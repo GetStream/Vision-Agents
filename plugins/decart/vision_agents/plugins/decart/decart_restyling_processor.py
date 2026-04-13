@@ -198,7 +198,9 @@ class RestylingProcessor(VideoProcessorPublisher):
                     ),
                 )
 
-                self._realtime_client.on("connection_change", self._on_connection_change)
+                self._realtime_client.on(
+                    "connection_change", self._on_connection_change
+                )
                 self._realtime_client.on("error", self._on_error)
 
                 self._connected = True

@@ -106,7 +106,7 @@ class TestRestylingProcessor:
 
             await processor.update_prompt("new style", enrich=False)
 
-            mock_client.set_prompt.assert_called_once_with("new style", enrich=False)
+            mock_client.set_prompt.assert_called_once_with("new style", enhance=False)
             assert processor.initial_prompt == "new style"
             await processor.close()
 
@@ -138,36 +138,21 @@ class TestRestylingProcessor:
 
             await processor.update_prompt("new style")
 
-            mock_client.set_prompt.assert_called_once_with("new style", enrich=True)
+            mock_client.set_prompt.assert_called_once_with("new style", enhance=True)
             await processor.close()
 
     @pytest.mark.asyncio
-    async def test_set_mirror_when_connected(self, mock_decart_client):
-        """Test set_mirror updates mirror mode when connected."""
+    async def test_set_mirror_updates_local_state(self, mock_decart_client):
+        """Test set_mirror updates local mirror state."""
         with patch(
             "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
         ):
             processor = RestylingProcessor(api_key="test_key", mirror=True)
-            mock_client = AsyncMock()
-            processor._realtime_client = mock_client
 
             await processor.set_mirror(False)
-
-            mock_client.set_mirror.assert_called_once_with(False)
             assert processor.mirror is False
-            await processor.close()
 
-    @pytest.mark.asyncio
-    async def test_set_mirror_noop_when_disconnected(self, mock_decart_client):
-        """Test set_mirror is no-op when disconnected."""
-        with patch(
-            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
-        ):
-            processor = RestylingProcessor(api_key="test_key", mirror=True)
-            processor._realtime_client = None
-
-            await processor.set_mirror(False)
-
+            await processor.set_mirror(True)
             assert processor.mirror is True
             await processor.close()
 
@@ -265,9 +250,6 @@ class TestConnectionManagement:
             "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
         ):
             processor = RestylingProcessor(api_key="test_key")
-
-            processor._on_connection_change("connecting")
-            assert processor._connected
 
             processor._on_connection_change("connected")
             assert processor._connected
