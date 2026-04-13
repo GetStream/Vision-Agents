@@ -336,6 +336,11 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
 
         self._reconnecting = True
         reconnect_succeeded = False
+        # Track provisional new connection + listener in locals so the
+        # failure path in `finally` can tear them down without leaking a
+        # stream or a live task.
+        new_connection: Optional[RealtimeConnection] = None
+        new_handle_task: Optional[asyncio.Task[Any]] = None
         try:
             logger.info("Reconnecting to AWS Bedrock")
 
@@ -358,9 +363,8 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
 
             # Start new listener bound to the new connection before tearing
             # down the old one, so no inbound events are dropped.
-            self._handle_event_task = asyncio.create_task(
-                self._handle_events(new_connection)
-            )
+            new_handle_task = asyncio.create_task(self._handle_events(new_connection))
+            self._handle_event_task = new_handle_task
 
             # Gracefully shut the old stream BEFORE touching the old listener
             # task. Closing input_stream lets the old receive() raise
@@ -395,6 +399,19 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         finally:
             self._reconnecting = False
             if not reconnect_succeeded:
+                # Reconnect failed mid-setup. Release the provisional
+                # resources we created so we don't leak a stream or task.
+                # The session is considered dead; the caller can retry or
+                # close().
+                if new_handle_task is not None:
+                    await cancel_and_wait(new_handle_task)
+                if new_connection is not None:
+                    try:
+                        await new_connection.close()
+                    except Exception:
+                        logger.exception(
+                            "Error closing provisional new connection during reconnect cleanup"
+                        )
                 self.connected = False
 
     def _should_reconnect(self) -> bool:
@@ -842,6 +859,15 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         if not self.connected:
             return
 
+        # Stop the reconnection check loop BEFORE any awaits below. Otherwise
+        # it can fire _should_reconnect() -> reconnect() during
+        # _await_pending_tools() or the promptEnd/sessionEnd sends, swap
+        # self.connection / self._handle_event_task underneath us, and leave
+        # us tearing down the wrong stream.
+        if self._reconnection_check_task:
+            await cancel_and_wait(self._reconnection_check_task)
+            self._reconnection_check_task = None
+
         await self._await_pending_tools()
 
         if self.connection:
@@ -867,9 +893,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         if self._handle_event_task:
             await asyncio.wait([self._handle_event_task], timeout=2.0)
             await cancel_and_wait(self._handle_event_task)
-
-        if self._reconnection_check_task:
-            await cancel_and_wait(self._reconnection_check_task)
 
         self.connected = False
 
