@@ -22,20 +22,18 @@ This example shows how to use the `RestylingProcessor` to transform a user's vid
 
 ```python
 from vision_agents.core import User, Agent
-from vision_agents.plugins import getstream, openai, decart
+from vision_agents.plugins import getstream, gemini, decart
 
-# Initialize the restyling processor
 processor = decart.RestylingProcessor(
-    initial_prompt="A cute animated movie with vibrant colours",
-    model="mirage_v2"
+    initial_prompt="Studio Ghibli animation style",
+    model="lucy_2_rt",
 )
 
 agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="Styled AI"),
-    instructions="You are a helpful assistant.",
-    llm=openai.LLM("gpt-4o-mini"),
-    # Add the processor to the agent's pipeline
+    instructions="Be helpful",
+    llm=gemini.Realtime(),
     processors=[processor],
 )
 ```
@@ -52,6 +50,31 @@ async def change_style(prompt: str) -> str:
     await processor.update_prompt(prompt)
     return f"Style changed to: {prompt}"
 ```
+
+### Reference Images ("costumes")
+
+For models like Lucy that accept a reference image, pass it at construction
+time and/or swap it atomically with a prompt via `update_state`:
+
+```python
+processor = decart.RestylingProcessor(
+    model="lucy_2_rt",
+    initial_prompt="A person wearing a superhero costume",
+    initial_image="./costumes/superhero.png",  # your own reference image
+)
+
+# Later — atomically change prompt + reference image
+await processor.update_state(
+    prompt="A person wearing a wizard robe",
+    image="./costumes/wizard.png",
+)
+
+# Image-only update
+await processor.update_state(image=b"<raw image bytes>")
+```
+
+`initial_image` and `update_state(image=...)` accept `bytes`, a local file
+path, an `http(s)` URL, a `data:` URI, or a raw base64 string.
 
 ## Configuration
 
