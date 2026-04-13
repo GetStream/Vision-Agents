@@ -1,4 +1,4 @@
-<img width="1280" height="360" alt="Readme" src="assets/repo_image.png" />
+![VisionAgents](assets/repo_image.png)
 
 # Open Vision Agents by Stream
 
@@ -7,36 +7,42 @@
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/vision-agents.svg)
 [![License](https://img.shields.io/github/license/GetStream/Vision-Agents)](https://github.com/GetStream/Vision-Agents/blob/main/LICENSE)
 [![Discord](https://img.shields.io/discord/1108586339550638090)](https://discord.gg/RkhX9PxMS6)
-
----
-
-## Build Real-Time Vision AI Agents
-
-https://github.com/user-attachments/assets/d9778ab9-938d-4101-8605-ff879c29b0e4
+[![X (Twitter)](https://img.shields.io/badge/X-@visionagents__ai-000000?logo=x&logoColor=white)](https://x.com/visionagents_ai)
 
 ### Multi-modal AI agents that watch, listen, and understand video.
 
-Vision Agents give you the building blocks to create intelligent, low-latency video experiences powered by your models,
+[Vision Agents](https://visionagents.ai/) give you the building blocks to create intelligent, low-latency video experiences powered by your models,
 your infrastructure, and your use cases.
 
 ### Key Highlights
 
 - **Video AI:** Built for real-time video AI. Combine YOLO, Roboflow, and others with Gemini/OpenAI in real-time.
 - **Low Latency:** Join quickly (500ms) and maintain audio/video latency under 30ms
-  using [Stream's edge network](https://getstream.io/video/).
+  using [Stream's edge network](https://getstream.io/video/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents).
 - **Open:** Built by Stream, but works with any video edge network.
 - **Native APIs:** Native SDK methods from OpenAI (`create response`), Gemini (`generate`), and Claude (
   `create message`) — always access the latest LLM capabilities.
 - **SDKs:** SDKs for React, Android, iOS, Flutter, React Native, and Unity, powered by Stream's ultra-low-latency
   network.
 
-https://github.com/user-attachments/assets/d66587ea-7af4-40c4-9966-5c04fbcf467c
+## Getting Started
 
----
+**Step 1: Install via uv**
+
+`uv add vision-agents`
+
+**Step 2: (Optional) Install with extra integrations**
+
+`uv add "vision-agents[getstream, openai, elevenlabs, deepgram]"`
+
+**Step 3: Obtain your Stream API credentials**
+
+Get a free API key from [Stream](https://getstream.io/try-for-free/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents). Developers receive **333,000 participant minutes** per month,
+plus extra credits via the Maker Program.
+
+Follow the [quickstart guide](https://visionagents.ai/introduction/quickstart) to build your first agent.
 
 ## See It In Action
-
-### Sports Coaching
 
 https://github.com/user-attachments/assets/d1258ac2-ca98-4019-80e4-41ec5530117e
 
@@ -53,245 +59,74 @@ agent = Agent(
     agent_user=agent_user,
     instructions="Read @golf_coach.md",
     llm=gemini.Realtime(fps=10),
-    # llm=openai.Realtime(fps=1), # Careful with FPS can get expensive
     processors=[ultralytics.YOLOPoseProcessor(model_path="yolo11n-pose.pt", device="cuda")],
 )
 ```
 
-### Security Camera with Package Theft Detection
-
-https://github.com/user-attachments/assets/92a2cdd8-909c-46d8-aab7-039a90efc186
-
-This example shows a security camera system that detects faces, tracks packages and detects when a package is stolen. It
-automatically generates "WANTED" posters, posting them to X in real-time.
-
-It combines face recognition, YOLOv11 object detection, Nano Banana and Gemini for a complete security workflow with
-voice interaction.
-
-```python
-# partial example, full example: examples/04_security_camera_example/security_camera_example.py
-security_processor = SecurityCameraProcessor(
-    fps=5,
-    model_path="weights_custom.pt",  # YOLOv11 for package detection
-    package_conf_threshold=0.7,
-)
-
-agent = Agent(
-    edge=getstream.Edge(),
-    agent_user=User(name="Security AI", id="agent"),
-    instructions="Read @instructions.md",
-    processors=[security_processor],
-    llm=gemini.LLM("gemini-2.5-flash-lite"),
-    tts=elevenlabs.TTS(),
-    stt=deepgram.STT(),
-)
-```
-
-### Sales Assistant — Invisible Overlay Coach
-
-Apps like Cluely offer realtime coaching via an invisible overlay. This example shows you how you can build your own
-invisible assistant.
-It combines Gemini realtime (to watch your screen and audio), and doesn't broadcast audio (only text). This approach
-is quite versatile and can be used for: Sales coaching, job interview cheating, physical world/ on the job coaching with
-glasses
-
-Demo video
-
-```python
-agent = Agent(
-    edge=StreamEdge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.
-    agent_user=agent_user,  # the user object for the agent (name, image etc)
-    instructions="You are silently helping the user pass this interview. See @interview_coach.md",
-    # gemini realtime, no need to set tts, or sst (though that's also supported)
-    llm=gemini.Realtime()
-)
-```
-
-## Quick Start
-
-**Step 1: Install via uv**
-
-`uv add vision-agents`
-
-**Step 2: (Optional) Install with extra integrations**
-
-`uv add "vision-agents[getstream, openai, elevenlabs, deepgram]"`
-
-**Step 3: Obtain your Stream API credentials**
-
-Get a free API key from [Stream](https://getstream.io/). Developers receive **333,000 participant minutes** per month,
-plus extra credits via the Maker Program.
-
 ## Features
 
-| **Feature**                         | **Description**                                                                                                                                       |
-|-------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **True real-time via WebRTC**       | Stream directly to model providers that support it for instant visual understanding.                                                                  |
-| **Interval/processor pipeline**     | For providers without WebRTC, process frames with pluggable video processors (e.g., YOLO, Roboflow, or custom PyTorch/ONNX) before/after model calls. |
-| **Turn detection & diarization**    | Keep conversations natural; know when the agent should speak or stay quiet and who's talking.                                                         |
-| **Voice activity detection (VAD)**  | Trigger actions intelligently and use resources efficiently.                                                                                          |
-| **Speech↔Text↔Speech**              | Enable low-latency loops for smooth, conversational voice UX.                                                                                         |
-| **Tool/function calling**           | Execute arbitrary code and APIs mid-conversation. Create Linear issues, query weather, trigger telephony, or hit internal services.                   |
-| **Built-in memory via Stream Chat** | Agents recall context naturally across turns and sessions.                                                                                            |
-| **Text back-channel**               | Message the agent silently during a call.                                                                                                             |
-| **Phone and RAG**                   | Interact with the Agent via inbound or outbound phone calls using Twilio and Turbopuffer                                                              |
+| **Feature**              | **Description**                                                                                         |
+|--------------------------|---------------------------------------------------------------------------------------------------------|
+| **Real-time WebRTC**     | Stream video directly to model providers for instant visual understanding.                              |
+| **Video Processing**     | Pluggable processor pipeline for YOLO, Roboflow, or custom PyTorch/ONNX models before/after LLM calls. |
+| **Turn Detection**       | Natural conversation flow with VAD, diarization, and smart turn-taking.                                 |
+| **Tool Calling & MCP**   | Execute code and APIs mid-conversation — Linear issues, weather, telephony, or any MCP server.          |
+| **Phone Integration**    | Inbound and outbound voice calls via Twilio with bidirectional audio streaming.                         |
+| **RAG**                  | Retrieval-augmented generation with TurboPuffer vector search or Gemini FileSearch.                     |
+| **Memory**               | Agents recall context across turns and sessions via Stream Chat.                                        |
+| **Text Back-channel**    | Message the agent silently during a call — coaching overlays, silent instructions, etc.                 |
+| **Production Ready**     | Built-in HTTP server, Prometheus metrics, horizontal scaling, and Kubernetes deployment.                |
 
 ## Out-of-the-Box Integrations
 
-| **Plugin Name** | **Description**                                                                                                                                                                                                                         | **Docs Link**                                                                                    |
-|-----------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
-| AWS Bedrock     | Realtime speech-to-speech plugin using Amazon Nova models with automatic reconnection                                                                                                                                                   | [AWS](https://visionagents.ai/integrations/aws-bedrock)                                          |
-| AWS Polly       | TTS plugin using Amazon's cloud-based service with natural-sounding voices and neural engine support                                                                                                                                    | [AWS Polly](https://visionagents.ai/integrations/aws-polly)                                      |
-| AssemblyAI      | Streaming STT plugin using Universal-3 Pro with async WebSocket, built-in turn detection, and keyterms boosting                                                                                                                         | [AssemblyAI](https://www.assemblyai.com/docs/streaming/universal-3-pro)                           |
-| Cartesia        | TTS plugin for realistic voice synthesis in real-time voice applications                                                                                                                                                                | [Cartesia](https://visionagents.ai/integrations/cartesia)                                        |
-| Decart          | Real-time AI video transformation service for applying artistic styles and effects to video streams                                                                                                                                     | [Decart](https://visionagents.ai/integrations/decart)                                            |
-| Deepgram        | STT plugin for fast, accurate real-time transcription with speaker diarization                                                                                                                                                          | [Deepgram](https://visionagents.ai/integrations/deepgram)                                        |
-| ElevenLabs      | TTS plugin with highly realistic and expressive voices for conversational agents                                                                                                                                                        | [ElevenLabs](https://visionagents.ai/integrations/elevenlabs)                                    |
-| Fast-Whisper    | High-performance STT plugin using OpenAI's Whisper model with CTranslate2 for fast inference                                                                                                                                            | [Fast-Whisper](https://visionagents.ai/integrations/fast-whisper)                                |
-| Fish Audio      | STT and TTS plugin with automatic language detection and voice cloning capabilities                                                                                                                                                     | [Fish Audio](https://visionagents.ai/integrations/fish)                                          |
-| Gemini          | Realtime API for building conversational agents with support for both voice and video. Plugin supports LLMs, Gemini Live, and a VLM interface for Gemini 3 Flash.                                                                       | [Gemini](https://visionagents.ai/integrations/gemini)                                            |
-| HeyGen          | Realtime interactive avatars powered by [HeyGen](https://heygen.com/)                                                                                                                                                                   | [HeyGen](https://visionagents.ai/integrations/heygen)                                            |
-| Hugging Face | LLM plugin providing access to many open-source language models hosted on the Hugging Face Hub and powered by external providers (Cerebras, Together, Groq, etc.)                                                                       | [Hugging Face](https://visionagents.ai/integrations/huggingface)                                 |
-| Inworld         | TTS plugin with high-quality streaming voices for real-time conversational AI agents                                                                                                                                                    | [Inworld](https://visionagents.ai/integrations/inworld)                                          |
-| Kokoro          | Local TTS engine for offline voice synthesis with low latency                                                                                                                                                                           | [Kokoro](https://visionagents.ai/integrations/kokoro)                                            |
-| Mistral Voxtral | Mistral Voxtral is a real-time transcription tool with speaker diarization. | [Mistral Voxtral](https://visionagents.ai/integrations/mistral)                                      |
-| Moondream       | Moondream provides realtime detection and VLM capabilities. Developers can choose from using the hosted API or running locally on their CUDA devices. Vision Agents supports Moondream's Detect, Caption and VQA skills out-of-the-box. | [Moondream](https://visionagents.ai/integrations/moondream)                                      |
-| NVIDIA Cosmos 2 | VLM plugin using NVIDIA's Cosmos 2 models for video understanding with automatic frame buffering and streaming responses                                                                                                                | [NVIDIA](https://visionagents.ai/integrations/nvidia)                                            |
-| OpenAI          | Realtime API for building conversational agents with out of the box support for real-time video directly over WebRTC, LLMs and Open AI TTS                                                                                              | [OpenAI](https://visionagents.ai/integrations/openai)                                            |
-| OpenRouter      | LLM plugin providing access to multiple providers (Anthropic, Google, OpenAI) through a unified API                                                                                                                                     | [OpenRouter](https://visionagents.ai/integrations/openrouter)                                    |
-| Qwen            | Realtime audio plugin using Alibaba's Qwen3 with native audio output and built-in speech recognition                                                                                                                                    | [Qwen](https://visionagents.ai/integrations/qwen)                                                |
-| Roboflow        | Object detection processor using Roboflow's hosted API or local RF-DETR models                                                                                                                                                          | [Roboflow](https://visionagents.ai/integrations/roboflow)                                        |
-| Smart Turn      | Advanced turn detection system combining Silero VAD, Whisper, and neural models for natural conversation flow                                                                                                                           | [Smart Turn](https://visionagents.ai/integrations/smart-turn)                                    |
-| TurboPuffer     | RAG plugin using TurboPuffer for hybrid search (vector + BM25) with Gemini embeddings for retrieval augmented generation                                                                                                                | [TurboPuffer](https://visionagents.ai/guides/rag)                                                |
-| Twilio          | Voice call integration plugin enabling bidirectional audio streaming via Twilio Media Streams with call registry and audio conversion                                                                                                   | [Twilio](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) |
-| Ultralytics     | Real-time pose detection processor using YOLO models with skeleton overlays                                                                                                                                                             | [Ultralytics](https://visionagents.ai/integrations/ultralytics)                                  |
-| Vogent          | Neural turn detection system for intelligent turn-taking in voice conversations                                                                                                                                                         | [Vogent](https://visionagents.ai/integrations/vogent)                                            |
-| Wizper          | STT plugin with real-time translation capabilities powered by Whisper v3                                                                                                                                                                | [Wizper](https://visionagents.ai/integrations/wizper)                                            |
-| xAI             | LLM plugin using xAI's Grok models with advanced reasoning and real-time knowledge                                                                                                                                                      | [xAI](https://visionagents.ai/integrations/xai)                                                  |
+**LLMs:** [OpenAI](https://visionagents.ai/integrations/openai) · [Gemini](https://visionagents.ai/integrations/gemini) · [xAI](https://visionagents.ai/integrations/xai) · [OpenRouter](https://visionagents.ai/integrations/openrouter) · [Hugging Face](https://visionagents.ai/integrations/huggingface) · [Kimi AI](https://visionagents.ai/integrations/kimi)
 
-## Processors
+**Realtime:** [OpenAI Realtime](https://visionagents.ai/integrations/openai) · [Gemini Live](https://visionagents.ai/integrations/gemini) · [AWS Nova Sonic](https://visionagents.ai/integrations/aws-bedrock) · [Qwen](https://visionagents.ai/integrations/qwen)
 
-Processors let your agent **manage state** and **handle audio/video** in real-time.
+**STT:** [Deepgram](https://visionagents.ai/integrations/deepgram) · [AssemblyAI](https://www.assemblyai.com/docs/streaming/universal-3-pro) · [Fast-Whisper](https://visionagents.ai/integrations/fast-whisper) · [Fish Audio](https://visionagents.ai/integrations/fish) · [Wizper](https://visionagents.ai/integrations/wizper) · [Mistral Voxtral](https://visionagents.ai/integrations/mistral)
 
-They take care of the hard stuff, like:
+**TTS:** [ElevenLabs](https://visionagents.ai/integrations/elevenlabs) · [Cartesia](https://visionagents.ai/integrations/cartesia) · [Deepgram](https://visionagents.ai/integrations/deepgram) · [AWS Polly](https://visionagents.ai/integrations/aws-polly) · [Pocket](https://visionagents.ai/integrations/pocket) · [Kokoro](https://visionagents.ai/integrations/kokoro) · [Inworld](https://visionagents.ai/integrations/inworld) · [Fish Audio](https://visionagents.ai/integrations/fish)
 
-- Running smaller models
-- Making API calls
-- Transforming media
+**Vision:** [Ultralytics](https://visionagents.ai/integrations/ultralytics) · [Roboflow](https://visionagents.ai/integrations/roboflow) · [Moondream](https://visionagents.ai/integrations/moondream) · [NVIDIA Cosmos](https://visionagents.ai/integrations/nvidia) · [Decart](https://visionagents.ai/integrations/decart)
 
-… so you can focus on your agent logic.
+**Avatars:** [LemonSlice](https://visionagents.ai/integrations/lemonslice)
+
+**Turn Detection:** [Vogent](https://visionagents.ai/integrations/vogent) · [Smart Turn](https://visionagents.ai/integrations/smart-turn)
+
+**Other:** [Twilio](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) · [TurboPuffer](https://visionagents.ai/guides/rag)
 
 ## Documentation
 
-Check out our getting started guide at [VisionAgents.ai](https://visionagents.ai/).
+Check out the full docs at [VisionAgents.ai](https://visionagents.ai/).
 
-- **Quickstart:** [Building a Voice AI app](https://visionagents.ai/introduction/voice-agents)
-- **Quickstart:** [Building a Video AI app](https://visionagents.ai/introduction/video-agents)
-- **Tutorial:** [Building a real-time meeting assistant](https://github.com/GetStream/Vision-Agents/tree/main/examples/01_simple_agent_example)
-- **Tutorial:** [Building real-time sports coaching](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)
+**Quickstart:** [Voice AI](https://visionagents.ai/introduction/voice-agents) · [Video AI](https://visionagents.ai/introduction/video-agents)
+
+**Guides:** [MCP & Function Calling](https://visionagents.ai/guides/mcp-tool-calling) · [Video Processors](https://visionagents.ai/guides/video-processors) · [Phone Calling](https://visionagents.ai/guides/calling) · [RAG](https://visionagents.ai/guides/rag) · [Testing](https://visionagents.ai/guides/testing)
+
+**Production:** [HTTP Server](https://visionagents.ai/guides/http-server) · [Deployment](https://visionagents.ai/guides/deployment) · [Kubernetes](https://visionagents.ai/guides/kubernetes-deployment) · [Horizontal Scaling](https://visionagents.ai/guides/horizontal-scaling) · [Prometheus Metrics](https://visionagents.ai/guides/prometheus-metrics)
 
 ## Examples
 
 | 🔮 Demo Applications                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |                                                                                         |
 |:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|
-| <br><h3>Cartesia</h3>Using Cartesia's Sonic 3 model alongside a vision model to tell a story with emotion based on what's in the frame.<br><br>• Real-time visual understanding<br>• Emotional storytelling<br>• Frame-by-frame analysis<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/cartesia/example)                                                                                                                                                    | <img src="assets/demo_gifs/cartesia.gif" width="320" alt="Cartesia Demo">               |
-| <br><h3>Realtime Stable Diffusion</h3>Realtime stable diffusion using Vision Agents and Decart's Mirage 2 model to create interactive scenes and stories.<br><br>• Real-time video restyling<br>• Interactive scene generation<br>• Stable diffusion integration<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/decart/example)                                                                                                                 | <img src="assets/demo_gifs/mirage.gif" width="320" alt="Mirage Demo">                   |
-| <br><h3>Golf Coach</h3>Using Gemini Live together with Vision Agents and Ultralytics YOLO, we're able to track the user's pose and provide realtime actionable feedback on their golf game.<br><br>• Real-time pose tracking<br>• Actionable coaching feedback<br>• YOLO pose detection<br>• Gemini Live integration<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)                                                     | <img src="assets/demo_gifs/golf.gif" width="320" alt="Golf Coach Demo">                 |
-| <br><h3>GeoGuesser</h3>Together with OpenAI Realtime and Vision Agents, we can take GeoGuesser to the next level by asking it to identify places in our real world surroundings.<br><br>• Real-world location identification<br>• OpenAI Realtime integration<br>• Visual scene understanding<br><br> [>Source Code and tutorial](https://visionagents.ai/integrations/openai#openai-realtime)                                                                                                    | <img src="assets/demo_gifs/geoguesser.gif" width="320" alt="GeoGuesser Demo">           |
-| <br><h3>Phone and RAG</h3>Interact with your Agent over the phone using Twilio. This example demonstrates how to use TurboPuffer for Retrieval Augmented Generation (RAG) to give your agent specialized knowledge.<br><br>• Inbound/Outbound telephony<br>• Twilio Media Streams integration<br>• Vector search with TurboPuffer<br>• Retrieval Augmented Generation<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) | <img src="assets/demo_gifs/va_phone.png" width="320" alt="Phone and RAG Demo">          |
-| <br><h3>Security Camera</h3>A security camera with face recognition, package detection and automated theft response. Generates WANTED posters with Nano Banana and posts them to X when packages disappear.<br><br>• Face detection & named recognition<br>• YOLOv11 package detection<br>• Automated WANTED poster generation<br>• Real-time X posting<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/04_security_camera_example)             | <img src="assets/demo_gifs/security_camera.gif" width="320" alt="Security Camera Demo"> |
-| <br><h3>Fraud Detection</h3>A demonstration of how an AI agent can autonomously help a victim of fraud, using function calls to quickly take actions like cancelling a compromised credit card.<br><br>• NVIDIA Nemotron Super 3 LLM via Baseten<br>• Real-time voice conversation<br>• Tool calling for transaction lookup & fraud flagging<br>• Automatic card freeze & replacement issuing<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/openai/examples/nemotron_example) | <img src="assets/demo_gifs/fraud_detection.gif" width="320" alt="Fraud Detection Demo"> |
-
+| <br><h3>Voice Agents (Low Latency + RAG + File Search)</h3>Build fast voice agents that can reason over knowledge, search files, and respond in real time.<br><br>• Low-latency voice interactions<br>• Retrieval-augmented responses<br>• File and knowledge search<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/cartesia/example)                                                                                                                                                    | <img src="assets/demo_gifs/cartesia.gif" width="320" alt="Voice Agent Demo">               |
+| <br><h3>Realtime Coaching and Video Understanding</h3>Power interactive coaching flows with live pose tracking and processor pipelines for frame-by-frame understanding.<br><br>• Real-time pose tracking<br>• Actionable coaching feedback<br>• Video processor pipeline support<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/02_golf_coach_example)                                                     | <img src="assets/demo_gifs/golf.gif" width="320" alt="Realtime Coaching Demo">                 |
+| <br><h3>Video Restyling and Avatars</h3>Use models like Decart Lucy to build virtual try-ons, stylized scenes, or give your agents a visual identity.<br><br>• Real-time video restyling<br>• Virtual try-on experiences<br>• Avatar-like visual presence<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/decart/example)                                                                                                    | <img src="assets/demo_gifs/mirage.gif" width="320" alt="Video Restyling Demo">           |
+| <br><h3>Custom Video Models (Roboflow, YOLO, and More)</h3>Train and run custom computer vision models for security monitoring, moderation, and other domain-specific workflows.<br><br>• Bring your own CV models<br>• Real-time moderation pipelines<br>• Security and detection use cases<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/11_moderation_example) | <img src="assets/demo_gifs/security_camera.gif" width="320" alt="Custom Video Models Demo">          |
+| <br><h3>Tools, MCP, and Phone Calling</h3>Connect external APIs and services so agents can validate data and take real-world actions during live conversations.<br><br>• MCP and function calling support<br>• Twilio-based phone workflows<br>• Real-time fraud response automation<br><br> [>Phone + RAG example](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) · [>Fraud workflow example](https://github.com/GetStream/Vision-Agents/tree/main/plugins/openai/examples/nemotron_example) | <img src="assets/demo_gifs/fraud_detection.gif" width="320" alt="Tools and Phone Demo"> |
 
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md)
 
-## Open Platform
+Want to add your platform or provider? See [Create Your Own Plugin](https://visionagents.ai/integrations/create-your-own-plugin) or reach out to **nash@getstream.io**.
 
-Want to add your platform or provider? Reach out to **nash@getstream.io**.
+## Current Limitations
 
-## Awesome Video AI
-
-Our favorite people & projects to follow for vision AI
-
-| [<img src="https://github.com/user-attachments/assets/9149e871-cfe8-4169-a4ce-4073417e645c" width="80"/>](https://x.com/demishassabis) | [<img src="https://github.com/user-attachments/assets/2e1335d3-58af-4988-b879-1db8d862cd34" width="80"/>](https://x.com/OfficialLoganK) | [<img src="https://github.com/user-attachments/assets/c9249ae9-e66a-4a70-9393-f6fe4ab5c0b0" width="80"/>](https://x.com/ultralytics) |
-|:--------------------------------------------------------------------------------------------------------------------------------------:|:---------------------------------------------------------------------------------------------------------------------------------------:|:------------------------------------------------------------------------------------------------------------------------------------:|
-|                 [@demishassabis](https://x.com/demishassabis)<br>CEO @ Google DeepMind<br><sub>Won a Nobel prize</sub>                 |           [@OfficialLoganK](https://x.com/OfficialLoganK)<br>Product Lead @ Gemini<br><sub>Posts about robotics vision</sub>            |       [@ultralytics](https://x.com/ultralytics)<br>Various fast vision AI models<br><sub>Pose, detect, segment, classify</sub>       |
-
-| [<img src="https://github.com/user-attachments/assets/c1fe873d-6f41-4155-9be1-afc287ca9ac7" width="80"/>](https://x.com/skalskip92) | [<img src="https://github.com/user-attachments/assets/43359165-c23d-4d5d-a5a6-1de58d71fabd" width="80"/>](https://x.com/moondreamai) | [<img src="https://github.com/user-attachments/assets/490d349c-7152-4dfb-b705-04e57bb0a4ca" width="80"/>](https://x.com/kwindla) |
-|:-----------------------------------------------------------------------------------------------------------------------------------:|:------------------------------------------------------------------------------------------------------------------------------------:|:--------------------------------------------------------------------------------------------------------------------------------:|
-|          [@skalskip92](https://x.com/skalskip92)<br>Open Source Lead @ Roboflow<br><sub>Building tools for vision AI</sub>          |       [@moondreamai](https://x.com/moondreamai)<br>The tiny vision model that could<br><sub>Lightweight, fast, efficient</sub>       |                [@kwindla](https://x.com/kwindla)<br>Pipecat / Daily<br><sub>Sharing AI and vision insights</sub>                 |
-
-| [<img src="https://github.com/user-attachments/assets/d7ade584-781f-4dac-95b8-1acc6db4a7c4" width="80"/>](https://x.com/juberti) | [<img src="https://github.com/user-attachments/assets/00a1ed37-3620-426d-b47d-07dd59c19b28" width="80"/>](https://x.com/romainhuet) | [<img src="https://github.com/user-attachments/assets/eb5928c7-83b9-4aaa-854f-1d4f641426f2" width="80"/>](https://x.com/thorwebdev) |
-|:--------------------------------------------------------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------------------------------------------------------:|
-|               [@juberti](https://x.com/juberti)<br>Head of Realtime AI @ OpenAI<br><sub>Realtime AI systems</sub>                |                [@romainhuet](https://x.com/romainhuet)<br>Head of DX @ OpenAI<br><sub>Developer tooling & APIs</sub>                |                    [@thorwebdev](https://x.com/thorwebdev)<br>Eleven Labs<br><sub>Voice and AI experiments</sub>                    |
-
-| [<img src="https://github.com/user-attachments/assets/ab5ef918-7c97-4c6d-be10-2e2aeefec015" width="80"/>](https://x.com/mervenoyann) | [<img src="https://github.com/user-attachments/assets/af936e13-22cf-4000-a35b-bfe30d44c320" width="80"/>](https://x.com/stash_pomichter) |         [<img src="https://pbs.twimg.com/profile_images/1893061651152121856/Op4W8mza_400x400.jpg" width="80"/>](https://x.com/Mentraglass)          |
-|:------------------------------------------------------------------------------------------------------------------------------------:|:----------------------------------------------------------------------------------------------------------------------------------------:|:---------------------------------------------------------------------------------------------------------------------------------------------------:|
-|               [@mervenoyann](https://x.com/mervenoyann)<br>Hugging Face<br><sub>Posts extensively about Video AI</sub>               |          [@stash_pomichter](https://x.com/stash_pomichter)<br>Spatial memory for robots<br><sub>Robotics & AI navigation</sub>           | [@Mentraglass](https://x.com/Mentraglass)<br>Open-source smart glasses<br><sub>Open-Source, hackable AR glasses with AI capabilities built in</sub> |
-
-| [<img src="https://pbs.twimg.com/profile_images/1664559115581145088/UMD1vtMw_400x400.jpg" width="80"/>](https://x.com/vikhyatk) |
-|:-------------------------------------------------------------------------------------------------------------------------------:|
-|        [@vikhyatk](https://x.com/vikhyatk)<br>AI Engineer<br><sub>Open-source AI projects, Creator of Moondream AI</sub>        |
-
-## Inspiration
-
-- Livekit Agents: Great syntax, Livekit only
-- Pipecat: Flexible, but more verbose.
-- OpenAI Agents: Focused on openAI only
-
-## Roadmap
-
-### 0.5 Documentation/polish - Planned 
-- Excellence on documentation
-- Segmentation examples with HuggingFace and Roboflow 
-- Automated workflows for maintenance
-- Local camera/audio support AND/OR WebRTC connection
-- Embedded/robotics examples
-
-### 0.4 - Production Polish & Scalability - Feb
-- Horizontal scaling support via Redis-based session store for multi-node deployments
-- New model/provider expansions: [XAI realtime](https://visionagents.ai/integrations/xai), [Mistral/Voxtral](https://visionagents.ai/integrations), [Gemini 3 Vision](https://visionagents.ai/integrations/gemini), [Hugging Face Transformers plugin](https://visionagents.ai/integrations), Qwen, [OpenRouter VLM](https://visionagents.ai/integrations/openrouter) + upgraded defaults (e.g., GPT-Realtime 1.5)
-- Enforced async-only APIs, agent testing framework, authentication flow updates, limits in AgentLauncher, and reduced GetStream dependency coupling for standalone use
-- Multi-speaker call support, LemonSlice Avatar plugin, TTS/audio fixes, VLM message deduplication (Gemini/NVIDIA/Anthropic), and improved video/screen-sharing handling
-- Lot of polish: full [CHANGELOG.md](https://github.com/GetStream/Vision-Agents/blob/main/CHANGELOG.md), [Grafana/Prometheus examples](https://visionagents.ai/core/telemetry), and numerous stability/bug fixes
-
-### 0.3 - Examples and Deploys - Jan
-
-- Production-grade HTTP API for agent deployment (`uv run <agent.py> serve`)
-- Metrics & Observability stack
-- Phone/voice integration with RAG capabilities
-- 10 new LLM
-  plugins ([AWS Nova 2](plugins/aws), [Qwen 3 Realtime](plugins/qwen), [NVIDIA Cosmos 2](plugins/nvidia), [Pocket TTS](plugins/pocket), [Deepgram TTS](plugins/deepgram), [OpenRouter](plugins/openrouter), [HuggingFace Inference](plugins/huggingface), [Roboflow](plugins/roboflow), [Twilio](plugins/twilio), [Turbopuffer](plugins/turbopuffer))
-- Real-world
-  examples ([security camera](examples/05_security_camera_example), [phone integration](examples/03_phone_and_rag_example), [football commentator](examples/04_football_commentator_example), [Docker deployment with GPU support](examples/07_deploy_example), [agent server](examples/08_agent_server_example))
-- Stability: Fixes for participant sync, video frame handling, agent lifecycle, and screen sharing
-
-### 0.2 - Simplification - Nov
-
-- Simplified the library & improved code quality
-- Deepgram Nova 3, Elevenlabs Scribe 2, Fish, Moondream, QWen3, Smart turn, Vogent, Inworld, Heygen, AWS and more
-- Improved openAI & Gemini realtime performance
-- Audio & Video utilities
-
-### 0.1 – First Release - Oct
-
-- Working TTS, Gemini & OpenAI
-
-## Vision AI limitations
-
-Video AI is the frontier of AI. The state of the art is changing daily to help models understand live video.
-While building the integrations, here are the limitations we've noticed (Dec 2025)
-
-* Video AI struggles with small text. If you want the AI to read the score in a game it will often get it wrong and
-  hallucinate
-* Longer videos can cause the AI to lose context. For instance if it's watching a soccer match it will get confused
-  after 30 seconds
-* Most applications require a combination of small specialized models like Yolo/Roboflow/Moondream, API calls to get
-  more context and larger models like gemini/openAI
-* Image size & FPS need to stay relatively low due to performance constraints
-* Video doesn’t trigger responses in realtime models. You always need to send audio/text to trigger a response.
+- Video AI struggles with small text — models may hallucinate scores, signs, etc.
+- Context degrades on longer sessions (~30s+) for continuous video understanding
+- Most use cases need a mix of specialized models (YOLO, Roboflow) with larger LLMs
+- Real-time models require audio/text to trigger responses — video alone won't prompt output
 
 ## Star History
 

@@ -158,17 +158,12 @@ class RestylingProcessor(VideoProcessorPublisher):
             logger.debug("Cannot set prompt: not connected to Decart")
             return
 
-        enrich_value = enrich if enrich is not None else self.enrich
-        await self._realtime_client.set_prompt(prompt_text, enrich=enrich_value)
+        enhance_value = enrich if enrich is not None else self.enrich
+        await self._realtime_client.set_prompt(prompt_text, enhance=enhance_value)
         self.initial_prompt = prompt_text
         logger.info(f"Updated Decart prompt: {prompt_text[:50]}...")
 
     async def set_mirror(self, enabled: bool) -> None:
-        if not self._realtime_client:
-            logger.debug("Cannot set mirror: not connected to Decart")
-            return
-
-        await self._realtime_client.set_mirror(enabled)
         self.mirror = enabled
         logger.debug(f"Updated Decart mirror mode: {enabled}")
 
@@ -188,9 +183,8 @@ class RestylingProcessor(VideoProcessorPublisher):
                 initial_state = ModelState(
                     prompt=Prompt(
                         text=self.initial_prompt,
-                        enrich=self.enrich,
+                        enhance=self.enrich,
                     ),
-                    mirror=self.mirror,
                 )
 
                 self._realtime_client = await RealtimeClient.connect(

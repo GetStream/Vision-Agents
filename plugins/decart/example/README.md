@@ -22,7 +22,7 @@ In this example, the AI storyteller will:
     - [Decart](https://decart.ai/) (for video restyling)
     - [ElevenLabs](https://elevenlabs.io/) (for text-to-speech)
     - [Deepgram](https://deepgram.com/) (for speech-to-text)
-    - [Stream](https://getstream.io/) (for video/audio infrastructure)
+    - [Stream](https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) (for video/audio infrastructure)
 
 ## Installation
 

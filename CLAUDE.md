@@ -69,6 +69,8 @@ uv run --no-sync mypy
 module-level `logger = logging.getLogger(__name__)`. Use `debug` for lifecycle, `info` for notable events, `error` for failures without a traceback,
 `exception` for errors with traceback.
 
+- In hot paths (audio processing, event handling), guard debug logging behind `if logger.isEnabledFor(logging.DEBUG):` to avoid formatting overhead when debug is disabled.
+
 **Constructor validation**:
 
 - raise `ValueError` with a descriptive message for invalid args. Prefer custom domain exceptions over generic ones.

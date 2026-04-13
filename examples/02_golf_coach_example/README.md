@@ -19,7 +19,7 @@ video AI use cases like sports coaching, physical therapy, workout coaching, or 
 - Python 3.13 or higher
 - API keys for:
     - [Gemini](https://ai.google.dev/) (for realtime LLM with vision)
-    - [Stream](https://getstream.io/) (for video/audio infrastructure)
+    - [Stream](https://getstream.io/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) (for video/audio infrastructure)
     - Alternatively: [OpenAI](https://openai.com) (if using OpenAI Realtime instead)
 
 ## Installation

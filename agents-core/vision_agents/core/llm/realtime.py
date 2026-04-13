@@ -153,13 +153,17 @@ class Realtime(OmniLLM):
         self.events.send(event)
 
     def _emit_audio_output_done_event(
-        self, response_id: str | None = None, user_metadata=None
+        self,
+        response_id: str | None = None,
+        user_metadata=None,
+        interrupted: bool = False,
     ):
         """Emit an event signaling audio output is complete."""
         event = events.RealtimeAudioOutputDoneEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             response_id=response_id,
+            interrupted=interrupted,
             participant=user_metadata,
         )
         self.events.send(event)

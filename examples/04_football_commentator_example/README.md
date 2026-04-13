@@ -8,7 +8,7 @@ Both models could provide feedback, but neither was accurate or fast enough for 
 
 ## Code Setup 
 
-Note: You can find the code for this tutorial on the [Vision Agents GitHub page](https://github.com/GetStream/Vision-Agents/tree/main/plugins/roboflow/example).
+Note: You can find the code for this tutorial on the [Vision Agents GitHub page](https://github.com/GetStream/Vision-Agents/tree/main/plugins/roboflow/examples/detection).
 
 Given that we were working with complex clips of sports games with motion and differing camera angles, the live models from Gemini and OpenAI needed some help to identify key elements in the frame, such as the players and ball.
 
@@ -85,7 +85,7 @@ The Vision Agents SDK can be configured very quickly, which allowed us to iterat
 
 - **RF-DETR model**: We wanted a lightweight pretrained model, so we chose \`rfdetr-base\` as a balance between speed and accuracy. The \`rfdetr-nano\` variant runs faster but misses smaller objects. \`rfdetr-large\` is more accurate but couldn't keep up with real-time video on our test hardware.
 
-- **Detection FPS**: We ran RF-DETR at 5 FPS. This is fast enough to \[track player movement]\(https\://getstream.io/blog/ai-ball-player-tracking/) and ball position without overwhelming the system. Higher FPS didn't improve commentary quality since the bottleneck is the real-time model, not Roboflow.
+- **Detection FPS**: We ran RF-DETR at 5 FPS. This is fast enough to [track player movement](https://getstream.io/blog/ai-ball-player-tracking/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) and ball position without overwhelming the system. Higher FPS didn't improve commentary quality since the bottleneck is the real-time model, not Roboflow.
 
 - **Real-time model FPS**: We tried different FPS rates, but these were much lower than the detection FPS, ranging from 1-3 FPS. The real-time models were only able to keep a few frames in context without getting confused or queueing frames. Sending more frames increased cost without improving responsiveness.
 
@@ -245,7 +245,7 @@ Here are some of our hopes for 2026 model improvements:
 
 This demo was a useful reality check and reflects the current state of the technology as of December 2025. The two-model architecture is sound and Vision Agents made iteration easy but current real-time models aren't ready for high-motion video. 
 
-For now, [reliable sports commentary](https://getstream.io/blog/ai-sports-analytics/) would need more intelligence in the detection layer: custom models to recognize game events, with more structured prompts and TTS for narration.
+For now, [reliable sports commentary](https://getstream.io/blog/ai-sports-analytics/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) would need more intelligence in the detection layer: custom models to recognize game events, with more structured prompts and TTS for narration.
 
 Things in the AI space are moving so quickly that it would be fun to revisit this project in a few months’ time or when an exciting new model is released. We’re optimistic that we’ll get very different results.
 

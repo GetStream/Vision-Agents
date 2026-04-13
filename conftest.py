@@ -10,12 +10,12 @@ import logging
 import os
 from typing import Iterator
 
+import av
 import numpy as np
 import pytest
 from blockbuster import BlockBuster, blockbuster_ctx
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import AudioFormat, PcmData
-from torchvision.io.video import av
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt.events import (
     STTErrorEvent,

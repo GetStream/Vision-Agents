@@ -34,6 +34,10 @@ class QueuedVideoTrack(VideoStreamTrack):
         max_queue_size: int = 10,
     ):
         super().__init__()
+        if width <= 0 or width % 2 != 0:
+            raise ValueError("width must be a positive even integer")
+        if height <= 0 or height % 2 != 0:
+            raise ValueError("height must be a positive even integer")
         self.frame_queue: VideoLatestNQueue[av.VideoFrame] = VideoLatestNQueue(
             maxlen=max_queue_size
         )

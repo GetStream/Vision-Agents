@@ -55,7 +55,7 @@ class OpenAILLM(LLM):
 
     def __init__(
         self,
-        model: str,
+        model: str = "gpt-5.4",
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         client: Optional[AsyncOpenAI] = None,

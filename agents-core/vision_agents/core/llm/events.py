@@ -1,11 +1,10 @@
+import uuid
 from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 from getstream.video.rtc import PcmData
-
 from vision_agents.core.agents.transcript.buffer import TranscriptMode
 from vision_agents.core.events import PluginBaseEvent
-from typing import Optional, Any, Dict
-import uuid
 
 
 @dataclass
@@ -54,6 +53,7 @@ class RealtimeAudioOutputDoneEvent(PluginBaseEvent):
 
     type: str = field(default="plugin.realtime_audio_output_done", init=False)
     response_id: Optional[str] = None
+    interrupted: bool = False
 
 
 @dataclass

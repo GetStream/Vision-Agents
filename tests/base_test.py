@@ -1,11 +1,10 @@
 import asyncio
 import os
 
+import av
 import numpy as np
 import pytest
-from torchvision.io.video import av
-
-from getstream.video.rtc.track_util import PcmData, AudioFormat
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 
 
 class BaseTest:

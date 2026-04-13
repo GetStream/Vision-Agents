@@ -63,6 +63,17 @@ class TTS(tts.TTS):
             audio_stream, sample_rate=16000, channels=1, format=AudioFormat.S16
         )
 
+    async def close(self) -> None:
+        # SDK doesn't expose a public aclose() - workaround using internals
+        try:
+            wrapper = getattr(self.client, "_client_wrapper", None)
+            http_client = getattr(wrapper, "httpx_client", None)
+            httpx_client = getattr(http_client, "httpx_client", None)
+            if httpx_client is not None:
+                await httpx_client.aclose()
+        finally:
+            await super().close()
+
     async def stop_audio(self) -> None:
         """
         Clears the queue and stops playing audio.

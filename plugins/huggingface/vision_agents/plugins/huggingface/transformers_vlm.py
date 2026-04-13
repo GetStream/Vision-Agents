@@ -21,9 +21,10 @@ import logging
 import time
 import uuid
 from collections import deque
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Callable, Optional, cast
 
 import av
+import jinja2
 import torch
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
 from transformers import AutoModelForImageTextToText, AutoProcessor, PreTrainedModel
@@ -35,14 +36,20 @@ from vision_agents.core.llm.events import (
     VLMInferenceStartEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
+from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.warmup import Warmable
 
 from . import events
+from ._tool_call_loop import (
+    convert_tools_to_chat_completions_format,
+    run_tool_call_loop,
+)
 from .transformers_llm import (
     DeviceType,
     QuantizationType,
     TorchDtypeType,
+    extract_tool_calls_from_text,
     get_quantization_config,
     resolve_torch_dtype,
 )
@@ -50,11 +57,6 @@ from .transformers_llm import (
 logger = logging.getLogger(__name__)
 
 PLUGIN_NAME = "transformers_vlm"
-
-
-# ---------------------------------------------------------------------------
-# Resource container
-# ---------------------------------------------------------------------------
 
 
 class VLMResources:
@@ -69,11 +71,6 @@ class VLMResources:
         self.model = model
         self.processor = processor
         self.device = device
-
-
-# ---------------------------------------------------------------------------
-# TransformersVLM
-# ---------------------------------------------------------------------------
 
 
 class TransformersVLM(VideoLLM, Warmable[VLMResources]):
@@ -92,6 +89,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         frame_buffer_seconds: Seconds of frames to keep in the buffer.
         max_frames: Maximum frames to send per inference. Evenly sampled from buffer.
         max_new_tokens: Default maximum tokens to generate per response.
+        max_tool_rounds: Maximum tool-call rounds per response (default 3).
     """
 
     def __init__(
@@ -105,6 +103,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         frame_buffer_seconds: int = 10,
         max_frames: int = 4,
         max_new_tokens: int = 512,
+        max_tool_rounds: int = 3,
     ):
         super().__init__()
 
@@ -114,22 +113,18 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         self._torch_dtype_config = torch_dtype
         self._trust_remote_code = trust_remote_code
         self._max_new_tokens = max_new_tokens
+        self._max_tool_rounds = max_tool_rounds
         self._fps = fps
         self._max_frames = max_frames
 
         self._resources: Optional[VLMResources] = None
 
-        # Video frame handling (mirrors HuggingFaceVLM)
         self._video_forwarder: Optional[VideoForwarder] = None
         self._frame_buffer: deque[av.VideoFrame] = deque(
             maxlen=fps * frame_buffer_seconds
         )
 
         self.events.register_events_from_module(events)
-
-    # ------------------------------------------------------------------
-    # Warmable interface
-    # ------------------------------------------------------------------
 
     async def on_warmup(self) -> VLMResources:
         logger.info(f"Loading VLM: {self.model_id}")
@@ -143,7 +138,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
     def _load_model_sync(self) -> VLMResources:
         torch_dtype = resolve_torch_dtype(self._torch_dtype_config)
 
-        load_kwargs: Dict[str, Any] = {
+        load_kwargs: dict[str, Any] = {
             "trust_remote_code": self._trust_remote_code,
             "torch_dtype": torch_dtype,
         }
@@ -172,10 +167,6 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
         device = next(model.parameters()).device
         return VLMResources(model=model, processor=processor, device=device)
-
-    # ------------------------------------------------------------------
-    # VideoLLM interface
-    # ------------------------------------------------------------------
 
     async def watch_video_track(
         self,
@@ -210,10 +201,6 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
             self._video_forwarder = None
             logger.info(f"Stopped video forwarding to {PLUGIN_NAME}")
 
-    # ------------------------------------------------------------------
-    # LLM interface
-    # ------------------------------------------------------------------
-
     async def simple_response(
         self,
         text: str,
@@ -234,7 +221,16 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                 role="user", user_id="user", content=text
             )
 
-        frames_count = len(self._frame_buffer)
+        frames_snapshot = list(self._frame_buffer)
+        image_count = min(len(frames_snapshot), self._max_frames)
+
+        messages = self._build_messages()
+        image_content: list[dict[str, Any]] = [
+            {"type": "image"} for _ in range(image_count)
+        ]
+        image_content.append({"type": "text", "text": text or "Describe what you see."})
+        messages.append({"role": "user", "content": image_content})
+
         inference_id = str(uuid.uuid4())
 
         self.events.send(
@@ -242,9 +238,91 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                 plugin_name=PLUGIN_NAME,
                 inference_id=inference_id,
                 model=self.model_id,
-                frames_count=frames_count,
+                frames_count=len(frames_snapshot),
             )
         )
+
+        request_start = time.perf_counter()
+        response = await self.create_response(messages=messages, frames=frames_snapshot)
+        latency_ms = (time.perf_counter() - request_start) * 1000
+
+        if response.exception is not None:
+            self.events.send(
+                VLMErrorEvent(
+                    plugin_name=PLUGIN_NAME,
+                    inference_id=inference_id,
+                    error=response.exception,
+                    context="generation",
+                )
+            )
+        else:
+            self.events.send(
+                VLMInferenceCompletedEvent(
+                    plugin_name=PLUGIN_NAME,
+                    inference_id=inference_id,
+                    model=self.model_id,
+                    text=response.text,
+                    latency_ms=latency_ms,
+                    frames_processed=len(frames_snapshot),
+                )
+            )
+
+        return response
+
+    async def create_response(
+        self,
+        messages: Optional[list[dict[str, Any]]] = None,
+        *,
+        frames: Optional[list[av.VideoFrame]] = None,
+        max_new_tokens: Optional[int] = None,
+        temperature: float = 0.7,
+        do_sample: bool = True,
+        **kwargs: Any,
+    ) -> LLMResponseEvent:
+        """Generate a response from messages and optional video frames.
+
+        Args:
+            messages: Chat messages. If ``None``, builds from conversation history.
+            frames: Video frames to include. If ``None``, uses the current buffer.
+            max_new_tokens: Override the default max token count.
+            temperature: Sampling temperature.
+            do_sample: Whether to use sampling (vs greedy).
+        """
+        is_tool_followup = kwargs.pop("_tool_followup", False)
+
+        if self._resources is None:
+            logger.error("Model not loaded. Ensure warmup() was called.")
+            return LLMResponseEvent(original=None, text="")
+
+        if messages is None:
+            messages = self._build_messages()
+        if frames is None:
+            frames = list(self._frame_buffer)
+
+        tools_param: Optional[list[dict[str, Any]]] = None
+        tools_spec = self.get_available_functions()
+        if tools_spec:
+            tools_param = convert_tools_to_chat_completions_format(tools_spec)
+
+        try:
+            inputs = await asyncio.to_thread(
+                self._build_processor_inputs, messages, frames, tools_param
+            )
+        except (jinja2.TemplateError, TypeError, ValueError, RuntimeError) as e:
+            logger.exception("Failed to build VLM inputs")
+            return LLMResponseEvent(original=None, text="", exception=e)
+
+        device = self._resources.device
+        inputs = {
+            k: v.to(device) if isinstance(v, torch.Tensor) else v
+            for k, v in inputs.items()
+        }
+
+        max_tokens = max_new_tokens or self._max_new_tokens
+        model = self._resources.model
+        processor = self._resources.processor
+        pad_token_id = processor.tokenizer.pad_token_id
+
         self.events.send(
             LLMRequestStartedEvent(
                 plugin_name=PLUGIN_NAME,
@@ -255,40 +333,12 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
         request_start = time.perf_counter()
 
-        frames_snapshot = list(self._frame_buffer)
-
-        try:
-            inputs = await asyncio.to_thread(
-                self._build_vlm_inputs, text, frames_snapshot
-            )
-        except (TypeError, ValueError, RuntimeError) as e:
-            logger.exception("Failed to build VLM inputs")
-            self.events.send(
-                VLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    inference_id=inference_id,
-                    error=e,
-                    context="input_processing",
-                )
-            )
-            return LLMResponseEvent(original=None, text="")
-
-        # Move tensors to device
-        device = self._resources.device
-        inputs = {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in inputs.items()
-        }
-
-        processor = self._resources.processor
-        model = self._resources.model
-
-        pad_token_id = processor.tokenizer.pad_token_id
-
         def _do_generate() -> Any:
-            gen_kwargs: Dict[str, Any] = {
+            gen_kwargs: dict[str, Any] = {
                 **inputs,
-                "max_new_tokens": self._max_new_tokens,
+                "max_new_tokens": max_tokens,
+                "do_sample": do_sample,
+                "temperature": temperature if do_sample else 1.0,
             }
             if pad_token_id is not None:
                 gen_kwargs["pad_token_id"] = pad_token_id
@@ -300,45 +350,38 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         except RuntimeError as e:
             logger.exception("VLM generation failed")
             self.events.send(
-                VLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    inference_id=inference_id,
-                    error=e,
-                    context="generation",
-                )
-            )
-            self.events.send(
                 events.LLMErrorEvent(
                     plugin_name=PLUGIN_NAME,
                     error_message=str(e),
                     event_data=e,
                 )
             )
-            return LLMResponseEvent(original=None, text="")
+            return LLMResponseEvent(original=None, text="", exception=e)
 
-        # Decode only newly generated tokens
         input_length = inputs["input_ids"].shape[1]
         generated_ids = outputs[0][input_length:]
         output_text = processor.decode(generated_ids, skip_special_tokens=True)
 
-        latency_ms = (time.perf_counter() - request_start) * 1000
+        if tools_param and output_text:
+            tool_calls = extract_tool_calls_from_text(output_text)
+            if tool_calls:
+                if is_tool_followup:
+                    # Return to run_tool_call_loop — it will handle these
+                    # tool calls in the next round without nesting loops.
+                    return LLMResponseEvent(original=outputs, text=output_text)
+                return await self._handle_tool_calls(
+                    tool_calls, messages, frames, kwargs
+                )
 
-        self.events.send(
-            VLMInferenceCompletedEvent(
-                plugin_name=PLUGIN_NAME,
-                inference_id=inference_id,
-                model=self.model_id,
-                text=output_text,
-                latency_ms=latency_ms,
-                frames_processed=frames_count,
-            )
-        )
+        latency_ms = (time.perf_counter() - request_start) * 1000
+        response_id = str(uuid.uuid4())
+
         self.events.send(
             LLMResponseCompletedEvent(
                 plugin_name=PLUGIN_NAME,
                 original=outputs,
                 text=output_text,
-                item_id=inference_id,
+                item_id=response_id,
                 latency_ms=latency_ms,
                 model=self.model_id,
             )
@@ -346,54 +389,49 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
 
         return LLMResponseEvent(original=outputs, text=output_text)
 
-    # ------------------------------------------------------------------
-    # Input building
-    # ------------------------------------------------------------------
-
-    def _build_vlm_inputs(
-        self, text: str, frames: list[av.VideoFrame]
-    ) -> Dict[str, Any]:
-        """Build processor inputs from text and video frames.
-
-        Converts ``av.VideoFrame`` objects to PIL Images and passes them
-        to the processor alongside a structured message list.
-        """
-        assert self._resources is not None
-        processor = self._resources.processor
-
-        # Sample frames evenly to stay within context limits
-        all_frames = list(frames)
-        if len(all_frames) > self._max_frames:
-            step = len(all_frames) / self._max_frames
-            all_frames = [all_frames[int(i * step)] for i in range(self._max_frames)]
-
-        # Convert sampled frames to PIL images
-        images = [frame.to_image() for frame in all_frames]
-
-        # Build chat messages
-        messages: List[Dict[str, Any]] = []
+    def _build_messages(self) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
         if self._instructions:
             messages.append({"role": "system", "content": self._instructions})
         if self._conversation:
             for msg in self._conversation.messages:
                 messages.append({"role": msg.role, "content": msg.content})
+        return messages
 
-        # User message with image placeholders + text
-        user_content: List[Dict[str, Any]] = [{"type": "image"} for _ in images]
-        user_content.append({"type": "text", "text": text or "Describe what you see."})
-        messages.append({"role": "user", "content": user_content})
+    def _build_processor_inputs(
+        self,
+        messages: list[dict[str, Any]],
+        frames: list[av.VideoFrame],
+        tools: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        """Build processor inputs from messages, video frames, and optional tools.
 
-        # Apply chat template to get formatted prompt, then tokenize.
-        # Some processors return tokenized tensors directly from
-        # apply_chat_template (return_dict=True), others return a string
-        # that needs a separate processor() call to tokenize.
+        Samples frames evenly to stay within ``max_frames``, converts them to
+        PIL images, then applies the processor's chat template.
+        """
+        assert self._resources is not None
+        processor = self._resources.processor
+
+        all_frames = list(frames)
+        if len(all_frames) > self._max_frames:
+            step = len(all_frames) / self._max_frames
+            all_frames = [all_frames[int(i * step)] for i in range(self._max_frames)]
+
+        images = [frame.to_image() for frame in all_frames]
+
+        template_kwargs: dict[str, Any] = {
+            "add_generation_prompt": True,
+            "return_dict": True,
+            "return_tensors": "pt",
+        }
+        if tools:
+            template_kwargs["tools"] = tools
+
         try:
             result = processor.apply_chat_template(
                 messages,
                 images=images if images else None,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt",
+                **template_kwargs,
             )
             if isinstance(result, str):
                 return processor(
@@ -403,9 +441,37 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                     padding=True,
                 )
             return result
-        except (TypeError, ValueError, RuntimeError) as e:
+        except (jinja2.TemplateError, TypeError, ValueError) as e:
+            if tools:
+                logger.warning(
+                    f"apply_chat_template failed with tools, retrying without: {e}"
+                )
+                template_kwargs.pop("tools", None)
+                result = processor.apply_chat_template(
+                    messages,
+                    images=images if images else None,
+                    **template_kwargs,
+                )
+                if isinstance(result, str):
+                    return processor(
+                        text=result,
+                        images=images if images else None,
+                        return_tensors="pt",
+                        padding=True,
+                    )
+                return result
+
             logger.warning(f"processor.apply_chat_template failed, using fallback: {e}")
-            prompt = text or "Describe what you see."
+            prompt = "Describe what you see."
+            if messages:
+                last_content = messages[-1].get("content", prompt)
+                if isinstance(last_content, str):
+                    prompt = last_content
+                elif isinstance(last_content, list):
+                    for item in last_content:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            prompt = item.get("text", prompt)
+                            break
             return processor(
                 text=prompt,
                 images=images if images else None,
@@ -413,9 +479,36 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                 padding=True,
             )
 
-    # ------------------------------------------------------------------
-    # Memory management
-    # ------------------------------------------------------------------
+    def _convert_tools_to_provider_format(
+        self, tools: list[ToolSchema]
+    ) -> list[dict[str, Any]]:
+        return convert_tools_to_chat_completions_format(tools)
+
+    async def _handle_tool_calls(
+        self,
+        tool_calls: list[NormalizedToolCallItem],
+        messages: list[dict[str, Any]],
+        frames: list[av.VideoFrame],
+        kwargs: dict[str, Any],
+    ) -> LLMResponseEvent:
+        """Execute tool calls and generate follow-up responses with the same frames."""
+
+        async def _generate_followup(
+            current_messages: list[dict[str, Any]],
+        ) -> tuple[LLMResponseEvent, list[NormalizedToolCallItem]]:
+            result = await self.create_response(
+                messages=current_messages, frames=frames, _tool_followup=True, **kwargs
+            )
+            next_calls = extract_tool_calls_from_text(result.text)
+            return result, next_calls
+
+        return await run_tool_call_loop(
+            self,
+            tool_calls,
+            messages,
+            _generate_followup,
+            max_rounds=self._max_tool_rounds,
+        )
 
     def unload(self) -> None:
         logger.info(f"Unloading VLM: {self.model_id}")

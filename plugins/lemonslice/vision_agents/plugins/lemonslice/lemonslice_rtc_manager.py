@@ -196,6 +196,19 @@ class LemonSliceRTCManager:
             self._stream_writer = None
             logger.debug("Closed audio byte stream (segment end)")
 
+    async def interrupt(self) -> None:
+        """Send clear_buffer RPC to interrupt avatar playback."""
+        if self._room is None or not self._room.isconnected():
+            return
+        try:
+            await self._room.local_participant.perform_rpc(
+                destination_identity=_AVATAR_IDENTITY,
+                method="lk.clear_buffer",
+                payload="",
+            )
+        except rtc.RpcError:
+            logger.warning("clear_buffer RPC failed", exc_info=True)
+
     async def close(self) -> None:
         """Disconnect from the LiveKit room and clean up resources."""
         try:
@@ -234,7 +247,7 @@ class LemonSliceRTCManager:
             await self._on_audio(pcm)
 
     def _rpc_on_playback_finished(self, data: rtc.RpcInvocationData) -> str:
-        logger.info(
+        logger.debug(
             "playback finished event received",
             extra={"caller_identity": data.caller_identity},
         )
