@@ -1093,15 +1093,14 @@ class Agent:
         # Store the local video track.
         self._video_track_override_path = path
 
-    async def _poll_audio_queues(
-        self,
-        queues: dict[str, tuple[Participant, AudioQueue]],
-    ) -> AsyncIterator[tuple[Participant, PcmData]]:
+    async def _poll_audio_queues(self) -> AsyncIterator[tuple[Participant, PcmData]]:
         """Poll all participant audio queues sequentially.
 
         Yields (Participant, PcmData) tuples for each queue that has data ready.
         Queues that time out are silently skipped.
         """
+        # Make a copy before iterating because the track maybe get unpublished
+        queues = self._participant_queues.copy()
         for participant, queue in queues.values():
             try:
                 pcm = await asyncio.wait_for(
@@ -1124,9 +1123,7 @@ class Agent:
             while self._call_ended_event and not self._call_ended_event.is_set():
                 loop_start = time.perf_counter()
 
-                async for participant, pcm in self._poll_audio_queues(
-                    self._participant_queues
-                ):
+                async for participant, pcm in self._poll_audio_queues():
                     if participant.user_id != self.agent_user.id:
                         # Pass audio through the filter
                         # if multiple participants are on the call
