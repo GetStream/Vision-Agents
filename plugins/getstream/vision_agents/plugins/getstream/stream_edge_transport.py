@@ -265,19 +265,20 @@ class StreamEdge(EdgeTransport[StreamCall]):
                     break
 
             # Fallback: some video track_added callbacks can arrive with user=None.
-            # In that case we can still match by WebRTC kind.
+            # In that case we can still match by WebRTC kind, but only if there
+            # is exactly one anonymous candidate — multiple anonymous entries
+            # with the same kind would be ambiguous and could misbind.
             if track_id is None:
-                for tid, (pending_user, pending_session, pending_kind) in list(
-                    self._pending_tracks.items()
-                ):
-                    if (
-                        pending_user is None
-                        and pending_session is None
-                        and pending_kind == webrtc_track_kind
-                    ):
-                        track_id = tid
-                        del self._pending_tracks[tid]
-                        break
+                anonymous_candidates = [
+                    tid
+                    for tid, (pending_user, pending_session, pending_kind) in self._pending_tracks.items()
+                    if pending_user is None
+                    and pending_session is None
+                    and pending_kind == webrtc_track_kind
+                ]
+                if len(anonymous_candidates) == 1:
+                    track_id = anonymous_candidates[0]
+                    del self._pending_tracks[track_id]
 
             if track_id:
                 break
