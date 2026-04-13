@@ -1394,7 +1394,7 @@ wheels = [
 
 [[package]]
 name = "decart"
-version = "0.0.8"
+version = "0.0.29"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1404,9 +1404,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/86/75e55da0dc56528b232e31186c02bf409ba9bce888e5520507a9737cdc36/decart-0.0.8.tar.gz", hash = "sha256:95ea6fc0af5896198ce76abf7d2ecf39feec77e3ebf7c5fa55e2f239879d5545", size = 198620, upload-time = "2025-11-12T17:02:42.627Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/db/13/a469f99802783e68d28fd36efbbb6020b9b44fa743aa0aceb23344ff90f2/decart-0.0.29.tar.gz", hash = "sha256:5fd6b5031a90e4c8fd2ef55745d20313bcb0f2668e028dbd02feb9cb5325d91d", size = 192953, upload-time = "2026-03-22T13:28:02.036Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/e2/e128f098aaf0981849da4684a30d53b9a84be84fc372709de14557d135e9/decart-0.0.8-py3-none-any.whl", hash = "sha256:3f1ab43ced32edcd5a494673bc8f899a559f6a5c59796da88d71c5f48b8422dc", size = 20263, upload-time = "2025-11-12T17:02:40.913Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/d8/18f000412c4cbd11038883928e13adda3ed4e47e712678dc871b9c41d1e1/decart-0.0.29-py3-none-any.whl", hash = "sha256:85881db770dbf39db1f4cafc1a41d9ef2794f325eaa07eaac0f25c2baf5318d5", size = 37432, upload-time = "2026-03-22T13:28:00.673Z" },
 ]
 
 [[package]]
@@ -6996,6 +6996,7 @@ wheels = [
 name = "vision-agents"
 source = { editable = "agents-core" }
 dependencies = [
+    { name = "aiortc" },
     { name = "colorlog" },
     { name = "fastapi" },
     { name = "getstream", extra = ["telemetry", "webrtc"] },
@@ -7160,6 +7161,7 @@ xai = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiortc", specifier = ">=1.14.0,<1.15.0" },
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
@@ -7403,7 +7405,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "decart", specifier = "==0.0.8" },
+    { name = "decart", specifier = "==0.0.29" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

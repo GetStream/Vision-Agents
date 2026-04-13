@@ -1,16 +1,16 @@
-# Decart Storyteller Example
+# Decart Virtual Try-On Example
 
-This example shows you how to build a real-time storytelling agent using [Vision Agents](https://visionagents.ai/)
-and [Decart](https://decart.ai/). The agent tells a story while transforming your video feed into an animated style that
-matches the narrative.
+This example shows you how to build a real-time virtual try-on ("costume") agent using
+[Vision Agents](https://visionagents.ai/) and [Decart](https://decart.ai/). The agent listens for voice requests like
+"put me in a superhero costume" and uses the Lucy real-time model to restyle the user's video so they appear to be
+wearing it, using a reference image.
 
-In this example, the AI storyteller will:
+In this example, the AI wardrobe assistant will:
 
 - Listen to your voice input
-- Generate a story based on your interactions
-- Use [Decart](https://decart.ai/) to restyle your video feed in real-time (e.g., "A cute animated movie with vibrant
-  colours")
-- Change the video style dynamically as the story progresses
+- Use [Decart](https://decart.ai/) Lucy to restyle your video feed in real-time with both a prompt and a reference image
+- Atomically swap costumes via `processor.update_state(prompt=..., image=...)`
+- Fall back to prompt-only outfit changes for freeform requests
 - Speak with an expressive voice using [ElevenLabs](https://elevenlabs.io/)
 - Run on Stream's low-latency edge network
 
@@ -54,25 +54,36 @@ The agent will:
 1. Create a video call
 2. Open a demo UI in your browser
 3. Join the call
-4. Start telling a story and restyling your video
+4. Listen for costume requests and restyle your video with Lucy
 
 ## Code Walkthrough
 
 ### Setting Up the Agent
 
-The code creates an agent with the Decart processor and other components:
+The code creates an agent with the Decart processor (Lucy real-time) and a pre-defined set of costumes:
 
 ```python
+COSTUMES: dict[str, dict[str, Optional[str]]] = {
+    "jacket": {
+        "prompt": "A person wearing a jacket",
+        "image": "https://images.unsplash.com/photo-1591047139829-d91aecb6caea",
+    },
+    "superhero": {
+        "prompt": "A person wearing a superhero costume",
+        "image": "https://images.unsplash.com/photo-1766062854584-77e3d2467e54",
+    },
+}
+
 processor = decart.RestylingProcessor(
-    initial_prompt="A cute animated movie with vibrant colours",
-    model="mirage_v2"
+    model="lucy_2_rt",
 )
+llm = openai.LLM(model="gpt-5")
 
 agent = Agent(
     edge=getstream.Edge(),
-    agent_user=User(name="Story teller", id="agent"),
-    instructions="You are a story teller...",
-    llm=openai.LLM(model="gpt-4o-mini"),
+    agent_user=User(name="Virtual Wardrobe", id="agent"),
+    instructions="You are a playful virtual wardrobe assistant...",
+    llm=llm,
     tts=elevenlabs.TTS(voice_id="N2lVS1w4EtoT3dr4eOWO"),
     stt=deepgram.STT(),
     processors=[processor],
@@ -81,45 +92,66 @@ agent = Agent(
 
 **Components:**
 
-- `processor`: The Decart RestylingProcessor that transforms the video feed.
-- `llm`: The language model (GPT-4o-mini) that generates the story and controls the processor.
-- `tts`: ElevenLabs TTS for expressive voice output.
-- `stt`: Deepgram STT for transcribing user speech.
-- `processors`: The list of video processors (just Decart in this case).
+- `processor`: The Decart `RestylingProcessor` running the `lucy_2_rt` real-time model, which accepts a reference image.
+- `llm`: GPT-5 — picks the right costume and narrates the change.
+- `tts` / `stt`: ElevenLabs + Deepgram for a voice-driven loop.
 
-### Dynamic Style Changing
+### Swapping Costumes Atomically
 
-The agent can change the video style dynamically using a registered function:
+`update_state` mirrors the JS SDK's `realtimeClient.set({ prompt, enhance, image })` — prompt and reference image are
+applied in a single atomic update so the output video never shows a half-updated state:
 
 ```python
 @llm.register_function(
-    description="This function changes the prompt of the Decart processor which in turn changes the style of the video and user's background"
+    description="Put the user in one of the pre-defined costumes."
 )
-async def change_prompt(prompt: str) -> str:
-    await processor.update_prompt(prompt)
-    return f"Prompt changed to {prompt}"
+async def change_costume(name: str) -> str:
+    costume = COSTUMES.get(name.lower())
+    if costume is None:
+        return f"Unknown costume '{name}'. Available: {', '.join(COSTUMES)}."
+    await processor.update_state(prompt=costume["prompt"], image=costume["image"])
+    return f"Costume changed to {name}."
 ```
 
-This allows the LLM to call `change_prompt("A dark and stormy night")` to instantly change the visual style of the video
-to match the story's mood.
+For freeform requests (anything not in `COSTUMES`), the agent calls `change_outfit` which uses
+`update_state(prompt=..., image=...)` if the user supplies a URL, or `update_prompt(...)` for prompt-only changes:
+
+```python
+@llm.register_function(
+    description=(
+        "Change the user's outfit to a freeform description. Use this when "
+        "the user asks for a costume not in the pre-defined list. If you "
+        "have a reference image URL (http/https) pass it as image_url, "
+        "otherwise pass an empty string."
+    )
+)
+async def change_outfit(description: str, image_url: str) -> str:
+    if image_url:
+        await processor.update_state(prompt=description, image=image_url)
+    else:
+        await processor.update_prompt(description)
+    return f"Outfit changed: {description}"
+```
 
 ## Customization
 
-### Change the Initial Style
+### Add or Change Costumes
 
-Modify the `initial_prompt` in the `RestylingProcessor` to start with a different look:
+Edit the `COSTUMES` dict. Each entry needs a `prompt` and an optional `image` — bytes, a file path, an http(s) URL, a
+data URI, or a raw base64 string are all accepted.
+
+### Start With a Costume Already On
+
+Pass `initial_image` to the processor so the very first frame is already restyled. Point it at your own hosted image (or
+a local file path / bytes / data URI):
 
 ```python
 processor = decart.RestylingProcessor(
-    initial_prompt="A cyberpunk city with neon lights",
-    model="mirage_v2"
+    model="lucy_2_rt",
+    initial_prompt="A person wearing a superhero costume",
+    initial_image="./costumes/superhero.png",  # or bytes, an http(s) URL, a data URI, or raw base64
 )
 ```
-
-### Modify the Storytelling Persona
-
-Edit the `instructions` passed to the `Agent` to change the storyteller's personality, tone, or the type of stories they
-tell.
 
 ### Change the Voice
 
