@@ -271,7 +271,11 @@ class StreamEdge(EdgeTransport[StreamCall]):
             if track_id is None:
                 anonymous_candidates = [
                     tid
-                    for tid, (pending_user, pending_session, pending_kind) in self._pending_tracks.items()
+                    for tid, (
+                        pending_user,
+                        pending_session,
+                        pending_kind,
+                    ) in self._pending_tracks.items()
                     if pending_user is None
                     and pending_session is None
                     and pending_kind == webrtc_track_kind

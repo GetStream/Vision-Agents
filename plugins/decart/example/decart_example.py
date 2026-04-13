@@ -60,9 +60,7 @@ async def create_agent(**kwargs) -> Agent:
     )
 
     @llm.register_function(
-        description=(
-            "Put the user in one of the pre-defined costumes."
-        )
+        description=("Put the user in one of the pre-defined costumes.")
     )
     async def change_costume(name: str) -> str:
         costume = COSTUMES.get(name.lower())
