@@ -76,6 +76,7 @@ assemblyai = ["vision-agents-plugins-assemblyai"]
 redis = ["redis[hiredis]>=5.0.0"]
 local = ["vision-agents-plugins-local"]
 anam = ["vision-agents-plugins-anam"]
+sarvam = ["vision-agents-plugins-sarvam"]
 
 all-plugins = [
     "vision-agents-plugins-anthropic",
@@ -112,6 +113,7 @@ all-plugins = [
     "vision-agents-plugins-assemblyai",
     "vision-agents-plugins-local",
     "vision-agents-plugins-anam",
+    "vision-agents-plugins-sarvam",
 ]
 
 [tool.hatch.metadata]
