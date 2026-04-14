@@ -169,7 +169,7 @@ class STT(stt.STT):
         message = {
             "audio": {
                 "data": base64.b64encode(audio_bytes).decode("ascii"),
-                "encoding": "audio/wav",
+                "input_audio_codec": "pcm_s16le",
                 "sample_rate": self.sample_rate,
             }
         }

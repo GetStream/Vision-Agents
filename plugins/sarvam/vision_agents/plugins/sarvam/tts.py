@@ -111,12 +111,16 @@ class TTS(tts.TTS):
         Returns:
             Async iterator yielding ``PcmData`` chunks.
         """
-        self._stop_event.clear()
-        async with self._lock:
-            ws = await self._ensure_connection()
-            await ws.send_str(json.dumps({"type": "text", "data": {"text": text}}))
-            await ws.send_str(json.dumps({"type": "flush"}))
-        return self._receive_audio(ws)
+        async def _stream() -> AsyncIterator[PcmData]:
+            self._stop_event.clear()
+            async with self._lock:
+                ws = await self._ensure_connection()
+                await ws.send_str(json.dumps({"type": "text", "data": {"text": text}}))
+                await ws.send_str(json.dumps({"type": "flush"}))
+                async for chunk in self._receive_audio(ws):
+                    yield chunk
+
+        return _stream()
 
     async def stop_audio(self) -> None:
         """Cancel any in-flight synthesis and tear down the connection."""
