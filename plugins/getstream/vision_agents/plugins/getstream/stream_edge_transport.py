@@ -247,9 +247,16 @@ class StreamEdge(EdgeTransport[StreamCall]):
         # so track_added won't fire again. Migrate the stale session entry.
         for old_key, old_info in list(self._track_map.items()):
             old_user, old_session, old_type = old_key
-            if old_user == user_id and old_type == track_type_int and old_session != session_id:
+            if (
+                old_user == user_id
+                and old_type == track_type_int
+                and old_session != session_id
+            ):
                 del self._track_map[old_key]
-                self._track_map[track_key] = {"track_id": old_info["track_id"], "published": True}
+                self._track_map[track_key] = {
+                    "track_id": old_info["track_id"],
+                    "published": True,
+                }
                 logger.info(
                     f"Migrated track for {user_id} from session {old_session} to {session_id}"
                 )

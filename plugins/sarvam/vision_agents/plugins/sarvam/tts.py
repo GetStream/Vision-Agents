@@ -28,20 +28,67 @@ KEEPALIVE_INTERVAL_S = 20
 
 MODEL_SPEAKER_COMPATIBILITY: dict[str, set[str]] = {
     "bulbul:v2": {
-        "anushka", "manisha", "vidya", "arya",
-        "abhilash", "karun", "hitesh",
+        "anushka",
+        "manisha",
+        "vidya",
+        "arya",
+        "abhilash",
+        "karun",
+        "hitesh",
     },
     "bulbul:v3-beta": {
-        "shubh", "ritu", "rahul", "pooja", "simran", "kavya", "amit",
-        "ratan", "rohan", "dev", "ishita", "shreya", "manan", "sumit",
-        "priya", "aditya", "kabir", "neha", "varun", "roopa", "aayan",
-        "ashutosh", "advait", "amelia", "sophia",
+        "shubh",
+        "ritu",
+        "rahul",
+        "pooja",
+        "simran",
+        "kavya",
+        "amit",
+        "ratan",
+        "rohan",
+        "dev",
+        "ishita",
+        "shreya",
+        "manan",
+        "sumit",
+        "priya",
+        "aditya",
+        "kabir",
+        "neha",
+        "varun",
+        "roopa",
+        "aayan",
+        "ashutosh",
+        "advait",
+        "amelia",
+        "sophia",
     },
     "bulbul:v3": {
-        "shubh", "ritu", "rahul", "pooja", "simran", "kavya", "amit",
-        "ratan", "rohan", "dev", "ishita", "shreya", "manan", "sumit",
-        "priya", "aditya", "kabir", "neha", "varun", "roopa", "aayan",
-        "ashutosh", "advait", "amelia", "sophia",
+        "shubh",
+        "ritu",
+        "rahul",
+        "pooja",
+        "simran",
+        "kavya",
+        "amit",
+        "ratan",
+        "rohan",
+        "dev",
+        "ishita",
+        "shreya",
+        "manan",
+        "sumit",
+        "priya",
+        "aditya",
+        "kabir",
+        "neha",
+        "varun",
+        "roopa",
+        "aayan",
+        "ashutosh",
+        "advait",
+        "amelia",
+        "sophia",
     },
 }
 
@@ -288,8 +335,6 @@ class TTS(tts.TTS):
             elif msg_type == "error":
                 error_data = data.get("data") or {}
                 error_msg = (
-                    error_data.get("message")
-                    or data.get("error")
-                    or "Sarvam TTS error"
+                    error_data.get("message") or data.get("error") or "Sarvam TTS error"
                 )
                 raise SarvamTTSError(str(error_msg))
