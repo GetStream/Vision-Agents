@@ -22,7 +22,83 @@ logger = logging.getLogger(__name__)
 
 WS_BASE_URL = "wss://api.sarvam.ai/text-to-speech/ws"
 
-SUPPORTED_MODELS = {"bulbul:v2", "bulbul:v3"}
+SUPPORTED_MODELS = {"bulbul:v2", "bulbul:v3-beta", "bulbul:v3"}
+
+KEEPALIVE_INTERVAL_S = 20
+
+MODEL_SPEAKER_COMPATIBILITY: dict[str, set[str]] = {
+    "bulbul:v2": {
+        "anushka",
+        "manisha",
+        "vidya",
+        "arya",
+        "abhilash",
+        "karun",
+        "hitesh",
+    },
+    "bulbul:v3-beta": {
+        "shubh",
+        "ritu",
+        "rahul",
+        "pooja",
+        "simran",
+        "kavya",
+        "amit",
+        "ratan",
+        "rohan",
+        "dev",
+        "ishita",
+        "shreya",
+        "manan",
+        "sumit",
+        "priya",
+        "aditya",
+        "kabir",
+        "neha",
+        "varun",
+        "roopa",
+        "aayan",
+        "ashutosh",
+        "advait",
+        "amelia",
+        "sophia",
+    },
+    "bulbul:v3": {
+        "shubh",
+        "ritu",
+        "rahul",
+        "pooja",
+        "simran",
+        "kavya",
+        "amit",
+        "ratan",
+        "rohan",
+        "dev",
+        "ishita",
+        "shreya",
+        "manan",
+        "sumit",
+        "priya",
+        "aditya",
+        "kabir",
+        "neha",
+        "varun",
+        "roopa",
+        "aayan",
+        "ashutosh",
+        "advait",
+        "amelia",
+        "sophia",
+    },
+}
+
+MODELS_SUPPORTING_PITCH = {"bulbul:v2"}
+MODELS_SUPPORTING_LOUDNESS = {"bulbul:v2"}
+MODELS_SUPPORTING_TEMPERATURE = {"bulbul:v3-beta", "bulbul:v3"}
+
+
+class SarvamTTSError(Exception):
+    """Raised when Sarvam TTS returns an error message over WebSocket."""
 
 
 class TTS(tts.TTS):
@@ -37,14 +113,14 @@ class TTS(tts.TTS):
         api_key: Optional[str] = None,
         model: str = "bulbul:v3",
         language: str = "hi-IN",
-        speaker: str = "anushka",
+        speaker: str = "shubh",
         sample_rate: int = 24000,
         pace: Optional[float] = None,
         pitch: Optional[float] = None,
         loudness: Optional[float] = None,
         temperature: Optional[float] = None,
         enable_preprocessing: bool = True,
-        idle_timeout: float = 1.5,
+        idle_timeout: float = 5.0,
     ) -> None:
         """Initialize Sarvam TTS.
 
@@ -55,14 +131,15 @@ class TTS(tts.TTS):
             speaker: Speaker voice id (e.g. ``shubh``, ``anushka``).
             sample_rate: Output sample rate in Hz. Defaults to 24000.
             pace: Speech pace. Range depends on model
-                (bulbul:v3 supports 0.5–2.0).
+                (bulbul:v3 supports 0.5-2.0).
             pitch: Speech pitch. Only supported on bulbul:v2.
             loudness: Speech loudness. Only supported on bulbul:v2.
-            temperature: Sampling temperature. Only supported on bulbul:v3.
+            temperature: Sampling temperature. Only supported on
+                bulbul:v3 / bulbul:v3-beta.
             enable_preprocessing: Normalize mixed-language / numeric text.
-            idle_timeout: Seconds of silence from the server before we treat
-                a synthesis as complete. Sarvam does not always emit an
-                explicit completion event, so this bounds ``stream_audio``.
+            idle_timeout: Fallback seconds of server silence before treating
+                synthesis as complete. Normally the server sends an explicit
+                completion event; this is a safety net.
         """
         super().__init__(provider_name="sarvam")
 
@@ -76,6 +153,13 @@ class TTS(tts.TTS):
         if not self._api_key:
             raise ValueError(
                 "SARVAM_API_KEY env var or api_key parameter required for Sarvam TTS"
+            )
+
+        compatible = MODEL_SPEAKER_COMPATIBILITY.get(model)
+        if compatible is not None and speaker not in compatible:
+            raise ValueError(
+                f"Speaker '{speaker}' is not compatible with model '{model}'. "
+                f"Compatible speakers: {sorted(compatible)}"
             )
 
         self.model = model
@@ -93,6 +177,7 @@ class TTS(tts.TTS):
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
+        self._keepalive_task: Optional[asyncio.Task[None]] = None
 
     async def start(self) -> None:
         """Open the persistent WebSocket connection."""
@@ -131,7 +216,6 @@ class TTS(tts.TTS):
                 await self._ws.send_str(json.dumps({"type": "cancel"}))
             except (aiohttp.ClientError, ConnectionError):
                 pass
-        # Easiest way to flush the server-side queue is a reconnect.
         await self._reset_connection()
 
     async def _ensure_connection(self) -> aiohttp.ClientWebSocketResponse:
@@ -141,11 +225,12 @@ class TTS(tts.TTS):
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
 
-        url = f"{WS_BASE_URL}?model={self.model}"
+        url = f"{WS_BASE_URL}?model={self.model}&send_completion_event=true"
         headers = {"api-subscription-key": self._api_key or ""}
         ws = await self._session.ws_connect(url, headers=headers)
 
         config: dict[str, Any] = {
+            "model": self.model,
             "target_language_code": self.language,
             "speaker": self.speaker,
             "speech_sample_rate": self.sample_rate,
@@ -154,19 +239,42 @@ class TTS(tts.TTS):
         }
         if self.pace is not None:
             config["pace"] = self.pace
-        if self.pitch is not None:
+        if self.pitch is not None and self.model in MODELS_SUPPORTING_PITCH:
             config["pitch"] = self.pitch
-        if self.loudness is not None:
+        if self.loudness is not None and self.model in MODELS_SUPPORTING_LOUDNESS:
             config["loudness"] = self.loudness
-        if self.temperature is not None:
+        if self.temperature is not None and self.model in MODELS_SUPPORTING_TEMPERATURE:
             config["temperature"] = self.temperature
 
         await ws.send_str(json.dumps({"type": "config", "data": config}))
         self._ws = ws
+        self._start_keepalive()
         logger.debug("Sarvam TTS websocket connected at %dHz", self.sample_rate)
         return ws
 
+    def _start_keepalive(self) -> None:
+        self._stop_keepalive()
+        self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+
+    def _stop_keepalive(self) -> None:
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
+            self._keepalive_task = None
+
+    async def _keepalive_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(KEEPALIVE_INTERVAL_S)
+                if self._ws is not None and not self._ws.closed:
+                    await self._ws.send_str(json.dumps({"type": "ping"}))
+        except asyncio.CancelledError:
+            pass
+        except (aiohttp.ClientError, ConnectionError):
+            logger.debug("Sarvam TTS keepalive send failed")
+
     async def _reset_connection(self) -> None:
+        self._stop_keepalive()
+
         if self._ws is not None and not self._ws.closed:
             try:
                 await self._ws.close()
@@ -181,12 +289,7 @@ class TTS(tts.TTS):
     async def _receive_audio(
         self, ws: aiohttp.ClientWebSocketResponse
     ) -> AsyncIterator[PcmData]:
-        """Yield PcmData chunks until flushed, cancelled, idle, or disconnected.
-
-        Sarvam does not always send an explicit completion event after the
-        final audio chunk, so we also treat a short idle gap (no message
-        within ``self._idle_timeout`` seconds) as end-of-stream.
-        """
+        """Yield PcmData chunks until completion event, cancel, idle, or disconnect."""
         while True:
             if self._stop_event.is_set():
                 break
@@ -223,8 +326,15 @@ class TTS(tts.TTS):
                     channels=1,
                     format=AudioFormat.S16,
                 )
+            elif msg_type == "event":
+                event_data = data.get("data") or {}
+                if event_data.get("event_type") == "final":
+                    break
             elif msg_type in ("flushed", "complete", "done"):
                 break
             elif msg_type == "error":
-                logger.error("Sarvam TTS error: %s", data)
-                break
+                error_data = data.get("data") or {}
+                error_msg = (
+                    error_data.get("message") or data.get("error") or "Sarvam TTS error"
+                )
+                raise SarvamTTSError(str(error_msg))

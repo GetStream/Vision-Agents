@@ -35,8 +35,8 @@ async def create_agent(**kwargs) -> Agent:
             "Reply in the same language the user speaks. "
             "Keep replies short and conversational."
         ),
-        stt=sarvam.STT(language="hi-IN"),
-        tts=sarvam.TTS(language="hi-IN", speaker="shubh"),
+        stt=sarvam.STT(language="en-IN"),
+        tts=sarvam.TTS(language="en-IN", speaker="shubh"),
         llm=sarvam.LLM(model="sarvam-m"),
     )
     return agent
