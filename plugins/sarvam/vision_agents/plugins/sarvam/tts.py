@@ -111,6 +111,7 @@ class TTS(tts.TTS):
         Returns:
             Async iterator yielding ``PcmData`` chunks.
         """
+
         async def _stream() -> AsyncIterator[PcmData]:
             self._stop_event.clear()
             async with self._lock:
