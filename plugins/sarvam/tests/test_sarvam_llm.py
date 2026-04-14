@@ -78,7 +78,7 @@ class TestSarvamLLM:
 
     async def test_subscription_key_header_injected(self):
         llm = LLM(api_key="sk_test")
-        headers = llm._client.default_headers
+        headers = llm._client._custom_headers
         assert headers.get("api-subscription-key") == "sk_test"
 
 

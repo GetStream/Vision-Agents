@@ -22,7 +22,7 @@ class TestSarvamTTS:
         tts = TTS(api_key="sk_test")
         assert tts.model == "bulbul:v3"
         assert tts.language == "hi-IN"
-        assert tts.speaker == "shubh"
+        assert tts.speaker == "anushka"
         assert tts.sample_rate == 24000
         assert tts.provider_name == "sarvam"
 
