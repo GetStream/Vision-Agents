@@ -1,7 +1,6 @@
 """Tests for TranscriptBuffer."""
 
 import pytest
-
 from vision_agents.core.agents.transcript import TranscriptBuffer
 
 
@@ -218,3 +217,40 @@ class TestTranscriptBuffer:
         buffer.update("replacement done", mode="final")
 
         assert buffer.segments == ["delta text", "replacement done"]
+
+    def test_final_empty(self, buffer):
+        assert not buffer.final
+
+    def test_delta_to_final(self, buffer):
+        # "delta" update makes the buffer non-final
+        buffer.update("test1", mode="delta")
+        assert not buffer.final
+        # mode="final" marks buffer as final
+        buffer.update("", mode="final")
+        assert buffer.final
+
+        # another "delta" makes it non-final again
+        buffer.update("test2", mode="delta")
+        assert not buffer.final
+
+    def test_replacement_to_final(self, buffer):
+        # "replacement" update makes the buffer non-final
+        buffer.update("test1", mode="replacement")
+        assert not buffer.final
+        # mode="final" marks buffer as final
+        buffer.update("", mode="final")
+        assert buffer.final
+
+        # another "replacement" makes it non-final again
+        buffer.update("test2", mode="delta")
+        assert not buffer.final
+
+    def test_final_with_empty_string_is_final(self, buffer):
+        buffer.update("", mode="final")
+        assert buffer.final
+        assert buffer.text == ""
+
+    def test_final_with_full_string_is_final(self, buffer):
+        buffer.update("test", mode="final")
+        assert buffer.final
+        assert buffer.text == "test"
