@@ -39,6 +39,7 @@ members = [
     "vision-agents-plugins-pocket",
     "vision-agents-plugins-qwen",
     "vision-agents-plugins-roboflow",
+    "vision-agents-plugins-sarvam",
     "vision-agents-plugins-smart-turn",
     "vision-agents-plugins-turbopuffer",
     "vision-agents-plugins-twilio",
@@ -7038,6 +7039,7 @@ all-plugins = [
     { name = "vision-agents-plugins-pocket" },
     { name = "vision-agents-plugins-qwen" },
     { name = "vision-agents-plugins-roboflow" },
+    { name = "vision-agents-plugins-sarvam" },
     { name = "vision-agents-plugins-smart-turn" },
     { name = "vision-agents-plugins-turbopuffer" },
     { name = "vision-agents-plugins-twilio" },
@@ -7137,6 +7139,9 @@ redis = [
 roboflow = [
     { name = "vision-agents-plugins-roboflow" },
 ]
+sarvam = [
+    { name = "vision-agents-plugins-sarvam" },
+]
 smart-turn = [
     { name = "vision-agents-plugins-smart-turn" },
 ]
@@ -7232,6 +7237,8 @@ requires-dist = [
     { name = "vision-agents-plugins-qwen", marker = "extra == 'qwen'", editable = "plugins/qwen" },
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'all-plugins'", editable = "plugins/roboflow" },
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'roboflow'", editable = "plugins/roboflow" },
+    { name = "vision-agents-plugins-sarvam", marker = "extra == 'all-plugins'", editable = "plugins/sarvam" },
+    { name = "vision-agents-plugins-sarvam", marker = "extra == 'sarvam'", editable = "plugins/sarvam" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'all-plugins'", editable = "plugins/smart_turn" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "plugins/smart_turn" },
     { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'all-plugins'", editable = "plugins/turbopuffer" },
@@ -7247,7 +7254,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "lemonslice", "local", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "redis", "roboflow", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "lemonslice", "local", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -8014,6 +8021,34 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "rfdetr", specifier = ">=1.3.0" },
     { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-sarvam"
+source = { editable = "plugins/sarvam" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "vision-agents" },
+    { name = "vision-agents-plugins-openai" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.13.3" },
+    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
 ]
 
 [package.metadata.requires-dev]
