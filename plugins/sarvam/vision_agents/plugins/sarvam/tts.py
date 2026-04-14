@@ -29,7 +29,7 @@ class TTS(tts.TTS):
     """Sarvam AI streaming Text-to-Speech.
 
     Keeps a persistent WebSocket open across synthesis calls. Sends a config
-    message on first connect, then text + flush per ``stream_audio`` call.
+    message on first connect, then text + flush.
     """
 
     def __init__(
@@ -37,7 +37,7 @@ class TTS(tts.TTS):
         api_key: Optional[str] = None,
         model: str = "bulbul:v3",
         language: str = "hi-IN",
-        speaker: str = "shubh",
+        speaker: str = "anushka",
         sample_rate: int = 24000,
         pace: Optional[float] = None,
         pitch: Optional[float] = None,
