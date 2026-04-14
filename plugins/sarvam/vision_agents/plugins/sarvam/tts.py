@@ -145,6 +145,7 @@ class TTS(tts.TTS):
             "speaker": self.speaker,
             "speech_sample_rate": self.sample_rate,
             "enable_preprocessing": self.enable_preprocessing,
+            "output_audio_codec": "linear16",
         }
         if self.pace is not None:
             config["pace"] = self.pace
