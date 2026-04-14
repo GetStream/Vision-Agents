@@ -25,11 +25,16 @@ from vision_agents.core.stt import TranscriptResponse
 
 logger = logging.getLogger(__name__)
 
-WS_BASE_URL = "wss://api.sarvam.ai/speech-to-text/ws"
+WS_STT_URL = "wss://api.sarvam.ai/speech-to-text/ws"
+WS_STT_TRANSLATE_URL = "wss://api.sarvam.ai/speech-to-text-translate/ws"
 
 SUPPORTED_SAMPLE_RATES = {8000, 16000}
-SUPPORTED_MODELS = {"saaras:v3", "saarika:v2.5", "saaras:v2.5"}
 SUPPORTED_MODES = {"transcribe", "translate", "verbatim", "translit", "codemix"}
+
+MODELS_USING_TRANSLATE_ENDPOINT = {"saaras:v2.5"}
+MODELS_SUPPORTING_PROMPT = {"saaras:v2.5", "saaras:v3"}
+MODELS_SUPPORTING_MODE = {"saaras:v3"}
+SUPPORTED_MODELS = {"saaras:v3", "saarika:v2.5", "saaras:v2.5"}
 
 
 class STT(stt.STT):
@@ -109,7 +114,17 @@ class STT(stt.STT):
         self._current_participant: Optional[Participant] = None
         self._audio_start_time: Optional[float] = None
 
+        self._in_speech: bool = False
+        self._pending_transcript: Optional[str] = None
+        self._pending_response: Optional[TranscriptResponse] = None
+        self._turn_end_pending: bool = False
+
     def _build_ws_url(self) -> str:
+        base = (
+            WS_STT_TRANSLATE_URL
+            if self.model in MODELS_USING_TRANSLATE_ENDPOINT
+            else WS_STT_URL
+        )
         params: dict[str, str | int] = {
             "model": self.model,
             "sample_rate": self.sample_rate,
@@ -117,11 +132,11 @@ class STT(stt.STT):
         }
         if self.language is not None:
             params["language-code"] = self.language
-        if self.mode is not None:
+        if self.mode is not None and self.model in MODELS_SUPPORTING_MODE:
             params["mode"] = self.mode
         if self.high_vad_sensitivity:
             params["high_vad_sensitivity"] = "true"
-        return f"{WS_BASE_URL}?{urlencode(params)}"
+        return f"{base}?{urlencode(params)}"
 
     async def start(self) -> None:
         """Open the Sarvam WebSocket and start the receive loop."""
@@ -133,8 +148,10 @@ class STT(stt.STT):
         self._session = aiohttp.ClientSession()
         self._ws = await self._session.ws_connect(url, headers=headers)
 
-        if self._prompt:
-            await self._ws.send_str(json.dumps({"config": {"prompt": self._prompt}}))
+        if self._prompt and self.model in MODELS_SUPPORTING_PROMPT:
+            await self._ws.send_str(
+                json.dumps({"type": "config", "prompt": self._prompt})
+            )
 
         self._receive_task = asyncio.create_task(self._receive_loop())
         self._connection_ready.set()
@@ -142,7 +159,7 @@ class STT(stt.STT):
     async def process_audio(
         self,
         pcm_data: PcmData,
-        participant: Optional[Participant] = None,
+        participant: Participant,
     ) -> None:
         """Send a PCM audio chunk to Sarvam.
 
@@ -169,7 +186,7 @@ class STT(stt.STT):
         message = {
             "audio": {
                 "data": base64.b64encode(audio_bytes).decode("ascii"),
-                "input_audio_codec": "pcm_s16le",
+                "encoding": "audio/wav",
                 "sample_rate": self.sample_rate,
             }
         }
@@ -216,7 +233,9 @@ class STT(stt.STT):
         - ``{"type": "events", "data": {"signal_type": "START_SPEECH" | "END_SPEECH"}}``
           VAD boundaries used to drive turn events.
         - ``{"type": "data", "data": {"transcript": "...", "language_code": ...}}``
-          The finalized transcript for the current utterance (no partials).
+          Transcript updates during an utterance. Sarvam may send multiple
+          ``data`` messages per utterance as it refines the text. Only the
+          last one before ``END_SPEECH`` is treated as final.
         - ``{"type": "error", ...}`` or any message with an ``error`` key.
         """
         msg_type = data.get("type", "")
@@ -228,10 +247,25 @@ class STT(stt.STT):
             if participant is None:
                 return
             if signal == "START_SPEECH":
+                self._in_speech = True
+                self._pending_transcript = None
+                self._pending_response = None
+                self._turn_end_pending = False
                 self._emit_turn_started_event(participant)
             elif signal == "END_SPEECH":
+                self._in_speech = False
                 self._audio_start_time = None
-                self._emit_turn_ended_event(participant)
+                if self._pending_transcript and self._pending_response:
+                    self._emit_transcript_event(
+                        self._pending_transcript,
+                        participant,
+                        self._pending_response,
+                    )
+                    self._pending_transcript = None
+                    self._pending_response = None
+                    self._emit_turn_ended_event(participant)
+                else:
+                    self._turn_end_pending = True
             return
 
         if msg_type == "error" or "error" in data:
@@ -274,9 +308,16 @@ class STT(stt.STT):
             audio_duration_ms=audio_duration_ms,
         )
 
-        # Sarvam streaming only sends finalized transcripts (per utterance),
-        # so treat every `type: data` message as a final transcript event.
-        self._emit_transcript_event(transcript_text, participant, response)
+        if self._in_speech:
+            self._pending_transcript = transcript_text
+            self._pending_response = response
+            self._emit_partial_transcript_event(transcript_text, participant, response)
+        elif self._turn_end_pending:
+            self._turn_end_pending = False
+            self._emit_transcript_event(transcript_text, participant, response)
+            self._emit_turn_ended_event(participant)
+        else:
+            self._emit_transcript_event(transcript_text, participant, response)
 
     async def close(self) -> None:
         """Send end_of_stream, close the WebSocket, and clean up."""

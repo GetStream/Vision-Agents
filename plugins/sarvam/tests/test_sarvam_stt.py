@@ -63,6 +63,25 @@ class TestSarvamSTT:
         url = stt._build_ws_url()
         assert "language-code" not in url
 
+    async def test_build_ws_url_translate_endpoint_for_saaras_v25(self):
+        stt = STT(api_key="sk_test", model="saaras:v2.5")
+        url = stt._build_ws_url()
+        assert url.startswith("wss://api.sarvam.ai/speech-to-text-translate/ws?")
+
+    async def test_build_ws_url_regular_endpoint_for_saarika(self):
+        stt = STT(api_key="sk_test", model="saarika:v2.5")
+        url = stt._build_ws_url()
+        assert url.startswith("wss://api.sarvam.ai/speech-to-text/ws?")
+
+    async def test_mode_only_included_for_supporting_models(self):
+        stt = STT(api_key="sk_test", model="saarika:v2.5", mode="transcribe")
+        url = stt._build_ws_url()
+        assert "mode=" not in url
+
+        stt_v3 = STT(api_key="sk_test", model="saaras:v3", mode="translate")
+        url_v3 = stt_v3._build_ws_url()
+        assert "mode=translate" in url_v3
+
     async def test_process_audio_uses_pcm_s16le_codec(self):
         class FakeWebSocket:
             def __init__(self) -> None:
@@ -87,9 +106,8 @@ class TestSarvamSTT:
         await stt.process_audio(pcm_data, participant=participant)
 
         message = json.loads(ws.sent_messages[0])
-        assert message["audio"]["input_audio_codec"] == "pcm_s16le"
+        assert message["audio"]["encoding"] == "audio/wav"
         assert message["audio"]["sample_rate"] == 16000
-        assert "encoding" not in message["audio"]
 
 
 @pytest.mark.skipif(not os.getenv("SARVAM_API_KEY"), reason="SARVAM_API_KEY not set")

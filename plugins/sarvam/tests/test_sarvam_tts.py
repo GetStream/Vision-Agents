@@ -22,7 +22,7 @@ class TestSarvamTTS:
         tts = TTS(api_key="sk_test")
         assert tts.model == "bulbul:v3"
         assert tts.language == "hi-IN"
-        assert tts.speaker == "anushka"
+        assert tts.speaker == "shubh"
         assert tts.sample_rate == 24000
         assert tts.provider_name == "sarvam"
 
@@ -31,9 +31,21 @@ class TestSarvamTTS:
             TTS(api_key="sk_test", model="not-a-model")
 
     async def test_custom_speaker_and_language(self):
-        tts = TTS(api_key="sk_test", language="en-IN", speaker="anushka")
+        tts = TTS(api_key="sk_test", language="en-IN", speaker="ritu")
         assert tts.language == "en-IN"
-        assert tts.speaker == "anushka"
+        assert tts.speaker == "ritu"
+
+    async def test_v3_beta_model_accepted(self):
+        tts = TTS(api_key="sk_test", model="bulbul:v3-beta", speaker="shubh")
+        assert tts.model == "bulbul:v3-beta"
+
+    async def test_incompatible_speaker_rejected(self):
+        with pytest.raises(ValueError, match="not compatible"):
+            TTS(api_key="sk_test", model="bulbul:v2", speaker="shubh")
+
+    async def test_v3_speaker_on_v2_rejected(self):
+        with pytest.raises(ValueError, match="not compatible"):
+            TTS(api_key="sk_test", model="bulbul:v3", speaker="hitesh")
 
 
 @pytest.mark.skipif(not os.getenv("SARVAM_API_KEY"), reason="SARVAM_API_KEY not set")
@@ -43,7 +55,7 @@ class TestSarvamTTSIntegration:
 
     @pytest.fixture
     async def tts(self):
-        t = TTS(language="en-IN", speaker="anand")
+        t = TTS(language="en-IN", speaker="shubh")
         try:
             yield t
         finally:
