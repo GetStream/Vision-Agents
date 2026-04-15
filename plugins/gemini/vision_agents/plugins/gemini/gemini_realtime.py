@@ -12,6 +12,7 @@ import websockets
 from aiortc import VideoStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
+from google.genai.errors import APIError
 from google.genai.live import AsyncSession
 from google.genai.types import (
     AudioTranscriptionConfigDict,
@@ -79,25 +80,43 @@ DEFAULT_CONFIG = LiveConnectConfigDict(
 )
 
 
-def _should_reconnect(exc: Exception) -> bool:
-    """
-    Temporary errors should typically trigger a reconnect
-    So if the websocket breaks this should return True and trigger a reconnect
-    """
-    # Gemini WS API returns code 1011 on session timeout
-    reconnect_close_codes = [
-        1011,  # Server-side exception or session timeout
-        1012,  # Service restart
-        1013,  # Try again later
-        1014,  # Bad gateway
-    ]
-    if (
-        isinstance(exc, websockets.ConnectionClosedError)
-        and exc.rcvd
-        and exc.rcvd.code in reconnect_close_codes
-    ):
-        return True
-    return False
+RECONNECT_CLOSE_CODES = {
+    1011,  # Server-side exception or session timeout
+    1012,  # Service restart
+    1013,  # Try again later
+    1014,  # Bad gateway
+}
+
+
+RECONNECT = "reconnect"
+STOP = "stop"
+RETRY = "retry"
+
+
+def _classify_loop_error(exc: Exception) -> tuple[str, str, bool]:
+    """Classify a processing-loop exception into (action, reason, was_clean)."""
+    match exc:
+        case websockets.ConnectionClosedOK():
+            return STOP, "WebSocket closed cleanly", True
+
+        case websockets.ConnectionClosedError(rcvd=rcvd):
+            code = rcvd.code if rcvd else None
+            if code in RECONNECT_CLOSE_CODES:
+                return RECONNECT, f"WebSocket code {code}", False
+            reason = (
+                f"WebSocket closed with code {code}"
+                if code
+                else "WebSocket closed unexpectedly"
+            )
+            return STOP, reason, False
+
+        case APIError(code=int(code)) if code in RECONNECT_CLOSE_CODES:
+            return RECONNECT, f"API error code {code}", False
+
+        case APIError(code=int(code)):
+            return STOP, f"API error code {code}", False
+
+    return RETRY, str(exc), False
 
 
 class GeminiRealtime(realtime.Realtime):
@@ -197,8 +216,8 @@ class GeminiRealtime(realtime.Realtime):
             await self._session.send_realtime_input(text=text)
             return LLMResponseEvent(text="", original=None)
         except Exception as e:
-            # reconnect here in some cases
-            if _should_reconnect(e):
+            action, _, _ = _classify_loop_error(e)
+            if action == RECONNECT:
                 await self.connect()
             logger.exception("Failed to send realtime input to Gemini")
             return LLMResponseEvent(text="", original=None, exception=e)
@@ -302,6 +321,13 @@ class GeminiRealtime(realtime.Realtime):
         # Stop the processing task first in case we're reconnecting
         await self._stop_processing_task()
 
+        await self._establish_session()
+
+        # Start the loop task
+        await self._start_processing_task()
+
+    async def _establish_session(self):
+        """Create a new Gemini WebSocket session without managing the processing task."""
         logger.debug("Connecting to Gemini live, config set to %s", self._base_config)
         self._real_session = await self._exit_stack.enter_async_context(
             self._client.aio.live.connect(  # type: ignore[arg-type]
@@ -310,9 +336,6 @@ class GeminiRealtime(realtime.Realtime):
         )
         self.connected = True
         logger.info("Gemini live connected to session %s", self._session)
-
-        # Start the loop task
-        await self._start_processing_task()
 
     async def close(self):
         """
@@ -460,25 +483,45 @@ class GeminiRealtime(realtime.Realtime):
         return False
 
     async def _processing_loop(self):
-        """
-        Start the loop for receiving messages.
-
-        It also reconnects the underlying session if it's closed.
-        """
+        """Start the loop for receiving and reconnecting on transient errors."""
         logger.debug("Start processing events from Gemini Live API")
+        consecutive_errors = 0
+        max_consecutive_errors = 5
         try:
             while True:
                 try:
                     await self._process_events()
-                except websockets.ConnectionClosedError as e:
-                    if not _should_reconnect(e):
-                        raise e
-                    # Reconnect here for some errors
-                    await self.connect()
-                except Exception:
+                    consecutive_errors = 0
+                except Exception as exc:
+                    action, reason, was_clean = _classify_loop_error(exc)
+
+                    if action == RECONNECT:
+                        logger.info("Gemini connection lost (%s), reconnecting", reason)
+                        await self._establish_session()
+                        consecutive_errors = 0
+                        continue
+
+                    if action == STOP:
+                        logger.info("Gemini connection closed: %s", reason)
+                        self._emit_disconnected_event(
+                            reason=reason, was_clean=was_clean
+                        )
+                        return
+
+                    consecutive_errors += 1
                     logger.exception(
-                        "Error while processing events from Gemini Live API"
+                        "Error in Gemini processing loop (%d/%d)",
+                        consecutive_errors,
+                        max_consecutive_errors,
                     )
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.error(
+                            "Too many consecutive errors, stopping processing loop"
+                        )
+                        self._emit_disconnected_event(
+                            reason="Too many consecutive errors", was_clean=False
+                        )
+                        return
 
         except CancelledError:
             logger.debug("Processing loop has been cancelled")

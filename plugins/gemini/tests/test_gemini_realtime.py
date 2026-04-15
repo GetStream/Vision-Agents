@@ -2,7 +2,9 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import websockets
 from dotenv import load_dotenv
+from google.genai.errors import APIError
 from getstream.video.rtc import AudioFormat, PcmData
 from google.genai.types import (
     Blob,
@@ -15,11 +17,13 @@ from google.genai.types import (
     Part,
     Transcription,
 )
+from websockets.frames import Close
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
     RealtimeAgentSpeechTranscriptionEvent,
     RealtimeAudioOutputDoneEvent,
     RealtimeAudioOutputEvent,
+    RealtimeDisconnectedEvent,
     RealtimeUserSpeechTranscriptionEvent,
 )
 from vision_agents.core.tts.manual_test import play_pcm_with_ffplay
@@ -486,3 +490,125 @@ class TestGeminiRealtimeProcessEvents:
             assert finished is False
         finally:
             await rt.close()
+
+
+class TestGeminiRealtimeProcessingLoop:
+    async def test_clean_websocket_close_emits_disconnected(self):
+        rt = _make_realtime()
+
+        async def _raise_closed_ok():
+            raise websockets.ConnectionClosedOK(Close(1000, "normal"), None)
+
+        rt._process_events = _raise_closed_ok
+
+        emitted: list[object] = []
+        rt.events.send = lambda e: emitted.append(e)
+
+        await rt._processing_loop()
+
+        assert len(emitted) == 1
+        assert isinstance(emitted[0], RealtimeDisconnectedEvent)
+        assert emitted[0].was_clean is True
+
+    async def test_non_reconnectable_close_emits_disconnected(self):
+        rt = _make_realtime()
+
+        async def _raise_closed_error():
+            raise websockets.ConnectionClosedError(Close(1002, "protocol error"), None)
+
+        rt._process_events = _raise_closed_error
+
+        emitted: list[object] = []
+        rt.events.send = lambda e: emitted.append(e)
+
+        await rt._processing_loop()
+
+        assert len(emitted) == 1
+        assert isinstance(emitted[0], RealtimeDisconnectedEvent)
+        assert emitted[0].was_clean is False
+        assert "1002" in emitted[0].reason
+
+    async def test_reconnectable_close_triggers_reconnect(self):
+        rt = _make_realtime()
+        reconnected = asyncio.Event()
+
+        async def _raise_reconnectable():
+            if not reconnected.is_set():
+                reconnected.set()
+                raise websockets.ConnectionClosedError(Close(1011, "timeout"), None)
+            await asyncio.sleep(10)
+
+        rt._process_events = _raise_reconnectable
+        rt._establish_session = AsyncMock()
+
+        emitted: list[object] = []
+        rt.events.send = lambda e: emitted.append(e)
+
+        task = asyncio.create_task(rt._processing_loop())
+        await asyncio.wait_for(reconnected.wait(), timeout=2.0)
+        task.cancel()
+        await task
+
+        rt._establish_session.assert_called_once()
+        disconnected = [e for e in emitted if isinstance(e, RealtimeDisconnectedEvent)]
+        assert len(disconnected) == 0
+
+    async def test_consecutive_errors_stop_loop(self):
+        rt = _make_realtime()
+
+        async def _always_fail():
+            raise ConnectionError("network down")
+
+        rt._process_events = _always_fail
+
+        emitted: list[object] = []
+        rt.events.send = lambda e: emitted.append(e)
+
+        await rt._processing_loop()
+
+        disconnected = [e for e in emitted if isinstance(e, RealtimeDisconnectedEvent)]
+        assert len(disconnected) == 1
+        assert disconnected[0].was_clean is False
+        assert "consecutive" in disconnected[0].reason.lower()
+
+    async def test_api_error_with_reconnectable_code_triggers_reconnect(self):
+        rt = _make_realtime()
+        reconnected = asyncio.Event()
+
+        async def _raise_api_error():
+            if not reconnected.is_set():
+                reconnected.set()
+                raise APIError(1011, None, None)
+            await asyncio.sleep(10)
+
+        rt._process_events = _raise_api_error
+        rt._establish_session = AsyncMock()
+
+        emitted: list[object] = []
+        rt.events.send = lambda e: emitted.append(e)
+
+        task = asyncio.create_task(rt._processing_loop())
+        await asyncio.wait_for(reconnected.wait(), timeout=2.0)
+        task.cancel()
+        await task
+
+        rt._establish_session.assert_called_once()
+        disconnected = [e for e in emitted if isinstance(e, RealtimeDisconnectedEvent)]
+        assert len(disconnected) == 0
+
+    async def test_api_error_non_reconnectable_stops_loop(self):
+        rt = _make_realtime()
+
+        async def _raise_api_error():
+            raise APIError(1002, None, None)
+
+        rt._process_events = _raise_api_error
+
+        emitted: list[object] = []
+        rt.events.send = lambda e: emitted.append(e)
+
+        await rt._processing_loop()
+
+        disconnected = [e for e in emitted if isinstance(e, RealtimeDisconnectedEvent)]
+        assert len(disconnected) == 1
+        assert disconnected[0].was_clean is False
