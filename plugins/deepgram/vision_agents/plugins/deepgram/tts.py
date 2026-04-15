@@ -102,13 +102,13 @@ class TTS(tts.TTS):
         self._stop_event.clear()
 
         try:
-            await socket.send_text(SpeakV1Text(text=text))
+            await socket.send_text(SpeakV1Text(text=text, type="Speak"))
             await socket.send_flush()
         except (websockets.exceptions.ConnectionClosed, ConnectionError):
             logger.warning("Deepgram TTS websocket dropped, reconnecting")
             await self._reset_connection()
             socket = await self._ensure_connection()
-            await socket.send_text(SpeakV1Text(text=text))
+            await socket.send_text(SpeakV1Text(text=text, type="Speak"))
             await socket.send_flush()
 
         self._generation += 1
