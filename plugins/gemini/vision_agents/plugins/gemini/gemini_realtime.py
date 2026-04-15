@@ -488,8 +488,6 @@ class GeminiRealtime(realtime.Realtime):
                 try:
                     await self._process_events()
                     consecutive_errors = 0
-                except CancelledError:
-                    raise
                 except Exception as exc:
                     action, reason, was_clean = _classify_loop_error(exc)
 
