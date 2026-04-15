@@ -53,6 +53,11 @@ Tone guidelines:
 - Be direct with solutions: "Here's what we can do right now."
 - End with confirmation: "Is there anything else I can help you with?"
 - Never blame the customer for the issue
+
+Response style (voice channel — keep it tight):
+- Reply in 1-2 short sentences. Never more than 30 words per turn.
+- Ask one clarifying question at a time.
+- Skip preambles ("Sure, I can help with that"). Get straight to the answer.
 """
 
 
@@ -64,11 +69,14 @@ async def create_agent(**kwargs) -> Agent:
         instructions=CUSTOMER_SUPPORT_INSTRUCTIONS,
         tts=xai.TTS(voice="rex"),
         stt=deepgram.STT(eager_turn_detection=True),
-        llm=xai.LLM(model="grok-4-latest"),
+        llm=xai.LLM(model="grok-4-fast-non-reasoning"),
         turn_detection=smart_turn.TurnDetection(
             silence_duration_ms=2000,
             speech_probability_threshold=0.5,
         ),
+        # Stream LLM output to TTS sentence-by-sentence so the first audio
+        # plays well before the LLM finishes generating.
+        streaming_tts=True,
     )
     return agent
 
