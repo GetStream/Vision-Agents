@@ -5,6 +5,7 @@ lip-synced video from the TTS audio stream.
 
 Required environment variables:
     LEMONSLICE_API_KEY
+    LEMONSLICE_AGENT_ID
     LIVEKIT_URL
     LIVEKIT_API_KEY
     LIVEKIT_API_SECRET
@@ -13,6 +14,7 @@ Required environment variables:
 """
 
 import logging
+import os
 
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner, User
@@ -24,6 +26,9 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
+    agent_id = os.getenv("LEMONSLICE_AGENT_ID")
+    if not agent_id:
+        raise ValueError("Environment variable LEMONSLICE_AGENT_ID must be set.")
     return Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Avatar Agent", id="agent"),
@@ -35,9 +40,7 @@ async def create_agent(**kwargs) -> Agent:
         tts=cartesia.TTS(),
         stt=deepgram.STT(eager_turn_detection=True),
         processors=[
-            lemonslice.LemonSliceAvatarPublisher(
-                agent_id="your-agent-id",
-            ),
+            lemonslice.LemonSliceAvatarPublisher(agent_id=agent_id),
         ],
     )
 
@@ -46,6 +49,8 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     call = await agent.create_call(call_type, call_id)
 
     async with agent.join(call):
+        await agent.simple_response("tell me something interesting in a short sentence")
+
         await agent.finish()
 
 

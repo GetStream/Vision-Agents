@@ -1,9 +1,11 @@
-import pytest
-from dotenv import load_dotenv
 import asyncio
 
+import pytest
+from dotenv import load_dotenv
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.turn_detection import TurnEndedEvent, TurnStartedEvent
 from vision_agents.plugins import elevenlabs
+
 from conftest import STTSession
 
 # Load environment variables
@@ -29,26 +31,16 @@ class TestElevenLabsSTT:
     @pytest.mark.integration
     async def test_transcribe_mia_audio_16khz(self, stt, mia_audio_16khz, participant):
         """Test transcription with 16kHz audio (native sample rate)"""
-        # Create session to collect transcripts and errors
         session = STTSession(stt)
 
-        # Process the audio with participant
         await stt.process_audio(mia_audio_16khz, participant=participant)
 
-        # Wait for result
-        # Wait a bit longer for all audio to be processed
-        await asyncio.sleep(5)
-
-        await stt.clear()
+        # VAD auto-commits after silence; wait for the committed transcript
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
 
-        await asyncio.sleep(5)
-
-        # Verify transcript - check for any significant part of the transcript
         full_transcript = session.get_full_transcript()
         assert len(full_transcript) > 0, "No transcript received"
-        # The transcript should contain some of the key words from the audio
         assert any(
             word in full_transcript.lower()
             for word in ["village", "quiet", "mia", "treasures"]
@@ -57,28 +49,15 @@ class TestElevenLabsSTT:
     @pytest.mark.integration
     async def test_transcribe_mia_audio_48khz(self, stt, mia_audio_48khz, participant):
         """Test transcription with 48kHz audio (requires resampling)"""
-        # Create session to collect transcripts and errors
         session = STTSession(stt)
 
-        # Process the audio with participant
         await stt.process_audio(mia_audio_48khz, participant=participant)
 
-        # Wait a bit for all audio to be processed
-        await asyncio.sleep(5)
-
-        # Commit the transcript (required for MANUAL commit strategy)
-        await stt.clear()
-
-        # Wait for committed transcript
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
 
-        await asyncio.sleep(5)
-
-        # Verify transcript - check for any significant part of the transcript
         full_transcript = session.get_full_transcript()
         assert len(full_transcript) > 0, "No transcript received"
-        # The transcript should contain some of the key words from the audio
         assert any(
             word in full_transcript.lower()
             for word in ["village", "quiet", "mia", "treasures"]
@@ -87,28 +66,15 @@ class TestElevenLabsSTT:
     @pytest.mark.integration
     async def test_transcribe_with_participant(self, stt, mia_audio_16khz):
         """Test transcription with participant metadata"""
-        # Create session to collect transcripts and errors
         session = STTSession(stt)
 
-        # Create a participant
         participant = Participant({}, user_id="test-user-123", id="test-user-123")
 
-        # Process the audio with participant
         await stt.process_audio(mia_audio_16khz, participant=participant)
 
-        # Wait a bit for all audio to be processed
-        await asyncio.sleep(5)
-
-        # Commit the transcript (required for MANUAL commit strategy)
-        await stt.clear()
-
-        # Wait for committed transcript
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
 
-        await asyncio.sleep(5)
-
-        # Verify transcript and participant
         full_transcript = session.get_full_transcript()
         assert len(full_transcript) > 0, "No transcript received"
         assert any(
@@ -119,80 +85,79 @@ class TestElevenLabsSTT:
 
     @pytest.mark.integration
     async def test_transcribe_chunked_audio(
-        self, stt, mia_audio_48khz_chunked, participant
+        self, stt, mia_audio_48khz_chunked, silence_2s_48khz, participant
     ):
         """Test transcription with chunked audio stream"""
-        # Create session to collect transcripts and errors
         session = STTSession(stt)
 
-        # Process audio chunks one by one (simulating real-time streaming)
-        # Use more chunks to ensure we get a complete phrase
         for chunk in mia_audio_48khz_chunked[:100]:  # Use first 100 chunks (~2 seconds)
             await stt.process_audio(chunk, participant=participant)
-            await asyncio.sleep(
-                0.02
-            )  # 20ms delay between chunks (real-time simulation)
+            await asyncio.sleep(0.02)  # 20ms delay between chunks
 
-        # Wait for audio to be processed
-        await asyncio.sleep(3)
+        # Send some silence to trigger VAD
+        await stt.process_audio(silence_2s_48khz, participant=participant)
 
-        # Commit the transcript (required for MANUAL commit strategy)
-        await stt.clear()
-
-        # Wait for committed transcript
-        await session.wait_for_result(timeout=30.0)
+        await session.wait_for_result(timeout=10.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
 
-        # Verify we got some transcript
         assert len(session.transcripts) > 0 or len(session.partial_transcripts) > 0
 
     @pytest.mark.integration
     async def test_partial_transcripts(self, stt, mia_audio_48khz, participant):
         """Test that partial transcripts are emitted"""
-        # Create session to collect transcripts and errors
         session = STTSession(stt)
 
-        # Process the audio with participant
         await stt.process_audio(mia_audio_48khz, participant=participant)
 
-        # Wait for audio to be processed
-        await asyncio.sleep(5)
-
-        # Commit the transcript (required for MANUAL commit strategy)
-        await stt.clear()
-
-        # Wait for committed transcript
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
 
-        # Verify we got both partial and final transcripts
-        # Note: Depending on the VAD settings, we may or may not get partials
         full_transcript = session.get_full_transcript()
         assert len(full_transcript) > 0
 
     @pytest.mark.integration
-    async def test_turn_detection_disabled(self, stt):
-        """Test that turn detection is disabled for Scribe v2"""
-        # Scribe v2 does not support turn detection
-        assert stt.turn_detection is False
+    async def test_turn_detection_enabled(self, stt):
+        """Test that turn detection is enabled via VAD commit strategy"""
+        assert stt.turn_detection is True
+
+    @pytest.mark.integration
+    async def test_turn_events_emitted(self, stt, mia_audio_16khz, participant):
+        """Test that TurnStartedEvent and TurnEndedEvent are emitted"""
+        session = STTSession(stt)
+        turn_started_events: list[TurnStartedEvent] = []
+        turn_ended_events: list[TurnEndedEvent] = []
+
+        @stt.events.subscribe
+        async def on_turn_started(event: TurnStartedEvent):
+            turn_started_events.append(event)
+
+        @stt.events.subscribe
+        async def on_turn_ended(event: TurnEndedEvent):
+            turn_ended_events.append(event)
+
+        await stt.process_audio(mia_audio_16khz, participant=participant)
+
+        # Wait for VAD to auto-commit
+        await session.wait_for_result(timeout=30.0)
+        assert not session.errors, f"Errors occurred: {session.errors}"
+
+        assert len(turn_started_events) > 0, "No TurnStartedEvent received"
+        assert len(turn_ended_events) > 0, "No TurnEndedEvent received"
+        assert turn_started_events[0].participant == participant
+        assert turn_ended_events[0].participant == participant
+        assert turn_ended_events[0].eager_end_of_turn is False
 
     @pytest.mark.integration
     async def test_multiple_audio_segments(
         self, stt, mia_audio_16khz, silence_2s_48khz, participant
     ):
         """Test processing multiple audio segments"""
-        # Create session to collect transcripts and errors
         session = STTSession(stt)
 
         # Process first audio segment
         await stt.process_audio(mia_audio_16khz, participant=participant)
 
-        # Wait for audio to be processed
-        await asyncio.sleep(5)
-
-        await stt.clear()
-
-        # Wait for first committed transcript
+        # Wait for VAD auto-commit on first segment
         await session.wait_for_result(timeout=30.0)
         assert not session.errors, f"Errors occurred: {session.errors}"
 
@@ -202,15 +167,9 @@ class TestElevenLabsSTT:
         # Process second audio segment
         await stt.process_audio(mia_audio_16khz, participant=participant)
 
-        # Wait for audio to be processed
+        # Wait for second committed transcript
         await asyncio.sleep(5)
-
-        await stt.clear()
-
-        # Wait a bit longer for second result
         await session.wait_for_result(timeout=30.0)
 
-        # Should have gotten additional transcripts
-        # Note: Depending on VAD behavior, may combine or separate
         full_transcript = session.get_full_transcript()
         assert len(full_transcript) > 0

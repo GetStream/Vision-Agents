@@ -7,11 +7,12 @@ from openai import AsyncOpenAI
 from openai.lib.streaming.responses import ResponseStreamEvent
 from openai.types.responses import (
     Response as OpenAIResponse,
-    ResponseCompletedEvent,
-    ResponseTextDeltaEvent,
-    ResponseFunctionToolCall,
 )
-
+from openai.types.responses import (
+    ResponseCompletedEvent,
+    ResponseFunctionToolCall,
+    ResponseTextDeltaEvent,
+)
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
@@ -19,11 +20,12 @@ from vision_agents.core.llm.events import (
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
+
 from . import events
 from .tool_utils import (
     convert_tools_to_openai_format,
-    tool_call_dedup_key,
     parse_tool_arguments,
+    tool_call_dedup_key,
 )
 
 if TYPE_CHECKING:
@@ -53,7 +55,7 @@ class OpenAILLM(LLM):
 
     def __init__(
         self,
-        model: str,
+        model: str = "gpt-5.4",
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         client: Optional[AsyncOpenAI] = None,
@@ -108,6 +110,9 @@ class OpenAILLM(LLM):
     async def create_conversation(self):
         if not self.openai_conversation:
             self.openai_conversation = await self.client.conversations.create()
+
+    async def close(self) -> None:
+        await self.client.close()
 
     def add_conversation_history(self, kwargs):
         if self.openai_conversation:

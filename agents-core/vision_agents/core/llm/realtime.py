@@ -1,6 +1,8 @@
 import abc
+import asyncio
 import logging
 import uuid
+from collections.abc import Coroutine
 from typing import (
     Any,
     Optional,
@@ -48,6 +50,9 @@ class Realtime(OmniLLM):
         # Store current participant for user speech transcription events
         self._current_participant: Optional[Participant] = None
 
+        # Background tool tasks — tracked to prevent GC and awaited on close
+        self._tool_tasks: set[asyncio.Task[None]] = set()
+
         # Monotonic epoch counter; incremented on interrupt so stale events
         # emitted before the interrupt can be identified and dropped.
         self._epoch: int = 0
@@ -64,6 +69,24 @@ class Realtime(OmniLLM):
     async def interrupt(self) -> None:
         """Increment epoch so stale audio output events are discarded."""
         self._epoch += 1
+
+    def _run_tool_in_background(self, coro: Coroutine[None, None, None]) -> None:
+        """Run a tool coroutine as a background task without blocking the WS reader."""
+        task = asyncio.create_task(coro)
+        self._tool_tasks.add(task)
+        task.add_done_callback(self._on_tool_task_done)
+
+    def _on_tool_task_done(self, task: asyncio.Task[None]) -> None:
+        """Callback for completed tool tasks — log exceptions and clean up."""
+        self._tool_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.exception("Background tool task failed", exc_info=task.exception())
+
+    async def _await_pending_tools(self) -> None:
+        """Await all in-flight tool tasks. Call this in close() before closing the connection."""
+        if self._tool_tasks:
+            await asyncio.gather(*self._tool_tasks, return_exceptions=True)
+            self._tool_tasks.clear()
 
     @abc.abstractmethod
     async def connect(self): ...
@@ -130,13 +153,17 @@ class Realtime(OmniLLM):
         self.events.send(event)
 
     def _emit_audio_output_done_event(
-        self, response_id: str | None = None, user_metadata=None
+        self,
+        response_id: str | None = None,
+        user_metadata=None,
+        interrupted: bool = False,
     ):
         """Emit an event signaling audio output is complete."""
         event = events.RealtimeAudioOutputDoneEvent(
             session_id=self.session_id,
             plugin_name=self.provider_name,
             response_id=response_id,
+            interrupted=interrupted,
             participant=user_metadata,
         )
         self.events.send(event)

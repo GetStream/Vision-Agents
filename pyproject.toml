@@ -36,6 +36,9 @@ vision-agents-plugins-turbopuffer = { workspace = true }
 vision-agents-plugins-nvidia = { workspace = true }
 vision-agents-plugins-mistral = { workspace = true }
 vision-agents-plugins-assemblyai = { workspace = true }
+vision-agents-plugins-local = { workspace = true }
+vision-agents-plugins-anam = { workspace = true }
+vision-agents-plugins-sarvam = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -79,6 +82,9 @@ members = [
     "plugins/nvidia",
     "plugins/mistral",
     "plugins/assemblyai",
+    "plugins/local",
+    "plugins/anam",
+    "plugins/sarvam",
 ]
 exclude = [
     "**/__pycache__",
@@ -96,7 +102,7 @@ exclude = [
 [dependency-groups]
 dev = [
     "ruff",
-    "mypy[mypyc,faster-cache]",
+    "mypy[mypyc,faster-cache]>=1.19,<1.20", # TODO: unpin later, need to update code before using 1.20
     "pip>=25.2",
     "pytest",
     "pytest-xdist",
@@ -104,7 +110,7 @@ dev = [
     "python-dotenv",
     "pre-commit",
     "scalene>=1.5.54",
-    "fastmcp>=2.14.0",
+    "fastmcp>=3.2.0",
     "opentelemetry-exporter-otlp>=1.37.0",
     "pytest-timeout>=2.4.0",
     "hatch-vcs>=0.5.0",
@@ -114,7 +120,6 @@ dev = [
     "pyinstrument>=5.1.1",
     "toml>=0.10.2",
     "asgi-lifespan>=2.1.0",
-    "mistralai[realtime]>=1.12.0",
     "testcontainers[redis]>=4.0.0",
     "redis[hiredis]>=5.0.0",
 ]

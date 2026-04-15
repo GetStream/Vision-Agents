@@ -12,7 +12,7 @@ using [Cartesia's](https://cartesia.ai/?utm_medium=partner&utm_source=getstream)
 
 ## Prerequisites
 
-1. **Stream Account**: Get your API credentials from [Stream Dashboard](https://getstream.io/try-for-free/)
+1. **Stream Account**: Get your API credentials from [Stream Dashboard](https://getstream.io/try-for-free/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents)
 2. **Cartesia Account**: Get your API key from [Cartesia](https://cartesia.ai/?utm_medium=partner&utm_source=getstream)
 3. **Python 3.10+**: Required for running the example
 

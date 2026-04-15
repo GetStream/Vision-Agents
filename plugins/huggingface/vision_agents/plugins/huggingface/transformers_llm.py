@@ -23,7 +23,7 @@ import re
 import time
 import uuid
 from threading import Thread
-from typing import Any, Callable, Dict, List, Literal, Optional, cast
+from typing import Any, Callable, Literal, Optional, cast
 
 import jinja2
 import torch
@@ -45,14 +45,14 @@ from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.warmup import Warmable
 
 from . import events
+from ._tool_call_loop import (
+    convert_tools_to_chat_completions_format,
+    run_tool_call_loop,
+)
 
 logger = logging.getLogger(__name__)
 
 PLUGIN_NAME = "transformers_llm"
-
-# ---------------------------------------------------------------------------
-# Shared helpers (imported by transformers_vlm.py)
-# ---------------------------------------------------------------------------
 
 DeviceType = Literal["auto", "cuda", "mps", "cpu"]
 QuantizationType = Literal["none", "4bit", "8bit"]
@@ -100,9 +100,67 @@ def get_quantization_config(quantization: QuantizationType) -> Optional[Any]:
     return None
 
 
-# ---------------------------------------------------------------------------
-# Resource container
-# ---------------------------------------------------------------------------
+convert_tools_to_transformers_format = convert_tools_to_chat_completions_format
+
+
+def _extract_json_objects(text: str) -> list[dict[str, Any]]:
+    """Extract all top-level JSON objects from *text* using ``raw_decode``.
+
+    Handles arbitrarily nested braces, unlike a regex approach.
+    """
+    decoder = json.JSONDecoder()
+    objects: list[dict[str, Any]] = []
+    idx = 0
+    while idx < len(text):
+        idx = text.find("{", idx)
+        if idx == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(text, idx)
+            if isinstance(obj, dict):
+                objects.append(obj)
+            idx = end
+        except json.JSONDecodeError:
+            idx += 1
+    return objects
+
+
+def extract_tool_calls_from_text(text: str) -> list[NormalizedToolCallItem]:
+    """Parse tool calls from raw model output text.
+
+    Supports:
+    - Hermes format: ``<tool_call>{"name": ..., "arguments": ...}</tool_call>``
+    - Generic JSON: ``{"name": ..., "arguments": ...}``
+    """
+    tool_calls: list[NormalizedToolCallItem] = []
+
+    hermes_pattern = r"<tool_call>\s*(.*?)\s*</tool_call>"
+    for match in re.finditer(hermes_pattern, text, re.DOTALL):
+        for obj in _extract_json_objects(match.group(1)):
+            tool_calls.append(
+                {
+                    "type": "tool_call",
+                    "id": obj.get("id", str(uuid.uuid4())),
+                    "name": obj.get("name", ""),
+                    "arguments_json": obj.get("arguments", {}),
+                }
+            )
+
+    if tool_calls:
+        return tool_calls
+
+    for obj in _extract_json_objects(text):
+        if "name" in obj and "arguments" in obj:
+            tool_calls.append(
+                {
+                    "type": "tool_call",
+                    "id": str(uuid.uuid4()),
+                    "name": obj["name"],
+                    "arguments_json": obj["arguments"],
+                }
+            )
+
+    return tool_calls
 
 
 class ModelResources:
@@ -119,11 +177,6 @@ class ModelResources:
         self.device = device
 
 
-# ---------------------------------------------------------------------------
-# TransformersLLM
-# ---------------------------------------------------------------------------
-
-
 class TransformersLLM(LLM, Warmable[ModelResources]):
     """Local LLM inference using HuggingFace Transformers.
 
@@ -137,6 +190,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         torch_dtype: ``"auto"``, ``"float16"``, ``"bfloat16"``, or ``"float32"``.
         trust_remote_code: Allow custom model code (needed for Qwen, Phi, etc.).
         max_new_tokens: Default maximum tokens to generate per response.
+        max_tool_rounds: Maximum tool-call rounds per response (default 3).
     """
 
     def __init__(
@@ -147,6 +201,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         torch_dtype: TorchDtypeType = "auto",
         trust_remote_code: bool = False,
         max_new_tokens: int = 512,
+        max_tool_rounds: int = 3,
     ):
         super().__init__()
 
@@ -156,14 +211,11 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         self._torch_dtype_config = torch_dtype
         self._trust_remote_code = trust_remote_code
         self._max_new_tokens = max_new_tokens
+        self._max_tool_rounds = max_tool_rounds
 
         self._resources: Optional[ModelResources] = None
 
         self.events.register_events_from_module(events)
-
-    # ------------------------------------------------------------------
-    # Warmable interface
-    # ------------------------------------------------------------------
 
     async def on_warmup(self) -> ModelResources:
         logger.info(f"Loading model: {self.model_id}")
@@ -177,7 +229,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
     def _load_model_sync(self) -> ModelResources:
         torch_dtype = resolve_torch_dtype(self._torch_dtype_config)
 
-        load_kwargs: Dict[str, Any] = {
+        load_kwargs: dict[str, Any] = {
             "trust_remote_code": self._trust_remote_code,
             "torch_dtype": torch_dtype,
         }
@@ -209,10 +261,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         device = next(model.parameters()).device
         return ModelResources(model=model, tokenizer=tokenizer, device=device)
 
-    # ------------------------------------------------------------------
-    # LLM interface
-    # ------------------------------------------------------------------
-
     async def simple_response(
         self,
         text: str,
@@ -234,7 +282,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
     async def create_response(
         self,
-        messages: Optional[List[Dict[str, Any]]] = None,
+        messages: Optional[list[dict[str, Any]]] = None,
         *,
         stream: bool = True,
         max_new_tokens: Optional[int] = None,
@@ -253,14 +301,12 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         tokenizer = self._resources.tokenizer
         device = self._resources.device
 
-        # Prepare tools if any are registered
-        tools_param: Optional[List[Dict[str, Any]]] = None
+        tools_param: Optional[list[dict[str, Any]]] = None
         tools_spec = self.get_available_functions()
         if tools_spec:
-            tools_param = self._convert_tools_to_provider_format(tools_spec)
+            tools_param = convert_tools_to_transformers_format(tools_spec)
 
-        # Apply chat template
-        template_kwargs: Dict[str, Any] = {
+        template_kwargs: dict[str, Any] = {
             "add_generation_prompt": True,
             "return_dict": True,
             "return_tensors": "pt",
@@ -270,7 +316,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         try:
             inputs = cast(
-                Dict[str, Any],
+                dict[str, Any],
                 tokenizer.apply_chat_template(messages, **template_kwargs),
             )
         except (jinja2.TemplateError, TypeError, ValueError) as e:
@@ -280,7 +326,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                 )
                 template_kwargs.pop("tools", None)
                 inputs = cast(
-                    Dict[str, Any],
+                    dict[str, Any],
                     tokenizer.apply_chat_template(messages, **template_kwargs),
                 )
                 tools_param = None
@@ -291,42 +337,82 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         inputs = {k: v.to(device) for k, v in inputs.items()}
         max_tokens = max_new_tokens or self._max_new_tokens
 
+        # When tools are registered, always suppress streaming events and use
+        # non-streaming generation. The model output may contain tool call
+        # markup (e.g. <tool_call>…</tool_call>) that must not be spoken by
+        # TTS.  We only emit the completed event once we confirm the response
+        # contains no tool calls (i.e. the final natural-language answer).
+        is_tool_followup = kwargs.pop("_tool_followup", False)
+        suppress_events = tools_param is not None
+
         self.events.send(
             LLMRequestStartedEvent(
                 plugin_name=PLUGIN_NAME,
                 model=self.model_id,
-                streaming=stream,
+                streaming=stream and not suppress_events,
             )
         )
 
-        if stream:
+        if stream and not suppress_events:
             result = await self._generate_streaming(
                 model, tokenizer, inputs, max_tokens, temperature, do_sample
             )
         else:
             result = await self._generate_non_streaming(
-                model, tokenizer, inputs, max_tokens, temperature, do_sample
+                model,
+                tokenizer,
+                inputs,
+                max_tokens,
+                temperature,
+                do_sample,
+                emit_events=not suppress_events,
             )
 
-        # Check for tool calls in generated text
-        if tools_param and result.text:
-            tool_calls = self._extract_tool_calls_from_text(result.text)
+        if suppress_events and result.text:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Raw model output (tools registered): %s", result.text)
+            tool_calls = extract_tool_calls_from_text(result.text)
             if tool_calls:
-                return await self._handle_tool_calls(
-                    tool_calls, messages, tools_param, kwargs
+                if is_tool_followup:
+                    # Return to run_tool_call_loop — it will handle these
+                    # tool calls in the next round without nesting loops.
+                    return result
+                return await self._handle_tool_calls(tool_calls, messages, kwargs)
+            # No tool calls — this is the final answer. Emit events
+            # that were suppressed during generation. Only emit a
+            # synthetic chunk when the caller requested streaming
+            # (needed for streaming-TTS sentence buffering).
+            response_id = str(uuid.uuid4())
+            if stream:
+                self.events.send(
+                    LLMResponseChunkEvent(
+                        plugin_name=PLUGIN_NAME,
+                        content_index=None,
+                        item_id=response_id,
+                        output_index=0,
+                        sequence_number=0,
+                        delta=result.text,
+                        is_first_chunk=True,
+                        time_to_first_token_ms=None,
+                    )
                 )
+            self.events.send(
+                LLMResponseCompletedEvent(
+                    plugin_name=PLUGIN_NAME,
+                    original=None,
+                    text=result.text,
+                    item_id=response_id,
+                    model=self.model_id,
+                )
+            )
 
         return result
-
-    # ------------------------------------------------------------------
-    # Generation
-    # ------------------------------------------------------------------
 
     async def _generate_streaming(
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizerBase,
-        inputs: Dict[str, Any],
+        inputs: dict[str, Any],
         max_new_tokens: int,
         temperature: float,
         do_sample: bool,
@@ -373,7 +459,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                 generation_error = e
                 logger.exception("Generation failed")
             finally:
-                # Unblock the async consumer so it doesn't hang forever
                 loop.call_soon_threadsafe(async_queue.put_nowait, None)
 
         thread = Thread(target=run_generation, daemon=True)
@@ -442,10 +527,11 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizerBase,
-        inputs: Dict[str, Any],
+        inputs: dict[str, Any],
         max_new_tokens: int,
         temperature: float,
         do_sample: bool,
+        emit_events: bool = True,
     ) -> LLMResponseEvent:
         request_start = time.perf_counter()
         response_id = str(uuid.uuid4())
@@ -481,27 +567,23 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         generated_ids = outputs[0][input_length:]
         text = tokenizer.decode(generated_ids, skip_special_tokens=True)
 
-        latency_ms = (time.perf_counter() - request_start) * 1000
-
-        self.events.send(
-            LLMResponseCompletedEvent(
-                plugin_name=PLUGIN_NAME,
-                original=outputs,
-                text=text,
-                item_id=response_id,
-                latency_ms=latency_ms,
-                model=self.model_id,
+        if emit_events:
+            latency_ms = (time.perf_counter() - request_start) * 1000
+            self.events.send(
+                LLMResponseCompletedEvent(
+                    plugin_name=PLUGIN_NAME,
+                    original=outputs,
+                    text=text,
+                    item_id=response_id,
+                    latency_ms=latency_ms,
+                    model=self.model_id,
+                )
             )
-        )
 
         return LLMResponseEvent(original=outputs, text=text)
 
-    # ------------------------------------------------------------------
-    # Message building
-    # ------------------------------------------------------------------
-
-    def _build_messages(self) -> List[Dict[str, Any]]:
-        messages: List[Dict[str, Any]] = []
+    def _build_messages(self) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
         if self._instructions:
             messages.append({"role": "system", "content": self._instructions})
         if self._conversation:
@@ -509,172 +591,35 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                 messages.append({"role": msg.role, "content": msg.content})
         return messages
 
-    # ------------------------------------------------------------------
-    # Tool calling
-    # ------------------------------------------------------------------
-
     def _convert_tools_to_provider_format(
-        self, tools: List[ToolSchema]
-    ) -> List[Dict[str, Any]]:
-        result: List[Dict[str, Any]] = []
-        for t in tools or []:
-            name = t.get("name", "unnamed_tool")
-            description = t.get("description", "") or ""
-            params = t.get("parameters_schema") or t.get("parameters") or {}
-            if not isinstance(params, dict):
-                params = {}
-            params.setdefault("type", "object")
-            params.setdefault("properties", {})
-
-            result.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": description,
-                        "parameters": params,
-                    },
-                }
-            )
-        return result
-
-    def _extract_tool_calls_from_text(self, text: str) -> List[NormalizedToolCallItem]:
-        """Parse tool calls from raw model output text.
-
-        Supports:
-        - Hermes format: ``<tool_call>{"name": ..., "arguments": ...}</tool_call>``
-        - Generic JSON: ``{"name": ..., "arguments": ...}``
-        """
-        tool_calls: List[NormalizedToolCallItem] = []
-
-        # Pattern 1: Hermes / NousResearch XML tags
-        hermes_pattern = r"<tool_call>\s*(\{.*?\})\s*</tool_call>"
-        for match in re.finditer(hermes_pattern, text, re.DOTALL):
-            try:
-                data = json.loads(match.group(1))
-                tool_calls.append(
-                    {
-                        "type": "tool_call",
-                        "id": data.get("id", str(uuid.uuid4())),
-                        "name": data.get("name", ""),
-                        "arguments_json": data.get("arguments", {}),
-                    }
-                )
-            except json.JSONDecodeError:
-                continue
-
-        if tool_calls:
-            return tool_calls
-
-        # Pattern 2: generic JSON objects with name + arguments keys
-        json_pattern = (
-            r"\{[^{}]*\"name\"\s*:[^{}]*\"arguments\"\s*:\s*\{[^{}]*\}[^{}]*\}"
-        )
-        for match in re.finditer(json_pattern, text):
-            try:
-                data = json.loads(match.group(0))
-                if "name" in data and "arguments" in data:
-                    tool_calls.append(
-                        {
-                            "type": "tool_call",
-                            "id": str(uuid.uuid4()),
-                            "name": data["name"],
-                            "arguments_json": data["arguments"],
-                        }
-                    )
-            except json.JSONDecodeError:
-                continue
-
-        return tool_calls
+        self, tools: list[ToolSchema]
+    ) -> list[dict[str, Any]]:
+        return convert_tools_to_transformers_format(tools)
 
     async def _handle_tool_calls(
         self,
-        tool_calls: List[NormalizedToolCallItem],
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]],
-        kwargs: Dict[str, Any],
+        tool_calls: list[NormalizedToolCallItem],
+        messages: list[dict[str, Any]],
+        kwargs: dict[str, Any],
     ) -> LLMResponseEvent:
-        """Execute tool calls and generate follow-up responses.
+        """Execute tool calls and generate follow-up responses."""
 
-        Mirrors ``HuggingFaceLLM._handle_tool_calls`` using the base class
-        ``_dedup_and_execute`` infrastructure.
-        """
-        llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
-        max_rounds = 3
-        current_tool_calls = tool_calls
-        seen: set[tuple] = set()
-        current_messages = list(messages)
-
-        for round_num in range(max_rounds):
-            triples, seen = await self._dedup_and_execute(
-                current_tool_calls,
-                max_concurrency=8,
-                timeout_s=30,
-                seen=seen,
+        async def _generate_followup(
+            current_messages: list[dict[str, Any]],
+        ) -> tuple[LLMResponseEvent, list[NormalizedToolCallItem]]:
+            result = await self.create_response(
+                messages=current_messages, _tool_followup=True, **kwargs
             )
+            next_calls = extract_tool_calls_from_text(result.text)
+            return result, next_calls
 
-            if not triples:
-                break
-
-            assistant_tool_calls = []
-            tool_results = []
-            for tc, res, err in triples:
-                cid = tc.get("id")
-                if not cid:
-                    continue
-
-                assistant_tool_calls.append(
-                    {
-                        "id": cid,
-                        "type": "function",
-                        "function": {
-                            "name": tc["name"],
-                            "arguments": json.dumps(tc.get("arguments_json", {})),
-                        },
-                    }
-                )
-                tool_results.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": cid,
-                        "content": self._sanitize_tool_output(
-                            err if err is not None else res
-                        ),
-                    }
-                )
-
-            if not tool_results:
-                return llm_response
-
-            current_messages.append(
-                {
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": assistant_tool_calls,
-                }
-            )
-            current_messages.extend(tool_results)
-
-            # Follow-up generation (non-streaming during tool loops)
-            follow_up = await self.create_response(
-                messages=current_messages,
-                stream=False,
-                **kwargs,
-            )
-
-            next_tool_calls = self._extract_tool_calls_from_text(follow_up.text)
-            if next_tool_calls and round_num < max_rounds - 1:
-                current_tool_calls = next_tool_calls
-                llm_response = follow_up
-                continue
-
-            return follow_up
-
-        return llm_response
-
-    # ------------------------------------------------------------------
-    # Memory management
-    # ------------------------------------------------------------------
+        return await run_tool_call_loop(
+            self,
+            tool_calls,
+            messages,
+            _generate_followup,
+            max_rounds=self._max_tool_rounds,
+        )
 
     def unload(self) -> None:
         logger.info(f"Unloading model: {self.model_id}")

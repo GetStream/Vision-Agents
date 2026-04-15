@@ -30,7 +30,7 @@ The project has two components:
 - macOS 13.0 or later
 - Python 3.12+, [uv](https://docs.astral.sh/uv/) (recommended) or pip
 - API keys for:
-  - [Stream](https://getstream.io/try-for-free/) (Video API key + secret)
+  - [Stream](https://getstream.io/try-for-free/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) (Video API key + secret)
   - [Google AI Studio](https://aistudio.google.com) (Gemini API key)
   - [AssemblyAI](https://www.assemblyai.com/) (STT API key)
 

@@ -6,7 +6,16 @@ on:
         description: 'pytest -m expression (e.g., `not integration` or `integration`)'
         required: true
         type: string
-    secrets: { }
+      pytest-params:
+        description: 'additional pytest params'
+        required: false
+        default: ""
+        type: string
+      notify-on-failure:
+        description: 'Post to Slack on test failure'
+        required: false
+        default: false
+        type: boolean
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -74,6 +83,8 @@ jobs:
       AWS_BEDROCK_API_KEY: ${{ secrets.AWS_BEDROCK_API_KEY }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -84,9 +95,19 @@ jobs:
           sudo rm -rf "/usr/local/lib/android" || true
           sudo rm -rf "/usr/local/share/boost" || true
           sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2
       - name: Install dependencies
         uses: ./.github/actions/python-uv-setup
       - name: Run core tests
-        run: uv run pytest -m "${{ inputs.marker }}" tests/
+        run: uv run pytest -m "${{ inputs.marker }}" tests/ ${{ inputs.pytest-params }}
       - name: Run plugin tests
-        run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py
+        run: uv run pytest -m "${{ inputs.marker }}" plugins/*/tests/*.py ${{ inputs.pytest-params }}
+      - name: Notify Slack on failure
+        if: failure() && inputs.notify-on-failure
+        uses: ./.github/actions/notify-slack
+        with:
+          workflow-name: ${{ github.workflow }}
+          report-file: .report.json
+          summary: "${{ github.workflow }} failed"
+          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}

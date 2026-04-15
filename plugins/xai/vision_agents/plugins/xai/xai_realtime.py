@@ -299,6 +299,8 @@ class XAIRealtime(realtime.Realtime):
         self.connected = False
         self._emit_disconnected_event(reason="close requested", was_clean=True)
 
+        await self._await_pending_tools()
+
         if self._processing_task is not None:
             self._processing_task.cancel()
             try:
@@ -512,7 +514,7 @@ class XAIRealtime(realtime.Realtime):
 
             elif event_type == "response.function_call_arguments.done":
                 # Function call from the model
-                await self._handle_function_call(data)
+                self._run_tool_in_background(self._handle_function_call(data))
 
             elif event_type == "error":
                 error_info = data.get("error", {})

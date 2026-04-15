@@ -167,7 +167,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         # track_type_int is from TrackType enum (e.g., TrackType.TRACK_TYPE_AUDIO)
         self._track_map: dict = {}
         # Temporary storage for tracks before SFU confirms their type
-        # track_id -> (user_id, session_id, webrtc_type_string)
+        # track_id -> (user_id|None, session_id|None, webrtc_type_string)
         self._pending_tracks: dict = {}
 
         self._real_connection: Optional[ConnectionManager] = None
@@ -243,6 +243,33 @@ class StreamEdge(EdgeTransport[StreamCall]):
             )
             return
 
+        # User reconnected with a new session — the WebRTC media track is reused
+        # so track_added won't fire again. Migrate the stale session entry.
+        for old_key, old_info in list(self._track_map.items()):
+            old_user, old_session, old_type = old_key
+            if (
+                old_user == user_id
+                and old_type == track_type_int
+                and old_session != session_id
+            ):
+                del self._track_map[old_key]
+                self._track_map[track_key] = {
+                    "track_id": old_info["track_id"],
+                    "published": True,
+                }
+                logger.info(
+                    f"Migrated track for {user_id} from session {old_session} to {session_id}"
+                )
+                self.events.send(
+                    events.TrackAddedEvent(
+                        plugin_name="getstream",
+                        track_id=old_info["track_id"],
+                        track_type=track_type,
+                        participant=_to_core_participant(event.participant),
+                    )
+                )
+                return
+
         # Wait for pending track to be populated (with 10 second timeout)
         # SFU might send TrackPublishedEvent before WebRTC processes track_added
         track_id = None
@@ -263,6 +290,26 @@ class StreamEdge(EdgeTransport[StreamCall]):
                     track_id = tid
                     del self._pending_tracks[tid]
                     break
+
+            # Fallback: some video track_added callbacks can arrive with user=None.
+            # In that case we can still match by WebRTC kind, but only if there
+            # is exactly one anonymous candidate — multiple anonymous entries
+            # with the same kind would be ambiguous and could misbind.
+            if track_id is None:
+                anonymous_candidates = [
+                    tid
+                    for tid, (
+                        pending_user,
+                        pending_session,
+                        pending_kind,
+                    ) in self._pending_tracks.items()
+                    if pending_user is None
+                    and pending_session is None
+                    and pending_kind == webrtc_track_kind
+                ]
+                if len(anonymous_candidates) == 1:
+                    track_id = anonymous_candidates[0]
+                    del self._pending_tracks[track_id]
 
             if track_id:
                 break
@@ -416,13 +463,23 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
         # Open RTC connection and keep it alive for the duration of the returned context manager
         connection = await rtc.join(
-            call, agent.agent_user.id, subscription_config=subscription_config
+            call,
+            agent.agent_user.id,
+            subscription_config=subscription_config,
         )
+        # Store immediately so close() can clean up if join is interrupted
+        self._real_connection = connection
 
         @connection.on("track_added")
         async def on_track(track_id, track_type, user):
             # Store track in pending map - wait for SFU to confirm type before spawning TrackAddedEvent
-            self._pending_tracks[track_id] = (user.user_id, user.session_id, track_type)
+            pending_user_id = user.user_id if user else None
+            pending_session_id = user.session_id if user else None
+            self._pending_tracks[track_id] = (
+                pending_user_id,
+                pending_session_id,
+                track_type,
+            )
 
         self.events.silent(events.AudioReceivedEvent)
 
@@ -446,7 +503,6 @@ class StreamEdge(EdgeTransport[StreamCall]):
 
         # Start the connection
         await connection.__aenter__()
-        self._real_connection = connection
         self._call = call
         # Re-publish already published tracks in case somebody is already on the call when we joined.
         # Otherwise, we won't get the video track from participants joined before us.
@@ -496,6 +552,14 @@ class StreamEdge(EdgeTransport[StreamCall]):
         )
 
     async def close(self):
+        if self._real_connection:
+            try:
+                await self._real_connection.leave()
+            except Exception:
+                logger.exception("Error during connection leave")
+            self._real_connection = None
+        if self.client:
+            await self.client.aclose()
         self._call = None
 
     async def send_custom_event(self, data: dict) -> None:

@@ -266,7 +266,9 @@ class ChatCompletionsVLM(VideoLLM):
                     )
                 )
 
-            llm_response = LLMResponseEvent(original=chunk, text=total_text)
+                llm_response = LLMResponseEvent(original=chunk, text=total_text)
+                break
+
             i += 1
 
         return llm_response
@@ -381,4 +383,5 @@ class ChatCompletionsVLM(VideoLLM):
         return messages
 
     async def close(self) -> None:
+        await self._client.close()
         self._executor.shutdown(wait=False)

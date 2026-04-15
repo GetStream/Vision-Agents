@@ -1093,34 +1093,22 @@ class Agent:
         # Store the local video track.
         self._video_track_override_path = path
 
-    async def _poll_audio_queues(
-        self,
-        queues: dict[str, tuple[Participant, AudioQueue]],
-    ) -> AsyncIterator[tuple[Participant, PcmData]]:
-        """Poll all participant audio queues in parallel.
+    async def _poll_audio_queues(self) -> AsyncIterator[tuple[Participant, PcmData]]:
+        """Poll all participant audio queues sequentially.
 
-        Yields (Participant, PcmData) tuples as each queue produces a chunk.
-        Queues that time out are silently skipped. On exit, any remaining
-        in-flight tasks are cancelled to avoid unhandled exceptions.
+        Yields (Participant, PcmData) tuples for each queue that has data ready.
+        Queues that time out are silently skipped.
         """
-
-        async def _poll(participant: Participant, queue: AudioQueue):
-            pcm = await asyncio.wait_for(
-                queue.get_duration(duration_ms=20), timeout=0.001
-            )
-            return participant, pcm
-
-        tasks = [asyncio.create_task(_poll(p, q)) for p, q in queues.values()]
-        try:
-            for fut in asyncio.as_completed(tasks):
-                try:
-                    yield await fut
-                except (asyncio.TimeoutError, asyncio.QueueEmpty):
-                    continue
-        finally:
-            for t in tasks:
-                if not t.done():
-                    t.cancel()
+        # Make a copy before iterating because the track maybe get unpublished
+        queues = self._participant_queues.copy()
+        for participant, queue in queues.values():
+            try:
+                pcm = await asyncio.wait_for(
+                    queue.get_duration(duration_ms=20), timeout=0.001
+                )
+                yield participant, pcm
+            except (TimeoutError, asyncio.QueueEmpty):
+                continue
 
     async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from per-participant queues."""
@@ -1135,9 +1123,7 @@ class Agent:
             while self._call_ended_event and not self._call_ended_event.is_set():
                 loop_start = time.perf_counter()
 
-                async for participant, pcm in self._poll_audio_queues(
-                    self._participant_queues
-                ):
+                async for participant, pcm in self._poll_audio_queues():
                     if participant.user_id != self.agent_user.id:
                         # Pass audio through the filter
                         # if multiple participants are on the call
@@ -1285,6 +1271,9 @@ class Agent:
         ):
             return
 
+        if not self._needs_video():
+            return
+
         self.logger.info(
             f"📺 Track added: {track_type.name} from {participant.user_id}"
         )
@@ -1373,13 +1362,14 @@ class Agent:
         # - Audio processors (for audio analysis)
         # Note: VAD and turn detection are helpers for STT/TTS, not standalone consumers
         needs_audio = self.stt is not None or len(self.audio_processors) > 0
-
         # Video input needed for:
         # - Video processors (for frame analysis)
         # - Realtime mode with video (multimodal LLMs)
-        needs_video = len(self.video_processors) > 0 or _is_video_llm(self.llm)
 
-        return needs_audio or needs_video
+        return needs_audio or self._needs_video()
+
+    def _needs_video(self) -> bool:
+        return len(self.video_processors) > 0 or _is_video_llm(self.llm)
 
     @property
     def audio_processors(self) -> list[AudioProcessor]:
@@ -1420,19 +1410,22 @@ class Agent:
     def _validate_configuration(self):
         """Validate the agent configuration."""
         if _is_audio_llm(self.llm):
-            # Realtime mode - should not have separate STT/TTS
-            if self.stt or self.tts:
+            if self.stt or self.tts or self.turn_detection:
                 self.logger.warning(
-                    "Realtime mode detected: STT and TTS services will be ignored. "
-                    "The Realtime model handles both speech-to-text and text-to-speech internally."
+                    "Realtime mode detected: STT, TTS and Turn Detection services will be disabled. "
+                    "The Realtime model handles speech-to-text, text-to-speech and turn detection internally."
                 )
-                # Realtime mode - should not have separate STT/TTS
-            if self.stt or self.turn_detection:
-                self.logger.warning(
-                    "Realtime mode detected: STT, TTS and Turn Detection services will be ignored. "
-                    "The Realtime model handles both speech-to-text, text-to-speech and turn detection internally."
-                )
+                self.stt = None
+                self.tts = None
+                self.streaming_tts = False
+                self.turn_detection = None
         else:
+            if self.turn_detection and self.stt and self.stt.turn_detection:
+                self.logger.warning(
+                    "STT already provides turn detection; ignoring the TurnDetector plugin."
+                )
+                self.turn_detection = None
+
             # Traditional mode - check if we have audio processing or just video processing
             has_audio_processing = bool(self.stt or self.tts or self.turn_detection)
             has_video_processing = bool(self.video_processors)

@@ -12,11 +12,14 @@ import websockets
 from aiortc import VideoStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from google import genai
+from google.genai.errors import APIError
 from google.genai.live import AsyncSession
 from google.genai.types import (
     AudioTranscriptionConfigDict,
+    AutomaticActivityDetectionDict,
     Blob,
     ContextWindowCompressionConfigDict,
+    EndSensitivity,
     FunctionCall,
     FunctionResponse,
     HttpOptions,
@@ -28,6 +31,7 @@ from google.genai.types import (
     RealtimeInputConfigDict,
     SlidingWindowDict,
     SpeechConfigDict,
+    StartSensitivity,
     TurnCoverage,
     VoiceConfigDict,
 )
@@ -59,7 +63,14 @@ DEFAULT_CONFIG = LiveConnectConfigDict(
         language_code="en-US",
     ),
     realtime_input_config=RealtimeInputConfigDict(
-        turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY
+        turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
+        # VAD config optimized for lower latency
+        automatic_activity_detection=AutomaticActivityDetectionDict(
+            start_of_speech_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
+            end_of_speech_sensitivity=EndSensitivity.END_SENSITIVITY_HIGH,
+            silence_duration_ms=250,
+            prefix_padding_ms=50,
+        ),
     ),
     enable_affective_dialog=False,
     context_window_compression=ContextWindowCompressionConfigDict(
@@ -69,25 +80,43 @@ DEFAULT_CONFIG = LiveConnectConfigDict(
 )
 
 
-def _should_reconnect(exc: Exception) -> bool:
-    """
-    Temporary errors should typically trigger a reconnect
-    So if the websocket breaks this should return True and trigger a reconnect
-    """
-    # Gemini WS API returns code 1011 on session timeout
-    reconnect_close_codes = [
-        1011,  # Server-side exception or session timeout
-        1012,  # Service restart
-        1013,  # Try again later
-        1014,  # Bad gateway
-    ]
-    if (
-        isinstance(exc, websockets.ConnectionClosedError)
-        and exc.rcvd
-        and exc.rcvd.code in reconnect_close_codes
-    ):
-        return True
-    return False
+RECONNECT_CLOSE_CODES = {
+    1011,  # Server-side exception or session timeout
+    1012,  # Service restart
+    1013,  # Try again later
+    1014,  # Bad gateway
+}
+
+
+RECONNECT = "reconnect"
+STOP = "stop"
+RETRY = "retry"
+
+
+def _classify_loop_error(exc: Exception) -> tuple[str, str, bool]:
+    """Classify a processing-loop exception into (action, reason, was_clean)."""
+    match exc:
+        case websockets.ConnectionClosedOK():
+            return STOP, "WebSocket closed cleanly", True
+
+        case websockets.ConnectionClosedError(rcvd=rcvd):
+            code = rcvd.code if rcvd else None
+            if code in RECONNECT_CLOSE_CODES:
+                return RECONNECT, f"WebSocket code {code}", False
+            reason = (
+                f"WebSocket closed with code {code}"
+                if code
+                else "WebSocket closed unexpectedly"
+            )
+            return STOP, reason, False
+
+        case APIError(code=int(code)) if code in RECONNECT_CLOSE_CODES:
+            return RECONNECT, f"API error code {code}", False
+
+        case APIError(code=int(code)):
+            return STOP, f"API error code {code}", False
+
+    return RETRY, str(exc), False
 
 
 class GeminiRealtime(realtime.Realtime):
@@ -187,8 +216,8 @@ class GeminiRealtime(realtime.Realtime):
             await self._session.send_realtime_input(text=text)
             return LLMResponseEvent(text="", original=None)
         except Exception as e:
-            # reconnect here in some cases
-            if _should_reconnect(e):
+            action, _, _ = _classify_loop_error(e)
+            if action == RECONNECT:
                 await self.connect()
             logger.exception("Failed to send realtime input to Gemini")
             return LLMResponseEvent(text="", original=None, exception=e)
@@ -248,7 +277,11 @@ class GeminiRealtime(realtime.Realtime):
         )
 
         # Add frame handler (starts automatically)
-        self._video_forwarder.add_frame_handler(self._send_video_frame)
+        # Throttle to self.fps so shared forwarders (which run at higher FPS) don't
+        # saturate the websocket with video data and starve audio sends.
+        self._video_forwarder.add_frame_handler(
+            self._send_video_frame, fps=float(self.fps)
+        )
         logger.info(f"Started video forwarding with {self.fps} FPS")
 
     async def _send_video_frame(self, frame: av.VideoFrame) -> None:
@@ -267,7 +300,7 @@ class GeminiRealtime(realtime.Realtime):
 
         blob = Blob(data=png_bytes, mime_type="image/png")
         try:
-            await self._session.send_realtime_input(media=blob)
+            await self._session.send_realtime_input(video=blob)
         except Exception:
             logger.exception("Failed to send a video frame to Gemini Live API")
 
@@ -288,6 +321,13 @@ class GeminiRealtime(realtime.Realtime):
         # Stop the processing task first in case we're reconnecting
         await self._stop_processing_task()
 
+        await self._establish_session()
+
+        # Start the loop task
+        await self._start_processing_task()
+
+    async def _establish_session(self):
+        """Create a new Gemini WebSocket session without managing the processing task."""
         logger.debug("Connecting to Gemini live, config set to %s", self._base_config)
         self._real_session = await self._exit_stack.enter_async_context(
             self._client.aio.live.connect(  # type: ignore[arg-type]
@@ -296,9 +336,6 @@ class GeminiRealtime(realtime.Realtime):
         )
         self.connected = True
         logger.info("Gemini live connected to session %s", self._session)
-
-        # Start the loop task
-        await self._start_processing_task()
 
     async def close(self):
         """
@@ -312,6 +349,8 @@ class GeminiRealtime(realtime.Realtime):
 
         # Do not wait for threads to complete to avoid blocking the loop
         self._executor.shutdown(wait=False)
+
+        await self._await_pending_tools()
 
         if self._processing_task is not None:
             self._processing_task.cancel()
@@ -376,83 +415,67 @@ class GeminiRealtime(realtime.Realtime):
         """
         async for response in self._session.receive():
             server_message: LiveServerMessage = response
+            server_content = server_message.server_content
 
-            is_input_transcript = (
-                server_message
-                and server_message.server_content
-                and server_message.server_content.input_transcription
-            )
-            is_output_transcript = (
-                server_message
-                and server_message.server_content
-                and server_message.server_content.output_transcription
-            )
-            is_response = (
-                server_message
-                and server_message.server_content
-                and server_message.server_content.model_turn
-            )
+            handled = False
 
-            if is_input_transcript:
-                if (
-                    server_message.server_content
-                    and server_message.server_content.input_transcription
-                ):
-                    text = server_message.server_content.input_transcription.text
-                    if text:
-                        self._emit_user_speech_transcription(
-                            text=text,
-                            mode="delta",
-                            original=server_message,
-                        )
-            elif is_output_transcript:
-                if (
-                    server_message.server_content
-                    and server_message.server_content.output_transcription
-                ):
-                    text = server_message.server_content.output_transcription.text
-                    if text:
-                        self._emit_agent_speech_transcription(
-                            text=text,
-                            mode="delta",
-                            original=server_message,
-                        )
-            elif is_response:
+            if server_content and server_content.input_transcription:
+                text = server_content.input_transcription.text
+                if text:
+                    self._emit_user_speech_transcription(
+                        text=text,
+                        mode="delta",
+                        original=server_message,
+                    )
+                    handled = True
+
+            if server_content and server_content.output_transcription:
+                text = server_content.output_transcription.text
+                if text:
+                    self._emit_agent_speech_transcription(
+                        text=text,
+                        mode="delta",
+                        original=server_message,
+                    )
+                    handled = True
+
+            if server_content and server_content.model_turn:
                 self._begin_response()
+                handled = True
                 # Store the resumption id so we can resume a broken connection
                 if server_message.session_resumption_update:
                     update = server_message.session_resumption_update
                     if update.resumable and update.new_handle:
                         self._session_resumption_id = update.new_handle
 
-                if (
-                    server_message.server_content
-                    and server_message.server_content.model_turn
-                ):
-                    parts = server_message.server_content.model_turn.parts or []
-                    for part in parts:
-                        if part.text and not part.thought:
-                            # Emit partial LLM response event
-                            event = LLMResponseChunkEvent(delta=part.text)
-                            self.events.send(event)
-                        elif part.inline_data:
-                            # Emit audio output event
-                            pcm = PcmData.from_bytes(part.inline_data.data, 24000)
-                            self._emit_audio_output_event(audio_data=pcm)
-                        elif part.function_call:
-                            # Handle function calls from Gemini Live
-                            await self._handle_function_call(part.function_call)
+                parts = server_content.model_turn.parts or []
+                for part in parts:
+                    if part.text and not part.thought:
+                        event = LLMResponseChunkEvent(delta=part.text)
+                        self.events.send(event)
+                    if part.inline_data:
+                        pcm = PcmData.from_bytes(part.inline_data.data, 24000)
+                        self._emit_audio_output_event(audio_data=pcm)
+                    if part.function_call:
+                        self._run_tool_in_background(
+                            self._handle_function_call(part.function_call)
+                        )
 
-            elif (
-                server_message.server_content
-                and server_message.server_content.turn_complete
-            ):
+            if server_content and server_content.interrupted:
+                await self.interrupt()
+                self._emit_audio_output_done_event(interrupted=True)
+                handled = True
+            elif server_content and server_content.turn_complete:
                 self._emit_audio_output_done_event()
+                handled = True
 
-            elif server_message.tool_call:
-                # Handle tool calls from Gemini Live
-                await self._handle_tool_calls(server_message.tool_call)
-            else:
+            if server_message.tool_call:
+                self._run_tool_in_background(
+                    self._handle_tool_calls(server_message.tool_call)
+                )
+                handled = True
+
+            if not handled:
                 logger.debug(
                     "Unrecognized event structure from Gemini %s", server_message
                 )
@@ -460,25 +483,45 @@ class GeminiRealtime(realtime.Realtime):
         return False
 
     async def _processing_loop(self):
-        """
-        Start the loop for receiving messages.
-
-        It also reconnects the underlying session if it's closed.
-        """
+        """Start the loop for receiving and reconnecting on transient errors."""
         logger.debug("Start processing events from Gemini Live API")
+        consecutive_errors = 0
+        max_consecutive_errors = 5
         try:
             while True:
                 try:
                     await self._process_events()
-                except websockets.ConnectionClosedError as e:
-                    if not _should_reconnect(e):
-                        raise e
-                    # Reconnect here for some errors
-                    await self.connect()
-                except Exception:
+                    consecutive_errors = 0
+                except Exception as exc:
+                    action, reason, was_clean = _classify_loop_error(exc)
+
+                    if action == RECONNECT:
+                        logger.info("Gemini connection lost (%s), reconnecting", reason)
+                        await self._establish_session()
+                        consecutive_errors = 0
+                        continue
+
+                    if action == STOP:
+                        logger.info("Gemini connection closed: %s", reason)
+                        self._emit_disconnected_event(
+                            reason=reason, was_clean=was_clean
+                        )
+                        return
+
+                    consecutive_errors += 1
                     logger.exception(
-                        "Error while processing events from Gemini Live API"
+                        "Error in Gemini processing loop (%d/%d)",
+                        consecutive_errors,
+                        max_consecutive_errors,
                     )
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.error(
+                            "Too many consecutive errors, stopping processing loop"
+                        )
+                        self._emit_disconnected_event(
+                            reason="Too many consecutive errors", was_clean=False
+                        )
+                        return
 
         except CancelledError:
             logger.debug("Processing loop has been cancelled")

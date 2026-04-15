@@ -8,6 +8,6 @@ Build Vision Agents quickly with any model or video provider.
 -  **Native APIs**: Native SDK methods from OpenAI (create response), Gemini (generate) and Claude (create message). So you're never behind on the latest features
 -  **SDKs**: SDKs for React, Android, iOS, Flutter, React, React Native and Unity.
 
-Created by Stream, uses [Stream's edge network](https://getstream.io/video/) for ultra-low latency.
+Created by Stream, uses [Stream's edge network](https://getstream.io/video/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) for ultra-low latency.
 
 See [Github](https://github.com/GetStream/Vision-Agents).

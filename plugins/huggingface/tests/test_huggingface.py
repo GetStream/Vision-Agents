@@ -2,13 +2,13 @@ import asyncio
 import fractions
 import os
 import uuid
+from types import SimpleNamespace
 from typing import AsyncIterator, Literal, Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
 from av import VideoFrame
-from conftest import skip_blockbuster
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
@@ -17,10 +17,12 @@ from vision_agents.core.llm.events import (
 from vision_agents.plugins.huggingface import LLM, VLM
 from vision_agents.plugins.huggingface.events import LLMErrorEvent
 
+from conftest import skip_blockbuster
+
 
 @pytest.fixture()
 def huggingface_client_mock():
-    mock = MagicMock()
+    mock = AsyncMock()
     mock.chat = MagicMock()
     mock.chat.completions = MagicMock()
     mock.chat.completions.create = AsyncMock()
@@ -36,42 +38,53 @@ async def conversation():
 async def llm(huggingface_client_mock, conversation):
     llm_ = LLM(client=huggingface_client_mock, model="test")
     llm_.set_conversation(conversation)
-    return llm_
+    yield llm_
+    await llm_.close()
 
 
 @pytest.fixture()
 async def vlm(huggingface_client_mock, conversation):
     vlm_ = VLM(client=huggingface_client_mock, model="test")
     vlm_.set_conversation(conversation)
-    return vlm_
+    yield vlm_
+    await vlm_.close()
 
 
-class ChatCompletionChunkMock:
-    """Mock for HuggingFace chat completion chunks."""
+def _tc_delta(index: int, tc_id: str, name: str, arguments: str) -> SimpleNamespace:
+    """A single tool_call entry inside a streaming delta."""
+    return SimpleNamespace(
+        index=index,
+        id=tc_id,
+        function=SimpleNamespace(name=name, arguments=arguments),
+    )
 
-    def __init__(
-        self,
-        chunk_id: str,
-        content: str = "",
-        finish_reason: Optional[
-            Literal["stop", "length", "tool_calls", "content_filter"]
-        ] = None,
-    ):
-        self.id = chunk_id
-        self.choices = [
-            MagicMock(
-                delta=MagicMock(content=content, tool_calls=None),
+
+def _chunk(
+    chunk_id: str,
+    content: str = "",
+    finish_reason: Optional[
+        Literal["stop", "length", "tool_calls", "content_filter"]
+    ] = None,
+    tool_calls: Optional[list] = None,
+) -> SimpleNamespace:
+    """A single streaming chat-completion chunk."""
+    return SimpleNamespace(
+        id=chunk_id,
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(content=content, tool_calls=tool_calls),
                 finish_reason=finish_reason,
             )
-        ]
+        ],
+    )
 
 
 class AsyncStreamStub:
-    """Mock of async streaming response."""
+    """Async-iterable stub that yields pre-built chunks."""
 
     def __init__(self):
         self.id = str(uuid.uuid4())
-        self.chunks = []
+        self.chunks: list[SimpleNamespace] = []
         self.model = "test"
 
     def add_chunk(
@@ -80,18 +93,13 @@ class AsyncStreamStub:
         finish_reason: Optional[
             Literal["stop", "length", "tool_calls", "content_filter"]
         ] = None,
+        tool_calls: Optional[list] = None,
     ):
-        self.chunks.append(
-            ChatCompletionChunkMock(
-                chunk_id=self.id,
-                content=content,
-                finish_reason=finish_reason,
-            )
-        )
+        self.chunks.append(_chunk(self.id, content, finish_reason, tool_calls))
 
     async def __aiter__(self) -> AsyncIterator:
-        for chunk in self.chunks:
-            yield chunk
+        for c in self.chunks:
+            yield c
 
 
 class VideoStreamTrackStub:
@@ -165,7 +173,7 @@ class TestHuggingFaceVLM:
         self, vlm, conversation, huggingface_client_mock
     ):
         huggingface_client_mock.chat.completions.create = AsyncMock(
-            side_effect=ValueError("test")
+            side_effect=OSError("test")
         )
 
         events = []
@@ -229,7 +237,7 @@ class TestHuggingFaceLLM:
         self, llm, conversation, huggingface_client_mock
     ):
         huggingface_client_mock.chat.completions.create = AsyncMock(
-            side_effect=ValueError("test")
+            side_effect=OSError("test")
         )
 
         events = []
@@ -261,3 +269,120 @@ class TestHuggingFaceLLM:
 
         response = await llm.simple_response(text="Say hello in one word")
         assert response.text
+
+
+class TestHuggingFaceLLMToolCalling:
+    async def test_streaming_tool_calls_parsed_and_executed(
+        self, llm, conversation, huggingface_client_mock
+    ):
+        """Streaming response with finish_reason=tool_calls triggers tool execution."""
+        calls_received = []
+
+        @llm.register_function("get_weather", description="Get weather for a city")
+        async def get_weather(city: str) -> str:
+            calls_received.append(city)
+            return "Sunny, 72F"
+
+        # First API call returns a tool_call via streaming
+        tool_stream = AsyncStreamStub()
+        tool_stream.add_chunk(
+            tool_calls=[_tc_delta(0, "call-1", "get_weather", '{"city": "SF"}')]
+        )
+        tool_stream.add_chunk(finish_reason="tool_calls")
+
+        # Second API call (follow-up after tool execution) returns text
+        followup_stream = AsyncStreamStub()
+        followup_stream.add_chunk(content="It's sunny in SF!")
+        followup_stream.add_chunk(finish_reason="stop")
+
+        huggingface_client_mock.chat.completions.create = AsyncMock(
+            side_effect=[tool_stream, followup_stream]
+        )
+
+        response = await llm.simple_response(text="What's the weather in SF?")
+
+        assert calls_received == ["SF"]
+        assert response.text == "It's sunny in SF!"
+
+        # Verify follow-up call includes tool result messages
+        follow_up_call = huggingface_client_mock.chat.completions.create.call_args_list[
+            1
+        ]
+        follow_up_messages = follow_up_call.kwargs["messages"]
+        roles = [m["role"] for m in follow_up_messages]
+        assert "tool" in roles
+        assert "assistant" in roles
+
+    async def test_create_response_passes_tools_to_api(
+        self, llm, conversation, huggingface_client_mock
+    ):
+        """When tools are registered, they are forwarded to the API call."""
+
+        @llm.register_function("lookup", description="Look up info")
+        async def lookup(query: str) -> str:
+            return "result"
+
+        stream = AsyncStreamStub()
+        stream.add_chunk(content="No tool needed.")
+        stream.add_chunk(finish_reason="stop")
+        huggingface_client_mock.chat.completions.create = AsyncMock(return_value=stream)
+
+        await llm.simple_response(text="hi")
+
+        call_kwargs = huggingface_client_mock.chat.completions.create.call_args.kwargs
+        assert "tools" in call_kwargs
+        tool_names = [t["function"]["name"] for t in call_kwargs["tools"]]
+        assert "lookup" in tool_names
+
+
+class TestHuggingFaceVLMToolCalling:
+    async def test_vlm_streaming_tool_calls(
+        self, vlm, conversation, huggingface_client_mock
+    ):
+        """VLM streaming response with tool calls triggers execution."""
+        calls_received = []
+
+        @vlm.register_function("count_objects", description="Count objects in frame")
+        async def count_objects(label: str) -> str:
+            calls_received.append(label)
+            return "3"
+
+        tool_stream = AsyncStreamStub()
+        tool_stream.add_chunk(
+            tool_calls=[_tc_delta(0, "call-1", "count_objects", '{"label": "person"}')]
+        )
+        tool_stream.add_chunk(finish_reason="tool_calls")
+
+        followup_stream = AsyncStreamStub()
+        followup_stream.add_chunk(content="I see 3 people.")
+        followup_stream.add_chunk(finish_reason="stop")
+
+        huggingface_client_mock.chat.completions.create = AsyncMock(
+            side_effect=[tool_stream, followup_stream]
+        )
+
+        response = await vlm.simple_response(text="How many people?")
+
+        assert calls_received == ["person"]
+        assert response.text == "I see 3 people."
+
+    async def test_vlm_create_response_passes_tools(
+        self, vlm, conversation, huggingface_client_mock
+    ):
+        """VLM create_response forwards registered tools to the API."""
+
+        @vlm.register_function("detect", description="Detect objects")
+        async def detect(category: str) -> str:
+            return "found"
+
+        stream = AsyncStreamStub()
+        stream.add_chunk(content="No detection needed.")
+        stream.add_chunk(finish_reason="stop")
+        huggingface_client_mock.chat.completions.create = AsyncMock(return_value=stream)
+
+        await vlm.create_response(messages=[{"role": "user", "content": "test"}])
+
+        call_kwargs = huggingface_client_mock.chat.completions.create.call_args.kwargs
+        assert "tools" in call_kwargs
+        tool_names = [t["function"]["name"] for t in call_kwargs["tools"]]
+        assert "detect" in tool_names

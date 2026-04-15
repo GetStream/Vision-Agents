@@ -192,6 +192,7 @@ class Realtime(realtime.Realtime):
         await self.rtc.send_audio_pcm(audio)
 
     async def close(self):
+        await self._await_pending_tools()
         await self.rtc.close()
 
     async def _handle_openai_event(self, event: dict) -> None:
@@ -257,9 +258,14 @@ class Realtime(realtime.Realtime):
                 text=user_transcript_event.transcript, mode="final", original=event
             )
         elif et == "input_audio_buffer.speech_started":
-            # Validate event but don't need to store it
             InputAudioBufferSpeechStartedEvent.model_validate(event)
-            # await self.output_track.flush()
+            await self.interrupt()
+            # TODO: According to https://developers.openai.com/api/docs/guides/realtime-conversations#interruption-and-truncation
+            #  we must send conversation.item.truncate event to remove
+            #  the unplayed portion of the model’s last response from the conversation.
+            #  However, we don't have this data available yet.
+            self._emit_audio_output_done_event(interrupted=True)
+
         elif et == "response.output_item.added":
             # Start tracking a function call (arguments will stream in)
             item = event.get("item", {})
@@ -284,13 +290,13 @@ class Realtime(realtime.Realtime):
             # Arguments complete - execute the tool call
             item_id = event.get("item_id")
             if item_id and item_id in self._pending_tool_calls:
-                await self._execute_pending_tool_call(item_id)
+                self._run_tool_in_background(self._execute_pending_tool_call(item_id))
         elif et == "response.output_item.done":
             # Fallback: if we have a pending tool call for this item, execute it
             item = event.get("item", {})
             item_id = item.get("id")
             if item_id and item_id in self._pending_tool_calls:
-                await self._execute_pending_tool_call(item_id)
+                self._run_tool_in_background(self._execute_pending_tool_call(item_id))
         elif et == "response.created":
             self._begin_response()
         elif et == "session.created":
@@ -306,6 +312,8 @@ class Realtime(realtime.Realtime):
                 raise Exception(
                     "OpenAI realtime failure %s", response_done_event.response
                 )
+            elif response_done_event.response.status == "cancelled":
+                logger.debug("Response cancelled (user interrupted)")
         elif et == "session.updated":
             # Update session with new data
             session_updated_event = SessionUpdatedEvent(**event)

@@ -11,18 +11,17 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participan
 from huggingface_hub import AsyncInferenceClient
 from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
 from vision_agents.core.llm.events import (
-    LLMRequestStartedEvent,
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
     VLMErrorEvent,
     VLMInferenceCompletedEvent,
     VLMInferenceStartEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
+from vision_agents.core.llm.llm_types import ToolSchema
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
 
 from . import events
+from ._hf_tool_calling import convert_tools_to_hf_format, create_hf_response
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +30,7 @@ PLUGIN_NAME = "huggingface_vlm"
 
 
 class HuggingFaceVLM(VideoLLM):
-    """
-    HuggingFace Inference integration for vision language models.
+    """HuggingFace Inference integration for vision language models.
 
     This plugin allows developers to interact with vision models via HuggingFace's
     Inference Providers API. Supports models that accept both text and images.
@@ -40,6 +38,7 @@ class HuggingFaceVLM(VideoLLM):
     Features:
         - Video understanding: Automatically buffers and forwards video frames
         - Streaming responses with real-time chunk events
+        - Function/tool calling support
         - Configurable frame rate and buffer duration
 
     Examples:
@@ -59,8 +58,7 @@ class HuggingFaceVLM(VideoLLM):
         frame_buffer_seconds: int = 10,
         client: Optional[AsyncInferenceClient] = None,
     ):
-        """
-        Initialize the HuggingFaceVLM class.
+        """Initialize the HuggingFaceVLM class.
 
         Args:
             model: The HuggingFace model ID to use.
@@ -107,8 +105,7 @@ class HuggingFaceVLM(VideoLLM):
         text: str,
         participant: Optional[Participant] = None,
     ) -> LLMResponseEvent[Any]:
-        """
-        Create an LLM response from text input with video context.
+        """Create an LLM response from text input with video context.
 
         This method is called when a new STT transcript is received.
 
@@ -130,11 +127,9 @@ class HuggingFaceVLM(VideoLLM):
 
         messages = await self._build_model_request()
 
-        # Count frames being processed
         frames_count = len(self._frame_buffer)
         inference_id = str(uuid.uuid4())
 
-        # Emit VLM start event
         self.events.send(
             VLMInferenceStartEvent(
                 plugin_name=PLUGIN_NAME,
@@ -144,131 +139,81 @@ class HuggingFaceVLM(VideoLLM):
             )
         )
 
-        # Emit request started event
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name=PLUGIN_NAME,
-                model=self.model,
-                streaming=True,
-            )
-        )
-
-        # Track timing
         request_start_time = time.perf_counter()
-        first_token_time: Optional[float] = None
+        response = await self.create_response(messages=messages)
+        latency_ms = (time.perf_counter() - request_start_time) * 1000
 
-        try:
-            response = await self._client.chat.completions.create(
-                messages=messages,
-                model=self.model,
-                stream=True,
-            )
-        except Exception as e:
-            logger.exception(f'Failed to get a response from the model "{self.model}"')
-            self.events.send(
-                events.LLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    error_message=str(e),
-                    event_data=e,
-                )
-            )
+        if response.exception is not None:
             self.events.send(
                 VLMErrorEvent(
                     plugin_name=PLUGIN_NAME,
                     inference_id=inference_id,
-                    error=e,
-                    context="api_request",
+                    error=response.exception,
+                    context="generation",
                 )
             )
-            return LLMResponseEvent(original=None, text="")
-
-        i = 0
-        llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
-        text_chunks: list[str] = []
-        total_text = ""
-        chunk_id = ""
-
-        async for chunk in response:
-            if not chunk.choices:
-                continue
-
-            choice = chunk.choices[0]
-            content = choice.delta.content if choice.delta else None
-            finish_reason = choice.finish_reason
-            chunk_id = chunk.id if chunk.id else chunk_id
-
-            if content:
-                # Track time to first token
-                if first_token_time is None:
-                    first_token_time = time.perf_counter()
-
-                is_first = len(text_chunks) == 0
-                ttft_ms = None
-                if is_first:
-                    ttft_ms = (first_token_time - request_start_time) * 1000
-
-                text_chunks.append(content)
-                self.events.send(
-                    LLMResponseChunkEvent(
-                        plugin_name=PLUGIN_NAME,
-                        content_index=None,
-                        item_id=chunk_id,
-                        output_index=0,
-                        sequence_number=i,
-                        delta=content,
-                        is_first_chunk=is_first,
-                        time_to_first_token_ms=ttft_ms,
-                    )
+        else:
+            self.events.send(
+                VLMInferenceCompletedEvent(
+                    plugin_name=PLUGIN_NAME,
+                    inference_id=inference_id,
+                    model=self.model,
+                    text=response.text,
+                    latency_ms=latency_ms,
+                    frames_processed=frames_count,
                 )
+            )
 
-            if finish_reason:
-                if finish_reason in ("length", "content"):
-                    logger.warning(
-                        f'The model finished the response due to reason "{finish_reason}"'
-                    )
-                total_text = "".join(text_chunks)
-                latency_ms = (time.perf_counter() - request_start_time) * 1000
-                ttft_ms_final = None
-                if first_token_time is not None:
-                    ttft_ms_final = (first_token_time - request_start_time) * 1000
+        return response
 
-                # Emit VLM-specific completion event with metrics
-                self.events.send(
-                    VLMInferenceCompletedEvent(
-                        plugin_name=PLUGIN_NAME,
-                        inference_id=inference_id,
-                        model=self.model,
-                        text=total_text,
-                        latency_ms=latency_ms,
-                        frames_processed=frames_count,
-                    )
-                )
+    async def create_response(
+        self,
+        messages: Optional[list[dict[str, Any]]] = None,
+        *,
+        stream: bool = True,
+        **kwargs: Any,
+    ) -> LLMResponseEvent:
+        """Create a response using HuggingFace's Inference API with video context.
 
-                # Also emit LLM completion for compatibility
-                self.events.send(
-                    LLMResponseCompletedEvent(
-                        plugin_name=PLUGIN_NAME,
-                        original=chunk,
-                        text=total_text,
-                        item_id=chunk_id,
-                        latency_ms=latency_ms,
-                        time_to_first_token_ms=ttft_ms_final,
-                        model=self.model,
-                    )
-                )
+        Args:
+            messages: List of message dicts with 'role' and 'content'.
+                If not provided, builds from conversation history + buffered frames.
+            stream: Whether to stream the response.
+            **kwargs: Additional arguments passed to the API.
 
-            llm_response = LLMResponseEvent(original=chunk, text=total_text)
-            i += 1
+        Returns:
+            LLMResponseEvent with the response.
+        """
+        if messages is None:
+            messages = await self._build_model_request()
 
-        return llm_response
+        tools_param = None
+        tools_spec = self.get_available_functions()
+        if tools_spec:
+            tools_param = convert_tools_to_hf_format(tools_spec)
+
+        return await create_hf_response(
+            self,
+            self._client,
+            self.model,
+            PLUGIN_NAME,
+            messages,
+            tools_param,
+            stream,
+            **kwargs,
+        )
+
+    def _convert_tools_to_provider_format(
+        self, tools: list[ToolSchema]
+    ) -> list[dict[str, Any]]:
+        return convert_tools_to_hf_format(tools)
 
     async def watch_video_track(
         self,
         track: MediaStreamTrack,
         shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:
-        """
-        Setup video forwarding and start buffering video frames.
+        """Setup video forwarding and start buffering video frames.
 
         Args:
             track: Instance of VideoStreamTrack.
@@ -280,7 +225,7 @@ class HuggingFaceVLM(VideoLLM):
             self._video_forwarder = None
             logger.info("Stopped video forwarding")
 
-        logger.info(f'🎥Subscribing plugin "{PLUGIN_NAME}" to VideoForwarder')
+        logger.info(f'Subscribing plugin "{PLUGIN_NAME}" to VideoForwarder')
         if shared_forwarder:
             self._video_forwarder = shared_forwarder
         else:
@@ -300,9 +245,7 @@ class HuggingFaceVLM(VideoLLM):
         if self._video_forwarder is not None:
             await self._video_forwarder.remove_frame_handler(self._frame_buffer.append)
             self._video_forwarder = None
-            logger.info(
-                f"🛑 Stopped video forwarding to {PLUGIN_NAME} (participant left)"
-            )
+            logger.info(f"Stopped video forwarding to {PLUGIN_NAME}")
 
     def _get_frames_bytes(self) -> Iterator[bytes]:
         """Iterate over all buffered video frames."""
@@ -350,3 +293,6 @@ class HuggingFaceVLM(VideoLLM):
                 }
             )
         return messages
+
+    async def close(self) -> None:
+        await self._client.close()

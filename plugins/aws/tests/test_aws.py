@@ -28,7 +28,7 @@ def assert_response_successful(response):
 
 
 @pytest.fixture
-async def llm(self) -> BedrockLLM:
+async def llm() -> BedrockLLM:
     """Test BedrockLLM initialization with a provided client."""
     llm = BedrockLLM(model="qwen.qwen3-32b-v1:0", region_name="us-east-1")
     llm.set_conversation(InMemoryConversation("be friendly", []))
@@ -53,44 +53,10 @@ class TestBedrockLLM:
         messages2 = BedrockLLM._normalize_message(advanced)
         assert messages2[0].original is not None
 
-    @pytest.mark.integration
-    async def test_simple(self, llm: BedrockLLM):
-        response = await llm.simple_response(
-            "Explain quantum computing in 1 paragraph",
-        )
-        assert_response_successful(response)
-
-    @pytest.mark.integration
-    async def test_native_api(self, llm: BedrockLLM):
-        response = await llm.converse(
-            messages=[{"role": "user", "content": [{"text": "say hi"}]}],
-        )
-
-        assert_response_successful(response)
-
-    @pytest.mark.integration
-    async def test_stream(self, llm: BedrockLLM):
-        streaming_works = False
-
-        @llm.events.subscribe
-        async def passed(event: LLMResponseChunkEvent):
-            nonlocal streaming_works
-            streaming_works = True
-
-        await llm.converse_stream(
-            messages=[
-                {"role": "user", "content": [{"text": "Explain magma to a 5 year old"}]}
-            ]
-        )
-        # Wait for all events in queue to be processed
-        await llm.events.wait()
-
-        assert streaming_works
-
 
 @pytest.mark.skip()
 @pytest.mark.integration
-class TestTestBedrockLLMIntegration:
+class TestBedrockLLMIntegration:
     async def test_memory(self, llm: BedrockLLM):
         await llm.simple_response(
             text="There are 2 dogs in the room",
@@ -152,3 +118,34 @@ class TestTestBedrockLLMIntegration:
 
         assert_response_successful(response)
         assert "nl" in response.text.lower()
+
+    async def test_simple_response(self, llm: BedrockLLM):
+        response = await llm.simple_response(
+            "Explain quantum computing in 1 paragraph",
+        )
+        assert_response_successful(response)
+
+    async def test_converse(self, llm: BedrockLLM):
+        response = await llm.converse(
+            messages=[{"role": "user", "content": [{"text": "say hi"}]}],
+        )
+
+        assert_response_successful(response)
+
+    async def test_converse_stream(self, llm: BedrockLLM):
+        streaming_works = False
+
+        @llm.events.subscribe
+        async def passed(event: LLMResponseChunkEvent):
+            nonlocal streaming_works
+            streaming_works = True
+
+        await llm.converse_stream(
+            messages=[
+                {"role": "user", "content": [{"text": "Explain magma to a 5 year old"}]}
+            ]
+        )
+        # Wait for all events in queue to be processed
+        await llm.events.wait()
+
+        assert streaming_works

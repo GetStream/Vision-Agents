@@ -4,6 +4,8 @@ Development CLI tool for agents-core
 Essential dev commands for testing, linting, and type checking
 """
 
+import datetime
+import json
 import os
 import shlex
 import subprocess
@@ -100,7 +102,7 @@ def mypy_plugins():
     """Run mypy type checks on all plugins."""
     click.echo("Running mypy on plugins...")
     run(
-        "uv run mypy --install-types --non-interactive --exclude 'plugins/[^/]+/tests/' --exclude 'plugins/getstream/.*/sfu_events\\.py' plugins",
+        "uv run mypy --install-types --non-interactive --exclude 'plugins/[^/]+/tests/' --exclude 'plugins/getstream/.*/sfu_events\\.py' --exclude 'plugins/getstream/_generate_sfu_events\\.py' plugins",
     )
 
 
@@ -214,6 +216,93 @@ def check():
     run("uv run py.test -m 'not integration' -n auto")
 
     click.echo("\n✅ All checks passed!")
+
+
+def _extract_first_failure(
+    tests: list[dict],
+) -> tuple[str, str, str] | tuple[None, None, None]:
+    """
+    Return (nodeid, phase, message) for first failed test,
+    checking setup → call → teardown.
+    """
+    for t in tests:
+        if t.get("outcome") in ("failed", "error"):
+            nodeid = t.get("nodeid", "unknown test")
+
+            for phase in ["setup", "call", "teardown"]:
+                phase_data = t.get(phase)
+                if phase_data and phase_data.get("outcome") == "failed":
+                    longrepr = phase_data.get("longrepr", "")
+                    if isinstance(longrepr, dict):
+                        message = longrepr.get("reprcrash", {}).get(
+                            "message", str(longrepr)
+                        )
+                    else:
+                        message = str(longrepr)
+
+                    return nodeid, phase, message
+
+            return nodeid, "unknown", "No error details available"
+
+    return None, None, None
+
+
+@cli.command()
+@click.option(
+    "--file",
+    "report_file",
+    default=".report.json",
+    type=click.File("r"),
+    show_default=True,
+    help="Path to pytest JSON report file",
+)
+def parse_pytest_report(report_file):
+    """Parse pytest JSON report and print summary for CI (GitHub Actions friendly)."""
+    report = json.load(report_file)
+
+    summary = report.get("summary", {})
+    duration = str(datetime.timedelta(seconds=report.get("duration", 0)))
+    exit_code = report.get("exitcode", 0)
+
+    failed = summary.get("failed", 0)
+    error = summary.get("error", 0)
+    passed = summary.get("passed", 0)
+    skipped = summary.get("skipped", 0)
+    total = summary.get("total", 0)
+
+    # Header
+    status = (
+        "❌ Test Results - Failed" if failed or error else "✅ Test Results - Success"
+    )
+    click.echo(f"*{status}*")
+    click.echo()
+
+    # Duration
+    click.echo(f"*Duration:* {duration}")
+    click.echo()
+
+    # Summary
+    click.echo("*Summary:*")
+    click.echo(f"* *Total:* {total}")
+    click.echo(f"* *Passed:* {passed}")
+    click.echo(f"* *Failed:* {failed}")
+    click.echo(f"* *Error:* {error}")
+    click.echo(f"* *Skipped:* {skipped}")
+    click.echo()
+
+    # Failure details
+    if failed or error:
+        nodeid, phase, message = _extract_first_failure(report.get("tests", []))
+
+        click.echo("*Failure Details:*")
+        click.echo(f"* *Exit code:* `{exit_code}`")
+
+        if nodeid:
+            click.echo(f"* *First failed test:* `{nodeid}`")
+        if phase:
+            click.echo(f"* *Phase:* `{phase}`")
+        if message:
+            click.echo(f"* *Error:*\n\n```\n{message}\n```")
 
 
 if __name__ == "__main__":

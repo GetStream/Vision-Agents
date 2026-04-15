@@ -3,13 +3,11 @@ import logging
 
 import numpy as np
 import pytest
-
-from getstream.video.rtc.track_util import PcmData, AudioFormat
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core.utils.audio_queue import AudioQueue
-from tests.base_test import BaseTest
 
 
-class TestAudioQueue(BaseTest):
+class TestAudioQueue:
     def test_audio_queue_initialization(self):
         """Test that AudioQueue initializes correctly."""
         queue = AudioQueue(buffer_limit_ms=1000)
@@ -577,3 +575,27 @@ class TestAudioQueue(BaseTest):
 
         assert 99 in remaining_values  # new chunk is present
         assert 0 not in remaining_values  # oldest was dropped
+
+    async def test_audio_queue_clear_empty(self):
+        """Test clear() on an empty AudioQueue."""
+        queue = AudioQueue(buffer_limit_ms=1000)
+        queue.clear()
+        assert queue.qsize() == 0
+        assert queue.empty()
+
+    async def test_audio_queue_clear_non_empty(self):
+        """Test clear() removes existing data from AudioQueue."""
+        queue = AudioQueue(buffer_limit_ms=1000)
+
+        # Create test audio data
+        samples = np.array([1, 2, 3, 4, 5], dtype=np.int16)
+        pcm = PcmData(
+            samples=samples, sample_rate=16000, format=AudioFormat.S16, channels=1
+        )
+
+        await queue.put(pcm)
+        assert queue.qsize() > 0
+
+        queue.clear()
+        assert queue.qsize() == 0
+        assert queue.empty()

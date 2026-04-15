@@ -7,6 +7,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import aiortc
+import boto3
 from aws_sdk_bedrock_runtime.client import (
     BedrockRuntimeClient,
     InvokeModelWithBidirectionalStreamOperationInput,
@@ -18,10 +19,15 @@ from aws_sdk_bedrock_runtime.models import (
 )
 from getstream.video.rtc import PcmData
 from getstream.video.rtc.audio_track import AudioStreamTrack
-from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
+from smithy_aws_core.identity.components import (
+    AWSCredentialsIdentity,
+    AWSIdentityProperties,
+)
+from smithy_core.aio.interfaces.identity import IdentityResolver
 from vision_agents.core.agents.agent_types import AgentOptions
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
+from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
 from vision_agents.core.warmup import Warmable
@@ -32,6 +38,44 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "amazon.nova-2-sonic-v1:0"
 # Reconnect after 5 seconds if there is silence. If there is no break in speech reconnect after 7 seconds
 FORCE_RECONNECT_IN_MINUTES = 7.0
+
+
+class Boto3CredentialsResolver(
+    IdentityResolver[AWSCredentialsIdentity, AWSIdentityProperties]
+):
+    """IdentityResolver that delegates to boto3.Session for credential resolution.
+
+    Supports the full boto3 credential chain: env vars, shared credentials files,
+    AWS profiles, SSO, EC2 instance profiles, etc.
+    """
+
+    def __init__(self, profile_name: Optional[str] = None) -> None:
+        self._session = boto3.Session(profile_name=profile_name)
+        self._cached: Optional[AWSCredentialsIdentity] = None
+
+    async def get_identity(
+        self, *, properties: AWSIdentityProperties, **kwargs: Any
+    ) -> AWSCredentialsIdentity:
+        if self._cached is not None:
+            return self._cached
+
+        credentials = self._session.get_credentials()
+        if not credentials:
+            raise ValueError("Unable to load AWS credentials via boto3")
+
+        creds = credentials.get_frozen_credentials()
+        if not creds.access_key or not creds.secret_key:
+            raise ValueError("AWS credentials are incomplete")
+
+        expiry = getattr(credentials, "_expiry_time", None)
+
+        self._cached = AWSCredentialsIdentity(
+            access_key_id=creds.access_key,
+            secret_access_key=creds.secret_key,
+            session_token=creds.token or None,
+            expiration=expiry,
+        )
+        return self._cached
 
 
 class RealtimeConnection:
@@ -154,6 +198,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         region_name: str = "us-east-1",
         voice_id: str = "matthew",
         reconnect_after_minutes=5.0,  # Attempt to reconnect during silence after 5 minutes. Reconnect is forced after 7 minutes
+        aws_profile: Optional[str] = None,
         **kwargs,
     ) -> None:
         """ """
@@ -173,7 +218,9 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         config = Config(
             endpoint_uri=f"https://bedrock-runtime.{region_name}.amazonaws.com",
             region=region_name,
-            aws_credentials_identity_resolver=EnvironmentCredentialsResolver(),
+            aws_credentials_identity_resolver=Boto3CredentialsResolver(
+                profile_name=aws_profile
+            ),
         )
         self.client = BedrockRuntimeClient(config=config)
         self.logger = logging.getLogger(__name__)
@@ -246,11 +293,8 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         self.last_connected_at = datetime.datetime.now()
 
         # Start listener task
-        self._handle_event_task = asyncio.create_task(self._handle_events())
-
-        # Start reconnection check task
-        self._reconnection_check_task = asyncio.create_task(
-            self._reconnection_check_loop()
+        self._handle_event_task = asyncio.create_task(
+            self._handle_events(self.connection)
         )
 
         # send start and prompt event
@@ -273,6 +317,11 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         await self.content_input(self._instructions, "SYSTEM")
 
         self.connected = True
+
+        # Start reconnection check task
+        self._reconnection_check_task = asyncio.create_task(
+            self._reconnection_check_loop()
+        )
         logger.info("AWS Bedrock connection established")
 
     async def reconnect(self):
@@ -287,6 +336,11 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
 
         self._reconnecting = True
         reconnect_succeeded = False
+        # Track provisional new connection + listener in locals so the
+        # failure path in `finally` can tear them down without leaking a
+        # stream or a live task.
+        new_connection: Optional[RealtimeConnection] = None
+        new_handle_task: Optional[asyncio.Task[Any]] = None
         try:
             logger.info("Reconnecting to AWS Bedrock")
 
@@ -302,15 +356,37 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
 
             # Now swap the connections
             old_connection = self.connection
+            old_handle_task = self._handle_event_task
             self.connection = new_connection
             # Update timestamp
             self.last_connected_at = datetime.datetime.now()
 
-            # stop old events
-            if self._handle_event_task:
-                self._handle_event_task.cancel()
-            # create the new one
-            self._handle_event_task = asyncio.create_task(self._handle_events())
+            # Start new listener bound to the new connection before tearing
+            # down the old one, so no inbound events are dropped.
+            new_handle_task = asyncio.create_task(self._handle_events(new_connection))
+            self._handle_event_task = new_handle_task
+
+            # Gracefully shut the old stream BEFORE touching the old listener
+            # task. Closing input_stream lets the old receive() raise
+            # StopAsyncIteration so the task exits cleanly and awscrt stops
+            # delivering body chunks into its (otherwise-cancelled) future.
+            # Reference: awscrt/aio/http.py _on_body calls
+            # future.set_result(chunk); cancelling the task mid-stream makes
+            # that raise InvalidStateError.
+            if old_connection:
+                await old_connection.close()
+
+            if old_handle_task:
+                # Use asyncio.wait (not wait_for) so a late exception raised
+                # by the old handler during its teardown doesn't propagate
+                # out of reconnect() and trip the finally block into
+                # flipping self.connected to False.
+                _, pending = await asyncio.wait([old_handle_task], timeout=2.0)
+                if pending:
+                    logger.warning(
+                        "Old handle_events task did not exit in time, cancelling"
+                    )
+                await cancel_and_wait(old_handle_task)
 
             # Resend system instructions
             if self._instructions:
@@ -318,15 +394,24 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
 
             # TODO: Resend summary of conversation history if needed
 
-            # Close old connection
-            if old_connection:
-                await old_connection.close()
-
             reconnect_succeeded = True
             logger.info("Reconnection successful")
         finally:
             self._reconnecting = False
             if not reconnect_succeeded:
+                # Reconnect failed mid-setup. Release the provisional
+                # resources we created so we don't leak a stream or task.
+                # The session is considered dead; the caller can retry or
+                # close().
+                if new_handle_task is not None:
+                    await cancel_and_wait(new_handle_task)
+                if new_connection is not None:
+                    try:
+                        await new_connection.close()
+                    except Exception:
+                        logger.exception(
+                            "Error closing provisional new connection during reconnect cleanup"
+                        )
                 self.connected = False
 
     def _should_reconnect(self) -> bool:
@@ -362,7 +447,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         elif running_minutes > FORCE_RECONNECT_IN_MINUTES:
             should_reconnect = True
 
-        logger.info(
+        logger.debug(
             "Connection is %.2f seconds old. Silence: %s, should reconnect is %s",
             running.total_seconds(),
             has_silence,
@@ -774,6 +859,17 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         if not self.connected:
             return
 
+        # Stop the reconnection check loop BEFORE any awaits below. Otherwise
+        # it can fire _should_reconnect() -> reconnect() during
+        # _await_pending_tools() or the promptEnd/sessionEnd sends, swap
+        # self.connection / self._handle_event_task underneath us, and leave
+        # us tearing down the wrong stream.
+        if self._reconnection_check_task:
+            await cancel_and_wait(self._reconnection_check_task)
+            self._reconnection_check_task = None
+
+        await self._await_pending_tools()
+
         if self.connection:
             prompt_end = {
                 "event": {
@@ -789,22 +885,30 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
 
             await self.connection.close()
 
+        # The stream is already closed above, so receive() should raise
+        # StopAsyncIteration and the listener exits naturally. Fall back to
+        # cancel if it hasn't exited within the timeout. asyncio.wait (not
+        # wait_for) so we don't re-raise any exception the handler raised
+        # during its own teardown.
         if self._handle_event_task:
-            self._handle_event_task.cancel()
-
-        if self._reconnection_check_task:
-            self._reconnection_check_task.cancel()
+            await asyncio.wait([self._handle_event_task], timeout=2.0)
+            await cancel_and_wait(self._handle_event_task)
 
         self.connected = False
 
-    async def _handle_events(self):
-        """Process incoming responses from AWS Bedrock."""
+    async def _handle_events(self, connection: RealtimeConnection):
+        """Process incoming responses from AWS Bedrock.
+
+        Args:
+            connection: The specific connection this listener is bound to.
+                Taking this as a parameter (rather than reading
+                ``self.connection``) means a listener started for one
+                connection won't accidentally start consuming from a new one
+                after a reconnect swap.
+        """
         while True:
             try:
-                if not self.connection:
-                    logger.warning("Connection lost, stopping event handler")
-                    break
-                output = await self.connection.await_output()
+                output = await connection.await_output()
                 result = await output[1].receive()
                 if result.value and result.value.bytes_:
                     try:
@@ -818,7 +922,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 "audioOutput" not in json_data["event"]
                                 and "usageEvent" not in json_data["event"]
                             ):
-                                logger.info(f"Received event: {json_data}")
+                                logger.debug(f"Received event: {json_data}")
 
                             if "contentStart" in json_data["event"]:
                                 content_start = json_data["event"]["contentStart"]
@@ -961,7 +1065,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                         tool_call_info = self._pending_tool_calls.pop(
                                             tool_use_id
                                         )
-                                        asyncio.create_task(
+                                        self._run_tool_in_background(
                                             self._handle_tool_call(
                                                 tool_name=tool_call_info["toolName"],
                                                 tool_use_id=tool_call_info["toolUseId"],

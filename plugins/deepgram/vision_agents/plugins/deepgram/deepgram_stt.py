@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, Optional
+from typing import Any, AsyncContextManager, Optional
 
 from deepgram import AsyncDeepgramClient
 from deepgram.core import EventType
@@ -79,7 +79,9 @@ class STT(stt.STT):
         self._current_participant: Optional[Participant] = None
         self.connection: Optional[AsyncV2SocketClient] = None
         self._connection_ready = asyncio.Event()
-        self._connection_context: Optional[Any] = None
+        self._connection_context: Optional[AsyncContextManager[AsyncV2SocketClient]] = (
+            None
+        )
         self._listen_task: Optional[asyncio.Task[Any]] = None
         # Track when audio processing started for latency measurement
         self._audio_start_time: Optional[float] = None
@@ -297,13 +299,23 @@ class STT(stt.STT):
         # Close connection
         if self.connection and self._connection_context:
             try:
-                # Handle API differences between deepgram-sdk versions
                 close_msg = ListenV2CloseStream(type="CloseStream")
                 await self.connection.send_close_stream(close_msg)
+            except Exception as exc:
+                logger.warning(f"Error sending close stream to Deepgram: {exc}")
+
+            try:
                 await self._connection_context.__aexit__(None, None, None)
             except Exception as exc:
-                logger.warning(f"Error closing Deepgram websocket connection: {exc}")
+                logger.warning(f"Error closing Deepgram connection context: {exc}")
             finally:
                 self.connection = None
                 self._connection_context = None
                 self._connection_ready.clear()
+
+        # SDK doesn't expose a public aclose() - workaround using internals
+        wrapper = getattr(self.client, "_client_wrapper", None)
+        http_client = getattr(wrapper, "httpx_client", None)
+        httpx_client = getattr(http_client, "httpx_client", None)
+        if httpx_client is not None:
+            await httpx_client.aclose()
