@@ -113,6 +113,9 @@ def _classify_loop_error(exc: Exception) -> tuple[str, str, bool]:
         case APIError(code=int(code)) if code in RECONNECT_CLOSE_CODES:
             return RECONNECT, f"API error code {code}", False
 
+        case APIError(code=int(code)):
+            return STOP, f"API error code {code}", False
+
     return RETRY, str(exc), False
 
 

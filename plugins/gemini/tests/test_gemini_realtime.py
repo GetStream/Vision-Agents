@@ -514,7 +514,7 @@ class TestGeminiRealtimeProcessingLoop:
         rt = _make_realtime()
 
         async def _raise_closed_error():
-            raise websockets.ConnectionClosedError(Close(1006, "abnormal"), None)
+            raise websockets.ConnectionClosedError(Close(1002, "protocol error"), None)
 
         rt._process_events = _raise_closed_error
 
@@ -526,7 +526,7 @@ class TestGeminiRealtimeProcessingLoop:
         assert len(emitted) == 1
         assert isinstance(emitted[0], RealtimeDisconnectedEvent)
         assert emitted[0].was_clean is False
-        assert "1006" in emitted[0].reason
+        assert "1002" in emitted[0].reason
 
     async def test_reconnectable_close_triggers_reconnect(self):
         rt = _make_realtime()
@@ -600,7 +600,7 @@ class TestGeminiRealtimeProcessingLoop:
         rt = _make_realtime()
 
         async def _raise_api_error():
-            raise APIError(1006, None, None)
+            raise APIError(1002, None, None)
 
         rt._process_events = _raise_api_error
 
