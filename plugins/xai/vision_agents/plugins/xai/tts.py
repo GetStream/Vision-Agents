@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import os
+import wave
 from typing import Any, AsyncIterator, Iterator, Literal, Optional
 
 import aiohttp
@@ -9,6 +10,13 @@ import numpy as np
 
 from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core import tts
+
+try:
+    from pydub import AudioSegment
+
+    _PYDUB_AVAILABLE = True
+except ImportError:
+    _PYDUB_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +34,12 @@ Codec = Literal["mp3", "wav", "pcm", "mulaw", "alaw"]
 SampleRate = Literal[8000, 16000, 22050, 24000, 44100, 48000]
 
 
-class TTS(tts.TTS):
-    """
-    Grok (xAI) Text-to-Speech integration for Vision Agents.
+class XAITTS(tts.TTS):
+    """xAI (Grok) Text-to-Speech integration for Vision Agents.
 
-    Uses the xAI TTS REST API to convert text into spoken audio.
-    Supports five expressive voices, inline speech tags for fine-grained
-    delivery control, and multiple output formats.
+    Uses the xAI TTS REST API to convert text into spoken audio. Supports
+    five expressive voices, inline speech tags for fine-grained delivery
+    control, and multiple output formats.
 
     Speech tags supported in text:
         Inline:  [pause] [long-pause] [laugh] [chuckle] [giggle] [cry]
@@ -58,8 +65,7 @@ class TTS(tts.TTS):
         base_url: Optional[str] = None,
         session: Optional[aiohttp.ClientSession] = None,
     ) -> None:
-        """
-        Initialize the Grok TTS service.
+        """Initialize the xAI TTS service.
 
         Args:
             api_key: xAI API key. Falls back to XAI_API_KEY env var.
@@ -71,7 +77,7 @@ class TTS(tts.TTS):
             base_url: Override the API endpoint URL.
             session: Optional pre-existing aiohttp.ClientSession.
         """
-        super().__init__(provider_name="grok_tts")
+        super().__init__(provider_name="xai")
 
         self._api_key = api_key or os.environ.get("XAI_API_KEY")
         if not self._api_key:
@@ -113,8 +119,7 @@ class TTS(tts.TTS):
     async def stream_audio(
         self, text: str, *_, **kwargs: Any
     ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:
-        """
-        Convert text to speech using the Grok TTS API.
+        """Convert text to speech using the xAI TTS API.
 
         Args:
             text: Text to synthesize (max 15,000 chars). Supports speech tags.
@@ -137,36 +142,40 @@ class TTS(tts.TTS):
         for attempt in range(max_retries):
             try:
                 async with session.post(
-                    self._base_url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=60)
+                    self._base_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=60),
                 ) as resp:
                     if resp.status == 200:
                         audio_bytes = await resp.read()
                         return self._decode_audio(audio_bytes)
 
                     if resp.status in (429, 500, 503):
-                        wait = 2 ** attempt
+                        wait = 2**attempt
                         logger.warning(
-                            "Grok TTS returned %d, retrying in %ds (attempt %d/%d)",
-                            resp.status, wait, attempt + 1, max_retries,
+                            "xAI TTS returned %d, retrying in %ds (attempt %d/%d)",
+                            resp.status,
+                            wait,
+                            attempt + 1,
+                            max_retries,
                         )
                         await asyncio.sleep(wait)
                         continue
 
                     error_body = await resp.text()
-                    raise RuntimeError(
-                        f"Grok TTS API error {resp.status}: {error_body}"
-                    )
+                    raise RuntimeError(f"xAI TTS API error {resp.status}: {error_body}")
             except asyncio.CancelledError:
                 raise
             except aiohttp.ClientError as e:
                 if attempt < max_retries - 1:
-                    wait = 2 ** attempt
+                    wait = 2**attempt
                     logger.warning("Network error: %s, retrying in %ds", e, wait)
                     await asyncio.sleep(wait)
                     continue
                 raise
 
-        raise RuntimeError("Grok TTS: max retries exceeded")
+        raise RuntimeError("xAI TTS: max retries exceeded")
 
     def _decode_audio(self, audio_bytes: bytes) -> PcmData:
         """Decode raw audio bytes into PcmData based on the configured codec."""
@@ -188,7 +197,6 @@ class TTS(tts.TTS):
                 format=AudioFormat.S16,
             )
 
-        # MP3 and WAV: use the built-in decoder
         return self._decode_compressed(audio_bytes)
 
     @staticmethod
@@ -196,18 +204,13 @@ class TTS(tts.TTS):
         """Decode G.711 mu-law or A-law encoded bytes to 16-bit PCM."""
         raw = np.frombuffer(data, dtype=np.uint8)
         if law == "mulaw":
-            return TTS._ulaw_decode(raw)
-        return TTS._alaw_decode(raw)
+            return XAITTS._ulaw_decode(raw)
+        return XAITTS._alaw_decode(raw)
 
     @staticmethod
     def _ulaw_decode(data: np.ndarray) -> np.ndarray:
         """Decode mu-law compressed audio to linear 16-bit PCM."""
         BIAS = 0x84
-        CLIP = 32635
-
-        sign = data & 0x80
-        exponent = (data >> 4) & 0x07
-        mantissa = data & 0x0F
 
         data = ~data
         sign = (data & 0x80).astype(np.int16)
@@ -217,29 +220,31 @@ class TTS(tts.TTS):
         magnitude = ((mantissa << 1) | 0x21) << (exponent + 2)
         magnitude = magnitude - BIAS
 
-        result = np.where(sign != 0, -magnitude, magnitude).astype(np.int16)
-        return result
+        return np.where(sign != 0, -magnitude, magnitude).astype(np.int16)
 
     @staticmethod
     def _alaw_decode(data: np.ndarray) -> np.ndarray:
-        """Decode A-law compressed audio to linear 16-bit PCM."""
-        data = data ^ 0x55
+        """Decode A-law compressed audio to linear 16-bit PCM (ITU G.711)."""
+        # Cast to int32 so the negation below doesn't wrap on uint8.
+        data = (data ^ 0x55).astype(np.int32)
         sign = data & 0x80
         exponent = (data >> 4) & 0x07
         mantissa = data & 0x0F
 
-        if_exp_zero = (mantissa << 1) | 1
-        if_exp_nonzero = ((mantissa << 1) | 0x21) << (exponent - 1)
-
+        # exp == 0:  magnitude = (mantissa << 4) | 0x08
+        # exp  > 0:  magnitude = ((mantissa << 4) | 0x108) << (exp - 1)
+        # `safe_shift` avoids a negative shift count for the exp == 0 branch
+        # (np.where evaluates both arrays before selecting).
+        safe_shift = np.maximum(exponent - 1, 0)
+        if_exp_zero = (mantissa << 4) | 0x08
+        if_exp_nonzero = ((mantissa << 4) | 0x108) << safe_shift
         magnitude = np.where(exponent == 0, if_exp_zero, if_exp_nonzero)
-        result = np.where(sign != 0, -magnitude, magnitude).astype(np.int16)
-        return result
+
+        return np.where(sign != 0, -magnitude, magnitude).astype(np.int16)
 
     def _decode_compressed(self, audio_bytes: bytes) -> PcmData:
-        """Decode MP3 or WAV audio to PcmData via the wave module (WAV) or pydub (MP3)."""
+        """Decode MP3 or WAV audio to PcmData."""
         if self.codec == "wav":
-            import wave
-
             with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
                 raw = wf.readframes(wf.getnframes())
                 sr = wf.getframerate()
@@ -251,13 +256,10 @@ class TTS(tts.TTS):
                     format=AudioFormat.S16,
                 )
 
-        # MP3 fallback using pydub
-        try:
-            from pydub import AudioSegment
-        except ImportError:
+        if not _PYDUB_AVAILABLE:
             raise ImportError(
                 "pydub is required to decode MP3 audio. "
-                "Install it with: pip install pydub"
+                "Install it with: uv add 'vision-agents-plugins-xai[mp3]'"
             )
 
         segment = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
@@ -278,7 +280,7 @@ class TTS(tts.TTS):
                 await self._current_task
             except asyncio.CancelledError:
                 pass
-        logger.info("Grok TTS stop requested")
+        logger.info("xAI TTS stop requested")
 
     async def close(self) -> None:
         """Close the TTS provider and clean up resources."""

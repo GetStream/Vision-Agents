@@ -1,13 +1,12 @@
-"""
-Grok TTS — Customer Support Example
+"""xAI TTS — Customer Support Example
 
 A voice agent that handles customer support for a SaaS product.
-Uses the 'rex' voice (confident, clear) for a professional support experience.
+Uses the 'rex' voice (confident, clear) for a professional support experience,
+backed by Grok for the LLM.
 
 Requirements (environment variables):
-    XAI_API_KEY          — xAI / Grok API key
+    XAI_API_KEY          — xAI / Grok API key (used for both LLM and TTS)
     DEEPGRAM_API_KEY     — Deepgram STT key
-    GOOGLE_API_KEY       — Google Gemini key
     STREAM_API_KEY       — Stream API key
     STREAM_API_SECRET    — Stream API secret
 """
@@ -18,8 +17,7 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import deepgram, gemini, getstream, smart_turn
-from vision_agents.plugins import grok_tts
+from vision_agents.plugins import deepgram, getstream, smart_turn, xai
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +57,14 @@ Tone guidelines:
 
 
 async def create_agent(**kwargs) -> Agent:
-    """Create a customer support agent with Grok TTS (rex voice)."""
+    """Create a customer support agent with xAI TTS (rex voice)."""
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Alex - CloudSync Support", id="agent"),
         instructions=CUSTOMER_SUPPORT_INSTRUCTIONS,
-        tts=grok_tts.TTS(voice="rex"),
+        tts=xai.TTS(voice="rex"),
         stt=deepgram.STT(eager_turn_detection=True),
-        llm=gemini.LLM(),
+        llm=xai.LLM(model="grok-4-latest"),
         turn_detection=smart_turn.TurnDetection(
             silence_duration_ms=2000,
             speech_probability_threshold=0.5,
