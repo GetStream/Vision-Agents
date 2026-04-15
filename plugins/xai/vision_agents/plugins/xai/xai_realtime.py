@@ -1,10 +1,9 @@
-"""
-xAI Realtime API implementation for real-time AI audio communication using WebSocket.
+"""xAI Realtime API implementation for real-time AI audio communication using WebSocket.
 
-The xAI SDK (as of 1.5.0) provides AsyncClient for text/multimodal APIs, but does not
-include a WebSocket wrapper for the realtime voice API. This implementation uses the
-websockets library directly for the realtime connection while leveraging the SDK's
-AsyncClient for ephemeral token generation and configuration.
+The xAI SDK (verified through 1.11.0) provides AsyncClient for text/multimodal APIs
+but ships no WebSocket wrapper for the realtime voice API. This implementation uses
+the `websockets` library directly for the realtime connection while leveraging the
+SDK's AsyncClient for ephemeral token generation and configuration.
 
 See: https://docs.x.ai/docs/guides/voice/agent
 """
@@ -18,6 +17,7 @@ import os
 from asyncio import CancelledError
 from typing import Any, Optional
 
+import aiohttp
 import websockets
 from websockets.asyncio.client import ClientConnection
 from xai_sdk import AsyncClient
@@ -31,7 +31,7 @@ from vision_agents.core.llm.llm_types import ToolSchema
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "grok-3-fast"
+DEFAULT_MODEL = "grok-4"
 DEFAULT_VOICE = "Ara"
 WEBSOCKET_URL = "wss://api.x.ai/v1/realtime"
 EPHEMERAL_TOKEN_URL = "https://api.x.ai/v1/realtime/client_secrets"
@@ -62,8 +62,9 @@ class XAIRealtime(realtime.Realtime):
     audio streaming with voice AI capabilities. The SDK's AsyncClient is used
     for configuration and potential ephemeral token generation.
 
-    Note: The xAI SDK (1.5.0+) does not yet include a WebSocket wrapper for the
-    realtime voice API, so this implementation uses the websockets library directly.
+    Note: As of xai-sdk 1.11, the SDK still does not include a WebSocket wrapper
+    for the realtime voice API, so this implementation uses the websockets library
+    directly.
 
     Examples:
 
@@ -169,10 +170,8 @@ class XAIRealtime(realtime.Realtime):
             The ephemeral token string.
 
         Raises:
-            Exception: If token fetching fails.
+            aiohttp.ClientError: If token fetching fails.
         """
-        import aiohttp
-
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 EPHEMERAL_TOKEN_URL,
@@ -224,7 +223,7 @@ class XAIRealtime(realtime.Realtime):
                     additional_headers={"Authorization": f"Bearer {auth_token}"},
                 )
             )
-        except Exception as e:
+        except (OSError, websockets.WebSocketException, asyncio.TimeoutError) as e:
             logger.error(f"Failed to connect to xAI realtime: {e}")
             logger.error("Check that XAI_API_KEY is valid and has realtime API access")
             raise
@@ -310,7 +309,7 @@ class XAIRealtime(realtime.Realtime):
 
         try:
             await self._exit_stack.aclose()
-        except Exception as e:
+        except (OSError, websockets.WebSocketException, RuntimeError) as e:
             logger.warning(f"Error closing xAI session: {e}")
 
         self._ws = None
@@ -350,7 +349,7 @@ class XAIRealtime(realtime.Realtime):
             await self._send_event(response_event)
 
             return LLMResponseEvent(text="", original=None)
-        except Exception as e:
+        except (ConnectionError, websockets.WebSocketException) as e:
             if _should_reconnect(e):
                 await self.connect()
             logger.exception("Failed to send message to xAI realtime")
@@ -380,7 +379,7 @@ class XAIRealtime(realtime.Realtime):
         append_event = {"type": "input_audio_buffer.append", "audio": audio_base64}
         try:
             await self._send_event(append_event)
-        except Exception as e:
+        except (ConnectionError, websockets.WebSocketException) as e:
             if _should_reconnect(e):
                 await self.connect()
             logger.exception("Failed to send audio to xAI realtime")
@@ -427,7 +426,10 @@ class XAIRealtime(realtime.Realtime):
                         f"xAI WebSocket closed with code {e.rcvd.code if e.rcvd else 'unknown'}, reconnecting..."
                     )
                     await self.connect()
-                except Exception:
+                except (websockets.WebSocketException, OSError, json.JSONDecodeError):
+                    # Transient errors during message processing — keep the loop alive.
+                    # Programming bugs (KeyError, AttributeError, ...) intentionally
+                    # propagate so they aren't silently swallowed.
                     logger.exception("Error while processing xAI realtime events")
         except CancelledError:
             logger.debug("xAI realtime processing loop cancelled")
@@ -558,7 +560,9 @@ class XAIRealtime(realtime.Realtime):
                     if content_part.get("type") == "text":
                         text = content_part.get("text", "")
                         if text:
-                            event = LLMResponseChunkEvent(delta=text)
+                            event = LLMResponseChunkEvent(
+                                delta=text, plugin_name="xai"
+                            )
                             self.events.send(event)
 
     async def _handle_function_call(self, data: dict[str, Any]) -> None:
