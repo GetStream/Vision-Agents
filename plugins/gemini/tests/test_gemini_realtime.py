@@ -539,7 +539,7 @@ class TestGeminiRealtimeProcessingLoop:
             await asyncio.sleep(10)
 
         rt._process_events = _raise_reconnectable
-        rt.connect = AsyncMock()
+        rt._establish_session = AsyncMock()
 
         emitted: list[object] = []
         rt.events.send = lambda e: emitted.append(e)
@@ -549,7 +549,7 @@ class TestGeminiRealtimeProcessingLoop:
         task.cancel()
         await task
 
-        rt.connect.assert_called_once()
+        rt._establish_session.assert_called_once()
         disconnected = [e for e in emitted if isinstance(e, RealtimeDisconnectedEvent)]
         assert len(disconnected) == 0
 
@@ -582,7 +582,7 @@ class TestGeminiRealtimeProcessingLoop:
             await asyncio.sleep(10)
 
         rt._process_events = _raise_api_error
-        rt.connect = AsyncMock()
+        rt._establish_session = AsyncMock()
 
         emitted: list[object] = []
         rt.events.send = lambda e: emitted.append(e)
@@ -592,7 +592,7 @@ class TestGeminiRealtimeProcessingLoop:
         task.cancel()
         await task
 
-        rt.connect.assert_called_once()
+        rt._establish_session.assert_called_once()
         disconnected = [e for e in emitted if isinstance(e, RealtimeDisconnectedEvent)]
         assert len(disconnected) == 0
 

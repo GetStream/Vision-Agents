@@ -321,6 +321,13 @@ class GeminiRealtime(realtime.Realtime):
         # Stop the processing task first in case we're reconnecting
         await self._stop_processing_task()
 
+        await self._establish_session()
+
+        # Start the loop task
+        await self._start_processing_task()
+
+    async def _establish_session(self):
+        """Create a new Gemini WebSocket session without managing the processing task."""
         logger.debug("Connecting to Gemini live, config set to %s", self._base_config)
         self._real_session = await self._exit_stack.enter_async_context(
             self._client.aio.live.connect(  # type: ignore[arg-type]
@@ -329,9 +336,6 @@ class GeminiRealtime(realtime.Realtime):
         )
         self.connected = True
         logger.info("Gemini live connected to session %s", self._session)
-
-        # Start the loop task
-        await self._start_processing_task()
 
     async def close(self):
         """
@@ -493,7 +497,7 @@ class GeminiRealtime(realtime.Realtime):
 
                     if action == RECONNECT:
                         logger.info("Gemini connection lost (%s), reconnecting", reason)
-                        await self.connect()
+                        await self._establish_session()
                         consecutive_errors = 0
                         continue
 
