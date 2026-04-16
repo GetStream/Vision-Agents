@@ -623,9 +623,7 @@ class XAIRealtime(realtime.Realtime):
                 if content_part.get("type") == "text":
                     text = content_part.get("text", "")
                     if text:
-                        event = LLMResponseChunkEvent(
-                            delta=text, plugin_name="xai"
-                        )
+                        event = LLMResponseChunkEvent(delta=text, plugin_name="xai")
                         self.events.send(event)
 
     async def _handle_function_call(self, data: dict[str, Any]) -> None:
