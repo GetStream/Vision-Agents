@@ -31,13 +31,16 @@ from vision_agents.core.llm.llm_types import ToolSchema
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "grok-4"
+DEFAULT_MODEL = "grok-4-1-fast-non-reasoning"
 DEFAULT_VOICE = "Ara"
 WEBSOCKET_URL = "wss://api.x.ai/v1/realtime"
 EPHEMERAL_TOKEN_URL = "https://api.x.ai/v1/realtime/client_secrets"
 
-# Default sample rate, matching webrtc here
-DEFAULT_SAMPLE_RATE = 48000
+# xAI's realtime model emits PCM at 24 kHz natively. Declaring a higher rate
+# here causes the SDK-level PcmData to be tagged with the wrong rate, which
+# then plays back at 2x speed and drains the buffer after ~1-2 seconds. The
+# downstream audio pipeline resamples to the WebRTC track's rate as needed.
+DEFAULT_SAMPLE_RATE = 24000
 
 
 def _should_reconnect(exc: Exception) -> bool:
@@ -93,7 +96,7 @@ class XAIRealtime(realtime.Realtime):
 
     Development notes:
 
-    - Audio format is PCM16 little-endian at 48kHz
+    - Audio format is PCM16 little-endian at 24 kHz (xAI's native model rate)
     - Supports server-side VAD (voice activity detection) by default
     - Web search and X search are enabled by default
     """
@@ -105,21 +108,25 @@ class XAIRealtime(realtime.Realtime):
         api_key: Optional[str] = None,
         client: Optional[AsyncClient] = None,
         turn_detection: Optional[str] = "server_vad",
+        vad_interrupt_response: bool = False,
         web_search: bool = True,
         x_search: bool = True,
         x_search_allowed_handles: Optional[list[str]] = None,
         **kwargs,
     ) -> None:
-        """
-        Initialize xAI Realtime.
+        """Initialize xAI Realtime.
 
         Args:
-            model: Model to use (currently informational, not sent to API).
+            model: Model to use. Sent to the API in session.update.
             voice: Voice to use for responses. Options: Ara, Rex, Sal, Eve, Leo.
             api_key: Optional API key. Defaults to XAI_API_KEY environment variable.
             client: Optional AsyncClient instance. If not provided, one is created.
             turn_detection: Turn detection mode. Use "server_vad" for automatic
                            voice activity detection, or None for manual control.
+            vad_interrupt_response: When True, the server auto-cancels the
+                           assistant response on detected user speech. Defaults
+                           to False because speaker-to-mic echo can otherwise
+                           cancel the agent's own response mid-sentence.
             web_search: Enable web search tool. Defaults to True.
             x_search: Enable X (Twitter) search tool. Defaults to True.
             x_search_allowed_handles: Optional list of X handles to restrict search to.
@@ -130,6 +137,7 @@ class XAIRealtime(realtime.Realtime):
         self.voice = voice
         self.sample_rate = DEFAULT_SAMPLE_RATE
         self.turn_detection = turn_detection
+        self.vad_interrupt_response = vad_interrupt_response
         self.web_search = web_search
         self.x_search = x_search
         self.x_search_allowed_handles = x_search_allowed_handles
@@ -245,9 +253,18 @@ class XAIRealtime(realtime.Realtime):
         await self._start_processing_task()
 
     async def _configure_session(self) -> None:
-        """Send session configuration to xAI."""
+        """Send session configuration to xAI.
+
+        Sends the OpenAI-realtime-compatible session.update payload that xAI
+        expects. We mirror the shape used by the livekit xAI plugin (which
+        extends `openai.realtime.RealtimeModel`) to stay aligned with what the
+        server is known to accept.
+        """
         config: dict[str, Any] = {
+            "model": self.model,
             "voice": self.voice,
+            "modalities": ["text", "audio"],
+            "input_audio_transcription": {},
             "audio": {
                 "input": {"format": {"type": "audio/pcm", "rate": self.sample_rate}},
                 "output": {"format": {"type": "audio/pcm", "rate": self.sample_rate}},
@@ -258,9 +275,19 @@ class XAIRealtime(realtime.Realtime):
             config["instructions"] = self._instructions
 
         if self.turn_detection:
-            config["turn_detection"] = {"type": self.turn_detection}
+            # Full ServerVad config. `interrupt_response=False` by default so
+            # mic echo of the agent's own voice doesn't cancel the response
+            # mid-sentence; toggle via `vad_interrupt_response=True` to opt in.
+            config["turn_detection"] = {
+                "type": self.turn_detection,
+                "threshold": 0.5,
+                "prefix_padding_ms": 300,
+                "silence_duration_ms": 200,
+                "create_response": True,
+                "interrupt_response": self.vad_interrupt_response,
+            }
         else:
-            config["turn_detection"] = {"type": None}
+            config["turn_detection"] = None
 
         # Build tools list
         tools: list[dict[str, Any]] = []
@@ -514,6 +541,25 @@ class XAIRealtime(realtime.Realtime):
             elif event_type == "response.done":
                 self._handle_response_done(data)
 
+            elif event_type in ("response.cancelled", "response.cancel"):
+                # Server-initiated cancel — typically fired when server_vad
+                # detects user speech and `interrupt_response=True`. Logging
+                # at WARNING so we can see when the response is being cut off.
+                response_id = data.get("response_id") or data.get("response", {}).get(
+                    "id"
+                )
+                logger.warning(
+                    "xAI cancelled response %s (reason: %s)",
+                    response_id,
+                    data.get("reason", "unspecified"),
+                )
+                self._emit_audio_output_done_event(
+                    response_id=response_id, interrupted=True
+                )
+
+            elif event_type == "rate_limits.updated":
+                logger.debug("Rate limits updated: %s", data.get("rate_limits"))
+
             elif event_type == "response.function_call_arguments.done":
                 # Function call from the model
                 self._run_tool_in_background(self._handle_function_call(data))
@@ -528,7 +574,11 @@ class XAIRealtime(realtime.Realtime):
                 )
 
             else:
-                logger.debug(f"Unhandled xAI event type: {event_type}")
+                # Log unhandled events at INFO so diagnostics are visible
+                # without needing DEBUG. Full payload still logged at DEBUG.
+                logger.info("Unhandled xAI event type: %s", event_type)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Unhandled xAI event payload: %s", data)
 
     def _handle_conversation_item_added(self, data: dict[str, Any]) -> None:
         """Handle conversation.item.added event."""
