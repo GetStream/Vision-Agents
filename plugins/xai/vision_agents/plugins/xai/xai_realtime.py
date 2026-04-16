@@ -368,11 +368,7 @@ class XAIRealtime(realtime.Realtime):
             }
             await self._send_event(create_event)
 
-            # Request a response
-            response_event = {
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]},
-            }
+            response_event = {"type": "response.create"}
             await self._send_event(response_event)
 
             return LLMResponseEvent(text="", original=None)
@@ -472,7 +468,15 @@ class XAIRealtime(realtime.Realtime):
 
             logger.debug(f"Received xAI event: {event_type}")
 
-            if event_type == "session.updated":
+            if event_type in (
+                "ping",
+                "response.content_part.added",
+                "response.content_part.done",
+                "response.output_item.done",
+            ):
+                logger.debug("Received %s", event_type)
+
+            elif event_type == "session.updated":
                 logger.debug("xAI session configuration updated")
 
             elif event_type == "conversation.created":
@@ -600,26 +604,47 @@ class XAIRealtime(realtime.Realtime):
         """Handle response.done event."""
         response = data.get("response", {})
         status = response.get("status", "completed")
-        logger.debug(f"Response completed with status: {status}")
+        logger.debug("Response completed with status: %s", status)
 
-        # Emit text delta if there's any text content
         output = response.get("output", [])
         for item in output:
-            if item.get("type") == "message":
-                for content_part in item.get("content", []):
-                    if content_part.get("type") == "text":
-                        text = content_part.get("text", "")
-                        if text:
-                            event = LLMResponseChunkEvent(
-                                delta=text, plugin_name="xai"
-                            )
-                            self.events.send(event)
+            if item.get("type") != "message":
+                continue
+            content = item.get("content", [])
+            # If the response includes audio, the transcript was already
+            # streamed in real-time via response.output_audio_transcript
+            # events and written to the conversation by the agent's
+            # on_realtime_agent_speech_transcription handler. Re-emitting
+            # the text here would create a duplicate chat message.
+            has_audio = any(cp.get("type") == "audio" for cp in content)
+            if has_audio:
+                continue
+            for content_part in content:
+                if content_part.get("type") == "text":
+                    text = content_part.get("text", "")
+                    if text:
+                        event = LLMResponseChunkEvent(
+                            delta=text, plugin_name="xai"
+                        )
+                        self.events.send(event)
 
     async def _handle_function_call(self, data: dict[str, Any]) -> None:
         """Handle function calls from xAI realtime."""
         function_name = data.get("name", "unknown")
         call_id = data.get("call_id", "")
         arguments_str = data.get("arguments", "{}")
+
+        # xAI also emits response.function_call_arguments.done for its
+        # server-side tools (e.g. x_search's x_keyword_search). Those are
+        # executed on the server; we must not respond with a local
+        # function_call_output or the server treats our reply as an error
+        # and generates a second, apologetic response.
+        if self.function_registry.get_function(function_name) is None:
+            logger.debug(
+                "Ignoring server-side tool call %s (not in local registry)",
+                function_name,
+            )
+            return
 
         try:
             arguments = json.loads(arguments_str) if arguments_str else {}
