@@ -268,8 +268,7 @@ class XAILLM(LLM):
     def _extract_tool_calls_from_response(
         self, response: Response
     ) -> List[NormalizedToolCallItem]:
-        """
-        Extract tool calls from xAI response.
+        """Extract tool calls from xAI response.
 
         Args:
             response: xAI Response object
@@ -278,26 +277,19 @@ class XAILLM(LLM):
             List of normalized tool call items
         """
         calls = []
-        tool_calls = getattr(response, "tool_calls", None) or []
-        for tc in tool_calls:
-            func = getattr(tc, "function", None)
-            if not func:
-                continue
-
-            name = getattr(func, "name", "unknown")
-            args_str = getattr(func, "arguments", "{}")
-            call_id = getattr(tc, "id", "") or getattr(tc, "call_id", "")
+        for tc in response.tool_calls:
+            func = tc.function
+            name = func.name or "unknown"
+            args_str = func.arguments or "{}"
 
             try:
-                args_obj = (
-                    json.loads(args_str) if isinstance(args_str, str) else args_str
-                )
-            except Exception:
+                args_obj = json.loads(args_str)
+            except json.JSONDecodeError:
                 args_obj = {}
 
             call_item: NormalizedToolCallItem = {
                 "type": "tool_call",
-                "id": call_id,
+                "id": tc.id,
                 "name": name,
                 "arguments_json": args_obj,
             }

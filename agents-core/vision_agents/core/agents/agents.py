@@ -1460,8 +1460,12 @@ class Agent:
                     await self._audio_track.write(event.data)
 
             @self.events.subscribe
-            async def on_audio_done(_: RealtimeAudioOutputDoneEvent):
-                if self._audio_track is not None and not self.audio_publishers:
+            async def on_audio_done(event: RealtimeAudioOutputDoneEvent):
+                if (
+                    event.interrupted
+                    and self._audio_track is not None
+                    and not self.audio_publishers
+                ):
                     await self._audio_track.flush()
 
         # Set up video track if video publishers are available

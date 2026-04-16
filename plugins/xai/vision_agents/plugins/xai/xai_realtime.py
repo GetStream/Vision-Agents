@@ -1,10 +1,9 @@
-"""
-xAI Realtime API implementation for real-time AI audio communication using WebSocket.
+"""xAI Realtime API implementation for real-time AI audio communication using WebSocket.
 
-The xAI SDK (as of 1.5.0) provides AsyncClient for text/multimodal APIs, but does not
-include a WebSocket wrapper for the realtime voice API. This implementation uses the
-websockets library directly for the realtime connection while leveraging the SDK's
-AsyncClient for ephemeral token generation and configuration.
+The xAI SDK (verified through 1.11.0) provides AsyncClient for text/multimodal APIs
+but ships no WebSocket wrapper for the realtime voice API. This implementation uses
+the `websockets` library directly for the realtime connection while leveraging the
+SDK's AsyncClient for ephemeral token generation and configuration.
 
 See: https://docs.x.ai/docs/guides/voice/agent
 """
@@ -18,6 +17,7 @@ import os
 from asyncio import CancelledError
 from typing import Any, Optional
 
+import aiohttp
 import websockets
 from websockets.asyncio.client import ClientConnection
 from xai_sdk import AsyncClient
@@ -31,13 +31,16 @@ from vision_agents.core.llm.llm_types import ToolSchema
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "grok-3-fast"
+DEFAULT_MODEL = "grok-4-1-fast-non-reasoning"
 DEFAULT_VOICE = "Ara"
 WEBSOCKET_URL = "wss://api.x.ai/v1/realtime"
 EPHEMERAL_TOKEN_URL = "https://api.x.ai/v1/realtime/client_secrets"
 
-# Default sample rate, matching webrtc here
-DEFAULT_SAMPLE_RATE = 48000
+# xAI's realtime model emits PCM at 24 kHz natively. Declaring a higher rate
+# here causes the SDK-level PcmData to be tagged with the wrong rate, which
+# then plays back at 2x speed and drains the buffer after ~1-2 seconds. The
+# downstream audio pipeline resamples to the WebRTC track's rate as needed.
+DEFAULT_SAMPLE_RATE = 24000
 
 
 def _should_reconnect(exc: Exception) -> bool:
@@ -62,8 +65,9 @@ class XAIRealtime(realtime.Realtime):
     audio streaming with voice AI capabilities. The SDK's AsyncClient is used
     for configuration and potential ephemeral token generation.
 
-    Note: The xAI SDK (1.5.0+) does not yet include a WebSocket wrapper for the
-    realtime voice API, so this implementation uses the websockets library directly.
+    Note: As of xai-sdk 1.11, the SDK still does not include a WebSocket wrapper
+    for the realtime voice API, so this implementation uses the websockets library
+    directly.
 
     Examples:
 
@@ -92,7 +96,7 @@ class XAIRealtime(realtime.Realtime):
 
     Development notes:
 
-    - Audio format is PCM16 little-endian at 48kHz
+    - Audio format is PCM16 little-endian at 24 kHz (xAI's native model rate)
     - Supports server-side VAD (voice activity detection) by default
     - Web search and X search are enabled by default
     """
@@ -104,21 +108,25 @@ class XAIRealtime(realtime.Realtime):
         api_key: Optional[str] = None,
         client: Optional[AsyncClient] = None,
         turn_detection: Optional[str] = "server_vad",
+        vad_interrupt_response: bool = False,
         web_search: bool = True,
         x_search: bool = True,
         x_search_allowed_handles: Optional[list[str]] = None,
         **kwargs,
     ) -> None:
-        """
-        Initialize xAI Realtime.
+        """Initialize xAI Realtime.
 
         Args:
-            model: Model to use (currently informational, not sent to API).
+            model: Model to use. Sent to the API in session.update.
             voice: Voice to use for responses. Options: Ara, Rex, Sal, Eve, Leo.
             api_key: Optional API key. Defaults to XAI_API_KEY environment variable.
             client: Optional AsyncClient instance. If not provided, one is created.
             turn_detection: Turn detection mode. Use "server_vad" for automatic
                            voice activity detection, or None for manual control.
+            vad_interrupt_response: When True, the server auto-cancels the
+                           assistant response on detected user speech. Defaults
+                           to False because speaker-to-mic echo can otherwise
+                           cancel the agent's own response mid-sentence.
             web_search: Enable web search tool. Defaults to True.
             x_search: Enable X (Twitter) search tool. Defaults to True.
             x_search_allowed_handles: Optional list of X handles to restrict search to.
@@ -129,6 +137,7 @@ class XAIRealtime(realtime.Realtime):
         self.voice = voice
         self.sample_rate = DEFAULT_SAMPLE_RATE
         self.turn_detection = turn_detection
+        self.vad_interrupt_response = vad_interrupt_response
         self.web_search = web_search
         self.x_search = x_search
         self.x_search_allowed_handles = x_search_allowed_handles
@@ -169,10 +178,8 @@ class XAIRealtime(realtime.Realtime):
             The ephemeral token string.
 
         Raises:
-            Exception: If token fetching fails.
+            aiohttp.ClientError: If token fetching fails.
         """
-        import aiohttp
-
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 EPHEMERAL_TOKEN_URL,
@@ -224,7 +231,7 @@ class XAIRealtime(realtime.Realtime):
                     additional_headers={"Authorization": f"Bearer {auth_token}"},
                 )
             )
-        except Exception as e:
+        except (OSError, websockets.WebSocketException, asyncio.TimeoutError) as e:
             logger.error(f"Failed to connect to xAI realtime: {e}")
             logger.error("Check that XAI_API_KEY is valid and has realtime API access")
             raise
@@ -246,9 +253,18 @@ class XAIRealtime(realtime.Realtime):
         await self._start_processing_task()
 
     async def _configure_session(self) -> None:
-        """Send session configuration to xAI."""
+        """Send session configuration to xAI.
+
+        Sends the OpenAI-realtime-compatible session.update payload that xAI
+        expects. We mirror the shape used by the livekit xAI plugin (which
+        extends `openai.realtime.RealtimeModel`) to stay aligned with what the
+        server is known to accept.
+        """
         config: dict[str, Any] = {
+            "model": self.model,
             "voice": self.voice,
+            "modalities": ["text", "audio"],
+            "input_audio_transcription": {},
             "audio": {
                 "input": {"format": {"type": "audio/pcm", "rate": self.sample_rate}},
                 "output": {"format": {"type": "audio/pcm", "rate": self.sample_rate}},
@@ -259,9 +275,19 @@ class XAIRealtime(realtime.Realtime):
             config["instructions"] = self._instructions
 
         if self.turn_detection:
-            config["turn_detection"] = {"type": self.turn_detection}
+            # Full ServerVad config. `interrupt_response=False` by default so
+            # mic echo of the agent's own voice doesn't cancel the response
+            # mid-sentence; toggle via `vad_interrupt_response=True` to opt in.
+            config["turn_detection"] = {
+                "type": self.turn_detection,
+                "threshold": 0.5,
+                "prefix_padding_ms": 300,
+                "silence_duration_ms": 200,
+                "create_response": True,
+                "interrupt_response": self.vad_interrupt_response,
+            }
         else:
-            config["turn_detection"] = {"type": None}
+            config["turn_detection"] = None
 
         # Build tools list
         tools: list[dict[str, Any]] = []
@@ -310,7 +336,7 @@ class XAIRealtime(realtime.Realtime):
 
         try:
             await self._exit_stack.aclose()
-        except Exception as e:
+        except (OSError, websockets.WebSocketException, RuntimeError) as e:
             logger.warning(f"Error closing xAI session: {e}")
 
         self._ws = None
@@ -342,15 +368,11 @@ class XAIRealtime(realtime.Realtime):
             }
             await self._send_event(create_event)
 
-            # Request a response
-            response_event = {
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]},
-            }
+            response_event = {"type": "response.create"}
             await self._send_event(response_event)
 
             return LLMResponseEvent(text="", original=None)
-        except Exception as e:
+        except (ConnectionError, websockets.WebSocketException) as e:
             if _should_reconnect(e):
                 await self.connect()
             logger.exception("Failed to send message to xAI realtime")
@@ -380,7 +402,7 @@ class XAIRealtime(realtime.Realtime):
         append_event = {"type": "input_audio_buffer.append", "audio": audio_base64}
         try:
             await self._send_event(append_event)
-        except Exception as e:
+        except (ConnectionError, websockets.WebSocketException) as e:
             if _should_reconnect(e):
                 await self.connect()
             logger.exception("Failed to send audio to xAI realtime")
@@ -427,7 +449,10 @@ class XAIRealtime(realtime.Realtime):
                         f"xAI WebSocket closed with code {e.rcvd.code if e.rcvd else 'unknown'}, reconnecting..."
                     )
                     await self.connect()
-                except Exception:
+                except (websockets.WebSocketException, OSError, json.JSONDecodeError):
+                    # Transient errors during message processing — keep the loop alive.
+                    # Programming bugs (KeyError, AttributeError, ...) intentionally
+                    # propagate so they aren't silently swallowed.
                     logger.exception("Error while processing xAI realtime events")
         except CancelledError:
             logger.debug("xAI realtime processing loop cancelled")
@@ -443,7 +468,15 @@ class XAIRealtime(realtime.Realtime):
 
             logger.debug(f"Received xAI event: {event_type}")
 
-            if event_type == "session.updated":
+            if event_type in (
+                "ping",
+                "response.content_part.added",
+                "response.content_part.done",
+                "response.output_item.done",
+            ):
+                logger.debug("Received %s", event_type)
+
+            elif event_type == "session.updated":
                 logger.debug("xAI session configuration updated")
 
             elif event_type == "conversation.created":
@@ -512,6 +545,25 @@ class XAIRealtime(realtime.Realtime):
             elif event_type == "response.done":
                 self._handle_response_done(data)
 
+            elif event_type in ("response.cancelled", "response.cancel"):
+                # Server-initiated cancel — typically fired when server_vad
+                # detects user speech and `interrupt_response=True`. Logging
+                # at WARNING so we can see when the response is being cut off.
+                response_id = data.get("response_id") or data.get("response", {}).get(
+                    "id"
+                )
+                logger.warning(
+                    "xAI cancelled response %s (reason: %s)",
+                    response_id,
+                    data.get("reason", "unspecified"),
+                )
+                self._emit_audio_output_done_event(
+                    response_id=response_id, interrupted=True
+                )
+
+            elif event_type == "rate_limits.updated":
+                logger.debug("Rate limits updated: %s", data.get("rate_limits"))
+
             elif event_type == "response.function_call_arguments.done":
                 # Function call from the model
                 self._run_tool_in_background(self._handle_function_call(data))
@@ -526,7 +578,11 @@ class XAIRealtime(realtime.Realtime):
                 )
 
             else:
-                logger.debug(f"Unhandled xAI event type: {event_type}")
+                # Log unhandled events at INFO so diagnostics are visible
+                # without needing DEBUG. Full payload still logged at DEBUG.
+                logger.info("Unhandled xAI event type: %s", event_type)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Unhandled xAI event payload: %s", data)
 
     def _handle_conversation_item_added(self, data: dict[str, Any]) -> None:
         """Handle conversation.item.added event."""
@@ -548,24 +604,45 @@ class XAIRealtime(realtime.Realtime):
         """Handle response.done event."""
         response = data.get("response", {})
         status = response.get("status", "completed")
-        logger.debug(f"Response completed with status: {status}")
+        logger.debug("Response completed with status: %s", status)
 
-        # Emit text delta if there's any text content
         output = response.get("output", [])
         for item in output:
-            if item.get("type") == "message":
-                for content_part in item.get("content", []):
-                    if content_part.get("type") == "text":
-                        text = content_part.get("text", "")
-                        if text:
-                            event = LLMResponseChunkEvent(delta=text)
-                            self.events.send(event)
+            if item.get("type") != "message":
+                continue
+            content = item.get("content", [])
+            # If the response includes audio, the transcript was already
+            # streamed in real-time via response.output_audio_transcript
+            # events and written to the conversation by the agent's
+            # on_realtime_agent_speech_transcription handler. Re-emitting
+            # the text here would create a duplicate chat message.
+            has_audio = any(cp.get("type") == "audio" for cp in content)
+            if has_audio:
+                continue
+            for content_part in content:
+                if content_part.get("type") == "text":
+                    text = content_part.get("text", "")
+                    if text:
+                        event = LLMResponseChunkEvent(delta=text, plugin_name="xai")
+                        self.events.send(event)
 
     async def _handle_function_call(self, data: dict[str, Any]) -> None:
         """Handle function calls from xAI realtime."""
         function_name = data.get("name", "unknown")
         call_id = data.get("call_id", "")
         arguments_str = data.get("arguments", "{}")
+
+        # xAI also emits response.function_call_arguments.done for its
+        # server-side tools (e.g. x_search's x_keyword_search). Those are
+        # executed on the server; we must not respond with a local
+        # function_call_output or the server treats our reply as an error
+        # and generates a second, apologetic response.
+        if self.function_registry.get_function(function_name) is None:
+            logger.debug(
+                "Ignoring server-side tool call %s (not in local registry)",
+                function_name,
+            )
+            return
 
         try:
             arguments = json.loads(arguments_str) if arguments_str else {}

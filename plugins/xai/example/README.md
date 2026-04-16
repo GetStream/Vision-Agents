@@ -1,4 +1,21 @@
-# xAI Realtime Voice Agent Example
+# xAI Examples
+
+This directory contains examples for the xAI plugin. Two integration paths are demonstrated:
+
+1. **Realtime voice agent** — `xai_realtime_example.py`: end-to-end voice conversation using xAI's realtime WebSocket API.
+2. **TTS-based pipelined agent** — `xai_tts_customer_support_example.py`: Deepgram STT + xAI Grok LLM + xAI TTS, configured as a SaaS customer support agent with the `rex` voice.
+
+## TTS example
+
+```bash
+uv run plugins/xai/example/xai_tts_customer_support_example.py
+```
+
+The TTS example additionally requires `DEEPGRAM_API_KEY` for STT.
+
+---
+
+## Realtime voice agent
 
 This example demonstrates how to build a real-time voice conversation AI using xAI's Grok Voice Agent API with Vision Agents.
 

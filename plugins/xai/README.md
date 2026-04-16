@@ -145,11 +145,88 @@ Create a response with full control over parameters.
 
 - `XAI_API_KEY`: Your xAI API key (required if not provided in constructor)
 
+## Text-to-Speech (TTS)
+
+The plugin also ships an `xai.TTS` class powered by [xAI's Grok Voice API](https://docs.x.ai/docs/guides/voice/tts). It provides five expressive voices with inline speech tags for fine-grained delivery control.
+
+### Usage
+
+```python
+from vision_agents.plugins import xai
+
+# Default voice (eve) — energetic, upbeat
+tts = xai.TTS()
+
+# Specify a voice
+tts = xai.TTS(voice="ara")   # warm, friendly
+tts = xai.TTS(voice="leo")   # authoritative, strong
+tts = xai.TTS(voice="rex")   # confident, clear
+tts = xai.TTS(voice="sal")   # smooth, balanced
+
+# Custom output format
+tts = xai.TTS(
+    voice="rex",
+    codec="mp3",
+    sample_rate=44100,
+    bit_rate=192000,
+)
+
+# Explicit API key (otherwise reads XAI_API_KEY env var)
+tts = xai.TTS(api_key="xai-your-key-here")
+```
+
+### Configuration
+
+| Parameter     | Type   | Default   | Description                                                           |
+|---------------|--------|-----------|-----------------------------------------------------------------------|
+| `api_key`     | str    | env var   | xAI API key. Falls back to `XAI_API_KEY` environment variable.        |
+| `voice`       | str    | `"eve"`   | Voice ID: `"eve"`, `"ara"`, `"leo"`, `"rex"`, or `"sal"`.            |
+| `language`    | str    | `"en"`    | BCP-47 language code or `"auto"` for detection.                       |
+| `codec`       | str    | `"pcm"`   | Output codec: `"pcm"`, `"mp3"`, `"wav"`, `"mulaw"`, `"alaw"`.       |
+| `sample_rate` | int    | `24000`   | Sample rate: `8000`–`48000` Hz.                                       |
+| `bit_rate`    | int    | `None`    | MP3 bit rate (only used with `codec="mp3"`).                          |
+| `base_url`    | str    | `None`    | Override the xAI TTS API endpoint.                                    |
+| `session`     | object | `None`    | Optional pre-existing `aiohttp.ClientSession`.                        |
+
+### Voices
+
+| Voice | Tone                     | Best For                                       |
+|-------|--------------------------|------------------------------------------------|
+| `eve` | Energetic, upbeat        | Demos, announcements, upbeat content (default) |
+| `ara` | Warm, friendly           | Conversational interfaces, hospitality         |
+| `leo` | Authoritative, strong    | Instructional, educational, healthcare         |
+| `rex` | Confident, clear         | Business, corporate, customer support          |
+| `sal` | Smooth, balanced         | Versatile — works for any context              |
+
+### Speech tags
+
+Add expressiveness to synthesized speech with inline and wrapping tags:
+
+**Inline tags** (placed where the expression should occur):
+- Pauses: `[pause]` `[long-pause]` `[hum-tune]`
+- Laughter: `[laugh]` `[chuckle]` `[giggle]` `[cry]`
+- Mouth sounds: `[tsk]` `[tongue-click]` `[lip-smack]`
+- Breathing: `[breath]` `[inhale]` `[exhale]` `[sigh]`
+
+**Wrapping tags** (wrap text to change delivery):
+- Volume: `<soft>text</soft>` `<loud>text</loud>` `<shout>text</shout>`
+- Pitch/speed: `<high-pitch>text</high-pitch>` `<low-pitch>text</low-pitch>` `<slow>text</slow>` `<fast>text</fast>`
+- Style: `<whisper>text</whisper>` `<sing>text</sing>`
+
+### MP3 output
+
+MP3 decoding requires `pydub`. Install it via the `mp3` extra:
+
+```bash
+uv add "vision-agents-plugins-xai[mp3]"
+```
+
 ## Requirements
 
 - Python 3.10+
 - `xai-sdk`
 - `vision-agents-core`
+- Optional: `pydub` (for MP3 decoding via the `mp3` extra)
 
 ## License
 

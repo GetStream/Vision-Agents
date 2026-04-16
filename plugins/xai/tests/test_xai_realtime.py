@@ -109,9 +109,12 @@ class TestXAIRealtimeConfiguration:
         """Test that default configuration is set correctly."""
         realtime = Realtime(api_key="test-key")
         assert realtime.voice == "Ara"
-        assert realtime.sample_rate == 48000
+        # xAI realtime emits PCM at 24 kHz natively.
+        assert realtime.sample_rate == 24000
         assert realtime.turn_detection == "server_vad"
         assert realtime.provider_name == "xai"
+        # VAD interrupt defaults to False to avoid mic-echo cancellation.
+        assert realtime.vad_interrupt_response is False
         # Web search and X search enabled by default
         assert realtime.web_search is True
         assert realtime.x_search is True
@@ -123,10 +126,12 @@ class TestXAIRealtimeConfiguration:
             api_key="test-key",
             voice="Rex",
             turn_detection=None,
+            vad_interrupt_response=True,
         )
         assert realtime.voice == "Rex"
-        assert realtime.sample_rate == 48000  # Always 48kHz
+        assert realtime.sample_rate == 24000
         assert realtime.turn_detection is None
+        assert realtime.vad_interrupt_response is True
 
     async def test_search_tools_can_be_disabled(self):
         """Test that web_search and x_search can be disabled."""

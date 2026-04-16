@@ -16,6 +16,9 @@ dependencies = [
     "aiohttp>=3.13.3,<4",
 ]
 
+[project.optional-dependencies]
+mp3 = ["pydub>=0.25"]
+
 [project.urls]
 Documentation = "https://visionagents.ai/"
 Website = "https://visionagents.ai/"
