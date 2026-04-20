@@ -191,3 +191,4 @@ class TTS(tts.TTS):
     async def close(self) -> None:
         if self.client:
             await self.client.aclose()
+        await super(TTS, self).close()
