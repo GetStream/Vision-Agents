@@ -343,3 +343,45 @@ class TestStream:
         snapshot.clear()
 
         assert stream.peek() == [1, 2]
+
+    async def test_collect_none_drains_until_closed(self, stream: Stream[int]):
+        await stream.send(1)
+        await stream.send(2)
+        stream.close()
+
+        assert await stream.collect(None) == [1, 2]
+        assert stream.empty()
+
+    async def test_collect_default_waits_until_closed_like_none(
+        self, stream: Stream[int]
+    ):
+        await stream.send(7)
+        stream.close()
+
+        assert await stream.collect() == [7]
+
+    async def test_collect_with_timeout_returns_buffered_then_stops(
+        self, stream: Stream[int]
+    ):
+        stream.send_nowait(1)
+
+        assert await stream.collect(timeout=0.1) == [1]
+        assert stream.empty()
+        assert not stream.closed()
+
+    async def test_collect_timeout_zero_on_empty_returns_empty(
+        self, stream: Stream[int]
+    ):
+        assert await stream.collect(timeout=0) == []
+
+    async def test_collect_timeout_zero_drains_all_buffered_without_waiting(
+        self, stream: Stream[int]
+    ):
+        for i in range(3):
+            stream.send_nowait(i)
+
+        assert await stream.collect(timeout=0) == [0, 1, 2]
+
+    async def test_collect_negative_timeout_raises(self, stream: Stream[int]):
+        with pytest.raises(ValueError, match="timeout"):
+            await stream.collect(timeout=-1.0)

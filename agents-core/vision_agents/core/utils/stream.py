@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import time
 from collections import deque
 from typing import AsyncIterator, Generic, TypeVar
 
@@ -134,6 +135,52 @@ class Stream(Generic[T]):
             list of items from the stream.
         """
         return list(self._items)
+
+    async def collect(self, timeout: float | None = None) -> list[T]:
+        """Remove and return items from the stream until stopping conditions are met.
+
+        Args:
+            timeout: If ``None``, read until the stream is closed.
+                If non-negative, return after that many seconds; already-buffered
+                items are taken first, then each further item waits with the remaining
+                budget (same iterator protocol as ``async for``).
+
+        Returns:
+            Items removed from the stream, in FIFO order.
+
+        Raises:
+            ValueError: If ``timeout`` is negative.
+        """
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must be None or non-negative")
+
+        if timeout is None:
+            return [item async for item in self]
+
+        out: list[T] = []
+        # First, drain the already buffered data synchronously.
+        while True:
+            try:
+                out.append(self.get_nowait())
+            except StreamEmpty:
+                break
+            except StreamClosed:
+                return out
+
+        it = aiter(self)
+        deadline = time.monotonic() + timeout
+        while True:
+            if self.closed() and self.empty():
+                return out
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return out
+            try:
+                out.append(await asyncio.wait_for(anext(it), timeout=remaining))
+            except TimeoutError:
+                return out
+            except StopAsyncIteration:
+                return out
 
     def _wakeup_next_sender(self):
         # Notify the next waiting "send()" call that
