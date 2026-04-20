@@ -11,7 +11,8 @@ from deepgram.listen.v2.socket_client import AsyncV2SocketClient
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt import TranscriptResponse
+from vision_agents.core.stt import Transcript, TranscriptResponse
+from vision_agents.core.turn_detection import TurnEnded, TurnStarted
 from vision_agents.core.utils.utils import cancel_and_wait
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,7 @@ class STT(stt.STT):
 
         # Mark connection as ready
         self._connection_ready.set()
+        await super(STT, self).start()
 
     def _on_message(self, message: Any) -> None:
         """
@@ -241,28 +243,34 @@ class STT(stt.STT):
                 return
 
             # broadcast STT event first
-            if is_final:
-                self._emit_transcript_event(
-                    transcript_text, participant, response_metadata
+            self.output.send_nowait(
+                Transcript(
+                    text=transcript_text,
+                    participant=participant,
+                    response=response_metadata,
+                    # Deepgram API returns updated transcripts instead of deltas
+                    mode="final" if is_final else "replacement",
                 )
-            else:
-                self._emit_partial_transcript_event(
-                    transcript_text, participant, response_metadata
-                )
+            )
 
             # broadcast turn event
             if is_final or eager_end_of_turn:
                 # Reset audio start time for next utterance
                 self._audio_start_time = None
-                self._emit_turn_ended_event(
-                    participant=participant,
-                    eager_end_of_turn=eager_end_of_turn,
-                    confidence=end_of_turn_confidence,
+                self.output.send_nowait(
+                    TurnEnded(
+                        participant=participant,
+                        eager=eager_end_of_turn,
+                        confidence=end_of_turn_confidence,
+                    )
                 )
 
             if start_of_turn:
-                self._emit_turn_started_event(
-                    participant=participant, confidence=end_of_turn_confidence
+                self.output.send_nowait(
+                    TurnStarted(
+                        participant=participant,
+                        confidence=end_of_turn_confidence,
+                    )
                 )
 
     def _on_open(self, message):

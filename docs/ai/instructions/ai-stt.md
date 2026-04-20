@@ -2,7 +2,7 @@
 
 ```python
 from vision_agents.core import stt
-from vision_agents.core.stt.events import TranscriptResponse
+from vision_agents.core.stt import Transcript, TranscriptResponse
 
 class MySTT(stt.STT):
 
@@ -32,12 +32,28 @@ class MySTT(stt.STT):
                 audio_duration_ms=2000,
                 other={}
             )
-            # parts that aren't finished
-            self._emit_partial_transcript_event(part, participant, response)
+            # partials — mode depends on provider semantics:
+            #   "replacement" → each partial resends the full running transcript
+            #   "delta"       → each partial is a new chunk appended to prior text
+            self.output.send_nowait(
+                Transcript(
+                    text=part,
+                    participant=participant,
+                    response=response,
+                    mode="delta",
+                )
+            )
             full_text += part
 
         # the full text
-        self._emit_transcript_event(full_text, participant, response)
+        self.output.send_nowait(
+            Transcript(
+                text=full_text,
+                participant=participant,
+                response=response,
+                mode="final",
+            )
+        )
 
 ```
 
@@ -55,15 +71,23 @@ Do not write code that directly manipulates PCM, use the audio utilities instead
 If your STT supports Turn detection/turn events do the following
 
 ```
+from vision_agents.core.turn_detection import TurnEnded, TurnStarted
+
 class MySTT(stt.STT):
     turn_detection: bool = True
-    
+
     async def process_audio(
         self,
         pcm_data: PcmData,
         participant: Optional[Participant] = None,
     ):
         ...
-        self._emit_turn_ended_event(participant=participant, eager_end_of_turn=eager_end_of_turn)
+        self.output.send_nowait(
+            TurnEnded(
+                participant=participant,
+                confidence=0.9,
+                eager=eager_end_of_turn,
+            )
+        )
         ...
 ```

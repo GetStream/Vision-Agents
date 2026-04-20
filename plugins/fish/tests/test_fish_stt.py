@@ -1,10 +1,10 @@
 import pytest
 from dotenv import load_dotenv
 
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.stt import Transcript
 from vision_agents.plugins import fish
-from conftest import STTSession
 
-# Load environment variables
 load_dotenv()
 
 
@@ -12,42 +12,29 @@ class TestFishSTT:
     """Integration tests for Fish Audio STT"""
 
     @pytest.fixture
+    def participant(self) -> Participant:
+        return Participant({}, user_id="test-user", id="test-user")
+
+    @pytest.fixture
     async def stt(self):
-        """Create and manage Fish STT lifecycle"""
         stt = fish.STT()
-        try:
-            yield stt
-        finally:
-            await stt.close()
+        yield stt
+        await stt.close()
 
     @pytest.mark.integration
     async def test_transcribe_mia_audio(self, stt, mia_audio_16khz, participant):
-        # Create session to collect transcripts and errors
-        session = STTSession(stt)
-
-        # Process the audio
         await stt.process_audio(mia_audio_16khz, participant=participant)
 
-        # Wait for result
-        await session.wait_for_result(timeout=30.0)
-        assert not session.errors
-
-        # Verify transcript
-        full_transcript = session.get_full_transcript()
+        items = await stt.output.collect(timeout=10.0)
+        finals = [i for i in items if isinstance(i, Transcript) and i.final]
+        full_transcript = " ".join(t.text for t in finals)
         assert "forgotten treasures" in full_transcript.lower()
 
     @pytest.mark.integration
     async def test_transcribe_mia_audio_48khz(self, stt, mia_audio_48khz, participant):
-        # Create session to collect transcripts and errors
-        session = STTSession(stt)
-
-        # Process the audio
         await stt.process_audio(mia_audio_48khz, participant=participant)
 
-        # Wait for result
-        await session.wait_for_result(timeout=30.0)
-        assert not session.errors
-
-        # Verify transcript
-        full_transcript = session.get_full_transcript()
+        items = await stt.output.collect(timeout=10.0)
+        finals = [i for i in items if isinstance(i, Transcript) and i.final]
+        full_transcript = " ".join(t.text for t in finals)
         assert "forgotten treasures" in full_transcript.lower()

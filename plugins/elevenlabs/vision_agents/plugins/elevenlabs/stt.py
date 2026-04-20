@@ -16,7 +16,8 @@ from elevenlabs.client import AsyncElevenLabs
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt import TranscriptResponse
+from vision_agents.core.stt import Transcript, TranscriptResponse
+from vision_agents.core.turn_detection import TurnEnded, TurnStarted
 from vision_agents.core.utils.audio_queue import AudioQueue
 from vision_agents.core.utils.utils import cancel_and_wait
 
@@ -273,11 +274,18 @@ class STT(stt.STT):
         # Signal turn start on the first partial of a new utterance
         if not self._turn_in_progress:
             self._turn_in_progress = True
-            self._emit_turn_started_event(participant)
+            self.output.send_nowait(
+                TurnStarted(participant=participant, confidence=0.5)
+            )
 
         # Emit partial transcript
-        self._emit_partial_transcript_event(
-            transcript_text, participant, response_metadata
+        self.output.send_nowait(
+            Transcript(
+                text=transcript_text,
+                participant=participant,
+                response=response_metadata,
+                mode="replacement",
+            )
         )
 
     def _on_committed_transcript(self, transcription_data: dict[str, Any]):
@@ -312,7 +320,9 @@ class STT(stt.STT):
             if self._turn_in_progress:
                 self._turn_in_progress = False
                 self._audio_start_time = None
-                self._emit_turn_ended_event(participant)
+                self.output.send_nowait(
+                    TurnEnded(participant=participant, confidence=0.5)
+                )
             return
 
         # Build response metadata with word timestamps if available
@@ -334,14 +344,21 @@ class STT(stt.STT):
         )
 
         # Emit final transcript
-        self._emit_transcript_event(transcript_text, participant, response_metadata)
+        self.output.send_nowait(
+            Transcript(
+                text=transcript_text,
+                participant=participant,
+                response=response_metadata,
+                mode="final",
+            )
+        )
 
         # Reset audio start time for next utterance
         self._audio_start_time = None
 
         # Signal turn ended (VAD committed the transcript)
         self._turn_in_progress = False
-        self._emit_turn_ended_event(participant)
+        self.output.send_nowait(TurnEnded(participant=participant, confidence=0.5))
 
     def _on_error(self, error: Any):
         """

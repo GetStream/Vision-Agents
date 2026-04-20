@@ -7,11 +7,11 @@ from typing import Optional
 from urllib.parse import urlencode
 
 import aiohttp
-
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt import TranscriptResponse
+from vision_agents.core.stt import Transcript, TranscriptResponse
+from vision_agents.core.turn_detection import TurnEnded, TurnStarted
 
 logger = logging.getLogger(__name__)
 
@@ -223,11 +223,6 @@ class STT(stt.STT):
             logger.exception("Error in AssemblyAI receive loop")
 
         if not self.closed:
-            self._emit_error_event(
-                ConnectionError("AssemblyAI WebSocket closed unexpectedly"),
-                self._current_participant,
-                "assemblyai_ws_closed",
-            )
             reconnected = await self._reconnect()
             if not reconnected:
                 self.closed = True
@@ -260,7 +255,9 @@ class STT(stt.STT):
         elif msg_type == "SpeechStarted":
             participant = self._current_participant
             if participant is not None:
-                self._emit_turn_started_event(participant)
+                self.output.send_nowait(
+                    TurnStarted(participant=participant, confidence=0.5)
+                )
 
         elif msg_type == "Termination":
             logger.info(
@@ -271,11 +268,6 @@ class STT(stt.STT):
         elif "error" in data:
             error_msg = data.get("error", "Unknown error")
             logger.error("AssemblyAI streaming error: %s", error_msg)
-            self._emit_error_event(
-                Exception(error_msg),
-                self._current_participant,
-                "assemblyai_streaming",
-            )
 
         else:
             logger.debug("Unhandled AssemblyAI event: %s", msg_type)
@@ -324,11 +316,25 @@ class STT(stt.STT):
         )
 
         if data.get("end_of_turn"):
-            self._emit_transcript_event(transcript, participant, response)
+            self.output.send_nowait(
+                Transcript(
+                    text=transcript,
+                    participant=participant,
+                    response=response,
+                    mode="final",
+                )
+            )
             self._audio_start_time = None
-            self._emit_turn_ended_event(participant)
+            self.output.send_nowait(TurnEnded(participant=participant, confidence=0.5))
         else:
-            self._emit_partial_transcript_event(transcript, participant, response)
+            self.output.send_nowait(
+                Transcript(
+                    text=transcript,
+                    participant=participant,
+                    response=response,
+                    mode="replacement",
+                )
+            )
 
     async def process_audio(
         self,

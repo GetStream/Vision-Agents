@@ -19,7 +19,7 @@ import fal_client
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt import TranscriptResponse
+from vision_agents.core.stt import Transcript, TranscriptResponse
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +119,13 @@ class STT(stt.STT):
                             processing_time_ms=processing_time_ms,
                             model_name="wizper-v3",
                         )
-                        self._emit_transcript_event(
-                            text=text,
-                            participant=participant,
-                            response=response_metadata,
+                        self.output.send_nowait(
+                            Transcript(
+                                text=text,
+                                participant=participant,
+                                response=response_metadata,
+                                mode="final",
+                            )
                         )
             finally:
                 # Clean up temporary file (async to avoid blocking)
@@ -131,11 +134,8 @@ class STT(stt.STT):
                 except OSError:
                     pass
 
-        except Exception as e:
-            logger.error(f"Wizper processing error: {str(e)}")
-            self._emit_error_event(
-                e, context="Wizper processing", participant=participant
-            )
+        except Exception:
+            logger.exception("Wizper processing error")
 
     async def close(self):
         """Close the Wizper STT service and release any resources."""

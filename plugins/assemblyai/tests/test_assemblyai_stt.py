@@ -1,46 +1,39 @@
-import pytest
+import asyncio
 
+import pytest
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt.events import STTTranscriptEvent, STTPartialTranscriptEvent
+from vision_agents.core.stt import Transcript
 from vision_agents.plugins import assemblyai
-from conftest import STTSession
 
 
 class TestAssemblyAISTT:
     """Integration tests for AssemblyAI STT."""
 
     @pytest.fixture
+    def participant(self) -> Participant:
+        return Participant({}, user_id="test-user", id="test-user")
+
+    @pytest.fixture
     async def stt(self):
-        """Create and manage AssemblyAI STT lifecycle."""
         stt = assemblyai.STT()
-        try:
-            await stt.start()
-            yield stt
-        finally:
-            await stt.close()
+        await stt.start()
+        yield stt
+        await stt.close()
 
     @pytest.mark.integration
     async def test_transcribe_mia_audio_48khz(
-        self, stt, mia_audio_48khz, silence_2s_48khz
+        self, stt, mia_audio_48khz, silence_2s_48khz, participant
     ):
-        session = STTSession(stt)
+        for chunk in mia_audio_48khz.chunks(480):
+            await stt.process_audio(chunk, participant=participant)
+            await asyncio.sleep(0.001)
 
-        await stt.process_audio(
-            mia_audio_48khz, participant=Participant({}, user_id="hi", id="hi")
-        )
-
-        await stt.process_audio(
-            silence_2s_48khz, participant=Participant({}, user_id="hi", id="hi")
-        )
-
-        await session.wait_for_result(timeout=30.0)
-        assert not session.errors
-
-        full_transcript = session.get_full_transcript()
-        assert full_transcript is not None
+        items = await stt.output.collect(timeout=10.0)
+        transcripts = [i for i in items if isinstance(i, Transcript)]
+        finals = [t for t in transcripts if t.final]
+        full_transcript = " ".join(t.text for t in finals)
         assert "forgotten treasures" in full_transcript.lower()
-
-        assert session.transcripts[0].participant.user_id == "hi"
+        assert transcripts[0].participant == participant
 
     async def test_prompt_and_keyterms_exclusive(self):
         with pytest.raises(ValueError, match="cannot be used together"):
@@ -158,12 +151,6 @@ class TestAssemblyAISTT:
     async def test_handle_turn_with_speaker_label_emits_correct_participant(self):
         stt = assemblyai.STT(api_key="test-key", speaker_labels=True)
 
-        events: list[STTTranscriptEvent] = []
-
-        @stt.events.subscribe
-        async def on_transcript(event: STTTranscriptEvent):
-            events.append(event)
-
         stt._handle_turn(
             {
                 "transcript": "Hello world",
@@ -171,21 +158,16 @@ class TestAssemblyAISTT:
                 "speaker_label": "A",
             }
         )
-        await stt.events.wait()
 
-        assert len(events) == 1
-        assert events[0].text == "Hello world"
-        assert events[0].participant.user_id == "speaker_A"
-        assert events[0].response.other == {"speaker_label": "A"}
+        transcripts = [i for i in stt.output.peek() if isinstance(i, Transcript)]
+        assert len(transcripts) == 1
+        assert transcripts[0].text == "Hello world"
+        assert transcripts[0].final
+        assert transcripts[0].participant.user_id == "speaker_A"
+        assert transcripts[0].response.other == {"speaker_label": "A"}
 
     async def test_handle_turn_partial_with_speaker_label(self):
         stt = assemblyai.STT(api_key="test-key", speaker_labels=True)
-
-        events: list[STTPartialTranscriptEvent] = []
-
-        @stt.events.subscribe
-        async def on_partial(event: STTPartialTranscriptEvent):
-            events.append(event)
 
         stt._handle_turn(
             {
@@ -194,23 +176,18 @@ class TestAssemblyAISTT:
                 "speaker_label": "B",
             }
         )
-        await stt.events.wait()
 
-        assert len(events) == 1
-        assert events[0].text == "Hello"
-        assert events[0].participant.user_id == "speaker_B"
-        assert events[0].response.other == {"speaker_label": "B"}
+        transcripts = [i for i in stt.output.peek() if isinstance(i, Transcript)]
+        assert len(transcripts) == 1
+        assert transcripts[0].text == "Hello"
+        assert transcripts[0].mode == "replacement"
+        assert transcripts[0].participant.user_id == "speaker_B"
+        assert transcripts[0].response.other == {"speaker_label": "B"}
 
     async def test_handle_turn_without_diarization_no_other_field(self):
         stt = assemblyai.STT(api_key="test-key")
         participant = Participant(original=None, user_id="user1", id="p1")
         stt._current_participant = participant
-
-        events: list[STTTranscriptEvent] = []
-
-        @stt.events.subscribe
-        async def on_transcript(event: STTTranscriptEvent):
-            events.append(event)
 
         stt._handle_turn(
             {
@@ -218,22 +195,16 @@ class TestAssemblyAISTT:
                 "end_of_turn": True,
             }
         )
-        await stt.events.wait()
 
-        assert len(events) == 1
-        assert events[0].response.other is None
-        assert events[0].participant is participant
+        transcripts = [i for i in stt.output.peek() if isinstance(i, Transcript)]
+        assert len(transcripts) == 1
+        assert transcripts[0].response.other is None
+        assert transcripts[0].participant is participant
 
     async def test_handle_turn_null_speaker_label_falls_back(self):
         stt = assemblyai.STT(api_key="test-key", speaker_labels=True)
         participant = Participant(original=None, user_id="user1", id="p1")
         stt._current_participant = participant
-
-        events: list[STTTranscriptEvent] = []
-
-        @stt.events.subscribe
-        async def on_transcript(event: STTTranscriptEvent):
-            events.append(event)
 
         stt._handle_turn(
             {
@@ -242,20 +213,14 @@ class TestAssemblyAISTT:
                 "speaker_label": None,
             }
         )
-        await stt.events.wait()
 
-        assert len(events) == 1
-        assert events[0].participant is participant
-        assert events[0].response.other == {"speaker_label": None}
+        transcripts = [i for i in stt.output.peek() if isinstance(i, Transcript)]
+        assert len(transcripts) == 1
+        assert transcripts[0].participant is participant
+        assert transcripts[0].response.other == {"speaker_label": None}
 
     async def test_handle_turn_multi_speaker_conversation(self):
         stt = assemblyai.STT(api_key="test-key", speaker_labels=True)
-
-        events: list[STTTranscriptEvent] = []
-
-        @stt.events.subscribe
-        async def on_transcript(event: STTTranscriptEvent):
-            events.append(event)
 
         stt._handle_turn(
             {
@@ -278,10 +243,10 @@ class TestAssemblyAISTT:
                 "speaker_label": "A",
             }
         )
-        await stt.events.wait()
 
-        assert len(events) == 3
-        assert events[0].participant.user_id == "speaker_A"
-        assert events[1].participant.user_id == "speaker_B"
-        assert events[2].participant.user_id == "speaker_A"
-        assert events[0].participant is events[2].participant
+        transcripts = [i for i in stt.output.peek() if isinstance(i, Transcript)]
+        assert len(transcripts) == 3
+        assert transcripts[0].participant.user_id == "speaker_A"
+        assert transcripts[1].participant.user_id == "speaker_B"
+        assert transcripts[2].participant.user_id == "speaker_A"
+        assert transcripts[0].participant is transcripts[2].participant

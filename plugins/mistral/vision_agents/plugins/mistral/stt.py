@@ -14,7 +14,7 @@ from mistralai.models import (
 )
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt import TranscriptResponse
+from vision_agents.core.stt import Transcript, TranscriptResponse
 from vision_agents.core.utils.utils import cancel_and_wait
 
 logger = logging.getLogger(__name__)
@@ -111,12 +111,8 @@ class STT(stt.STT):
         except asyncio.CancelledError:
             logger.debug("Mistral receive loop cancelled")
             raise
-        except Exception as e:
+        except Exception:
             logger.exception("Error in Mistral receive loop")
-            if not self.closed:
-                self._emit_error_event(
-                    e, context="receive_loop", participant=self._current_participant
-                )
 
     def _handle_text_delta(self, event: TranscriptionStreamTextDelta):
         """Handle text delta - emit word-by-word partials, full text on complete."""
@@ -144,13 +140,27 @@ class STT(stt.STT):
         # Emit partial with just the new word/delta (not accumulated)
         text_stripped = text.strip()
         if text_stripped:
-            self._emit_partial_transcript_event(text_stripped, participant, response)
+            self.output.send_nowait(
+                Transcript(
+                    text=text_stripped,
+                    participant=participant,
+                    response=response,
+                    mode="delta",
+                )
+            )
 
         # Check for sentence-ending punctuation - emit complete transcript
         if text.rstrip().endswith((".", "?", "!")):
             accumulated_stripped = self._accumulated_text.strip()
             if accumulated_stripped:
-                self._emit_transcript_event(accumulated_stripped, participant, response)
+                self.output.send_nowait(
+                    Transcript(
+                        text=accumulated_stripped,
+                        participant=participant,
+                        response=response,
+                        mode="final",
+                    )
+                )
                 self._accumulated_text = ""
                 self._audio_start_time = None
 
@@ -170,7 +180,14 @@ class STT(stt.STT):
             model_name=event.model,
         )
 
-        self._emit_transcript_event(text, participant, response)
+        self.output.send_nowait(
+            Transcript(
+                text=text,
+                participant=participant,
+                response=response,
+                mode="final",
+            )
+        )
         self._accumulated_text = ""
         self._audio_start_time = None
         self._done_received.set()
@@ -180,10 +197,6 @@ class STT(stt.STT):
         error_msg = str(event.error) if event.error else "Unknown Mistral error"
         logger.error(f"Mistral transcription error: {error_msg}")
 
-        error = Exception(error_msg)
-        self._emit_error_event(
-            error, context="transcription", participant=self._current_participant
-        )
         self._audio_start_time = None
 
     async def process_audio(
@@ -220,7 +233,6 @@ class STT(stt.STT):
 
     async def close(self):
         """Close the Mistral connection and clean up resources."""
-        await super().close()
 
         # Signal end of audio to trigger Done event with full transcript
         if self._connection and not self._connection.is_closed:
@@ -252,3 +264,5 @@ class STT(stt.STT):
 
         self._audio_start_time = None
         self._accumulated_text = ""
+
+        await super().close()
