@@ -1,10 +1,9 @@
-import asyncio
 import logging
 
 import pytest
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.turn_detection import TurnEndedEvent, TurnStartedEvent
+from vision_agents.core.turn_detection import TurnEnded, TurnStarted
 from vision_agents.plugins.vogent.vogent_turn_detection import VogentTurnDetection
 
 logger = logging.getLogger(__name__)
@@ -30,18 +29,6 @@ class TestVogentTurnDetection:
     ):
         participant = Participant(user_id="mia", original={}, id="mia")
         conversation = InMemoryConversation(instructions="be nice", messages=[])
-        event_order = []
-
-        # Subscribe to events
-        @vogent_turn_detection.events.subscribe
-        async def on_start(event: TurnStartedEvent):
-            logger.info(f"Vogent turn started on {event.session_id}")
-            event_order.append("start")
-
-        @vogent_turn_detection.events.subscribe
-        async def on_stop(event: TurnEndedEvent):
-            logger.info(f"Vogent turn ended on {event.session_id}")
-            event_order.append("stop")
 
         await vogent_turn_detection.process_audio(
             mia_audio_16khz, participant, conversation
@@ -50,12 +37,18 @@ class TestVogentTurnDetection:
             silence_2s_48khz, participant, conversation
         )
 
-        await asyncio.sleep(0.001)
+        await vogent_turn_detection.wait_for_processing_complete()
 
-        await asyncio.sleep(5)
-
-        # Verify that turn detection is working - we should get at least some turn events
-        assert event_order == ["start", "stop"] or event_order == [
+        items = await vogent_turn_detection.output.collect(timeout=1.0)
+        kinds = [
+            "start"
+            if isinstance(item, TurnStarted)
+            else "stop"
+            if isinstance(item, TurnEnded)
+            else None
+            for item in items
+        ]
+        assert kinds == ["start", "stop"] or kinds == [
             "start",
             "stop",
             "start",

@@ -3,7 +3,7 @@ import logging
 import pytest
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.turn_detection import TurnEndedEvent, TurnStartedEvent
+from vision_agents.core.turn_detection import TurnEnded, TurnStarted
 from vision_agents.core.vad.silero import SileroVADSessionPool
 from vision_agents.plugins.smart_turn.smart_turn_detection import SmartTurnDetection
 
@@ -34,26 +34,21 @@ class TestSmartTurn:
         participant = Participant(user_id="mia", id="mia", original={})
         conversation = InMemoryConversation(instructions="be nice", messages=[])
 
-        event_order = []
-
-        # Subscribe to events
-        @smart_turn.events.subscribe
-        async def on_start(event: TurnStartedEvent):
-            logger.info(f"Smart turn turn started on {event.session_id}")
-            event_order.append("start")
-
-        @smart_turn.events.subscribe
-        async def on_stop(event: TurnEndedEvent):
-            logger.info(f"Smart turn turn ended on {event.session_id}")
-            event_order.append("stop")
-
         for pcm in mia_audio_16khz.chunks(chunk_size=304):
             await smart_turn.process_audio(pcm, participant, conversation)
 
-        # Wait for background processing to complete
         await smart_turn.wait_for_processing_complete()
 
-        assert event_order == ["start", "stop"] or event_order == [
+        items = await smart_turn.output.collect(timeout=1.0)
+        kinds = [
+            "start"
+            if isinstance(item, TurnStarted)
+            else "stop"
+            if isinstance(item, TurnEnded)
+            else None
+            for item in items
+        ]
+        assert kinds == ["start", "stop"] or kinds == [
             "start",
             "stop",
             "start",
@@ -63,39 +58,51 @@ class TestSmartTurn:
     async def test_turn_detection(self, smart_turn, mia_audio_16khz):
         participant = Participant(user_id="mia", id="mia", original={})
         conversation = InMemoryConversation(instructions="be nice", messages=[])
-        event_order = []
-
-        # Subscribe to events
-        @smart_turn.events.subscribe
-        async def on_start(event: TurnStartedEvent):
-            logger.info(f"Smart turn turn started on {event.session_id}")
-            event_order.append("start")
-
-        @smart_turn.events.subscribe
-        async def on_stop(event: TurnEndedEvent):
-            logger.info(f"Smart turn turn ended on {event.session_id}")
-            event_order.append("stop")
 
         await smart_turn.process_audio(mia_audio_16khz, participant, conversation)
 
-        # Wait for background processing to complete
         await smart_turn.wait_for_processing_complete()
 
-        # Verify that turn detection is working - we should get at least some turn events
+        items = await smart_turn.output.collect(timeout=1.0)
+        kinds = [
+            "start"
+            if isinstance(item, TurnStarted)
+            else "stop"
+            if isinstance(item, TurnEnded)
+            else None
+            for item in items
+        ]
         # With continuous processing, we may get multiple start/stop cycles
-        assert event_order == ["start", "stop"] or event_order == [
+        assert kinds == ["start", "stop"] or kinds == [
             "start",
             "stop",
             "start",
             "stop",
         ]
 
+    async def test_silence_does_not_start_segment(self, smart_turn, silence_1s_16khz):
+        participant = Participant(user_id="mia", id="mia", original={})
+        conversation = InMemoryConversation(instructions="be nice", messages=[])
+
+        await smart_turn.process_audio(silence_1s_16khz, participant, conversation)
+        await smart_turn.wait_for_processing_complete()
+
+        items = await smart_turn.output.collect(timeout=0.5)
+        assert items == []
+
+    async def test_speech_starts_segment(self, smart_turn, mia_audio_16khz):
+        participant = Participant(user_id="mia", id="mia", original={})
+        conversation = InMemoryConversation(instructions="be nice", messages=[])
+
+        await smart_turn.process_audio(mia_audio_16khz, participant, conversation)
+        await smart_turn.wait_for_processing_complete()
+
+        items = await smart_turn.output.collect(timeout=1.0)
+        assert any(isinstance(item, TurnStarted) for item in items)
+
     """
     TODO
     - Test that the 2nd turn detect includes the audio from the first turn
     - Test that turn detection is ran after 8s of audio
     - Test that turn detection is run after speech and 2s of silence
-    - Test that silence doens't start a new segmetn
-    - Test that speaking starts a new segment
-
     """

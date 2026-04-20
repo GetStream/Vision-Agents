@@ -14,7 +14,8 @@ from vision_agents.core.agents.agent_types import AgentOptions, default_agent_op
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.turn_detection import (
     TurnDetector,
-    TurnStartedEvent,
+    TurnEnded,
+    TurnStarted,
 )
 from vision_agents.core.utils.utils import ensure_model
 from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
@@ -162,7 +163,7 @@ class SmartTurnDetection(
         self,
         audio_data: PcmData,
         participant: Participant,
-        conversation: Optional[Conversation],
+        conversation: Conversation | None = None,
     ) -> None:
         """
         Fast, non-blocking audio packet enqueueing.
@@ -289,11 +290,13 @@ class SmartTurnDetection(
                     prediction = await self._predict_turn_completed(merged, participant)
                     turn_ended = prediction > 0.5
                     if turn_ended:
-                        self._emit_end_turn_event(
-                            participant=participant,
-                            confidence=prediction,
-                            trailing_silence_ms=trailing_silence_ms,
-                            duration_ms=self._active_segment.duration_ms,
+                        await self.output.send(
+                            TurnEnded(
+                                participant=participant,
+                                confidence=prediction,
+                                trailing_silence_ms=trailing_silence_ms,
+                                duration_ms=self._active_segment.duration_ms,
+                            )
                         )
                         self._active_segment = None
                         self._silence = Silence()
@@ -304,7 +307,12 @@ class SmartTurnDetection(
                         self._pre_speech_buffer.append(merged)
                         self._pre_speech_buffer = self._pre_speech_buffer.tail(8)
             elif is_speech and self._active_segment is None:
-                self._emit_start_turn_event(TurnStartedEvent(participant=participant))
+                await self.output.send(
+                    TurnStarted(
+                        participant=participant,
+                        confidence=speech_probability,
+                    )
+                )
                 # create a new segment
                 self._active_segment = PcmData(
                     sample_rate=RATE, channels=1, format=AudioFormat.F32

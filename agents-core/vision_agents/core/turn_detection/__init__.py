@@ -1,18 +1,12 @@
-from .turn_detection import (
-    TurnEvent,
-    TurnDetector,
-)
-from .events import (
-    TurnStartedEvent,
-    TurnEndedEvent,
-)
-
+from .events import TurnEndedEvent, TurnStartedEvent
+from .turn_detection import TurnDetector, TurnEnded, TurnStarted
 
 __all__ = [
     # Base classes and types
-    "TurnEvent",
     "TurnDetector",
     # Events
     "TurnStartedEvent",
     "TurnEndedEvent",
+    "TurnEnded",
+    "TurnStarted",
 ]
