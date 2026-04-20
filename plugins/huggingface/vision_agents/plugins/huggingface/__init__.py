@@ -1,15 +1,21 @@
-from .events import DetectionCompletedEvent
+from .events import DetectionCompletedEvent, SegmentationCompletedEvent
 from .huggingface_llm import HuggingFaceLLM as LLM
 from .huggingface_vlm import HuggingFaceVLM as VLM
 
-__all__ = ["DetectionCompletedEvent", "LLM", "VLM"]
+__all__ = ["DetectionCompletedEvent", "LLM", "SegmentationCompletedEvent", "VLM"]
 
 try:
     from .transformers_detection import TransformersDetectionProcessor
     from .transformers_llm import TransformersLLM
+    from .transformers_segmentation import TransformersSegmentationProcessor
     from .transformers_vlm import TransformersVLM
 
-    __all__ += ["TransformersDetectionProcessor", "TransformersLLM", "TransformersVLM"]
+    __all__ += [
+        "TransformersDetectionProcessor",
+        "TransformersLLM",
+        "TransformersSegmentationProcessor",
+        "TransformersVLM",
+    ]
 except ImportError as e:
     import warnings
 
