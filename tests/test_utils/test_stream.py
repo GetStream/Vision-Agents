@@ -318,3 +318,28 @@ class TestStream:
         assert "closed=False" in str(stream)
         stream.close()
         assert "closed=True" in str(stream)
+
+    async def test_peek_snapshots_buffered_items_without_draining(
+        self, stream: Stream[int]
+    ):
+        assert stream.peek() == []
+
+        await stream.send(1)
+        await stream.send(2)
+        await stream.send(3)
+
+        assert stream.peek() == [1, 2, 3]
+        assert stream.peek() == [1, 2, 3]
+
+        assert await stream.get() == 1
+        assert stream.peek() == [2, 3]
+
+    async def test_peek_returns_independent_copy(self, stream: Stream[int]):
+        await stream.send(1)
+        await stream.send(2)
+
+        snapshot = stream.peek()
+        snapshot.append(999)
+        snapshot.clear()
+
+        assert stream.peek() == [1, 2]

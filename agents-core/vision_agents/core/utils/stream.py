@@ -126,16 +126,25 @@ class Stream(Generic[T]):
         else:
             raise StreamEmpty("Stream is empty")
 
+    def peek(self) -> list[T]:
+        """
+        A helper method to peek into already buffered items without emptying the buffer.
+
+        Returns:
+            list of items from the stream.
+        """
+        return list(self._items)
+
     def _wakeup_next_sender(self):
         # Notify the next waiting "send()" call that
         # there's a free space in the items queue
-        self.__wakeup_next(self._senders)
+        self._wakeup_next(self._senders)
 
     def _wakeup_next_getter(self):
         # Notify the next waiting "get()" call that there's new data available
-        self.__wakeup_next(self._getters)
+        self._wakeup_next(self._getters)
 
-    def __wakeup_next(self, waiters: deque[asyncio.Future]) -> None:
+    def _wakeup_next(self, waiters: deque[asyncio.Future]) -> None:
         # Go over the waiters and resolve the next waiting in line
         while waiters:
             waiter = waiters.popleft()
