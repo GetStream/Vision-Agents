@@ -20,6 +20,7 @@ import gc
 import json
 import logging
 import re
+import threading
 import time
 import uuid
 from threading import Thread
@@ -55,6 +56,10 @@ logger = logging.getLogger(__name__)
 PLUGIN_NAME = "transformers_llm"
 
 DeviceType = Literal["auto", "cuda", "mps", "cpu"]
+
+# Guard concurrent from_pretrained calls which are not thread-safe
+# and can produce meta tensors when run in parallel threads.
+_model_load_lock = threading.Lock()
 QuantizationType = Literal["none", "4bit", "8bit"]
 TorchDtypeType = Literal["auto", "float16", "bfloat16", "float32"]
 
