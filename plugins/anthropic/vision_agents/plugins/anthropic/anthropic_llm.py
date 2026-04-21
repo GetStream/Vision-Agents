@@ -54,6 +54,7 @@ class ClaudeLLM(LLM):
         model: str,
         api_key: Optional[str] = None,
         client: Optional[AsyncAnthropic] = None,
+        tools_max_rounds: int = 3,
     ):
         """
         Initialize the ClaudeLLM class.
@@ -62,10 +63,12 @@ class ClaudeLLM(LLM):
             model (str): The model to use. https://docs.anthropic.com/en/docs/about-claude/models/overview
             api_key: optional API key. by default loads from ANTHROPIC_API_KEY
             client: optional Anthropic client. by default creates a new client object.
+            tools_max_rounds: max calling rounds for multi-hop tool call. Default - ``3``.
         """
         super().__init__()
         self.events.register_events_from_module(events)
         self.model = model
+        self._tools_max_rounds = max(tools_max_rounds, 1)
         self._pending_tool_uses_by_index: Dict[
             int, Dict[str, Any]
         ] = {}  # index -> {id, name, parts: []}
@@ -170,12 +173,11 @@ class ClaudeLLM(LLM):
             function_calls = self._extract_tool_calls_from_response(original)
             if function_calls:
                 messages = kwargs["messages"][:]
-                MAX_ROUNDS = 3
                 rounds = 0
                 seen: set[tuple[str, str, str]] = set()
                 current_calls = function_calls
 
-                while current_calls and rounds < MAX_ROUNDS:
+                while current_calls and rounds < self._tools_max_rounds:
                     # Execute calls concurrently with dedup
                     triples, seen = await self._dedup_and_execute(
                         current_calls, seen=seen, max_concurrency=8, timeout_s=30
@@ -303,13 +305,12 @@ class ClaudeLLM(LLM):
 
             # Track full message history to reuse across rounds
             messages = kwargs["messages"][:]  # start from prior history
-            MAX_ROUNDS = 3
             rounds = 0
             seen = set()
 
             # 2) While there are tool calls, execute -> return tool_result -> ask again (with tools)
             last_followup_stream = None
-            while accumulated_calls and rounds < MAX_ROUNDS:
+            while accumulated_calls and rounds < self._tools_max_rounds:
                 # Execute calls concurrently with dedup
                 triples, seen = await self._dedup_and_execute(
                     accumulated_calls, seen=seen, max_concurrency=8, timeout_s=30

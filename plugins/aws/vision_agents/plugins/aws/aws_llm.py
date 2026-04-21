@@ -1,22 +1,21 @@
 import asyncio
+import json
 import logging
 import time
-from typing import Optional, List, TYPE_CHECKING, Any, Dict, cast
-import json
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+
 import boto3
 from botocore.exceptions import ClientError
-
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
-from vision_agents.core.llm.llm_types import ToolSchema, NormalizedToolCallItem
-
-
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
     LLMResponseCompletedEvent,
 )
+from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
+
 from . import events
-from vision_agents.core.edge.types import Participant
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Message
@@ -48,6 +47,7 @@ class BedrockLLM(LLM):
         aws_secret_access_key: Optional[str] = None,
         aws_session_token: Optional[str] = None,
         aws_profile: Optional[str] = None,
+        tools_max_rounds: int = 3,
     ):
         """
         Initialize the BedrockLLM class.
@@ -59,6 +59,7 @@ class BedrockLLM(LLM):
             aws_secret_access_key: Optional AWS secret access key
             aws_session_token: Optional AWS session token
             aws_profile: Optional AWS profile name (from ~/.aws/credentials or ~/.aws/config)
+            tools_max_rounds: max calling rounds for multi-hop tool call. Default - ``3``.
         """
         super().__init__()
         self.events.register_events_from_module(events)
@@ -78,6 +79,7 @@ class BedrockLLM(LLM):
 
         self._client = None
         self._session_kwargs = session_kwargs
+        self._tools_max_rounds = max(tools_max_rounds, 1)
         self.region_name = region_name
         self.logger = logging.getLogger(__name__)
 
@@ -177,12 +179,11 @@ class BedrockLLM(LLM):
                 if assistant_msg_from_response:
                     messages.append(assistant_msg_from_response)
 
-                MAX_ROUNDS = 3
                 rounds = 0
                 seen: set[tuple[str, str, str]] = set()
                 current_calls = function_calls
 
-                while current_calls and rounds < MAX_ROUNDS:
+                while current_calls and rounds < self._tools_max_rounds:
                     # Execute calls concurrently with dedup
                     triples, seen = await self._dedup_and_execute(
                         cast(List[NormalizedToolCallItem], current_calls),
@@ -456,7 +457,6 @@ class BedrockLLM(LLM):
                 self._process_stream_event(event, text_parts, accumulated_calls)
 
             messages = kwargs["messages"][:]
-            MAX_ROUNDS = 3
             rounds = 0
             seen: set[tuple[str, str, str]] = set()
 
@@ -478,7 +478,7 @@ class BedrockLLM(LLM):
                 }
                 messages.append(assistant_msg_from_stream)
 
-            while accumulated_calls and rounds < MAX_ROUNDS:
+            while accumulated_calls and rounds < self._tools_max_rounds:
                 triples, seen = await self._dedup_and_execute(
                     cast(List[NormalizedToolCallItem], accumulated_calls),
                     seen=seen,

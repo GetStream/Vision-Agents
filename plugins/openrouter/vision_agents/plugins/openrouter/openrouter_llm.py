@@ -51,6 +51,7 @@ class OpenRouterLLM(OpenAILLM):
         base_url: str = "https://openrouter.ai/api/v1",
         model: str = "openrouter/andromeda-alpha",
         max_tokens: int | None = None,
+        tools_max_rounds: int = 3,
         **kwargs: Any,
     ) -> None:
         """Initialize OpenRouter LLM.
@@ -62,6 +63,7 @@ class OpenRouterLLM(OpenAILLM):
             max_tokens: This sets the upper limit for the number of tokens the model can generate in response.
                 It won’t produce more than this limit.
                 The maximum value is the context length minus the prompt length.
+            tools_max_rounds: max calling rounds for multi-hop tool call. Default - ``3``.
             **kwargs: Additional arguments passed to OpenAI LLM.
         """
         if api_key is None:
@@ -75,6 +77,7 @@ class OpenRouterLLM(OpenAILLM):
         # For tracking streaming tool calls in Chat Completions mode
         self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
         self._max_tokens = max_tokens
+        self._tools_max_rounds = max(tools_max_rounds, 1)
 
     def _is_auto_model(self, model: Optional[str] = None) -> bool:
         """Check if the model is a meta/auto model that may not support tools."""
@@ -506,7 +509,6 @@ class OpenRouterLLM(OpenAILLM):
         speaking "Now I'll search..." between each tool call.
         """
         llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
-        max_rounds = 3
         current_tool_calls = tool_calls
         seen: set[tuple] = set()
         current_messages = list(messages)
@@ -518,7 +520,7 @@ class OpenRouterLLM(OpenAILLM):
                 tc.get("arguments_json"),
             )
 
-        for round_num in range(max_rounds):
+        for round_num in range(self._tools_max_rounds):
             triples, seen = await self._dedup_and_execute(
                 current_tool_calls,  # type: ignore[arg-type]
                 max_concurrency=8,
@@ -635,7 +637,7 @@ class OpenRouterLLM(OpenAILLM):
                     llm_response = LLMResponseEvent(original=chunk, text=total_text)
 
             # If more tool calls, continue the loop
-            if next_tool_calls and round_num < max_rounds - 1:
+            if next_tool_calls and round_num < self._tools_max_rounds - 1:
                 current_tool_calls = next_tool_calls
                 continue
 

@@ -47,6 +47,7 @@ class XAILLM(LLM):
         model: str = "grok-4-latest",
         api_key: Optional[str] = None,
         client: Optional[AsyncClient] = None,
+        tools_max_rounds: int = 3,
     ):
         """
         Initialize the XAILLM class.
@@ -55,12 +56,14 @@ class XAILLM(LLM):
             model (str): The xAI model to use. Defaults to "grok-4-latest"
             api_key: optional API key. by default loads from XAI_API_KEY
             client: optional xAI client. by default creates a new client object.
+            tools_max_rounds: max calling rounds for multi-hop tool call. Default - ``3``.
         """
         super().__init__()
         self.events.register_events_from_module(events)
         self.model = model
         self.xai_chat: Optional["Chat"] = None
         self.conversation = None
+        self._tools_max_rounds = max(tools_max_rounds, 1)
 
         if client is not None:
             self.client = client
@@ -335,11 +338,10 @@ class XAILLM(LLM):
             LLM response with tool results
         """
         llm_response: Optional[LLMResponseEvent[Response]] = None
-        max_rounds = 3
         current_tool_calls = tool_calls
         seen: set[tuple] = set()
 
-        for round_num in range(max_rounds):
+        for round_num in range(self._tools_max_rounds):
             triples, seen = await self._dedup_and_execute(
                 current_tool_calls,
                 max_concurrency=8,
@@ -400,7 +402,7 @@ class XAILLM(LLM):
                 if llm_response and llm_response.original:
                     self.xai_chat.append(llm_response.original)
 
-                if pending_tool_calls and round_num < max_rounds - 1:
+                if pending_tool_calls and round_num < self._tools_max_rounds - 1:
                     current_tool_calls = pending_tool_calls
                     continue
                 else:
@@ -413,7 +415,7 @@ class XAILLM(LLM):
                 self.xai_chat.append(response)
 
                 next_tool_calls = self._extract_tool_calls_from_response(response)
-                if next_tool_calls and round_num < max_rounds - 1:
+                if next_tool_calls and round_num < self._tools_max_rounds - 1:
                     current_tool_calls = next_tool_calls
                     continue
                 else:

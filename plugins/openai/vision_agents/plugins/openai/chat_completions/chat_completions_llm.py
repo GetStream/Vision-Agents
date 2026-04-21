@@ -46,6 +46,7 @@ class ChatCompletionsLLM(LLM):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         client: Optional[AsyncOpenAI] = None,
+        tools_max_rounds: int = 3,
     ):
         """
         Initialize the ChatCompletionsLLM class.
@@ -59,6 +60,7 @@ class ChatCompletionsLLM(LLM):
         super().__init__()
         self.model = model
         self.events.register_events_from_module(events)
+        self._tools_max_rounds = max(tools_max_rounds, 1)
         # Track tool calls being accumulated during streaming
         self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
 
@@ -485,12 +487,11 @@ class ChatCompletionsLLM(LLM):
     ) -> LLMResponseEvent:
         """Execute tool calls and get follow-up response."""
         llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
-        max_rounds = 3
         current_tool_calls = tool_calls
         seen: set[tuple] = set()
         current_messages = list(messages)
 
-        for round_num in range(max_rounds):
+        for round_num in range(self._tools_max_rounds):
             triples, seen = await self._dedup_and_execute(
                 current_tool_calls,  # type: ignore[arg-type]
                 max_concurrency=8,
@@ -613,7 +614,7 @@ class ChatCompletionsLLM(LLM):
                 i += 1
 
             # Continue if there are more tool calls
-            if next_tool_calls and round_num < max_rounds - 1:
+            if next_tool_calls and round_num < self._tools_max_rounds - 1:
                 current_tool_calls = next_tool_calls
                 continue
 

@@ -58,6 +58,7 @@ class GeminiLLM(LLM):
         media_resolution: Optional[MediaResolution] = None,
         config: Optional[GenerateContentConfig] = None,
         tools: Optional[List[GeminiTool]] = None,
+        tools_max_rounds: int = 3,
         **kwargs,
     ):
         """
@@ -84,6 +85,7 @@ class GeminiLLM(LLM):
                 - tools.GoogleMaps(): Location-aware queries (Preview)
                 - tools.ComputerUse(): Browser automation (Preview)
                 See: https://ai.google.dev/gemini-api/docs/tools
+            tools_max_rounds: max calling rounds for multi-hop tool call. Default - ``3``.
             **kwargs: Additional arguments passed to GenerateContentConfig constructor.
         """
         super().__init__()
@@ -92,6 +94,7 @@ class GeminiLLM(LLM):
         self.thinking_level = thinking_level
         self.media_resolution = media_resolution
         self._builtin_tools = tools or []
+        self._tools_max_rounds = max(tools_max_rounds, 1)
 
         if config is not None:
             self._base_config: Optional[GenerateContentConfig] = config
@@ -267,13 +270,12 @@ class GeminiLLM(LLM):
         # Check if there were function calls in the response
         if pending_calls:
             # Multi-hop tool calling loop
-            MAX_ROUNDS = 3
             rounds = 0
             current_calls = pending_calls
             cfg_with_tools = kwargs.get("config")
 
             seen: set[str] = set()
-            while current_calls and rounds < MAX_ROUNDS:
+            while current_calls and rounds < self._tools_max_rounds:
                 # Execute tools concurrently with deduplication
                 triples, seen = await self._dedup_and_execute(
                     current_calls, max_concurrency=8, timeout_s=30, seen=seen
