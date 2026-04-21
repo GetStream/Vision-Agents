@@ -5,6 +5,7 @@ session-config shape, data channel named `oai-events`. This plugin reuses
 OpenAI's `openai.types.realtime` TypedDicts as the wire-format type hints.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -28,7 +29,7 @@ from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm import realtime
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
-from .rtc_manager import RTCManager
+from .rtc_manager import INWORLD_API_BASE, RTCManager
 from .tool_utils import convert_tools_to_openai_format, parse_tool_arguments
 
 load_dotenv()
@@ -76,6 +77,10 @@ class Realtime(realtime.Realtime):
             fields (routers, custom turn-detection, tool_choice, etc.).
         fps: Video frames per second (reserved — Inworld does not currently
             accept video input; this is kept for base-class compatibility).
+        force_tool_calling: Skip the REST preflight that auto-disables tools
+            on plans Inworld reports as restricted. Set True if you know the
+            plan supports tools (e.g. you just added credits) and want to
+            bypass the check.
     """
 
     def __init__(
@@ -86,6 +91,7 @@ class Realtime(realtime.Realtime):
         instructions: Optional[str] = None,
         realtime_session: Optional[RealtimeSessionCreateRequestParam] = None,
         fps: int = 1,
+        force_tool_calling: bool = False,
     ):
         resolved_key = api_key or os.getenv("INWORLD_API_KEY")
         if not resolved_key:
@@ -98,6 +104,7 @@ class Realtime(realtime.Realtime):
         self._api_key = resolved_key
         self.model = model
         self.voice = voice
+        self._force_tool_calling = force_tool_calling
 
         self.realtime_session: RealtimeSessionCreateRequestParam = (
             realtime_session or RealtimeSessionCreateRequestParam(type="realtime")
@@ -118,6 +125,7 @@ class Realtime(realtime.Realtime):
             self.realtime_session["instructions"] = instructions
 
         self._pending_tool_calls: dict[str, dict[str, Any]] = {}
+        self._session_updated: asyncio.Event = asyncio.Event()
 
         self.rtc = RTCManager(
             api_key=self._api_key,
@@ -127,20 +135,37 @@ class Realtime(realtime.Realtime):
     async def connect(self) -> None:
         """Establish the WebRTC connection to Inworld's Realtime API.
 
+        Inworld's server ignores most fields passed in the WebRTC signaling
+        body's ``session`` object (model, voice, instructions, tools all fall
+        back to defaults). Configuration must be applied via a ``session.update``
+        sent on the data channel after it opens — this method does that and
+        waits for the server's ``session.updated`` confirmation before
+        returning so callers can trust the session is fully configured.
+
         Emits ``RealtimeErrorEvent`` on failure before re-raising so subscribers
         are notified even if the caller does not catch.
         """
+        self._session_updated.clear()
         available_tools = self.get_available_functions()
         if available_tools:
             tools_for_inworld = convert_tools_to_openai_format(
                 available_tools, for_realtime=True
             )
-            self.realtime_session["tools"] = tools_for_inworld  # type: ignore[typeddict-item]
-            logger.info(
-                "Added %d tools to Inworld session config: %s",
-                len(tools_for_inworld),
-                [t["name"] for t in tools_for_inworld],
-            )
+            if await self._plan_supports_tool_calling():
+                self.realtime_session["tools"] = tools_for_inworld  # type: ignore[typeddict-item]
+                logger.info(
+                    "Added %d tools to Inworld session config: %s",
+                    len(tools_for_inworld),
+                    [t["name"] for t in tools_for_inworld],
+                )
+            else:
+                logger.warning(
+                    "Inworld plan does not permit tool calling; dropping %d "
+                    "registered tools so the session can still respond. "
+                    "Add credits at https://app.inworld.ai to enable tool "
+                    "calling.",
+                    len(tools_for_inworld),
+                )
 
         self.rtc.set_event_callback(self._handle_inworld_event)
         self.rtc.set_audio_callback(self._handle_audio_output)
@@ -163,6 +188,16 @@ class Realtime(realtime.Realtime):
         except ConnectionError as exc:
             self._emit_error_event(exc, context="webrtc")
             raise
+
+        await self.rtc.send_event(
+            {"type": "session.update", "session": dict(self.realtime_session)}
+        )
+        try:
+            await asyncio.wait_for(self._session_updated.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timed out waiting for Inworld session.updated; proceeding anyway"
+            )
 
         self._emit_connected_event(
             session_config={"model": self.model, "voice": self.voice},
@@ -268,11 +303,29 @@ class Realtime(realtime.Realtime):
             self._begin_response()
         elif et == "session.created":
             logger.info("Inworld session created")
+        elif et == "session.updated":
+            self._session_updated.set()
         elif et == "response.done":
             response = event.get("response", {})
             if response.get("status") == "failed":
-                raise InworldRealtimeError(
-                    f"Inworld realtime response failed: {response}"
+                reason = response.get("status_details", {}).get("reason", "")
+                if reason == "server_error" and self.realtime_session.get("tools"):
+                    logger.error(
+                        "Inworld response failed with server_error while tools "
+                        "were configured. Tool calling may be restricted on "
+                        "this Inworld plan — see "
+                        "https://api.inworld.ai/v1/chat/completions for the "
+                        "underlying plan-restriction error."
+                    )
+                else:
+                    logger.error(
+                        "Inworld realtime response failed: %s", response
+                    )
+                self._emit_error_event(
+                    InworldRealtimeError(
+                        f"Inworld realtime response failed: {response}"
+                    ),
+                    context="response_failed",
                 )
         elif et == "error":
             err = event.get("error", event)
@@ -280,7 +333,7 @@ class Realtime(realtime.Realtime):
                 InworldRealtimeError(json.dumps(err)),
                 context="server_error",
             )
-        elif et in _IGNORED_EVENT_TYPES or et == "session.updated" or et == "rate_limits.updated":
+        elif et in _IGNORED_EVENT_TYPES or et == "rate_limits.updated":
             pass
         else:
             if logger.isEnabledFor(logging.DEBUG):
@@ -342,6 +395,61 @@ class Realtime(realtime.Realtime):
         )
         logger.info("Sent tool response for call_id %s", call_id)
         await self.rtc.send_event({"type": "response.create"})
+
+    async def _plan_supports_tool_calling(self) -> bool:
+        """Probe whether the account's plan permits tool calling.
+
+        Inworld's Realtime API silently returns ``server_error`` on every
+        response when a tool-restricted plan has tools in the session, which
+        leaves the agent unable to respond at all. The REST completions
+        endpoint rejects the same request up-front with a validation 400
+        carrying ``"Tool calling is currently restricted on your plan."`` —
+        we use that as a cheap preflight so we can strip tools and keep the
+        session functional when the plan disallows them.
+
+        Returns True on any unexpected response so we fall back to the old
+        behaviour rather than silently disabling tool calling.
+        """
+        if self._force_tool_calling:
+            return True
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    f"{INWORLD_API_BASE}/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "tools": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "_preflight",
+                                    "description": "preflight",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {},
+                                    },
+                                },
+                            }
+                        ],
+                        "max_tokens": 1,
+                    },
+                )
+        except httpx.RequestError:
+            return True
+
+        if resp.status_code != 400:
+            return True
+        try:
+            message = resp.json().get("error", {}).get("message", "")
+        except ValueError:
+            message = resp.text
+        msg_lower = message.lower()
+        return not ("tool calling" in msg_lower and "restricted" in msg_lower)
 
     def set_instructions(self, instructions: Instructions | str) -> None:
         super().set_instructions(instructions)
