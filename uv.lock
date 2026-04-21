@@ -7682,8 +7682,10 @@ dev = [
 name = "vision-agents-plugins-inworld"
 source = { editable = "plugins/inworld" }
 dependencies = [
+    { name = "aiortc" },
     { name = "av" },
     { name = "httpx" },
+    { name = "openai", extra = ["realtime"] },
     { name = "vision-agents" },
 ]
 
@@ -7695,8 +7697,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiortc", specifier = ">=1.9" },
     { name = "av", specifier = ">=10.0.0" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "openai", extras = ["realtime"], specifier = ">=2.26.0,<3" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

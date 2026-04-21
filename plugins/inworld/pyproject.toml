@@ -5,15 +5,17 @@ build-backend = "hatchling.build"
 [project]
 name = "vision-agents-plugins-inworld"
 dynamic = ["version"]
-description = "Inworld AI TTS integration for Vision Agents"
+description = "Inworld AI integration for Vision Agents (TTS + Realtime WebRTC)"
 readme = "README.md"
-keywords = ["inworld", "TTS", "text-to-speech", "AI", "voice agents", "agents"]
+keywords = ["inworld", "TTS", "text-to-speech", "realtime", "webrtc", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
     "httpx>=0.28.1",
     "av>=10.0.0",
+    "aiortc>=1.9",
+    "openai[realtime]>=2.26.0,<3",
 ]
 
 [project.urls]
