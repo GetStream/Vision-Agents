@@ -56,6 +56,7 @@ class ChatCompletionsLLM(LLM):
             api_key: optional API key. By default, loads from OPENAI_API_KEY environment variable.
             base_url: optional base url. By default, loads from OPENAI_BASE_URL environment variable.
             client: optional `AsyncOpenAI` client. By default, creates a new client object.
+            tools_max_rounds: max calling rounds for multi-hop tool call. Default - ``3``.
         """
         super().__init__()
         self.model = model

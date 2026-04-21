@@ -328,7 +328,7 @@ class XAILLM(LLM):
     ) -> LLMResponseEvent[Response]:
         """
         Handle tool calls by executing them and getting a follow-up response.
-        Supports multi-round tool calling (max 3 rounds).
+        Supports multi-round tool calling.
 
         Args:
             tool_calls: List of tool calls to execute
