@@ -152,6 +152,8 @@ class MlxLLM(LocalTextLLM[MlxModelResources]):
             chunk_index += 1
 
         thread.join(timeout=5.0)
+        if thread.is_alive():
+            logger.warning("MLX generation thread still alive after 5s join timeout")
 
         if generation_error:
             self.events.send(
@@ -198,7 +200,7 @@ class MlxLLM(LocalTextLLM[MlxModelResources]):
         response_id = str(uuid.uuid4())
         sampler = make_sampler(temperature)
 
-        result = await asyncio.to_thread(
+        text = await asyncio.to_thread(
             generate,
             model,
             tokenizer,
@@ -206,7 +208,6 @@ class MlxLLM(LocalTextLLM[MlxModelResources]):
             max_tokens=max_tokens,
             sampler=sampler,
         )
-        text = result.text if hasattr(result, "text") else str(result)
 
         if emit_events:
             latency_ms = (time.perf_counter() - request_start) * 1000

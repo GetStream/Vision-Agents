@@ -314,6 +314,8 @@ class TransformersLLM(LocalTextLLM[ModelResources]):
             chunk_index += 1
 
         thread.join(timeout=5.0)
+        if thread.is_alive():
+            logger.warning("Generation thread still alive after 5s join timeout")
 
         if generation_error:
             self.events.send(
