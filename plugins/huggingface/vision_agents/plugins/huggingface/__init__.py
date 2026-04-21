@@ -23,6 +23,7 @@ except ImportError as e:
     else:
         raise
 
+
 def _is_mlx_import_error(exc: ImportError) -> bool:
     # e.name is None when the failing import is a missing shared library
     # (e.g. libmlx.so on Linux), so fall back to matching the message.
