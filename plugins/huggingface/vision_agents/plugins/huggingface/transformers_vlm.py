@@ -23,7 +23,7 @@ import av
 import jinja2
 import torch
 from transformers import AutoModelForImageTextToText, AutoProcessor, PreTrainedModel
-from ._local_vlm import LocalVLM
+from ._local_vlm import LocalVLM, _extract_last_user_text
 from .transformers_llm import (
     DeviceType,
     QuantizationType,
@@ -144,12 +144,12 @@ class TransformersVLM(LocalVLM[VLMResources]):
         processor = self._resources.processor
         device = self._resources.device
 
-        all_frames = list(frames)
-        if len(all_frames) > self._max_frames:
-            step = len(all_frames) / self._max_frames
-            all_frames = [all_frames[int(i * step)] for i in range(self._max_frames)]
+        sampled = frames
+        if len(frames) > self._max_frames:
+            step = len(frames) / self._max_frames
+            sampled = [frames[int(i * step)] for i in range(self._max_frames)]
 
-        images = [frame.to_image() for frame in all_frames]
+        images = [frame.to_image() for frame in sampled]
 
         inputs = self._build_processor_inputs(processor, messages, images, tools_param)
         inputs = {
@@ -227,18 +227,8 @@ class TransformersVLM(LocalVLM[VLMResources]):
             logger.warning(
                 "processor.apply_chat_template failed, using fallback: %s", e
             )
-            prompt = "Describe what you see."
-            if messages:
-                last_content = messages[-1].get("content", prompt)
-                if isinstance(last_content, str):
-                    prompt = last_content
-                elif isinstance(last_content, list):
-                    for item in last_content:
-                        if isinstance(item, dict) and item.get("type") == "text":
-                            prompt = item.get("text", prompt)
-                            break
             return processor(
-                text=prompt,
+                text=_extract_last_user_text(messages),
                 images=images if images else None,
                 return_tensors="pt",
                 padding=True,

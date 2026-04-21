@@ -1,9 +1,4 @@
-"""Abstract base class for local vision-language model plugins.
-
-Provides ``LocalVLM`` — the shared orchestration for video-capable local
-inference backends (Transformers, MLX). Subclasses implement model loading
-and the raw generate-from-frames call.
-"""
+"""Shared base class for local video-LLM plugins (Transformers, MLX)."""
 
 import abc
 import asyncio
@@ -38,6 +33,23 @@ from ._tool_call_loop import convert_tools_to_chat_completions_format
 logger = logging.getLogger(__name__)
 
 R = TypeVar("R")
+
+
+def _extract_last_user_text(
+    messages: list[dict[str, Any]],
+    default: str = "Describe what you see.",
+) -> str:
+    """Return the text from the last message, unwrapping content-list shapes."""
+    if not messages:
+        return default
+    last_content = messages[-1].get("content", default)
+    if isinstance(last_content, str):
+        return last_content
+    if isinstance(last_content, list):
+        for item in last_content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                return item.get("text", default)
+    return default
 
 
 class LocalVLM(VideoLLM, Warmable[R], Generic[R]):
