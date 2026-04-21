@@ -136,12 +136,9 @@ class TestSegmentWithMockedModel:
         image = np.zeros((480, 640, 3), dtype=np.uint8)
         processor._segment(image, FAKE_DETECTIONS[:1])
 
-        call_kwargs = resources.model.call_args
-        pixel_values = call_kwargs.kwargs.get(
-            "pixel_values", call_kwargs.args[0] if call_kwargs.args else None
-        )
-        if pixel_values is not None and isinstance(pixel_values, torch.Tensor):
-            assert pixel_values.dtype == torch.float16
+        pixel_values = resources.model.call_args.kwargs["pixel_values"]
+        assert isinstance(pixel_values, torch.Tensor)
+        assert pixel_values.dtype == torch.float16
 
     def test_segment_empty_detections(self):
         resources = self._make_resources(num_objects=0)

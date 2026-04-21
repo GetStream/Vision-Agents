@@ -52,6 +52,7 @@ from .transformers_llm import (
     DeviceType,
     TorchDtypeType,
     _model_load_lock,
+    resolve_device,
     resolve_torch_dtype,
 )
 
@@ -149,22 +150,10 @@ class TransformersSegmentationProcessor(
     def on_warmed_up(self, resource: SegmentationResources) -> None:
         self._resources = resource
 
-    def _resolve_device(self) -> torch.device:
-        if self._device_config == "cuda":
-            return torch.device("cuda")
-        if self._device_config == "mps":
-            return torch.device("mps")
-        if self._device_config == "auto":
-            if torch.cuda.is_available():
-                return torch.device("cuda")
-            if torch.backends.mps.is_available():
-                return torch.device("mps")
-        return torch.device("cpu")
-
     def _load_model_sync(self) -> SegmentationResources:
         from transformers import AutoModelForMaskGeneration, AutoProcessor
 
-        device = self._resolve_device()
+        device = resolve_device(self._device_config)
         dtype = resolve_torch_dtype(self._torch_dtype_config)
         with _model_load_lock:
             model = AutoModelForMaskGeneration.from_pretrained(
@@ -310,7 +299,7 @@ class TransformersSegmentationProcessor(
             SegmentationCompletedEvent(
                 plugin_name=self.name,
                 objects=segmented_objects,
-                masks=[m for m in masks],
+                masks=list(masks),
                 image_width=img_width,
                 image_height=img_height,
                 inference_time_ms=inference_time_ms,

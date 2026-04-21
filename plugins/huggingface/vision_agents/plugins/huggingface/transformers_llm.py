@@ -64,6 +64,23 @@ QuantizationType = Literal["none", "4bit", "8bit"]
 TorchDtypeType = Literal["auto", "float16", "bfloat16", "float32"]
 
 
+def resolve_device(config: DeviceType) -> torch.device:
+    """Map a string device config to a concrete ``torch.device``.
+
+    ``"auto"`` picks CUDA, then MPS, then CPU based on availability.
+    """
+    if config == "cuda":
+        return torch.device("cuda")
+    if config == "mps":
+        return torch.device("mps")
+    if config == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+    return torch.device("cpu")
+
+
 def resolve_torch_dtype(config: TorchDtypeType) -> torch.dtype:
     """Map a string config to a concrete ``torch.dtype``.
 

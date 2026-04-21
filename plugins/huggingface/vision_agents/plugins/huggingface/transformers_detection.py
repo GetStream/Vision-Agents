@@ -39,7 +39,7 @@ from vision_agents.core.warmup import Warmable
 
 from .annotation import annotate_image
 from .events import DetectedObject, DetectionCompletedEvent
-from .transformers_llm import DeviceType, _model_load_lock
+from .transformers_llm import DeviceType, _model_load_lock, resolve_device
 
 if TYPE_CHECKING:
     import aiortc
@@ -127,22 +127,10 @@ class TransformersDetectionProcessor(
     def on_warmed_up(self, resource: DetectionResources) -> None:
         self._resources = resource
 
-    def _resolve_device(self) -> torch.device:
-        if self._device_config == "cuda":
-            return torch.device("cuda")
-        if self._device_config == "mps":
-            return torch.device("mps")
-        if self._device_config == "auto":
-            if torch.cuda.is_available():
-                return torch.device("cuda")
-            if torch.backends.mps.is_available():
-                return torch.device("mps")
-        return torch.device("cpu")
-
     def _load_model_sync(self) -> DetectionResources:
         from transformers import AutoImageProcessor, AutoModelForObjectDetection
 
-        device = self._resolve_device()
+        device = resolve_device(self._device_config)
         with _model_load_lock:
             model = AutoModelForObjectDetection.from_pretrained(self.model_id)
             model = model.to(device)
