@@ -1,10 +1,4 @@
-"""Shared utilities and base classes for local-inference LLM plugins.
-
-Provides:
-- Tool-call parsing from raw model text output.
-- Message building from instructions + conversation.
-- ``LocalTextLLM`` — abstract base for text-only local LLMs (Transformers, MLX).
-"""
+"""Shared base class and helpers for local text-LLM plugins (Transformers, MLX)."""
 
 import abc
 import asyncio
@@ -62,6 +56,9 @@ def extract_tool_calls_from_text(text: str) -> list[NormalizedToolCallItem]:
     - Hermes format: ``<tool_call>{"name": ..., "arguments": ...}</tool_call>``
     - Generic JSON: ``{"name": ..., "arguments": ...}``
     """
+    if "{" not in text:
+        return []
+
     tool_calls: list[NormalizedToolCallItem] = []
 
     hermes_pattern = r"<tool_call>\s*(.*?)\s*</tool_call>"
