@@ -6,8 +6,10 @@ available to all tests in the project, including plugin tests.
 """
 
 import asyncio
+import importlib.util
 import logging
 import os
+import sys
 from typing import Iterator
 
 import av
@@ -24,6 +26,20 @@ from vision_agents.core.stt.events import (
 )
 
 load_dotenv()
+
+
+requires_mlx = pytest.mark.skipif(
+    sys.platform != "darwin" or importlib.util.find_spec("mlx_lm") is None,
+    reason="MLX tests require Apple Silicon with mlx-lm installed",
+)
+"""Skip marker for tests that require MLX (Apple Silicon only)."""
+
+
+requires_mlx_vlm = pytest.mark.skipif(
+    sys.platform != "darwin" or importlib.util.find_spec("mlx_vlm") is None,
+    reason="MLX-VLM tests require Apple Silicon with mlx-vlm installed",
+)
+"""Skip marker for tests that require MLX-VLM (Apple Silicon only)."""
 
 
 def skip_blockbuster(func_or_class):
