@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+from typing import TypedDict
 
 import aiortc.mediastreams
 import httpx
@@ -51,6 +52,12 @@ _IGNORED_EVENT_TYPES = frozenset(
         "rate_limits.updated",
     }
 )
+
+
+class _PendingToolCall(TypedDict):
+    call_id: str | None
+    name: str
+    argument_parts: list[str]
 
 
 class InworldRealtimeError(Exception):
@@ -122,7 +129,7 @@ class Realtime(realtime.Realtime):
         if instructions is not None:
             self.realtime_session["instructions"] = instructions
 
-        self._pending_tool_calls: dict[str, dict[str, object]] = {}
+        self._pending_tool_calls: dict[str, _PendingToolCall] = {}
         self._session_updated: asyncio.Event = asyncio.Event()
 
         self.rtc = RTCManager(

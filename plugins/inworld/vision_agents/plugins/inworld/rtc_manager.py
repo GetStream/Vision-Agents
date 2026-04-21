@@ -9,7 +9,7 @@ RTCManager; Inworld's protocol is OpenAI-compatible but the signaling layer
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import httpx
 from aiortc import (
@@ -57,8 +57,8 @@ class RTCManager:
             sample_rate=48000
         )
 
-        self._audio_callback: Callable[[PcmData], object] | None = None
-        self._event_callback: Callable[[dict], object] | None = None
+        self._audio_callback: Callable[[PcmData], Awaitable[None]] | None = None
+        self._event_callback: Callable[[dict], Awaitable[None]] | None = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
         self._pending_tasks: set[asyncio.Task[None]] = set()
 
@@ -210,10 +210,12 @@ class RTCManager:
         if cb is not None:
             await cb(event)
 
-    def set_audio_callback(self, callback: Callable[[PcmData], object]) -> None:
+    def set_audio_callback(
+        self, callback: Callable[[PcmData], Awaitable[None]]
+    ) -> None:
         self._audio_callback = callback
 
-    def set_event_callback(self, callback: Callable[[dict], object]) -> None:
+    def set_event_callback(self, callback: Callable[[dict], Awaitable[None]]) -> None:
         self._event_callback = callback
 
     def _setup_connection_logging(self) -> None:
