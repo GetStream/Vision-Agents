@@ -74,24 +74,28 @@ class RTCManager:
         self.pc = RTCPeerConnection(
             configuration=RTCConfiguration(iceServers=ice_servers)
         )
-        self._setup_connection_logging()
+        try:
+            self._setup_connection_logging()
 
-        await self._add_data_channel()
-        self.pc.addTrack(self._audio_to_inworld_track)
+            await self._add_data_channel()
+            self.pc.addTrack(self._audio_to_inworld_track)
 
-        @self.pc.on("track")
-        async def on_track(track):
-            if track.kind == "audio" and self._audio_callback:
-                audio_forwarder = AudioForwarder(track, self._audio_callback)
-                await audio_forwarder.start()
+            @self.pc.on("track")
+            async def on_track(track):
+                if track.kind == "audio" and self._audio_callback:
+                    audio_forwarder = AudioForwarder(track, self._audio_callback)
+                    await audio_forwarder.start()
 
-        offer = await self.pc.createOffer()
-        await self.pc.setLocalDescription(offer)
+            offer = await self.pc.createOffer()
+            await self.pc.setLocalDescription(offer)
 
-        answer_sdp = await self._exchange_sdp(offer.sdp)
+            answer_sdp = await self._exchange_sdp(offer.sdp)
 
-        answer = RTCSessionDescription(sdp=answer_sdp, type="answer")
-        await self.pc.setRemoteDescription(answer)
+            answer = RTCSessionDescription(sdp=answer_sdp, type="answer")
+            await self.pc.setRemoteDescription(answer)
+        except BaseException:
+            await self.close()
+            raise
 
     async def send_audio_pcm(self, pcm: PcmData) -> None:
         """Send a PCM audio frame upstream."""
@@ -258,7 +262,7 @@ class RTCManager:
 
         try:
             await pc.close()
-        except (ConnectionError, asyncio.CancelledError):
+        except ConnectionError:
             logger.debug("Suppressed expected error closing Inworld peer connection")
 
 

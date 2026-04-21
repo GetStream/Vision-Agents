@@ -107,8 +107,6 @@ class Realtime(realtime.Realtime):
         super().__init__(fps)
         self.provider_name = "inworld_realtime"
         self._api_key = resolved_key
-        self.model = model
-        self.voice = voice
         self._force_tool_calling = force_tool_calling
 
         self.realtime_session: RealtimeSessionCreateRequestParam = (
@@ -125,6 +123,9 @@ class Realtime(realtime.Realtime):
         if self.realtime_session["audio"].get("output") is None:
             self.realtime_session["audio"]["output"] = RealtimeAudioConfigOutputParam()
         self.realtime_session["audio"]["output"].setdefault("voice", voice)
+
+        self.model: str = self.realtime_session["model"]
+        self.voice: str = str(self.realtime_session["audio"]["output"]["voice"])
 
         if instructions is not None:
             self.realtime_session["instructions"] = instructions
@@ -448,11 +449,26 @@ class Realtime(realtime.Realtime):
         if resp.status_code != 400:
             return True
         try:
-            message = resp.json().get("error", {}).get("message", "")
+            body = resp.json()
         except ValueError:
             message = resp.text
+        else:
+            err = body.get("error") if isinstance(body, dict) else None
+            if isinstance(err, dict):
+                message = err.get("message", "") or ""
+            elif isinstance(err, str):
+                message = err
+            else:
+                message = resp.text
         msg_lower = message.lower()
-        return not ("tool calling" in msg_lower and "restricted" in msg_lower)
+        restricted = "tool calling" in msg_lower and "restricted" in msg_lower
+        if not restricted:
+            logger.warning(
+                "Inworld preflight returned 400 but did not match the known "
+                "tool-restriction message; assuming tools are allowed. body=%s",
+                message,
+            )
+        return not restricted
 
     def set_instructions(self, instructions: Instructions | str) -> None:
         super().set_instructions(instructions)
