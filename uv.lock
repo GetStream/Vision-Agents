@@ -1868,7 +1868,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "3.1.2"
+version = "3.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -1883,9 +1883,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "twirp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/76/97559901a908e662f1d94230dada0b4a1f29aa59b28922acba5617ff76e4/getstream-3.1.2.tar.gz", hash = "sha256:6ff9452dbc562e40793bea6397c8dd1dcabbec68cf8b39f537173e680e265b0c", size = 525297, upload-time = "2026-04-07T16:06:29.135Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/d2/4efbf387e6f77347f0b91f259ef6a6988a0767b125484b6198c8c8463c0a/getstream-3.3.0.tar.gz", hash = "sha256:111845b76da1c03df585d6c896e31d1568f597749eb96dc8d4e64b08160db763", size = 525972, upload-time = "2026-04-21T16:05:53.008Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/da/bba16c058dd88084f651e1bccdc31c740455ed652a16480e287f3efaf06b/getstream-3.1.2-py3-none-any.whl", hash = "sha256:49a9ba00273f41898657eb53268afc8531a8e0c4b5e47f4a1a03ba4de3315541", size = 333203, upload-time = "2026-04-07T16:06:30.558Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/6d/2ed3d704a467c624f9b66a958d621c3184f45dc9865108c3a0209ad64204/getstream-3.3.0-py3-none-any.whl", hash = "sha256:51bf099cda77affc24e24e624a6256ac3d2b7eddafdc6b5bb3bbedf2fc8f9ff4", size = 333901, upload-time = "2026-04-21T16:05:51.454Z" },
 ]
 
 [package.optional-dependencies]
@@ -7179,7 +7179,7 @@ requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.1.2,<4" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.3.0,<4" },
     { name = "mcp", specifier = ">=1.23.3,<2" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },

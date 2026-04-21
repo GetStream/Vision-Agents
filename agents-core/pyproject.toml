@@ -21,7 +21,7 @@ classifiers = [
 
 requires-python = ">=3.10"
 dependencies = [
-    "getstream[webrtc,telemetry]>=3.1.2,<4",
+    "getstream[webrtc,telemetry]>=3.3.0,<4",
     "aiortc>=1.14.0,<1.15.0",
     "python-dotenv>=1.1.1",
     "pillow>=10.4.0",
