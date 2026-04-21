@@ -9,11 +9,9 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Optional
 
 import aiortc.mediastreams
 import httpx
-from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 from openai.types.realtime import (
     RealtimeAudioConfigInputParam,
@@ -32,8 +30,6 @@ from vision_agents.core.utils.video_forwarder import VideoForwarder
 from .rtc_manager import INWORLD_API_BASE, RTCManager
 from .tool_utils import convert_tools_to_openai_format, parse_tool_arguments
 
-load_dotenv()
-
 logger = logging.getLogger(__name__)
 
 _IGNORED_EVENT_TYPES = frozenset(
@@ -51,6 +47,8 @@ _IGNORED_EVENT_TYPES = frozenset(
         "output_audio_buffer.stopped",
         "input_audio_buffer.speech_stopped",
         "input_audio_buffer.committed",
+        "session.updated",
+        "rate_limits.updated",
     }
 )
 
@@ -87,9 +85,9 @@ class Realtime(realtime.Realtime):
         self,
         model: str = "openai/gpt-4o-mini",
         voice: str = "Dennis",
-        api_key: Optional[str] = None,
-        instructions: Optional[str] = None,
-        realtime_session: Optional[RealtimeSessionCreateRequestParam] = None,
+        api_key: str | None = None,
+        instructions: str | None = None,
+        realtime_session: RealtimeSessionCreateRequestParam | None = None,
         fps: int = 1,
         force_tool_calling: bool = False,
     ):
@@ -109,7 +107,7 @@ class Realtime(realtime.Realtime):
         self.realtime_session: RealtimeSessionCreateRequestParam = (
             realtime_session or RealtimeSessionCreateRequestParam(type="realtime")
         )
-        self.realtime_session["model"] = model
+        self.realtime_session.setdefault("model", model)
 
         if self.realtime_session.get("audio") is None:
             self.realtime_session["audio"] = RealtimeAudioConfigParam(
@@ -119,12 +117,12 @@ class Realtime(realtime.Realtime):
             )
         if self.realtime_session["audio"].get("output") is None:
             self.realtime_session["audio"]["output"] = RealtimeAudioConfigOutputParam()
-        self.realtime_session["audio"]["output"]["voice"] = voice
+        self.realtime_session["audio"]["output"].setdefault("voice", voice)
 
         if instructions is not None:
             self.realtime_session["instructions"] = instructions
 
-        self._pending_tool_calls: dict[str, dict[str, Any]] = {}
+        self._pending_tool_calls: dict[str, dict[str, object]] = {}
         self._session_updated: asyncio.Event = asyncio.Event()
 
         self.rtc = RTCManager(
@@ -159,6 +157,7 @@ class Realtime(realtime.Realtime):
                     [t["name"] for t in tools_for_inworld],
                 )
             else:
+                self.realtime_session.pop("tools", None)  # type: ignore[misc]
                 logger.warning(
                     "Inworld plan does not permit tool calling; dropping %d "
                     "registered tools so the session can still respond. "
@@ -207,13 +206,13 @@ class Realtime(realtime.Realtime):
     async def simple_response(
         self,
         text: str,
-        participant: Optional[Participant] = None,
+        participant: Participant | None = None,
     ):
         """Send a text prompt to the Inworld Realtime session."""
         await self.rtc.send_text(text)
 
     async def simple_audio_response(
-        self, audio: PcmData, participant: Optional[Participant] = None
+        self, audio: PcmData, participant: Participant | None = None
     ):
         """Send a single PCM audio frame to the Inworld Realtime session.
 
@@ -234,7 +233,7 @@ class Realtime(realtime.Realtime):
     async def watch_video_track(
         self,
         track: aiortc.mediastreams.MediaStreamTrack,
-        shared_forwarder: Optional[VideoForwarder] = None,
+        shared_forwarder: VideoForwarder | None = None,
     ) -> None:
         """No-op — Inworld Realtime does not accept video input."""
         return None
@@ -303,8 +302,6 @@ class Realtime(realtime.Realtime):
             self._begin_response()
         elif et == "session.created":
             logger.info("Inworld session created")
-        elif et == "session.updated":
-            self._session_updated.set()
         elif et == "response.done":
             response = event.get("response", {})
             if response.get("status") == "failed":
@@ -318,9 +315,7 @@ class Realtime(realtime.Realtime):
                         "underlying plan-restriction error."
                     )
                 else:
-                    logger.error(
-                        "Inworld realtime response failed: %s", response
-                    )
+                    logger.error("Inworld realtime response failed: %s", response)
                 self._emit_error_event(
                     InworldRealtimeError(
                         f"Inworld realtime response failed: {response}"
@@ -333,8 +328,9 @@ class Realtime(realtime.Realtime):
                 InworldRealtimeError(json.dumps(err)),
                 context="server_error",
             )
-        elif et in _IGNORED_EVENT_TYPES or et == "rate_limits.updated":
-            pass
+        elif et in _IGNORED_EVENT_TYPES:
+            if et == "session.updated":
+                self._session_updated.set()
         else:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("Unrecognized Inworld Realtime event: %s %s", et, event)
@@ -360,13 +356,13 @@ class Realtime(realtime.Realtime):
             "arguments_json": arguments,
         }
 
-        logger.info("Executing tool call: %s with args: %s", name, arguments)
+        logger.info("Executing tool call: %s", name)
 
         tc, result, error = await self._run_one_tool(tool_call, timeout_s=30)
 
         if error:
-            response_data: dict[str, Any] = {"error": str(error)}
-            logger.error("Tool call %s failed: %s", name, error)
+            response_data: dict[str, object] = {"error": str(error)}
+            logger.error("Tool call %s failed", name)
         else:
             response_data = (
                 {"result": result} if not isinstance(result, dict) else result
@@ -376,7 +372,7 @@ class Realtime(realtime.Realtime):
         await self._send_tool_response(call_id, response_data)
 
     async def _send_tool_response(
-        self, call_id: Optional[str], response_data: dict[str, Any]
+        self, call_id: str | None, response_data: dict[str, object]
     ) -> None:
         """Send a tool-result item back to Inworld and trigger continuation."""
         if not call_id:
@@ -465,6 +461,12 @@ class Realtime(realtime.Realtime):
         if not available_tools:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("No tools available to register with Inworld realtime")
+            return
+
+        if not await self._plan_supports_tool_calling():
+            logger.warning(
+                "Inworld plan does not permit tool calling; skipping tool update"
+            )
             return
 
         tools_for_inworld = convert_tools_to_openai_format(

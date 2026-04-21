@@ -5,33 +5,33 @@ schema and argument format are identical to OpenAI's Realtime API.
 """
 
 import json
-from typing import Any, Dict, List
 
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
 
 def convert_tools_to_openai_format(
-    tools: List[ToolSchema], for_realtime: bool = False
-) -> List[Dict[str, Any]]:
+    tools: list[ToolSchema], for_realtime: bool = False
+) -> list[dict[str, object]]:
     """Convert ToolSchema to OpenAI format (used by Inworld Realtime).
 
     Args:
-        tools: List of ToolSchema objects from the function registry
+        tools: List of ToolSchema objects from the function registry.
         for_realtime: If True, format for Realtime API (no strict field).
 
     Returns:
         List of tools in OpenAI format.
     """
-    out = []
+    out: list[dict[str, object]] = []
     for t in tools or []:
-        params = t.get("parameters_schema") or t.get("parameters") or {}
-        if not isinstance(params, dict):
-            params = {}
+        raw_params = t.get("parameters_schema") or t.get("parameters") or {}
+        if not isinstance(raw_params, dict):
+            raw_params = {}
+        params = {**raw_params}
         params.setdefault("type", "object")
         params.setdefault("properties", {})
         params.setdefault("additionalProperties", False)
 
-        tool_def: Dict[str, Any] = {
+        tool_def: dict[str, object] = {
             "type": "function",
             "name": t.get("name", "unnamed_tool"),
             "description": t.get("description", "") or "",

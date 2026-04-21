@@ -9,7 +9,7 @@ RTCManager; Inworld's protocol is OpenAI-compatible but the signaling layer
 import asyncio
 import json
 import logging
-from typing import Any, Callable, Optional
+from collections.abc import Callable
 
 import httpx
 from aiortc import (
@@ -40,7 +40,7 @@ class RTCManager:
     """
 
     realtime_session: RealtimeSessionCreateRequestParam
-    pc: Optional[RTCPeerConnection]
+    pc: RTCPeerConnection | None
 
     def __init__(
         self,
@@ -50,16 +50,17 @@ class RTCManager:
         self._api_key = api_key
         self.realtime_session = realtime_session
         self.pc = None
-        self.data_channel: Optional[RTCDataChannel] = None
-        self.call_id: Optional[str] = None
+        self.data_channel: RTCDataChannel | None = None
+        self.call_id: str | None = None
 
         self._audio_to_inworld_track: AudioStreamTrack = AudioStreamTrack(
             sample_rate=48000
         )
 
-        self._audio_callback: Optional[Callable[[PcmData], Any]] = None
-        self._event_callback: Optional[Callable[[dict], Any]] = None
+        self._audio_callback: Callable[[PcmData], object] | None = None
+        self._event_callback: Callable[[dict], object] | None = None
         self._data_channel_open_event: asyncio.Event = asyncio.Event()
+        self._pending_tasks: set[asyncio.Task[None]] = set()
 
     async def connect(self) -> None:
         """Establish the WebRTC connection to Inworld.
@@ -200,17 +201,19 @@ class RTCManager:
             except json.JSONDecodeError:
                 logger.exception("Failed to decode data-channel message")
                 return
-            asyncio.create_task(self._handle_event(data))
+            task = asyncio.create_task(self._handle_event(data))
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
 
     async def _handle_event(self, event: dict) -> None:
         cb = self._event_callback
         if cb is not None:
             await cb(event)
 
-    def set_audio_callback(self, callback: Callable[[PcmData], Any]) -> None:
+    def set_audio_callback(self, callback: Callable[[PcmData], object]) -> None:
         self._audio_callback = callback
 
-    def set_event_callback(self, callback: Callable[[dict], Any]) -> None:
+    def set_event_callback(self, callback: Callable[[dict], object]) -> None:
         self._event_callback = callback
 
     def _setup_connection_logging(self) -> None:
@@ -249,14 +252,12 @@ class RTCManager:
         pc = self.pc
         if pc is None:
             return
+        self.pc = None
 
-        async def _safe_close():
-            try:
-                await pc.close()
-            except ConnectionError:
-                logger.exception("Error closing Inworld peer connection")
-
-        asyncio.create_task(_safe_close())
+        try:
+            await pc.close()
+        except (ConnectionError, asyncio.CancelledError):
+            logger.debug("Suppressed expected error closing Inworld peer connection")
 
 
 def _parse_ice_servers(raw: list[dict]) -> list[RTCIceServer]:

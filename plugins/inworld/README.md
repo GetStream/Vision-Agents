@@ -47,11 +47,12 @@ Requires a WebRTC-capable edge transport — pair with `getstream.Edge()` as
 shown below.
 
 ```python
-from vision_agents.core import Agent
+from vision_agents.core import Agent, User
 from vision_agents.plugins import getstream, inworld, smart_turn
 
 agent = Agent(
     edge=getstream.Edge(),
+    agent_user=User(name="My Agent", id="agent"),
     llm=inworld.Realtime(
         model="openai/gpt-4o-mini",
         voice="Dennis",

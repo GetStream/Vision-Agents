@@ -49,11 +49,11 @@ async def create_agent(**kwargs) -> Agent:
         description="Get the current time as an ISO-8601 string."
     )
     async def get_time() -> str:
-        return datetime.datetime.now().isoformat(timespec="seconds")
+        return datetime.datetime.now(tz=datetime.timezone.utc).isoformat(
+            timespec="seconds"
+        )
 
-    @realtime.register_function(
-        description="Get a short weather forecast for a city."
-    )
+    @realtime.register_function(description="Get a short weather forecast for a city.")
     async def get_weather(city: str) -> dict:
         conditions = random.choice(["sunny", "cloudy", "rainy", "windy", "snowy"])
         temp_c = random.randint(-5, 32)

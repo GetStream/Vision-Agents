@@ -64,7 +64,7 @@ All session endpoints now include `call_id` as a path parameter:
 
 ### Inworld Realtime plugin (WebRTC)
 
-Adds `inworld.Realtime` for low-latency speech-to-speech over Inworld's Realtime API (WebRTC transport). Protocol-compatible with OpenAI Realtime — supports function calling, turn detection, and multiple upstream models via the `<provider>/<model>` ID format (e.g. `"openai/gpt-4o-mini"`, `"google-ai-studio/gemini-2.5-flash"`).
+Adds `inworld.Realtime` for low-latency speech-to-speech over Inworld's Realtime API (WebRTC transport). Protocol-compatible with OpenAI Realtime — supports function calling, turn detection, and multiple upstream models via the `<provider>/<model>` ID format (e.g. `"openai/gpt-4o-mini"`, `"google-ai-studio/gemini-2.5-flash"`). (#502)
 
 ### Redis-backed Agent session registry for horizontal scaling
 
