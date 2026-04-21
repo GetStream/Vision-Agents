@@ -28,12 +28,12 @@ transformers-quantized = [
     "bitsandbytes>=0.41.0",
 ]
 mlx = [
-    "mlx>=0.22.0",
-    "mlx-lm>=0.22.0",
+    "mlx>=0.22.0 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-lm>=0.22.0 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 mlx-vlm = [
-    "mlx>=0.22.0",
-    "mlx-vlm>=0.4.0",
+    "mlx>=0.22.0 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "mlx-vlm>=0.4.0 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "av",
     "aiortc",
 ]
