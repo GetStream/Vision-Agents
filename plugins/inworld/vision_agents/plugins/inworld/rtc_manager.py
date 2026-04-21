@@ -98,7 +98,7 @@ class RTCManager:
 
     async def send_text(self, text: str) -> None:
         """Send a text message and trigger a response."""
-        await self._send_event(
+        await self.send_event(
             {
                 "type": "conversation.item.create",
                 "item": {
@@ -108,10 +108,10 @@ class RTCManager:
                 },
             }
         )
-        await self._send_event({"type": "response.create"})
+        await self.send_event({"type": "response.create"})
 
-    async def _send_event(self, event: dict) -> None:
-        """Send an event through the data channel."""
+    async def send_event(self, event: dict) -> None:
+        """Send a JSON event through the Inworld data channel."""
         if not self.data_channel:
             logger.warning("Data channel not ready, cannot send event")
             return
