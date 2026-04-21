@@ -10,8 +10,6 @@ Example:
 """
 
 import logging
-import os
-import tempfile
 from typing import Any, Optional
 
 import av
@@ -19,7 +17,7 @@ from mlx_vlm import generate, load
 from mlx_vlm.prompt_utils import apply_chat_template
 from mlx_vlm.utils import load_config
 
-from ._local_vlm import LocalVLM
+from ._local_vlm import LocalVLM, _extract_last_user_text
 
 logger = logging.getLogger(__name__)
 
@@ -71,14 +69,13 @@ class MlxVLM(LocalVLM[MlxVLMResources]):
         processor = self._resources.processor
         config = self._resources.config
 
-        all_frames = list(frames)
-        if len(all_frames) > self._max_frames:
-            step = len(all_frames) / self._max_frames
-            all_frames = [all_frames[int(i * step)] for i in range(self._max_frames)]
+        sampled = frames
+        if len(frames) > self._max_frames:
+            step = len(frames) / self._max_frames
+            sampled = [frames[int(i * step)] for i in range(self._max_frames)]
 
-        # mlx-vlm's apply_chat_template accepts a single prompt string + image
-        # count rather than a full message list, so only the last user text is
-        # passed. Multi-turn context is not supported by this API.
+        # mlx-vlm's apply_chat_template takes a single prompt string + image
+        # count rather than a full message list, so multi-turn history is dropped.
         if len(messages) > 1 and not self._multi_turn_warned:
             logger.warning(
                 "mlx-vlm only supports single-turn prompts; "
@@ -87,39 +84,23 @@ class MlxVLM(LocalVLM[MlxVLMResources]):
             )
             self._multi_turn_warned = True
 
-        last_user_text = "Describe what you see."
-        if messages:
-            last_content = messages[-1].get("content", "")
-            if isinstance(last_content, str):
-                last_user_text = last_content
-            elif isinstance(last_content, list):
-                for item in last_content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        last_user_text = item.get("text", last_user_text)
-                        break
+        last_user_text = _extract_last_user_text(messages)
+        images = [frame.to_image() for frame in sampled]
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            image_paths: list[str] = []
-            for i, frame in enumerate(all_frames):
-                img = frame.to_image()
-                path = os.path.join(tmpdir, f"frame_{i}.png")
-                img.save(path, format="PNG")
-                image_paths.append(path)
+        prompt = apply_chat_template(
+            processor,
+            config,
+            last_user_text,
+            num_images=len(images),
+        )
 
-            prompt = apply_chat_template(
-                processor,
-                config,
-                last_user_text,
-                num_images=len(image_paths),
-            )
+        result = generate(
+            model,
+            processor,
+            prompt=prompt,
+            image=images if images else None,
+            max_tokens=max_tokens,
+            temp=temperature,
+        )
 
-            result = generate(
-                model,
-                processor,
-                prompt=prompt,
-                image=image_paths if image_paths else None,
-                max_tokens=max_tokens,
-                temp=temperature,
-            )
-
-        return result.text if hasattr(result, "text") else str(result)
+        return result.text
