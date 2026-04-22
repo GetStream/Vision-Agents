@@ -343,9 +343,46 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR])
                 detected_class_ids = (
                     detected_obj.class_id if detected_obj.class_id is not None else []
                 )
+                keep_indices = np.flatnonzero(
+                    np.isin(np.asarray(detected_class_ids), classes_ids)
+                )
+                if keep_indices.size == 0:
+                    return sv.Detections.empty()
+
+                num_detections = len(detected_obj.xyxy)
+                filtered_data: dict[str, np.ndarray | list] = {}
+                metadata = dict(getattr(detected_obj, "metadata", {}))
+                for key, value in detected_obj.data.items():
+                    if isinstance(value, np.ndarray) and len(value) == num_detections:
+                        filtered_data[key] = value[keep_indices]
+                    elif isinstance(value, list) and len(value) == num_detections:
+                        filtered_data[key] = [value[i] for i in keep_indices]
+                    else:
+                        metadata[key] = value
+
                 detected_obj = cast(
                     Detections,
-                    detected_obj[np.isin(detected_class_ids, classes_ids)],
+                    sv.Detections(
+                        xyxy=detected_obj.xyxy[keep_indices],
+                        mask=(
+                            detected_obj.mask[keep_indices]
+                            if detected_obj.mask is not None
+                            else None
+                        ),
+                        confidence=(
+                            detected_obj.confidence[keep_indices]
+                            if detected_obj.confidence is not None
+                            else None
+                        ),
+                        class_id=np.asarray(detected_class_ids)[keep_indices],
+                        tracker_id=(
+                            detected_obj.tracker_id[keep_indices]
+                            if detected_obj.tracker_id is not None
+                            else None
+                        ),
+                        data=filtered_data,
+                        metadata=metadata,
+                    ),
                 )
 
             if detected_obj.class_id is not None and detected_obj.class_id.size:
