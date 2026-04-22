@@ -1,3 +1,5 @@
+import warnings
+
 from .events import DetectionCompletedEvent
 from .huggingface_llm import HuggingFaceLLM as LLM
 from .huggingface_vlm import HuggingFaceVLM as VLM
@@ -11,8 +13,6 @@ try:
 
     __all__ += ["TransformersDetectionProcessor", "TransformersLLM", "TransformersVLM"]
 except ImportError as e:
-    import warnings
-
     optional = {"torch", "transformers", "av", "aiortc", "jinja2", "supervision", "cv2"}
     if e.name in optional:
         warnings.warn(
@@ -25,11 +25,9 @@ except ImportError as e:
 
 
 def _is_mlx_import_error(exc: ImportError) -> bool:
-    # e.name is None when the failing import is a missing shared library
-    # (e.g. libmlx.so on Linux), so fall back to matching the message.
     if exc.name in {"mlx", "mlx_lm", "mlx_vlm", "mlx.core"}:
         return True
-    return "mlx" in str(exc).lower()
+    return exc.name is None and "mlx" in str(exc).lower()
 
 
 try:
@@ -37,8 +35,6 @@ try:
 
     __all__ += ["MlxLLM"]
 except ImportError as e:
-    import warnings
-
     if _is_mlx_import_error(e):
         warnings.warn(
             "MLX is not available on this platform. "
@@ -53,8 +49,6 @@ try:
 
     __all__ += ["MlxVLM"]
 except ImportError as e:
-    import warnings
-
     if _is_mlx_import_error(e) or e.name in {"av", "aiortc"}:
         warnings.warn(
             "MLX-VLM is not available on this platform. "

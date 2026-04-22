@@ -64,12 +64,17 @@ def extract_tool_calls_from_text(text: str) -> list[NormalizedToolCallItem]:
     hermes_pattern = r"<tool_call>\s*(.*?)\s*</tool_call>"
     for match in re.finditer(hermes_pattern, text, re.DOTALL):
         for obj in _extract_json_objects(match.group(1)):
+            name = obj.get("name")
+            arguments = obj.get("arguments")
+            if not isinstance(name, str) or not name or not isinstance(arguments, dict):
+                logger.debug("Skipping malformed Hermes tool call payload: %s", obj)
+                continue
             tool_calls.append(
                 {
                     "type": "tool_call",
                     "id": obj.get("id", str(uuid.uuid4())),
-                    "name": obj.get("name", ""),
-                    "arguments_json": obj.get("arguments", {}),
+                    "name": name,
+                    "arguments_json": arguments,
                 }
             )
 
@@ -77,7 +82,11 @@ def extract_tool_calls_from_text(text: str) -> list[NormalizedToolCallItem]:
         return tool_calls
 
     for obj in _extract_json_objects(text):
-        if "name" in obj and "arguments" in obj:
+        if (
+            isinstance(obj.get("name"), str)
+            and obj["name"]
+            and isinstance(obj.get("arguments"), dict)
+        ):
             tool_calls.append(
                 {
                     "type": "tool_call",
@@ -212,6 +221,10 @@ class LocalTextLLM(LLM, Warmable[R], Generic[R]):
             )
             return LLMResponseEvent(original=None, text="")
 
+        if self._resources is None:
+            logger.error("Model not loaded. Ensure warmup() was called.")
+            return LLMResponseEvent(original=None, text="")
+
         if participant is None:
             await self._conversation.send_message(
                 role="user", user_id="user", content=text
@@ -236,6 +249,13 @@ class LocalTextLLM(LLM, Warmable[R], Generic[R]):
         if messages is None:
             messages = self._build_messages()
 
+        generation_kwargs = {
+            "stream": stream,
+            "max_new_tokens": max_new_tokens,
+            "temperature": temperature,
+            **kwargs,
+        }
+
         tools_param: Optional[list[dict[str, Any]]] = None
         tools_spec = self.get_available_functions()
         if tools_spec:
@@ -258,14 +278,20 @@ class LocalTextLLM(LLM, Warmable[R], Generic[R]):
             )
         )
 
-        if stream and not suppress_events:
-            result = await self._generate_streaming(
-                prepared_input, max_tokens, temperature
-            )
-        else:
-            result = await self._generate_non_streaming(
-                prepared_input, max_tokens, temperature, not suppress_events
-            )
+        try:
+            if stream and not suppress_events:
+                result = await self._generate_streaming(
+                    prepared_input, max_tokens, temperature
+                )
+            else:
+                result = await self._generate_non_streaming(
+                    prepared_input, max_tokens, temperature, not suppress_events
+                )
+        except (RuntimeError, ValueError) as exc:
+            logger.exception("Local text generation failed")
+            error_event = LLMResponseEvent(original=None, text="", exception=exc)
+            self.events.send(error_event)
+            return error_event
 
         if suppress_events and result.text:
             if logger.isEnabledFor(logging.DEBUG):
@@ -274,7 +300,9 @@ class LocalTextLLM(LLM, Warmable[R], Generic[R]):
             if tool_calls:
                 if is_tool_followup:
                     return result
-                return await self._handle_tool_calls(tool_calls, messages, kwargs)
+                return await self._handle_tool_calls(
+                    tool_calls, messages, generation_kwargs
+                )
             response_id = str(uuid.uuid4())
             if stream:
                 self.events.send(

@@ -80,6 +80,7 @@ class LocalVLM(VideoLLM, Warmable[R], Generic[R]):
         self._max_tool_rounds = max_tool_rounds
         self._resources: Optional[R] = None
         self._video_forwarder: Optional[VideoForwarder] = None
+        self._owns_forwarder = False
         self._frame_buffer: deque[av.VideoFrame] = deque(
             maxlen=fps * frame_buffer_seconds
         )
@@ -114,15 +115,21 @@ class LocalVLM(VideoLLM, Warmable[R], Generic[R]):
         track: MediaStreamTrack,
         shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None:
-        if self._video_forwarder is not None and shared_forwarder is None:
-            logger.warning("Video forwarder already running, stopping the previous one")
-            await self._video_forwarder.stop()
+        if self._video_forwarder is not None:
+            await self._video_forwarder.remove_frame_handler(self._frame_buffer.append)
+            if self._owns_forwarder:
+                logger.warning(
+                    "Video forwarder already running, stopping the previous one"
+                )
+                await self._video_forwarder.stop()
             self._video_forwarder = None
+            self._owns_forwarder = False
 
         logger.info('Subscribing plugin "%s" to VideoForwarder', self._plugin_name)
 
         if shared_forwarder:
             self._video_forwarder = shared_forwarder
+            self._owns_forwarder = False
         else:
             self._video_forwarder = VideoForwarder(
                 cast(VideoStreamTrack, track),
@@ -131,6 +138,7 @@ class LocalVLM(VideoLLM, Warmable[R], Generic[R]):
                 name=f"{self._plugin_name}_forwarder",
             )
             self._video_forwarder.start()
+            self._owns_forwarder = True
 
         self._video_forwarder.add_frame_handler(
             self._frame_buffer.append, fps=self._fps
@@ -139,7 +147,10 @@ class LocalVLM(VideoLLM, Warmable[R], Generic[R]):
     async def stop_watching_video_track(self) -> None:
         if self._video_forwarder is not None:
             await self._video_forwarder.remove_frame_handler(self._frame_buffer.append)
+            if self._owns_forwarder:
+                await self._video_forwarder.stop()
             self._video_forwarder = None
+            self._owns_forwarder = False
             logger.info("Stopped video forwarding to %s", self._plugin_name)
 
     async def simple_response(
@@ -235,6 +246,12 @@ class LocalVLM(VideoLLM, Warmable[R], Generic[R]):
         if frames is None:
             frames = list(self._frame_buffer)
 
+        generation_kwargs = {
+            "max_new_tokens": max_new_tokens,
+            "temperature": temperature,
+            **kwargs,
+        }
+
         tools_param: Optional[list[dict[str, Any]]] = None
         tools_spec = self.get_available_functions()
         if tools_spec:
@@ -278,7 +295,7 @@ class LocalVLM(VideoLLM, Warmable[R], Generic[R]):
                 if is_tool_followup:
                     return LLMResponseEvent(original=None, text=result_text)
                 return await self._handle_tool_calls(
-                    tool_calls, messages, frames, kwargs
+                    tool_calls, messages, frames, generation_kwargs
                 )
 
         latency_ms = (time.perf_counter() - request_start) * 1000
