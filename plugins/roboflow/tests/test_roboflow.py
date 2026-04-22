@@ -79,7 +79,7 @@ class TestRoboflowLocalDetectionProcessor:
         assert detection
         objects = detection.objects
         assert len(objects) > 0
-        assert "label" in objects[0]
+        assert objects[0]["label"] in {"cat", "kitty", "feline"}
 
         # Check the output track. The image size must be the same as the original one
         output_frame = await output_track.recv()

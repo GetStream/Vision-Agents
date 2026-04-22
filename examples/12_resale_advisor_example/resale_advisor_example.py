@@ -1,16 +1,16 @@
 """
-Vision AI with Gemma 4 - Local VLM Agent (MLX)
+Resale Advisor with Gemma 4 - Local VLM Agent (MLX)
 
-A real-time vision + voice assistant powered by Gemma 4 E4B running on Apple
-Silicon via MLX.  Demonstrates how to build a multimodal AI agent that can see
-the user's video feed and respond with voice:
+A real-time resale advisor powered by Gemma 4 E4B running on Apple Silicon via
+MLX. Demonstrates how to build a multimodal AI agent that can see an item on
+camera, discuss its condition, and provide resale-oriented guidance with voice:
 
 - Gemma 4 E4B (8-bit quantized) via mlx-vlm for vision-language inference
 - Deepgram for speech-to-text and text-to-speech
 - GetStream for real-time communication
 
-The user speaks naturally and the agent responds with voice, describing what
-it sees and answering questions about the video feed.
+The user speaks naturally and the agent responds with voice, describing the
+item, asking clarifying questions when needed, and giving a rough resale view.
 
 Requirements:
 - STREAM_API_KEY and STREAM_API_SECRET environment variables
@@ -33,18 +33,20 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 SYSTEM_PROMPT = (
-    "You are a vision assistant running on a local Gemma 4 model. "
-    "You can see the user's camera feed. Describe what you see concisely. "
-    "Speak naturally, as if having a conversation. No lists or formatting. "
-    "Never use emojis or special characters. Keep responses under 50 words."
+    "You are a resale advisor running on a local Gemma 4 model. "
+    "You can see the user's camera feed. Identify the item, comment on visible "
+    "condition, ask for age or brand details when needed, and give a cautious "
+    "resale estimate or range when the user asks. Speak naturally, with no "
+    "lists or formatting. Never use emojis or special characters. Keep "
+    "responses under 60 words and be explicit when you are uncertain."
 )
 
 
 async def create_agent(**kwargs) -> Agent:
-    """Create a vision AI agent with Gemma 4 VLM."""
+    """Create a resale advisor agent with Gemma 4 VLM."""
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="Vision Assistant", id="agent"),
+        agent_user=User(name="Resale Advisor", id="agent"),
         instructions=SYSTEM_PROMPT,
         llm=huggingface.MlxVLM(
             model="mlx-community/gemma-4-e4b-it-8bit",
@@ -61,12 +63,12 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     """Join the call and run the agent."""
     call = await agent.create_call(call_type, call_id)
 
-    logger.info("Starting Vision Assistant...")
+    logger.info("Starting Resale Advisor...")
 
     async with agent.join(call):
         await asyncio.sleep(2)
         await agent.llm.simple_response(
-            text="Greet the user briefly. Tell them you can see their camera and can describe what you see.",
+            text="Greet the user briefly. Tell them you can inspect items on camera and help with resale guidance.",
         )
         await agent.finish()
 
