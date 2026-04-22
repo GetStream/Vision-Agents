@@ -54,8 +54,8 @@ class MlxLLM(LocalTextLLM[MlxModelResources]):
     _plugin_name = "mlx_llm"
 
     def _load_model_sync(self) -> MlxModelResources:
-        result = load(self.model_id)
-        return MlxModelResources(model=result[0], tokenizer=result[1])
+        model, tokenizer, *_ = load(self.model_id)
+        return MlxModelResources(model=model, tokenizer=tokenizer)
 
     def _apply_template(
         self,
@@ -200,14 +200,25 @@ class MlxLLM(LocalTextLLM[MlxModelResources]):
         response_id = str(uuid.uuid4())
         sampler = make_sampler(temperature)
 
-        text = await asyncio.to_thread(
-            generate,
-            model,
-            tokenizer,
-            prompt=prepared_input,
-            max_tokens=max_tokens,
-            sampler=sampler,
-        )
+        try:
+            text = await asyncio.to_thread(
+                generate,
+                model,
+                tokenizer,
+                prompt=prepared_input,
+                max_tokens=max_tokens,
+                sampler=sampler,
+            )
+        except (RuntimeError, ValueError) as e:
+            logger.exception("Generation failed")
+            self.events.send(
+                events.LLMErrorEvent(
+                    plugin_name=self._plugin_name,
+                    error_message=str(e),
+                    event_data=e,
+                )
+            )
+            return LLMResponseEvent(original=None, text="")
 
         if emit_events:
             latency_ms = (time.perf_counter() - request_start) * 1000

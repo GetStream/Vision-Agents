@@ -50,6 +50,7 @@ class MlxVLM(LocalVLM[MlxVLMResources]):
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
         self._multi_turn_warned = False
+        self._tools_unsupported_warned = False
 
     def _load_model_sync(self) -> MlxVLMResources:
         model, processor = load(self.model_id)
@@ -83,6 +84,13 @@ class MlxVLM(LocalVLM[MlxVLMResources]):
                 len(messages) - 1,
             )
             self._multi_turn_warned = True
+
+        if tools_param and not self._tools_unsupported_warned:
+            logger.warning(
+                "mlx-vlm's apply_chat_template does not accept tools; registered functions (%d) will not be surfaced to the model",
+                len(tools_param),
+            )
+            self._tools_unsupported_warned = True
 
         last_user_text = _extract_last_user_text(messages)
         images = [frame.to_image() for frame in sampled]

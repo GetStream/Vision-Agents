@@ -9,6 +9,7 @@ import asyncio
 import importlib.util
 import logging
 import os
+import platform
 import sys
 from typing import Iterator
 
@@ -29,14 +30,18 @@ load_dotenv()
 
 
 requires_mlx = pytest.mark.skipif(
-    sys.platform != "darwin" or importlib.util.find_spec("mlx_lm") is None,
+    sys.platform != "darwin"
+    or platform.machine() != "arm64"
+    or importlib.util.find_spec("mlx_lm") is None,
     reason="MLX tests require Apple Silicon with mlx-lm installed",
 )
 """Skip marker for tests that require MLX (Apple Silicon only)."""
 
 
 requires_mlx_vlm = pytest.mark.skipif(
-    sys.platform != "darwin" or importlib.util.find_spec("mlx_vlm") is None,
+    sys.platform != "darwin"
+    or platform.machine() != "arm64"
+    or importlib.util.find_spec("mlx_vlm") is None,
     reason="MLX-VLM tests require Apple Silicon with mlx-vlm installed",
 )
 """Skip marker for tests that require MLX-VLM (Apple Silicon only)."""

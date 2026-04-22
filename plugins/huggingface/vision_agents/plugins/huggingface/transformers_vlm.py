@@ -86,12 +86,12 @@ class TransformersVLM(LocalVLM[VLMResources]):
         do_sample: bool = True,
     ):
         super().__init__(
-            model,
-            fps,
-            frame_buffer_seconds,
-            max_frames,
-            max_new_tokens,
-            max_tool_rounds,
+            model=model,
+            fps=fps,
+            frame_buffer_seconds=frame_buffer_seconds,
+            max_frames=max_frames,
+            max_new_tokens=max_new_tokens,
+            max_tool_rounds=max_tool_rounds,
         )
         self._device_config = device
         self._quantization = quantization

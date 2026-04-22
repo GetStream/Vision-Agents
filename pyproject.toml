@@ -120,7 +120,7 @@ dev = [
     "asgi-lifespan>=2.1.0",
     "testcontainers[redis]>=4.0.0",
     "redis[hiredis]>=5.0.0",
-    "vision-agents-plugins-huggingface[mlx-vlm] ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "vision-agents-plugins-huggingface[mlx,mlx-vlm] ; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [tool.mypy]

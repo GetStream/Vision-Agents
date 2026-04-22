@@ -75,7 +75,7 @@ dev = [
     { name = "scalene", specifier = ">=1.5.54" },
     { name = "testcontainers", extras = ["redis"], specifier = ">=4.0.0" },
     { name = "toml", specifier = ">=0.10.2" },
-    { name = "vision-agents-plugins-huggingface", extras = ["mlx-vlm"], marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", editable = "plugins/huggingface" },
+    { name = "vision-agents-plugins-huggingface", extras = ["mlx", "mlx-vlm"], marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", editable = "plugins/huggingface" },
 ]
 
 [[package]]

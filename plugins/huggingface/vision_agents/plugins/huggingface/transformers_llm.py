@@ -152,12 +152,14 @@ class TransformersLLM(LocalTextLLM[ModelResources]):
         trust_remote_code: bool = False,
         max_new_tokens: int = 512,
         max_tool_rounds: int = 3,
+        do_sample: bool = True,
     ):
         super().__init__(model, max_new_tokens, max_tool_rounds)
         self._device_config = device
         self._quantization = quantization
         self._torch_dtype_config = torch_dtype
         self._trust_remote_code = trust_remote_code
+        self._do_sample = do_sample
 
     def _load_model_sync(self) -> ModelResources:
         torch_dtype = resolve_torch_dtype(self._torch_dtype_config)
@@ -260,8 +262,8 @@ class TransformersLLM(LocalTextLLM[ModelResources]):
             **prepared_input,
             "max_new_tokens": max_tokens,
             "streamer": streamer,
-            "do_sample": True,
-            "temperature": temperature,
+            "do_sample": self._do_sample,
+            "temperature": temperature if self._do_sample else 1.0,
             "pad_token_id": tokenizer.pad_token_id,
         }
 
@@ -364,8 +366,8 @@ class TransformersLLM(LocalTextLLM[ModelResources]):
         generate_kwargs = {
             **prepared_input,
             "max_new_tokens": max_tokens,
-            "do_sample": True,
-            "temperature": temperature,
+            "do_sample": self._do_sample,
+            "temperature": temperature if self._do_sample else 1.0,
             "pad_token_id": tokenizer.pad_token_id,
         }
 
