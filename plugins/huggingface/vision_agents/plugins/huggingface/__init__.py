@@ -1,3 +1,5 @@
+from importlib import import_module
+
 import warnings
 
 from .events import DetectionCompletedEvent
@@ -30,30 +32,32 @@ def _is_mlx_import_error(exc: ImportError) -> bool:
     return exc.name is None and "mlx" in str(exc).lower()
 
 
-try:
-    from .mlx_llm import MlxLLM
+__all__ += ["MlxLLM", "MlxVLM"]
 
-    __all__ += ["MlxLLM"]
-except ImportError as e:
-    if _is_mlx_import_error(e):
-        warnings.warn(
-            "MLX is not available on this platform. "
-            "Install the [mlx] extra on Apple Silicon to enable MLX plugins.",
-            stacklevel=2,
-        )
-    else:
-        raise
 
-try:
-    from .mlx_vlm import MlxVLM
+def __getattr__(name: str):
+    if name == "MlxLLM":
+        try:
+            return import_module(".mlx_llm", __name__).MlxLLM
+        except ImportError as e:
+            if _is_mlx_import_error(e):
+                warnings.warn(
+                    "MLX is not available on this platform. "
+                    "Install the [mlx] extra on Apple Silicon to enable MLX plugins.",
+                    stacklevel=2,
+                )
+            raise
 
-    __all__ += ["MlxVLM"]
-except ImportError as e:
-    if _is_mlx_import_error(e) or e.name in {"av", "aiortc"}:
-        warnings.warn(
-            "MLX-VLM is not available on this platform. "
-            "Install the [mlx-vlm] extra on Apple Silicon to enable MLX VLM plugins.",
-            stacklevel=2,
-        )
-    else:
-        raise
+    if name == "MlxVLM":
+        try:
+            return import_module(".mlx_vlm", __name__).MlxVLM
+        except ImportError as e:
+            if _is_mlx_import_error(e) or e.name in {"av", "aiortc"}:
+                warnings.warn(
+                    "MLX-VLM is not available on this platform. "
+                    "Install the [mlx-vlm] extra on Apple Silicon to enable MLX VLM plugins.",
+                    stacklevel=2,
+                )
+            raise
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
