@@ -120,7 +120,7 @@ dev = [
     "pyinstrument>=5.1.1",
     "toml>=0.10.2",
     "asgi-lifespan>=2.1.0",
-    "testcontainers[redis]>=4.0.0",
+    "testcontainers[redis]>=4.14.2",
     "redis[hiredis]>=5.0.0",
 ]
 
