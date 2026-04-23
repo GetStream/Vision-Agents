@@ -23,9 +23,7 @@ def log_exceptions(
         exceptions = (Exception,)
     try:
         yield
-    except BaseException as exc:
+    except exceptions:
         logger.exception(message)
-        # Always propagate non-targeted BaseExceptions
-        # (includes CancelledError, KeyboardInterrupt, SystemExit, etc.)
-        if not isinstance(exc, exceptions) or reraise:
+        if reraise:
             raise
