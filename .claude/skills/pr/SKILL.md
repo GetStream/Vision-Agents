@@ -7,7 +7,7 @@ description: Create a draft pull request for the Vision-Agents repo using gh CLI
 
 ## Before creating
 
-- One logical change per PR. If the branch covers more than one independent change, split it into separate PRs before writing the body.
+- Before writing the PR body, run `git log main..HEAD --oneline` to review all commits on the branch. If the branch contains more than one independent logical change, STOP and ask the user whether to split the branch into separate PRs before proceeding.
 - Run `uv run --no-sync dev.py check` (ruff + mypy + unit tests). Fix anything it reports.
 - Do not run integration tests locally. CI handles them.
 - If the change is user-facing (public API break, new feature, bug fix), update `CHANGELOG.md` per the rules in `CLAUDE.md` before opening the PR.
