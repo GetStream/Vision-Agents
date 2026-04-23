@@ -93,7 +93,8 @@ profile.html
 
 /opencode.json
 .ralph-tui/
-.claude/
+.claude/*
+!.claude/skills/
 
 .uv-cache/
 
