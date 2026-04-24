@@ -29,6 +29,21 @@ if TYPE_CHECKING:
 DEFAULT_MODEL = "gemini-3.1-pro-preview"
 
 
+_GEMINI_UNSUPPORTED_SCHEMA_KEYS = frozenset({"$schema"})
+
+
+def _strip_unsupported_schema_keys(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {
+            k: _strip_unsupported_schema_keys(v)
+            for k, v in node.items()
+            if k not in _GEMINI_UNSUPPORTED_SCHEMA_KEYS
+        }
+    if isinstance(node, list):
+        return [_strip_unsupported_schema_keys(item) for item in node]
+    return node
+
+
 class GeminiLLM(LLM):
     """
     The GeminiLLM class provides full/native access to the gemini SDK methods.
@@ -470,7 +485,9 @@ class GeminiLLM(LLM):
                 {
                     "name": tool["name"],
                     "description": tool.get("description", ""),
-                    "parameters": tool["parameters_schema"],
+                    "parameters_json_schema": _strip_unsupported_schema_keys(
+                        tool["parameters_schema"]
+                    ),
                 }
             )
 
