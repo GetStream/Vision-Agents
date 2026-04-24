@@ -41,7 +41,7 @@ async def create_agent(**kwargs) -> Agent:
         "Also make fun of yourself for not having vision yet. "
         "What sort of AI lab has excellent voice but no vision?!",
         llm=xai.Realtime(
-            voice="Ara",  # Options: Ara, Rex, Sal, Eve, Leo
+            voice="ara",  # Options: ara, rex, sal, eve, leo
         ),
     )
     return agent

@@ -16,7 +16,7 @@ async def realtime():
     """Create and manage Realtime connection lifecycle."""
     realtime = Realtime(
         api_key=os.getenv("XAI_API_KEY"),
-        voice="Ara",
+        voice="ara",
     )
     try:
         yield realtime
@@ -109,7 +109,7 @@ class TestXAIRealtimeConfiguration:
         """Test that default configuration is set correctly."""
         realtime = Realtime(api_key="test-key")
         assert realtime.model == "grok-voice-think-fast-1.0"
-        assert realtime.voice == "Ara"
+        assert realtime.voice == "ara"
         # xAI realtime emits PCM at 24 kHz natively.
         assert realtime.sample_rate == 24000
         assert realtime.turn_detection == "server_vad"
@@ -125,11 +125,11 @@ class TestXAIRealtimeConfiguration:
         """Test custom configuration options."""
         realtime = Realtime(
             api_key="test-key",
-            voice="Rex",
+            voice="rex",
             turn_detection=None,
             vad_interrupt_response=True,
         )
-        assert realtime.voice == "Rex"
+        assert realtime.voice == "rex"
         assert realtime.sample_rate == 24000
         assert realtime.turn_detection is None
         assert realtime.vad_interrupt_response is True

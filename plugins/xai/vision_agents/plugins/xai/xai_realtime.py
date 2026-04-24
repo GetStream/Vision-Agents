@@ -33,7 +33,7 @@ from vision_agents.core.llm.llm_types import ToolSchema
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "grok-voice-think-fast-1.0"
-DEFAULT_VOICE = "Ara"
+DEFAULT_VOICE = "ara"
 WEBSOCKET_URL = "wss://api.x.ai/v1/realtime"
 EPHEMERAL_TOKEN_URL = "https://api.x.ai/v1/realtime/client_secrets"
 
@@ -80,7 +80,7 @@ class XAIRealtime(realtime.Realtime):
         await llm.simple_response("Hello, how are you?")
 
         # With custom voice
-        llm = xai.Realtime(voice="Rex")
+        llm = xai.Realtime(voice="rex")
 
         # Disable web search and X search
         llm = xai.Realtime(web_search=False, x_search=False)
@@ -120,7 +120,7 @@ class XAIRealtime(realtime.Realtime):
         Args:
             model: Model to use. Sent as the `model` query parameter on the
                    WebSocket URL. Defaults to "grok-voice-think-fast-1.0".
-            voice: Voice to use for responses. Options: Ara, Rex, Sal, Eve, Leo.
+            voice: Voice to use for responses. Options: ara, rex, sal, eve, leo.
             api_key: Optional API key. Defaults to XAI_API_KEY environment variable.
             client: Optional AsyncClient instance. If not provided, one is created.
             turn_detection: Turn detection mode. Use "server_vad" for automatic
