@@ -19,3 +19,4 @@ description: Create a draft pull request for the Vision-Agents repo using gh CLI
 - `## Why` is motivation + context. `## Changes`, if included, is high-level; never per-bullet justifications, those belong in `## Why`.
 - Link public GitHub issues inline within `## Why` (e.g. "users reported X (#478)"), not as a trailing `Fixes #N`.
 - Do not paste CI, lint, or tool output in the body.
+- Do not hard-wrap paragraphs. GitHub renders each newline inside a paragraph as a visible line break, so a 72-column-wrapped paragraph becomes a staircase. Write each paragraph or bullet as one unbroken line; rely on the browser to soft-wrap. Only use newlines to separate paragraphs, list items, or block elements.
