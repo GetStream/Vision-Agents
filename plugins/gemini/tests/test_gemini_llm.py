@@ -24,6 +24,59 @@ class TestGeminiLLM:
         messages2 = GeminiLLM._normalize_message(advanced)
         assert messages2[0].original is not None
 
+    async def test_convert_tools_routes_mcp_schema_to_parameters_json_schema(
+        self, llm: GeminiLLM
+    ):
+        tools = [
+            {
+                "name": "search_docs",
+                "description": "Search knowledge base",
+                "parameters_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"}
+                    },
+                    "required": ["query"],
+                    "additionalProperties": False,
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                },
+            }
+        ]
+
+        result = llm._convert_tools_to_provider_format(tools)
+
+        decl = result[0]["function_declarations"][0]
+        assert "parameters" not in decl
+        schema = decl["parameters_json_schema"]
+        assert "$schema" not in schema
+        assert schema["additionalProperties"] is False
+        assert schema["required"] == ["query"]
+        assert schema["properties"]["query"]["type"] == "string"
+
+    async def test_convert_tools_strips_nested_schema_meta(self, llm: GeminiLLM):
+        tools = [
+            {
+                "name": "nested",
+                "description": "",
+                "parameters_schema": {
+                    "type": "object",
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "properties": {
+                        "inner": {
+                            "type": "object",
+                            "$schema": "http://json-schema.org/draft-07/schema#",
+                        }
+                    },
+                },
+            }
+        ]
+
+        schema = llm._convert_tools_to_provider_format(tools)[0][
+            "function_declarations"
+        ][0]["parameters_json_schema"]
+        assert "$schema" not in schema
+        assert "$schema" not in schema["properties"]["inner"]
+
     @pytest.fixture
     async def llm(self):
         llm = GeminiLLM()
