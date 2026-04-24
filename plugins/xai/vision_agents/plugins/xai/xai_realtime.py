@@ -5,7 +5,7 @@ but ships no WebSocket wrapper for the realtime voice API. This implementation u
 the `websockets` library directly for the realtime connection while leveraging the
 SDK's AsyncClient for ephemeral token generation and configuration.
 
-See: https://docs.x.ai/docs/guides/voice/agent
+See: https://docs.x.ai/developers/model-capabilities/audio/voice-agent
 """
 
 import asyncio
@@ -16,6 +16,7 @@ import logging
 import os
 from asyncio import CancelledError
 from typing import Any, Optional
+from urllib.parse import urlencode
 
 import aiohttp
 import websockets
@@ -31,7 +32,7 @@ from vision_agents.core.llm.llm_types import ToolSchema
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "grok-4-1-fast-non-reasoning"
+DEFAULT_MODEL = "grok-voice-think-fast-1.0"
 DEFAULT_VOICE = "Ara"
 WEBSOCKET_URL = "wss://api.x.ai/v1/realtime"
 EPHEMERAL_TOKEN_URL = "https://api.x.ai/v1/realtime/client_secrets"
@@ -117,7 +118,8 @@ class XAIRealtime(realtime.Realtime):
         """Initialize xAI Realtime.
 
         Args:
-            model: Model to use. Sent to the API in session.update.
+            model: Model to use. Sent as the `model` query parameter on the
+                   WebSocket URL. Defaults to "grok-voice-think-fast-1.0".
             voice: Voice to use for responses. Options: Ara, Rex, Sal, Eve, Leo.
             api_key: Optional API key. Defaults to XAI_API_KEY environment variable.
             client: Optional AsyncClient instance. If not provided, one is created.
@@ -224,10 +226,11 @@ class XAIRealtime(realtime.Realtime):
             assert self._api_key is not None
             auth_token = self._api_key
 
+        uri = f"{WEBSOCKET_URL}?{urlencode({'model': self.model})}"
         try:
             self._ws = await self._exit_stack.enter_async_context(
                 websockets.connect(
-                    uri=WEBSOCKET_URL,
+                    uri=uri,
                     additional_headers={"Authorization": f"Bearer {auth_token}"},
                 )
             )
@@ -261,7 +264,6 @@ class XAIRealtime(realtime.Realtime):
         server is known to accept.
         """
         config: dict[str, Any] = {
-            "model": self.model,
             "voice": self.voice,
             "modalities": ["text", "audio"],
             "input_audio_transcription": {},

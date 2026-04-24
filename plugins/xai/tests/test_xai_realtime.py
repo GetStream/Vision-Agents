@@ -108,6 +108,7 @@ class TestXAIRealtimeConfiguration:
     async def test_default_configuration(self):
         """Test that default configuration is set correctly."""
         realtime = Realtime(api_key="test-key")
+        assert realtime.model == "grok-voice-think-fast-1.0"
         assert realtime.voice == "Ara"
         # xAI realtime emits PCM at 24 kHz natively.
         assert realtime.sample_rate == 24000
