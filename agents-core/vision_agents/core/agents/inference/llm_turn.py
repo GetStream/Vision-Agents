@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from typing import Callable
 
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
@@ -15,6 +16,16 @@ tracer: Tracer = trace.get_tracer("agents")
 
 
 __all__ = ["LLMTurn"]
+
+
+def _log_task_exception(message: str) -> Callable[[asyncio.Task], None]:
+
+    def wrapper(task: asyncio.Task[None]) -> None:
+
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(message, exc_info=task.exception())
+
+    return wrapper
 
 
 @dataclass
@@ -59,7 +70,11 @@ class LLMTurn:
     def start(self, llm: LLM) -> None:
         if self._llm_response_task is not None:
             raise RuntimeError("LLM response task is already running")
-        self._llm_response_task = asyncio.create_task(self._do_llm_response(llm))
+        task = asyncio.create_task(self._do_llm_response(llm))
+        task.add_done_callback(
+            _log_task_exception("LLMTurn: failed to get a response from LLM")
+        )
+        self._llm_response_task = task
 
     async def cancel(self):
         if self.finalized or self.cancelled or not self.started:
@@ -86,7 +101,11 @@ class LLMTurn:
             raise RuntimeError("LLM turn must be confirmed first")
 
         logger.info('🤖 Finalizing LLM turn for transcript "%s"', self.transcript)
-        self._finalize_task = asyncio.create_task(self._do_finalize(output=output))
+        task = asyncio.create_task(self._do_finalize(output=output))
+        task.add_done_callback(
+            _log_task_exception("LLMTurn: failed to finalize the turn")
+        )
+        self._finalize_task = task
 
     def confirm(self):
         """
