@@ -1,12 +1,37 @@
+language: "en-US"
+tone_instructions: "Be direct, terse, pragmatic. No emojis, no praise, no filler, no metaphors. Findings are actionable items only."
+
 reviews:
-  #...
+  profile: "chill"
+
+  high_level_summary: false
+
+  collapse_walkthrough: true
+  changed_files_summary: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  assess_linked_issues: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  suggested_reviewers: false
+
+  poem: false
+  in_progress_fortune: false
+  review_status: false
+
+  enable_prompt_for_ai_agents: false
+
+  auto_review:
+    enabled: true
+    drafts: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 50
+
   path_instructions:
     - path: "/**/test_*.py"
       instructions: |
-        Review the following unit test code written using the pytest test library. Ensure that:
-        - The code adheres to best practices associated with Pytest. The project uses uv.  
-        - Descriptive test names are used to clearly convey the intent of each test.
-        - For Integration tests, we should avoid mocking. Integration tests of classes should use the actual client. 
-        - The test should convey actual value. Tests which initialise a class and test the values of those classes should be discouraged 
-        - Discourage verbosity and redundant tests    
-tone_instructions: "If you must write a poem, write it in the style of Sylvia Plath."
+        Review pytest tests. Project uses uv.
+        - Integration tests must not mock; use real clients.
+        - Assert behavior and outputs, not initialization or call paths.
+        - Discourage verbosity and redundant tests.
