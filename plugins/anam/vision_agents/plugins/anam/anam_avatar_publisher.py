@@ -57,6 +57,7 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         client_options: ClientOptions | None = None,
         connect_timeout: float | None = None,
         session_ready_timeout: float | None = None,
+        audio_sample_rate: int = 16000,
         width: int = 1920,
         height: int = 1080,
     ):
@@ -70,6 +71,7 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
                 None means wait indefinitely.
             session_ready_timeout: Seconds to wait for the session to become ready.
                 None means wait indefinitely.
+            audio_sample_rate: TTS audio sample rate sent to Anam.
             width: Output video width in pixels.
             height: Output video height in pixels.
         """
@@ -101,6 +103,7 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
 
         self._connect_timeout = connect_timeout
         self._session_ready_timeout = session_ready_timeout
+        self._audio_sample_rate = audio_sample_rate
 
         self._connected = asyncio.Event()
         self._session_ready = asyncio.Event()
@@ -184,20 +187,25 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
                 logger.warning("Failed to send audio frame", exc_info=True)
 
     async def _send_audio(self, pcm: PcmData) -> None:
-        if self._audio_input_stream is None:
-            self._audio_input_stream = self._session.create_agent_audio_input_stream(
-                AgentAudioInputConfig(
-                    encoding="pcm_s16le", sample_rate=24000, channels=1
-                )
-            )
-        for chunk in pcm.resample(target_channels=1, target_sample_rate=24000).chunks(
-            2400  # 100ms
-        ):
-            await self._audio_input_stream.send_audio_chunk(chunk.to_bytes())
+        audio_input_stream = self._audio_input_stream
+        if audio_input_stream is None:
+            audio_input_stream = self._create_audio_input_stream()
+        await audio_input_stream.send_audio_chunk(pcm.to_bytes())
 
     async def _flush_audio(self) -> None:
         if self._audio_input_stream is not None:
             await self._audio_input_stream.end_sequence()
+
+    def _create_audio_input_stream(self) -> AgentAudioInputStream:
+        audio_input_stream = self._session.create_agent_audio_input_stream(
+            AgentAudioInputConfig(
+                encoding="pcm_s16le",
+                sample_rate=self._audio_sample_rate,
+                channels=1,
+            )
+        )
+        self._audio_input_stream = audio_input_stream
+        return audio_input_stream
 
     def _subscribe_to_audio_events(self) -> None:
         @self._agent.events.subscribe
@@ -241,6 +249,8 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
 
         await self._wait_connected()
         await self._wait_session_ready()
+        if self._audio_input_stream is None:
+            self._create_audio_input_stream()
         if self._audio_receiver_task is None:
             self._audio_receiver_task = asyncio.create_task(self._audio_receiver())
             self._audio_receiver_task.add_done_callback(_task_done_callback)
