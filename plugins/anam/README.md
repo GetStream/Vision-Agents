@@ -74,6 +74,7 @@ AnamAvatarPublisher(
     client_options=None,  # Optional Anam ClientOptions for advanced configuration
     connect_timeout=None,  # Seconds to wait for connection (None = wait indefinitely)
     session_ready_timeout=None,  # Seconds to wait for session ready (None = wait indefinitely)
+    audio_sample_rate=16000,  # TTS audio sample rate sent to Anam
     width=1920,  # Output video width in pixels
     height=1080,  # Output video height in pixels
 )
@@ -82,9 +83,11 @@ AnamAvatarPublisher(
 ## How It Works
 
 1. **Anam Connection**: Connects to Anam's avatar service and waits for the session to become ready
-2. **Audio Forwarding**: TTS audio from the agent is resampled to 24kHz mono and streamed to Anam
+2. **Audio Forwarding**: TTS audio from the agent is streamed directly to Anam using the configured sample rate
 3. **Avatar Generation**: Anam generates synchronized avatar video and lip-synced audio from the input
 4. **Video Streaming**: Avatar video and audio frames are streamed back to call participants via GetStream Edge
+
+Set `audio_sample_rate` to match your TTS output sample rate.
 
 ## Requirements
 
