@@ -86,7 +86,8 @@ class GoogleSearch(GeminiTool):
 
     Usage:
         llm = gemini.LLM(tools=[gemini.tools.GoogleSearch()])
-        response = await llm.send_message("What happened in the news today?")
+        async for item in llm.simple_response("What happened in the news today?"):
+            print(item)
     """
 
     def to_tool(self) -> types.Tool:
@@ -104,7 +105,8 @@ class CodeExecution(GeminiTool):
 
     Usage:
         llm = gemini.LLM(tools=[gemini.tools.CodeExecution()])
-        response = await llm.send_message("Calculate the factorial of 20")
+        async for item in llm.simple_response("Calculate the factorial of 20"):
+            print(item)
     """
 
     def to_tool(self) -> types.Tool:
@@ -122,9 +124,8 @@ class URLContext(GeminiTool):
 
     Usage:
         llm = gemini.LLM(tools=[gemini.tools.URLContext()])
-        response = await llm.send_message(
-            "Summarize the content at https://example.com/article"
-        )
+        async for item in llm.simple_response("Summarize https://example.com/article"):
+            print(item)
     """
 
     def to_tool(self) -> types.Tool:
@@ -142,7 +143,8 @@ class GoogleMaps(GeminiTool):
 
     Usage:
         llm = gemini.LLM(tools=[gemini.tools.GoogleMaps()])
-        response = await llm.send_message("Find coffee shops near Times Square")
+        async for item in llm.simple_response("Find coffee shops near Times Square"):
+            print(item)
     """
 
     def to_tool(self) -> types.Tool:

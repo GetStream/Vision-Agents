@@ -11,12 +11,8 @@ from google.genai.types import (
     ThinkingLevel,
 )
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import (
-    LLMRequestStartedEvent,
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.llm.events import LLMRequestStartedEvent
+from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem
 from .utils import convert_tools_to_provider_format
 
@@ -41,7 +37,7 @@ class GeminiLLM(LLM):
     - response normalization
 
     Notes on the Gemini integration:
-    - the native method is called send_message (maps 1-1 to chat.send_message_stream)
+    - simple_response maps to chat.send_message_stream
     - history is maintained in the gemini sdk (with the usage of client.chats.create(model=self.model))
 
     Examples:
@@ -170,7 +166,7 @@ class GeminiLLM(LLM):
 
     async def simple_response(
         self, text: str, participant: Participant | None = None
-    ) -> LLMResponseEvent[Any]:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.
 
@@ -178,86 +174,75 @@ class GeminiLLM(LLM):
 
             llm.simple_response("say hi to the user, be mean")
         """
-        return await self.send_message(message=text)
-
-    async def send_message(self, *args, **kwargs):
-        """
-        send_message gives you full support/access to the native Gemini chat send message method
-        under the hood it calls chat.send_message_stream(*args, **kwargs)
-        this method wraps and ensures we broadcast an event which the agent class hooks into
-        """
-        # if "model" not in kwargs:
-        #    kwargs["model"] = self.model
-
         # initialize chat if needed
         if self.chat is None:
-            config = self._build_config(system_instruction=self._instructions)
-            self.chat = self.client.chats.create(model=self.model, config=config)
+            chat_config = self._build_config(system_instruction=self._instructions)
+            self.chat = self.client.chats.create(model=self.model, config=chat_config)
 
         # Add tools if available - Gemini uses GenerateContentConfig
+        config: GenerateContentConfig | None = None
         tools_spec = self.get_available_functions()
         if tools_spec:
             conv_tools = convert_tools_to_provider_format(tools_spec)
-            cfg = kwargs.get("config")
-            if not isinstance(cfg, GenerateContentConfig):
-                cfg = self._build_config()
-            else:
-                cfg = self._build_config(base_config=cfg)
-            cfg.tools = conv_tools  # type: ignore[assignment]
-            kwargs["config"] = cfg
+            config = self._build_config()
+            config.tools = conv_tools  # type: ignore[assignment]
         elif self.thinking_level or self.media_resolution:
             # Only pass config if we need to set thinking_level or media_resolution
             # Don't pass an empty config as it overrides the system_instruction from chat creation
-            cfg = kwargs.get("config")
-            if cfg is None or not isinstance(cfg, GenerateContentConfig):
-                cfg = self._build_config()
-            else:
-                cfg = self._build_config(base_config=cfg)
-            kwargs["config"] = cfg
+            config = self._build_config()
         # If no tools and no thinking/media config needed, don't pass config
         # This preserves the system_instruction set during chat creation
 
         # Emit request started event
         self.events.send(
             LLMRequestStartedEvent(
-                plugin_name="gemini",
-                model=self.model,
-                streaming=True,
+                plugin_name="gemini", model=self.model, streaming=True
             )
         )
 
         # Track timing
         request_start_time = time.perf_counter()
         first_token_time: Optional[float] = None
+        sequence_number = 0
 
         # Generate content using the client
-        iterator: AsyncIterator[
-            GenerateContentResponse
-        ] = await self.chat.send_message_stream(*args, **kwargs)
+        if config is not None:
+            iterator: AsyncIterator[
+                GenerateContentResponse
+            ] = await self.chat.send_message_stream(message=text, config=config)
+        else:
+            iterator = await self.chat.send_message_stream(message=text)
         text_parts: List[str] = []
         final_chunk = None
+        original_response = None
+        final_text = ""
         pending_calls: List[NormalizedToolCallItem] = []
 
         # Gemini API does not have an item_id, we create it here and add it to all events
         item_id = str(uuid.uuid4())
 
-        idx = 0
         async for chunk in iterator:
             response_chunk: GenerateContentResponse = chunk
             final_chunk = response_chunk
 
             # Track time to first token
-            if first_token_time is None and hasattr(chunk, "text") and chunk.text:
+            chunk_text = self._extract_text_from_chunk(chunk)
+            is_first_chunk = bool(chunk_text) and first_token_time is None
+            if is_first_chunk:
                 first_token_time = time.perf_counter()
 
-            self._standardize_and_emit_event(
-                response_chunk,
-                text_parts,
-                item_id,
-                idx,
-                request_start_time=request_start_time,
-                first_token_time=first_token_time,
-            )
+            if chunk_text:
+                llm_delta = self._build_response_delta(
+                    item_id=item_id,
+                    sequence_number=sequence_number,
+                    chunk_text=chunk_text,
+                    is_first_chunk=is_first_chunk,
+                    request_start_time=request_start_time,
+                    first_token_time=first_token_time,
+                )
+                text_parts.append(chunk_text)
+                yield llm_delta
+                sequence_number += 1
 
             # collect function calls as they stream
             try:
@@ -266,14 +251,12 @@ class GeminiLLM(LLM):
             except Exception:
                 pass  # Ignore errors in chunk processing
 
-            idx += 1
-
         # Check if there were function calls in the response
         if pending_calls:
             # Multi-hop tool calling loop
             rounds = 0
             current_calls = pending_calls
-            cfg_with_tools = kwargs.get("config")
+            cfg_with_tools = config
 
             seen: set[str] = set()
             while current_calls and rounds < self._tools_max_rounds:
@@ -322,19 +305,26 @@ class GeminiLLM(LLM):
                 follow_up_text_parts: List[str] = []
                 follow_up_last = None
                 next_calls = []
-                follow_up_idx = 0
 
                 async for chk in follow_up_iter:
                     follow_up_last = chk
-                    # TODO: unclear if this is correct (item_id and idx)
-                    self._standardize_and_emit_event(
-                        chk,
-                        follow_up_text_parts,
-                        item_id,
-                        follow_up_idx,
-                        request_start_time=request_start_time,
-                        first_token_time=first_token_time,
-                    )
+                    follow_up_text = self._extract_text_from_chunk(chk)
+                    is_first_chunk = bool(follow_up_text) and first_token_time is None
+                    if is_first_chunk:
+                        first_token_time = time.perf_counter()
+
+                    if follow_up_text:
+                        llm_delta = self._build_response_delta(
+                            item_id=item_id,
+                            sequence_number=sequence_number,
+                            chunk_text=follow_up_text,
+                            is_first_chunk=is_first_chunk,
+                            request_start_time=request_start_time,
+                            first_token_time=first_token_time,
+                        )
+                        follow_up_text_parts.append(follow_up_text)
+                        yield llm_delta
+                        sequence_number += 1
 
                     # Check for new function calls
                     try:
@@ -343,16 +333,19 @@ class GeminiLLM(LLM):
                     except Exception:
                         pass
 
-                    follow_up_idx += 1
-
                 current_calls = next_calls
                 rounds += 1
+                if follow_up_last is not None:
+                    original_response = follow_up_last
+                    final_text = "".join(follow_up_text_parts) or final_text
 
-            total_text = "".join(follow_up_text_parts) or "".join(text_parts)
-            llm_response = LLMResponseEvent(follow_up_last or final_chunk, total_text)
+            if original_response is None:
+                original_response = final_chunk
+            if not final_text:
+                final_text = "".join(text_parts)
         else:
-            total_text = "".join(text_parts)
-            llm_response = LLMResponseEvent(final_chunk, total_text)
+            original_response = final_chunk
+            final_text = "".join(text_parts)
 
         # Calculate timing metrics
         latency_ms = (time.perf_counter() - request_start_time) * 1000
@@ -364,33 +357,28 @@ class GeminiLLM(LLM):
         input_tokens: Optional[int] = None
         output_tokens: Optional[int] = None
         if (
-            final_chunk
-            and hasattr(final_chunk, "usage_metadata")
-            and final_chunk.usage_metadata
+            original_response
+            and hasattr(original_response, "usage_metadata")
+            and original_response.usage_metadata
         ):
-            usage = final_chunk.usage_metadata
+            usage = original_response.usage_metadata
             input_tokens = getattr(usage, "prompt_token_count", None)
             output_tokens = getattr(usage, "candidates_token_count", None)
 
-        self.events.send(
-            LLMResponseCompletedEvent(
-                plugin_name="gemini",
-                original=llm_response.original,
-                text=llm_response.text,
-                item_id=item_id,
-                latency_ms=latency_ms,
-                time_to_first_token_ms=ttft_ms,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=(input_tokens or 0) + (output_tokens or 0)
-                if input_tokens or output_tokens
-                else None,
-                model=self.model,
-            )
+        llm_final = LLMResponseFinal(
+            original=original_response,
+            text=final_text,
+            item_id=item_id,
+            latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=(input_tokens or 0) + (output_tokens or 0)
+            if input_tokens or output_tokens
+            else None,
+            model=self.model,
         )
-
-        # Return the LLM response
-        return llm_response
+        yield llm_final
 
     @staticmethod
     def _normalize_message(gemini_input) -> List["Message"]:
@@ -410,38 +398,29 @@ class GeminiLLM(LLM):
 
         return messages
 
-    def _standardize_and_emit_event(
+    def _build_response_delta(
         self,
-        chunk: GenerateContentResponse,
-        text_parts: List[str],
+        *,
         item_id: str,
-        idx: int,
-        request_start_time: Optional[float] = None,
-        first_token_time: Optional[float] = None,
-    ) -> Optional[LLMResponseEvent[Any]]:
-        """
-        Forwards the events and also send out a standardized version (the agent class hooks into that)
-        """
-        # forward the native event
-        self.events.send(
-            events.GeminiResponseEvent(plugin_name="gemini", response_chunk=chunk)
+        sequence_number: int,
+        chunk_text: str,
+        is_first_chunk: bool,
+        request_start_time: float,
+        first_token_time: Optional[float],
+    ) -> LLMResponseDelta:
+        ttft_ms = (
+            (first_token_time - request_start_time) * 1000
+            if is_first_chunk and first_token_time is not None
+            else None
         )
-
-        # Extract text directly from parts to avoid SDK warning when function_calls are present
-        # Using .text triggers "Warning: there are non-text parts in the response"
-        chunk_text = self._extract_text_from_chunk(chunk)
-        if chunk_text:
-            self.events.send(
-                LLMResponseChunkEvent(
-                    plugin_name="gemini",
-                    content_index=idx,
-                    item_id=item_id,
-                    delta=chunk_text,
-                )
-            )
-            text_parts.append(chunk_text)
-
-        return None
+        return LLMResponseDelta(
+            content_index=sequence_number,
+            item_id=item_id,
+            delta=chunk_text,
+            sequence_number=sequence_number,
+            is_first_chunk=is_first_chunk,
+            time_to_first_token_ms=ttft_ms,
+        )
 
     @staticmethod
     def _extract_text_from_chunk(chunk: GenerateContentResponse) -> str:
@@ -511,39 +490,6 @@ class GeminiLLM(LLM):
             )  # chunks use same shape
         except Exception:
             return []  # Ignore extraction errors
-
-    def _create_tool_result_parts(
-        self, tool_calls: List[NormalizedToolCallItem], results: List[Any]
-    ):
-        """
-        Create function_response parts for Gemini.
-
-        Args:
-            tool_calls: List of tool calls that were executed
-            results: List of results from function execution
-
-        Returns:
-            List of function_response parts
-        """
-        parts = []
-        for tc, res in zip(tool_calls, results):
-            try:
-                # Convert result to dict if it's not already
-                if isinstance(res, dict):
-                    response_data = res
-                else:
-                    response_data = {"result": res}
-
-                # res may be dict/list/str; pass directly; SDK serializes
-                parts.append(
-                    types.Part.from_function_response(
-                        name=tc["name"], response=response_data
-                    )
-                )
-            except Exception:
-                # Fallback: create a simple text part
-                parts.append(types.Part(text=f"Function {tc['name']} returned: {res}"))
-        return parts
 
     def _is_gemini_3_model(self) -> bool:
         """Check if the current model is Gemini 3."""
