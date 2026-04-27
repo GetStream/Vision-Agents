@@ -30,7 +30,7 @@ class TestGeminiLLM:
         messages2 = GeminiLLM._normalize_message(advanced)
         assert messages2[0].original is not None
 
-    async def test_convert_tools_routes_mcp_schema_to_parameters_json_schema(self):
+    def test_convert_tools_routes_mcp_schema_to_parameters_json_schema(self):
         tools = [
             {
                 "name": "search_docs",
@@ -57,7 +57,7 @@ class TestGeminiLLM:
         assert schema["required"] == ["query"]
         assert schema["properties"]["query"]["type"] == "string"
 
-    async def test_convert_tools_strips_nested_schema_meta(self):
+    def test_convert_tools_strips_nested_schema_meta(self):
         tools = [
             {
                 "name": "nested",
