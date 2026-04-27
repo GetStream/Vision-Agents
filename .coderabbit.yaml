@@ -29,7 +29,7 @@ reviews:
     auto_pause_after_reviewed_commits: 50
 
   path_instructions:
-    - path: "/**/test_*.py"
+    - path: "**/test_*.py"
       instructions: |
         Review pytest tests. Project uses uv.
         - Integration tests must not mock; use real clients.
