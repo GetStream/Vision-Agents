@@ -6,7 +6,13 @@ from vision_agents.core.llm.events import (
     LLMResponseCompletedEvent,
 )
 from vision_agents.plugins.gemini import events
-from vision_agents.plugins.gemini.gemini_llm import GeminiLLM
+from vision_agents.plugins.gemini.gemini_llm import (
+    GeminiLLM,
+)
+from vision_agents.plugins.gemini.utils import (
+    convert_tools_to_provider_format,
+)
+
 
 load_dotenv()
 
@@ -24,9 +30,7 @@ class TestGeminiLLM:
         messages2 = GeminiLLM._normalize_message(advanced)
         assert messages2[0].original is not None
 
-    async def test_convert_tools_routes_mcp_schema_to_parameters_json_schema(
-        self, llm: GeminiLLM
-    ):
+    async def test_convert_tools_routes_mcp_schema_to_parameters_json_schema(self):
         tools = [
             {
                 "name": "search_docs",
@@ -43,7 +47,7 @@ class TestGeminiLLM:
             }
         ]
 
-        result = llm._convert_tools_to_provider_format(tools)
+        result = convert_tools_to_provider_format(tools)
 
         decl = result[0]["function_declarations"][0]
         assert "parameters" not in decl
@@ -53,7 +57,7 @@ class TestGeminiLLM:
         assert schema["required"] == ["query"]
         assert schema["properties"]["query"]["type"] == "string"
 
-    async def test_convert_tools_strips_nested_schema_meta(self, llm: GeminiLLM):
+    async def test_convert_tools_strips_nested_schema_meta(self):
         tools = [
             {
                 "name": "nested",
@@ -71,9 +75,9 @@ class TestGeminiLLM:
             }
         ]
 
-        schema = llm._convert_tools_to_provider_format(tools)[0][
-            "function_declarations"
-        ][0]["parameters_json_schema"]
+        schema = convert_tools_to_provider_format(tools)[0]["function_declarations"][0][
+            "parameters_json_schema"
+        ]
         assert "$schema" not in schema
         assert "$schema" not in schema["properties"]["inner"]
 

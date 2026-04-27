@@ -1,6 +1,6 @@
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, List, Optional
 
 from google.genai import types
 from google.genai.client import AsyncClient, Client
@@ -17,7 +17,8 @@ from vision_agents.core.llm.events import (
     LLMResponseCompletedEvent,
 )
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
-from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
+from vision_agents.core.llm.llm_types import NormalizedToolCallItem
+from .utils import convert_tools_to_provider_format
 
 from . import events
 from .tools import GeminiTool
@@ -27,21 +28,6 @@ if TYPE_CHECKING:
 
 
 DEFAULT_MODEL = "gemini-3.1-pro-preview"
-
-
-_GEMINI_UNSUPPORTED_SCHEMA_KEYS = frozenset({"$schema"})
-
-
-def _strip_unsupported_schema_keys(node: Any) -> Any:
-    if isinstance(node, dict):
-        return {
-            k: _strip_unsupported_schema_keys(v)
-            for k, v in node.items()
-            if k not in _GEMINI_UNSUPPORTED_SCHEMA_KEYS
-        }
-    if isinstance(node, list):
-        return [_strip_unsupported_schema_keys(item) for item in node]
-    return node
 
 
 class GeminiLLM(LLM):
@@ -211,7 +197,7 @@ class GeminiLLM(LLM):
         # Add tools if available - Gemini uses GenerateContentConfig
         tools_spec = self.get_available_functions()
         if tools_spec:
-            conv_tools = self._convert_tools_to_provider_format(tools_spec)
+            conv_tools = convert_tools_to_provider_format(tools_spec)
             cfg = kwargs.get("config")
             if not isinstance(cfg, GenerateContentConfig):
                 cfg = self._build_config()
@@ -468,31 +454,6 @@ class GeminiLLM(LLM):
                         if part.text:
                             texts.append(part.text)
         return "".join(texts)
-
-    def _convert_tools_to_provider_format(
-        self, tools: List[ToolSchema]
-    ) -> List[Dict[str, Any]]:
-        """
-        Convert ToolSchema objects to Gemini format.
-        Args:
-            tools: List of ToolSchema objects
-        Returns:
-            List of tools in Gemini format
-        """
-        function_declarations = []
-        for tool in tools:
-            function_declarations.append(
-                {
-                    "name": tool["name"],
-                    "description": tool.get("description", ""),
-                    "parameters_json_schema": _strip_unsupported_schema_keys(
-                        tool["parameters_schema"]
-                    ),
-                }
-            )
-
-        # Return as dict with function_declarations (SDK accepts dicts)
-        return [{"function_declarations": function_declarations}]
 
     def _extract_tool_calls_from_response(
         self, response: Any
