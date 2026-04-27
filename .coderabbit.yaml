@@ -22,6 +22,24 @@ reviews:
 
   enable_prompt_for_ai_agents: false
 
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    title:
+      mode: "off"
+    description:
+      mode: "off"
+    issue_assessment:
+      mode: "off"
+
   auto_review:
     enabled: true
     drafts: true
