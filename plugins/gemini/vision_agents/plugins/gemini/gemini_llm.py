@@ -16,7 +16,6 @@ from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem
 from .utils import convert_tools_to_provider_format
 
-from . import events
 from .tools import GeminiTool
 
 if TYPE_CHECKING:
@@ -86,7 +85,6 @@ class GeminiLLM(LLM):
             **kwargs: Additional arguments passed to GenerateContentConfig constructor.
         """
         super().__init__()
-        self.events.register_events_from_module(events)
         self.model = model
         self.thinking_level = thinking_level
         self.media_resolution = media_resolution
