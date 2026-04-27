@@ -1,24 +1,14 @@
 import json
+import logging
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
 
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from openai import AsyncOpenAI
-from openai.lib.streaming.responses import ResponseStreamEvent
-from openai.types.responses import (
-    Response as OpenAIResponse,
-)
-from openai.types.responses import (
-    ResponseCompletedEvent,
-    ResponseFunctionToolCall,
-    ResponseTextDeltaEvent,
-)
-from vision_agents.core.llm.events import (
-    LLMRequestStartedEvent,
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from openai.types.responses import Response as OpenAIResponse
+from openai.types.responses import ResponseFunctionToolCall
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.events import LLMRequestStartedEvent
+from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
 from . import events
@@ -30,6 +20,8 @@ from .tool_utils import (
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Message
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAILLM(LLM):
@@ -43,7 +35,6 @@ class OpenAILLM(LLM):
     - response normalization
 
     Notes on the OpenAI integration
-    - the native method is called create_response (maps 1-1 to responses.create)
     - history is maintained using conversation.create()
 
     Examples:
@@ -56,9 +47,9 @@ class OpenAILLM(LLM):
     def __init__(
         self,
         model: str = "gpt-5.4",
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        client: Optional[AsyncOpenAI] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        client: AsyncOpenAI | None = None,
         max_tool_rounds: int = 3,
     ):
         """
@@ -80,7 +71,7 @@ class OpenAILLM(LLM):
 
         if client is not None:
             self.client = client
-        elif api_key is not None and api_key != "":
+        elif api_key:
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         else:
             self.client = AsyncOpenAI(base_url=base_url)
@@ -88,8 +79,8 @@ class OpenAILLM(LLM):
     async def simple_response(
         self,
         text: str,
-        participant: Participant = None,
-    ):
+        participant: Participant | None = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """
         simple_response is a standardized way (across openai, claude, gemini etc.) to create a response.
 
@@ -101,180 +92,126 @@ class OpenAILLM(LLM):
 
             llm.simple_response("say hi to the user, be mean")
         """
+        await self._create_conversation()
 
-        return await self.create_response(
-            input=text,
-            instructions=self._instructions,
+        base_kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "stream": True,
+        }
+        if self.openai_conversation:
+            base_kwargs["conversation"] = self.openai_conversation.id
+        tools = self.get_available_functions()
+        if tools:
+            base_kwargs["tools"] = convert_tools_to_openai_format(tools)
+        if self._instructions:
+            base_kwargs["instructions"] = self._instructions
+
+        self.events.send(
+            LLMRequestStartedEvent(
+                plugin_name="openai",
+                model=self.model,
+                streaming=True,
+            )
         )
 
-    async def create_conversation(self):
-        if not self.openai_conversation:
-            self.openai_conversation = await self.client.conversations.create()
+        request_start_time = time.perf_counter()
+        first_token_time: Optional[float] = None
+        sequence_number = 0
+        last_response: Optional[OpenAIResponse] = None
+        seen_calls: set[tuple[str, str]] = set()
+        exec_seen: set[tuple[Optional[str], str, str]] = set()
+
+        current_input: Any = text
+        for round_num in range(self.max_tool_rounds + 1):
+            stream = await self.client.responses.create(
+                **base_kwargs, input=current_input
+            )
+
+            new_tool_calls: list[NormalizedToolCallItem] = []
+            async for event in stream:
+                if event.type == "response.error":
+                    error_message = (
+                        event.error.message if event.error else "Unknown error"
+                    )
+                    logger.error("OpenAI stream error: %s", error_message)
+                elif event.type == "response.output_text.delta":
+                    is_first = first_token_time is None
+                    if is_first:
+                        first_token_time = time.perf_counter()
+                    ttft_ms = (
+                        (first_token_time - request_start_time) * 1000
+                        if is_first and first_token_time is not None
+                        else None
+                    )
+                    yield LLMResponseDelta(
+                        delta=event.delta,
+                        item_id=event.item_id,
+                        output_index=event.output_index,
+                        sequence_number=sequence_number,
+                        is_first_chunk=is_first,
+                        time_to_first_token_ms=ttft_ms,
+                    )
+                    sequence_number += 1
+                elif event.type == "response.completed":
+                    last_response = event.response
+                    for c in self._extract_tool_calls_from_response(event.response):
+                        key = tool_call_dedup_key(c)
+                        if key not in seen_calls:
+                            new_tool_calls.append(c)
+                            seen_calls.add(key)
+
+            if not new_tool_calls or round_num >= self.max_tool_rounds:
+                break
+
+            triples, exec_seen = await self._dedup_and_execute(
+                new_tool_calls,
+                max_concurrency=8,
+                timeout_s=30,
+                seen=exec_seen,
+            )
+            tool_messages = self._build_tool_messages(triples)
+            if not tool_messages:
+                break
+            current_input = tool_messages
+
+        latency_ms = (time.perf_counter() - request_start_time) * 1000
+        ttft_final_ms: Optional[float] = None
+        if first_token_time is not None:
+            ttft_final_ms = (first_token_time - request_start_time) * 1000
+
+        text_out = ""
+        item_id: Optional[str] = None
+        input_tokens: Optional[int] = None
+        output_tokens: Optional[int] = None
+        total_tokens: Optional[int] = None
+        model = self.model
+        if last_response is not None:
+            text_out = last_response.output_text
+            item_id = last_response.output[0].id if last_response.output else None
+            if last_response.usage:
+                input_tokens = last_response.usage.input_tokens
+                output_tokens = last_response.usage.output_tokens
+                total_tokens = last_response.usage.total_tokens
+            model = last_response.model
+
+        yield LLMResponseFinal(
+            text=text_out,
+            item_id=item_id,
+            latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_final_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            model=model,
+            original=last_response,
+        )
 
     async def close(self) -> None:
         await self.client.close()
 
-    def add_conversation_history(self, kwargs):
-        if self.openai_conversation:
-            kwargs["conversation"] = self.openai_conversation.id
-
-    async def create_response(
-        self, *args: Any, **kwargs: Any
-    ) -> LLMResponseEvent[OpenAIResponse]:
-        """
-        create_response gives you full support/access to the native openAI responses.create method
-        this method wraps the openAI method and ensures we broadcast an event which the agent class hooks into
-        """
-        if "model" not in kwargs:
-            kwargs["model"] = self.model
-        if "stream" not in kwargs:
-            kwargs["stream"] = True
-
-        # create the conversation if needed and add the required args
-        await self.create_conversation()
-        self.add_conversation_history(kwargs)
-
-        # Add tools if available
-        tools = self.get_available_functions()
-        if tools:
-            kwargs["tools"] = convert_tools_to_openai_format(tools)
-
-        # Provide instructions
-        if self._instructions:
-            kwargs["instructions"] = self._instructions
-
-        # Set up input parameter for OpenAI Responses API
-        if "input" not in kwargs:
-            # Use the first positional argument as input, or create a default
-            input_content = args[0] if args else "Hello"
-            kwargs["input"] = input_content
-
-        is_streaming = kwargs.get("stream", True)
-
-        # Emit request started event
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name="openai",
-                model=kwargs.get("model", self.model),
-                streaming=is_streaming,
-            )
-        )
-
-        # Track timing
-        request_start_time = time.perf_counter()
-        first_token_time: Optional[float] = None
-
-        # OpenAI Responses API only accepts keyword arguments
-        response = await self.client.responses.create(**kwargs)
-
-        llm_response: Optional[LLMResponseEvent[OpenAIResponse]] = None
-
-        if isinstance(response, OpenAIResponse):
-            # Non-streaming response
-            latency_ms = (time.perf_counter() - request_start_time) * 1000
-            llm_response = LLMResponseEvent[OpenAIResponse](
-                response, response.output_text
-            )
-
-            # Check for tool calls in non-streaming response
-            tool_calls = self._extract_tool_calls_from_response(response)
-            if tool_calls:
-                # Execute tools and get follow-up response
-                llm_response = await self._handle_tool_calls(tool_calls, kwargs)
-
-            # Emit completion event with metrics for non-streaming
-            self._emit_completion_event(
-                llm_response.original,
-                llm_response.text,
-                latency_ms=latency_ms,
-            )
-
-        elif hasattr(response, "__aiter__"):  # async stream
-            # Streaming response
-            stream_response = response
-            pending_tool_calls: list[NormalizedToolCallItem] = []
-            seen: set[tuple[str, str]] = set()
-
-            # Process streaming events and collect tool calls
-            async for event in stream_response:
-                # Track time to first token
-                if (
-                    first_token_time is None
-                    and event.type == "response.output_text.delta"
-                ):
-                    first_token_time = time.perf_counter()
-
-                llm_response_optional = self._standardize_and_emit_event(
-                    event,
-                    request_start_time=request_start_time,
-                    first_token_time=first_token_time,
-                )
-                if llm_response_optional is not None:
-                    llm_response = llm_response_optional
-
-                # Grab tool calls when the model finalizes the turn
-                if event.type == "response.completed":
-                    calls = self._extract_tool_calls_from_response(event.response)
-                    for c in calls:
-                        key = tool_call_dedup_key(c)
-                        if key not in seen:
-                            pending_tool_calls.append(c)
-                            seen.add(key)
-
-            # If we have tool calls, execute them and get follow-up response
-            if pending_tool_calls:
-                llm_response = await self._handle_tool_calls(pending_tool_calls, kwargs)
-        else:
-            # Defensive fallback for unknown response types
-            llm_response = LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
-
-        return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
-
-    async def _handle_tool_calls(
-        self, tool_calls: List[NormalizedToolCallItem], original_kwargs: Dict[str, Any]
-    ) -> LLMResponseEvent[OpenAIResponse]:
-        """Execute tool calls and get follow-up response. Supports multi-round.
-
-        Args:
-            tool_calls: List of tool calls to execute
-            original_kwargs: Original kwargs from the request
-
-        Returns:
-            LLM response with tool results
-        """
-        llm_response: Optional[LLMResponseEvent[OpenAIResponse]] = None
-        current_tool_calls = tool_calls
-        seen: set[tuple[str, str]] = set()
-
-        for round_num in range(self.max_tool_rounds):
-            # Execute tools with deduplication
-            triples, seen = await self._dedup_and_execute(
-                current_tool_calls,
-                max_concurrency=8,
-                timeout_s=30,
-                seen=seen,
-            )
-
-            if not triples:
-                break
-
-            # Build tool result messages
-            tool_messages = self._build_tool_messages(triples)
-            if not tool_messages:
-                break
-
-            # Get follow-up response
-            (
-                llm_response,
-                next_tool_calls,
-            ) = await self._send_tool_results_and_get_response(tool_messages, seen)
-
-            if not next_tool_calls or round_num >= self.max_tool_rounds - 1:
-                break
-
-            current_tool_calls = next_tool_calls
-
-        return llm_response or LLMResponseEvent[OpenAIResponse](None, "")  # type: ignore[arg-type]
+    async def _create_conversation(self):
+        if not self.openai_conversation:
+            self.openai_conversation = await self.client.conversations.create()
 
     def _build_tool_messages(
         self, triples: list[tuple[dict[str, Any], Any, Any]]
@@ -296,61 +233,6 @@ class OpenAILLM(LLM):
                 }
             )
         return tool_messages
-
-    async def _send_tool_results_and_get_response(
-        self,
-        tool_messages: list[dict[str, Any]],
-        seen: set[tuple[str, str]],
-    ) -> tuple[
-        Optional[LLMResponseEvent[OpenAIResponse]], List[NormalizedToolCallItem]
-    ]:
-        """Send tool results and get follow-up response.
-
-        Returns:
-            Tuple of (llm_response, next_tool_calls)
-        """
-        if not self.openai_conversation:
-            return None, []
-
-        follow_up_kwargs: Dict[str, Any] = {
-            "model": self.model,
-            "conversation": self.openai_conversation.id,
-            "input": tool_messages,
-            "stream": True,
-        }
-
-        # Include tools for potential follow-up calls
-        tools = self.get_available_functions()
-        if tools:
-            follow_up_kwargs["tools"] = convert_tools_to_openai_format(tools)
-
-        follow_up_response = await self.client.responses.create(**follow_up_kwargs)
-
-        if isinstance(follow_up_response, OpenAIResponse):
-            llm_response = LLMResponseEvent[OpenAIResponse](
-                follow_up_response, follow_up_response.output_text
-            )
-            next_tool_calls = self._extract_tool_calls_from_response(follow_up_response)
-            return llm_response, next_tool_calls
-
-        # Streaming response
-        llm_response_streaming: Optional[LLMResponseEvent[OpenAIResponse]] = None
-        pending_tool_calls: List[NormalizedToolCallItem] = []
-
-        async for event in follow_up_response:
-            llm_response_optional = self._standardize_and_emit_event(event)
-            if llm_response_optional is not None:
-                llm_response_streaming = llm_response_optional
-
-            if event.type == "response.completed":
-                calls = self._extract_tool_calls_from_response(event.response)
-                for c in calls:
-                    key = tool_call_dedup_key(c)
-                    if key not in seen:
-                        pending_tool_calls.append(c)
-                        seen.add(key)
-
-        return llm_response_streaming, pending_tool_calls
 
     @staticmethod
     def _normalize_message(openai_input) -> List["Message"]:
@@ -395,156 +277,3 @@ class OpenAILLM(LLM):
                     }
                 )
         return calls
-
-    def _create_tool_result_message(
-        self, tool_calls: List[NormalizedToolCallItem], results: List[Any]
-    ) -> List[Dict[str, Any]]:
-        """
-        Create tool result messages for OpenAI Responses API.
-
-        Args:
-            tool_calls: List of tool calls that were executed
-            results: List of results from function execution
-
-        Returns:
-            List of tool result messages in Responses API format
-        """
-        msgs = []
-        for tc, res in zip(tool_calls, results):
-            call_id = tc.get("id")
-            if not call_id:
-                # skip or wrap into a normal assistant message / log an error
-                continue
-
-            # Send only function_call_output items keyed by call_id
-            # Convert to string for Responses API
-            output_str = res if isinstance(res, str) else json.dumps(res)
-            msgs.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": call_id,
-                    "output": output_str,
-                }
-            )
-        return msgs
-
-    def _emit_completion_event(
-        self,
-        response: OpenAIResponse,
-        text: str,
-        latency_ms: Optional[float] = None,
-        time_to_first_token_ms: Optional[float] = None,
-    ) -> None:
-        """Emit LLMResponseCompletedEvent with metrics.
-
-        Args:
-            response: The OpenAI response object.
-            text: The response text.
-            latency_ms: Total latency in milliseconds.
-            time_to_first_token_ms: Time to first token in milliseconds.
-        """
-        # Extract token usage from response
-        input_tokens: Optional[int] = None
-        output_tokens: Optional[int] = None
-        total_tokens: Optional[int] = None
-
-        if response.usage:
-            input_tokens = response.usage.input_tokens
-            output_tokens = response.usage.output_tokens
-            total_tokens = response.usage.total_tokens
-
-        item_id = response.output[0].id if response.output else None
-
-        self.events.send(
-            LLMResponseCompletedEvent(
-                plugin_name="openai",
-                original=response,
-                text=text,
-                item_id=item_id,
-                latency_ms=latency_ms,
-                time_to_first_token_ms=time_to_first_token_ms,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=total_tokens,
-                model=response.model,
-            )
-        )
-
-    def _standardize_and_emit_event(
-        self,
-        event: ResponseStreamEvent,
-        request_start_time: Optional[float] = None,
-        first_token_time: Optional[float] = None,
-    ) -> Optional[LLMResponseEvent[OpenAIResponse]]:
-        """Forward native events and emit standardized versions.
-
-        Args:
-            event: The streaming event from OpenAI.
-            request_start_time: Time when the request started (perf_counter).
-            first_token_time: Time when first token was received (perf_counter).
-
-        Returns:
-            LLMResponseEvent if this is a completion event, None otherwise.
-        """
-        # Forward the native event
-        self.events.send(
-            events.OpenAIStreamEvent(
-                plugin_name="openai", event_type=event.type, event_data=event
-            )
-        )
-
-        if event.type == "response.error":
-            error_message = event.error.message if event.error else "Unknown error"
-            self.events.send(
-                events.LLMErrorEvent(
-                    plugin_name="openai", error_message=error_message, event_data=event
-                )
-            )
-            return None
-
-        if event.type == "response.output_text.delta":
-            delta_event: ResponseTextDeltaEvent = event
-            # Calculate time to first token for the first chunk
-            is_first = first_token_time is not None and request_start_time is not None
-            chunk_ttft_ms: Optional[float] = None
-            if first_token_time is not None and request_start_time is not None:
-                chunk_ttft_ms = (first_token_time - request_start_time) * 1000
-
-            self.events.send(
-                LLMResponseChunkEvent(
-                    plugin_name="openai",
-                    content_index=None,
-                    item_id=delta_event.item_id,
-                    output_index=delta_event.output_index,
-                    sequence_number=delta_event.sequence_number,
-                    delta=delta_event.delta,
-                    is_first_chunk=is_first,
-                    time_to_first_token_ms=chunk_ttft_ms,
-                )
-            )
-            return None
-
-        if event.type == "response.completed":
-            completed_event: ResponseCompletedEvent = event
-            response = completed_event.response
-            llm_response = LLMResponseEvent[OpenAIResponse](
-                response, response.output_text
-            )
-
-            # Calculate timing metrics
-            latency_ms: Optional[float] = None
-            ttft_ms: Optional[float] = None
-            if request_start_time is not None:
-                latency_ms = (time.perf_counter() - request_start_time) * 1000
-            if first_token_time is not None and request_start_time is not None:
-                ttft_ms = (first_token_time - request_start_time) * 1000
-
-            self._emit_completion_event(
-                response,
-                llm_response.text,
-                latency_ms=latency_ms,
-                time_to_first_token_ms=ttft_ms,
-            )
-            return llm_response
-
-        return None
