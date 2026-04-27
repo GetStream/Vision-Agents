@@ -4,13 +4,14 @@ import time
 import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional, cast
+from typing import Any, AsyncIterator, Optional, cast
 
 import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from google.genai import types
+from google.genai.chats import AsyncChat
 from google.genai.client import AsyncClient, Client
+from google.genai.errors import APIError
 from google.genai.types import (
     GenerateContentConfig,
     GenerateContentResponse,
@@ -18,20 +19,16 @@ from google.genai.types import (
     ThinkingConfig,
     ThinkingLevel,
 )
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-    VLMErrorEvent,
     VLMInferenceCompletedEvent,
     VLMInferenceStartEvent,
 )
-from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal, VideoLLM
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
-
-from . import events
 
 logger = logging.getLogger(__name__)
 
@@ -56,17 +53,17 @@ class GeminiVLM(VideoLLM):
     def __init__(
         self,
         model: str = DEFAULT_MODEL,
-        api_key: Optional[str] = None,
-        client: Optional[AsyncClient] = None,
-        thinking_level: Optional[ThinkingLevel] = None,
-        media_resolution: Optional[MediaResolution] = None,
-        config: Optional[GenerateContentConfig] = None,
+        api_key: str | None = None,
+        client: AsyncClient | None = None,
+        thinking_level: ThinkingLevel | None = None,
+        media_resolution: MediaResolution | None = None,
+        config: GenerateContentConfig | None = None,
         fps: int = 1,
         frame_buffer_seconds: int = 10,
         frame_width: int = 800,
         frame_height: int = 600,
         max_workers: int = 4,
-        **kwargs: Any,
+        **kwargs,
     ):
         """
         Initialize the GeminiVLM class.
@@ -86,7 +83,6 @@ class GeminiVLM(VideoLLM):
             **kwargs: Additional args for GenerateContentConfig if config is not provided.
         """
         super().__init__()
-        self.events.register_events_from_module(events)
         self.model = model
         self.thinking_level = thinking_level
         self.media_resolution = media_resolution
@@ -98,7 +94,7 @@ class GeminiVLM(VideoLLM):
         else:
             self._base_config = None
 
-        self.chat: Optional[Any] = None
+        self.chat: AsyncChat | None = None
         self._config = self._build_config()
 
         if client is not None:
@@ -141,8 +137,8 @@ class GeminiVLM(VideoLLM):
     async def simple_response(
         self,
         text: str,
-        participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent[Any]:
+        participant: Participant | None = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """
         Create a response from text input with video context.
 
@@ -180,6 +176,10 @@ class GeminiVLM(VideoLLM):
 
         request_start_time = time.perf_counter()
         first_token_time: Optional[float] = None
+        text_parts: list[str] = []
+        final_chunk: Optional[GenerateContentResponse] = None
+        item_id = str(uuid.uuid4())
+        sequence_number = 0
 
         try:
             parts = await self._build_message_parts(text)
@@ -187,11 +187,6 @@ class GeminiVLM(VideoLLM):
                 message=parts, config=self._config
             )
 
-            text_parts: list[str] = []
-            final_chunk: Optional[GenerateContentResponse] = None
-            item_id = str(uuid.uuid4())
-
-            idx = 0
             async for chunk in iterator:
                 final_chunk = chunk
                 chunk_text = self._extract_text_from_chunk(chunk)
@@ -199,16 +194,22 @@ class GeminiVLM(VideoLLM):
                     if first_token_time is None:
                         first_token_time = time.perf_counter()
 
-                    self.events.send(
-                        LLMResponseChunkEvent(
-                            plugin_name=PLUGIN_NAME,
-                            content_index=idx,
-                            item_id=item_id,
-                            delta=chunk_text,
-                        )
+                    is_first_chunk = len(text_parts) == 0
+                    delta_ttft_ms = (
+                        (first_token_time - request_start_time) * 1000
+                        if is_first_chunk
+                        else None
                     )
                     text_parts.append(chunk_text)
-                idx += 1
+                    yield LLMResponseDelta(
+                        content_index=sequence_number,
+                        item_id=item_id,
+                        delta=chunk_text,
+                        sequence_number=sequence_number,
+                        is_first_chunk=is_first_chunk,
+                        time_to_first_token_ms=delta_ttft_ms,
+                    )
+                    sequence_number += 1
 
             total_text = "".join(text_parts)
             latency_ms = (time.perf_counter() - request_start_time) * 1000
@@ -231,42 +232,22 @@ class GeminiVLM(VideoLLM):
                 )
             )
 
-            self.events.send(
-                LLMResponseCompletedEvent(
-                    plugin_name=PLUGIN_NAME,
-                    original=final_chunk,
-                    text=total_text,
-                    item_id=item_id,
-                    latency_ms=latency_ms,
-                    time_to_first_token_ms=ttft_ms,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    total_tokens=(input_tokens or 0) + (output_tokens or 0)
-                    if input_tokens or output_tokens
-                    else None,
-                    model=self.model,
-                )
+            yield LLMResponseFinal(
+                original=final_chunk,
+                text=total_text,
+                item_id=item_id,
+                latency_ms=latency_ms,
+                time_to_first_token_ms=ttft_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=(input_tokens or 0) + (output_tokens or 0)
+                if input_tokens or output_tokens
+                else None,
+                model=self.model,
             )
-
-            return LLMResponseEvent(final_chunk, total_text)
-        except Exception as exc:
+        except APIError:
             logger.exception(f'Failed to get a response from the model "{self.model}"')
-            self.events.send(
-                events.LLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    error_message=str(exc),
-                    event_data=exc,
-                )
-            )
-            self.events.send(
-                VLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    inference_id=inference_id,
-                    error=exc,
-                    context="api_request",
-                )
-            )
-            return LLMResponseEvent(original=None, text="", exception=exc)
+            raise
 
     async def watch_video_track(
         self,
