@@ -443,7 +443,7 @@ class TranscribingInferenceFlow(InferenceFlow):
                 if isinstance(item, LLMResponseDelta):
                     # Process the delta response
                     text = sanitize_text(item.delta or "")
-                    logger.debug(f"🤖 [LLM response delta]: {text}")
+                    logger.info(f"🤖 [LLM response delta]: {text}")
                     # Update the conversation with a new delta
                     await self._conversation.upsert_message(
                         message_id=item.item_id,
