@@ -31,7 +31,6 @@ class TestPocketTTS:
         assert out[0].final
 
     async def test_pocket_tts_with_custom_voice_path(self, tts_custom_voice):
-
         text = "Testing with a custom voice path."
         out = []
         async for item in tts_custom_voice.send_iter(text):

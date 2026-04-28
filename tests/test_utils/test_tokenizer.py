@@ -45,9 +45,7 @@ class TestTTSSentenceTokenizer:
     ):
         assert tokenizer.update("*Hello* #world. ") == "Hello world."
 
-    def test_flush_on_empty_returns_empty_string(
-        self, tokenizer: TTSSentenceTokenizer
-    ):
+    def test_flush_on_empty_returns_empty_string(self, tokenizer: TTSSentenceTokenizer):
         assert tokenizer.flush() == ""
 
     def test_flush_returns_buffered_text_stripped_and_empties_buffer(
@@ -67,8 +65,6 @@ class TestTTSSentenceTokenizer:
         # Only the unterminated remainder flushes out.
         assert tokenizer.flush() == "Trailing"
 
-    def test_flush_does_not_sanitize_markdown(
-        self, tokenizer: TTSSentenceTokenizer
-    ):
+    def test_flush_does_not_sanitize_markdown(self, tokenizer: TTSSentenceTokenizer):
         tokenizer.update("*keep* #raw")
         assert tokenizer.flush() == "*keep* #raw"

@@ -102,9 +102,7 @@ class TestSarvamLLMIntegration:
 
     async def test_streaming_chunks(self, llm):
         deltas, final = await collect_simple_response(
-            llm.simple_response(
-                "List the first 3 prime numbers, separated by commas."
-            )
+            llm.simple_response("List the first 3 prime numbers, separated by commas.")
         )
         assert final.text
         assert len(deltas) > 0, f"No chunks emitted. Response text: {final.text!r}"

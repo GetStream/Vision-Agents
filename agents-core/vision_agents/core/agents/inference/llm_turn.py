@@ -19,9 +19,7 @@ __all__ = ["LLMTurn"]
 
 
 def _log_task_exception(message: str) -> Callable[[asyncio.Task], None]:
-
     def wrapper(task: asyncio.Task[None]) -> None:
-
         if not task.cancelled() and task.exception() is not None:
             logger.error(message, exc_info=task.exception())
 

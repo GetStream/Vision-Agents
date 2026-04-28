@@ -65,7 +65,9 @@ class TestChatCompletionsVLM:
         # Wait a few seconds to let the video forwarder consume video frames
         await asyncio.sleep(2)
 
-        deltas, final = await collect_simple_response(vlm.simple_response(text="prompt"))
+        deltas, final = await collect_simple_response(
+            vlm.simple_response(text="prompt")
+        )
         assert final.text == "chunk1 chunk2"
         assert [d.delta for d in deltas] == ["chunk1", " chunk2"]
 

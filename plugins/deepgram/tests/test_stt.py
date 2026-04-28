@@ -23,7 +23,6 @@ class TestDeepgramSTT:
     async def test_transcribe_mia_audio_48khz(
         self, deepgram_stt, mia_audio_48khz, silence_2s_48khz, participant
     ):
-
         await deepgram_stt.process_audio(mia_audio_48khz, participant=participant)
         # Send 2 seconds of silence to trigger end of turn
         await deepgram_stt.process_audio(silence_2s_48khz, participant=participant)
