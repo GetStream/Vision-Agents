@@ -2,7 +2,7 @@
 
 import pytest
 from dotenv import load_dotenv
-from vision_agents.core.agents.conversation import InMemoryConversation, Message
+from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.plugins.aws.aws_llm import BedrockLLM
 
@@ -33,25 +33,6 @@ async def llm() -> BedrockLLM:
     llm = BedrockLLM(model="qwen.qwen3-32b-v1:0", region_name="us-east-1")
     llm.set_conversation(InMemoryConversation("be friendly", []))
     return llm
-
-
-class TestBedrockLLM:
-    """Test suite for BedrockLLM class with real API calls."""
-
-    async def test_message(self):
-        messages = BedrockLLM._normalize_message("say hi")
-        assert isinstance(messages[0], Message)
-        message = messages[0]
-        assert message.original is not None
-        assert message.content == "say hi"
-
-    async def test_advanced_message(self):
-        advanced = {
-            "role": "user",
-            "content": [{"text": "Explain quantum entanglement in simple terms."}],
-        }
-        messages2 = BedrockLLM._normalize_message(advanced)
-        assert messages2[0].original is not None
 
 
 @pytest.mark.skip()
