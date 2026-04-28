@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/getstream-vision-agents-badge.png)](https://mseep.ai/app/getstream-vision-agents)
+
 ![VisionAgents](assets/repo_image.png)
 
 # Open Vision Agents by Stream
