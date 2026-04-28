@@ -9,23 +9,22 @@ import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, AsyncIterator, Dict, List, Optional, cast
 
-from openai import AsyncStream
-from openai.types.chat import ChatCompletion
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
-from openai.types.chat.chat_completion_message_tool_call import (
-    ChatCompletionMessageToolCall,
+from openai import AsyncOpenAI, AsyncStream
+from openai.types.chat.chat_completion_chunk import (
+    ChatCompletionChunk,
+    ChoiceDeltaToolCall,
 )
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.core.llm.llm import LLMResponseEvent
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.events import LLMRequestStartedEvent
+from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
-from vision_agents.plugins.openai import LLM as OpenAILLM
 
 logger = logging.getLogger(__name__)
+
+
+PLUGIN_NAME = "openrouter"
 
 # Models that reliably support tool calling via Chat Completions API.
 # Used as fallbacks when openrouter/auto routes to a model without tool support.
@@ -36,10 +35,10 @@ TOOL_SUPPORTING_MODELS = [
 ]
 
 
-class OpenRouterLLM(OpenAILLM):
+class OpenRouterLLM(LLM):
     """OpenRouter LLM using Chat Completions API for all models.
 
-    Extends OpenAI LLM with OpenRouter-specific handling:
+    OpenRouter-specific handling:
     - Uses Chat Completions API for all models (consistent behavior)
     - Uses manual conversation history (no server-side conversation IDs)
     """
@@ -50,9 +49,9 @@ class OpenRouterLLM(OpenAILLM):
         api_key: str | None = None,
         base_url: str = "https://openrouter.ai/api/v1",
         model: str = "openrouter/andromeda-alpha",
+        client: AsyncOpenAI | None = None,
         max_tokens: int | None = None,
         tools_max_rounds: int = 3,
-        **kwargs: Any,
     ) -> None:
         """Initialize OpenRouter LLM.
 
@@ -60,24 +59,24 @@ class OpenRouterLLM(OpenAILLM):
             api_key: OpenRouter API key. Defaults to OPENROUTER_API_KEY env var.
             base_url: OpenRouter API base URL.
             model: Model to use (e.g., 'openai/gpt-4o-mini', 'google/gemini-2.5-flash').
+            client: Optional ``AsyncOpenAI`` client. By default, creates a new client.
             max_tokens: This sets the upper limit for the number of tokens the model can generate in response.
                 It won’t produce more than this limit.
                 The maximum value is the context length minus the prompt length.
             tools_max_rounds: max calling rounds for multi-hop tool call. Default - ``3``.
-            **kwargs: Additional arguments passed to OpenAI LLM.
         """
-        if api_key is None:
-            api_key = os.environ.get("OPENROUTER_API_KEY")
-        super().__init__(
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
-            **kwargs,
-        )
+        super().__init__()
+        self.model = model
         # For tracking streaming tool calls in Chat Completions mode
         self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
         self._max_tokens = max_tokens
         self._tools_max_rounds = max(tools_max_rounds, 1)
+
+        if client is not None:
+            self._client = client
+        else:
+            api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
+            self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     def _is_auto_model(self, model: Optional[str] = None) -> bool:
         """Check if the model is a meta/auto model that may not support tools."""
@@ -93,116 +92,66 @@ class OpenRouterLLM(OpenAILLM):
         model = model or self.model
         return model.startswith("openai/")
 
-    async def create_conversation(self):
-        """No-op for OpenRouter (no server-side conversation IDs)."""
-        pass
-
-    async def create_response(self, *args: Any, **kwargs: Any) -> LLMResponseEvent:
-        """Create a response using Chat Completions API.
-
-        Always uses Chat Completions API for consistent behavior across all
-        providers. OpenRouter's Responses API support is in beta, so we avoid it.
+    async def simple_response(
+        self,
+        text: str,
+        participant: Optional[Participant] = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """
-        return await self._create_response_chat_completions(*args, **kwargs)
+        simple_response is a standardized way to create an LLM response.
 
-    # =========================================================================
-    # Chat Completions API implementation
-    # =========================================================================
+        This method is also called every time a new STT transcript is received.
 
-    async def _create_response_chat_completions(
-        self, *args: Any, **kwargs: Any
-    ) -> LLMResponseEvent:
-        """Create response using Chat Completions API."""
-        from vision_agents.core.agents.conversation import Message
+        Args:
+            text: The text to respond to.
+            participant: the Participant object, optional. If not provided, the
+                message will be sent with the "user" role.
 
-        # Get the user input
-        user_input = kwargs.get("input", args[0] if args else "Hello")
+        Examples:
 
-        # Convert input to messages format (includes conversation history)
-        messages = self._build_chat_messages(user_input)
+            llm.simple_response("say hi to the user, be nice")
+        """
+        if self._conversation is None:
+            logger.warning(
+                f'Cannot request a response from the LLM "{self.model}" - the conversation has not been initialized yet.'
+            )
+            yield LLMResponseFinal(original=None, text="")
+            return
 
-        # Add tools if available
+        # The simple_response is called directly without providing the participant -
+        # assuming it's an initial prompt.
+        if participant is None:
+            await self._conversation.send_message(
+                role="user", user_id="user", content=text
+            )
+
+        messages = await self._build_model_request()
         tools_param = None
         tools_spec = self.get_available_functions()
         if tools_spec:
-            tools_param = self._convert_tools_to_chat_completions_format(tools_spec)
+            tools_param = self._convert_tools_to_provider_format(tools_spec)
 
-        response = await self._chat_completions_internal(
-            messages=messages,
-            tools=tools_param,
-            model=kwargs.get("model", self.model),
-            stream=kwargs.get("stream", True),
-            max_tokens=kwargs.get("max_tokens", self._max_tokens),
-        )
+        async for item in self._create_response_internal(
+            messages=messages, tools=tools_param
+        ):
+            yield item
 
-        # Update conversation history with the exchange
-        if self._conversation:
-            # Add user message
-            if isinstance(user_input, str):
-                self._conversation.messages.append(
-                    Message(
-                        original={"role": "user", "content": user_input},
-                        content=user_input,
-                        role="user",
-                    )
-                )
-            # Add assistant response
-            if response.text:
-                self._conversation.messages.append(
-                    Message(
-                        original={"role": "assistant", "content": response.text},
-                        content=response.text,
-                        role="assistant",
-                    )
-                )
+    async def close(self) -> None:
+        await self._client.close()
 
-        return response
-
-    def _build_chat_messages(self, input_value: Any) -> List[Dict[str, Any]]:
-        """Convert input to Chat Completions messages format."""
-        messages: List[Dict[str, Any]] = []
-
-        # Add instructions as system message
+    async def _build_model_request(self) -> list[dict]:
+        messages: list[dict] = []
+        # Add Agent's instructions as system prompt.
         if self._instructions:
             messages.append({"role": "system", "content": self._instructions})
 
-        # Add conversation history
-        if self._conversation:
-            for m in self._conversation.messages:
-                messages.append({"role": m.role or "user", "content": m.content})
-
-        # Convert input to user message(s)
-        if isinstance(input_value, str):
-            messages.append({"role": "user", "content": input_value})
-        elif isinstance(input_value, list):
-            for item in input_value:
-                if isinstance(item, dict):
-                    role = item.get("role", "user")
-                    content = item.get("content", "")
-                    item_type = item.get("type", "")
-
-                    # Skip system messages if we already added instructions
-                    if role == "system" and self._instructions:
-                        continue
-
-                    if item_type == "function_call_output":
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": item.get("call_id", ""),
-                                "content": item.get("output", ""),
-                            }
-                        )
-                    else:
-                        messages.append({"role": role, "content": content})
-                else:
-                    messages.append({"role": "user", "content": str(item)})
-        else:
-            messages.append({"role": "user", "content": str(input_value)})
-
+        # Add all messages from the conversation to the prompt
+        if self._conversation is not None:
+            for message in self._conversation.messages:
+                messages.append({"role": message.role, "content": message.content})
         return messages
 
-    def _convert_tools_to_chat_completions_format(
+    def _convert_tools_to_provider_format(
         self, tools: List[ToolSchema]
     ) -> List[Dict[str, Any]]:
         """Convert ToolSchema to Chat Completions API format.
@@ -239,22 +188,21 @@ class OpenRouterLLM(OpenAILLM):
             result.append({"type": "function", "function": func_spec})
         return result
 
-    async def _chat_completions_internal(
+    async def _create_response_internal(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]] = None,
         model: Optional[str] = None,
-        stream: bool = True,
-        max_tokens: Optional[int] = None,
-    ) -> LLMResponseEvent:
-        """Internal Chat Completions implementation with tool handling."""
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        """Internal method to create response with tool handling loop."""
         effective_model = model or self.model
-        request_kwargs: Dict[str, Any] = {
+        request_kwargs: dict[str, Any] = {
             "messages": messages,
             "model": effective_model,
-            "stream": stream,
-            "max_tokens": max_tokens,
+            "stream": True,
         }
+        if self._max_tokens is not None:
+            request_kwargs["max_tokens"] = self._max_tokens
         if tools:
             request_kwargs["tools"] = tools
             # openrouter/auto may route to models that don't support tools.
@@ -266,161 +214,124 @@ class OpenRouterLLM(OpenAILLM):
                 )
                 request_kwargs["extra_body"] = {"models": TOOL_SUPPORTING_MODELS}
 
-        request_start_time = time.perf_counter()
-        response = await self.client.chat.completions.create(**request_kwargs)
-
-        if stream:
-            return await self._process_chat_stream(response, messages, tools, model)
-        else:
-            return await self._process_chat_response(
-                cast(ChatCompletion, response),
-                messages,
-                tools,
-                model,
-                request_start_time,
+        self.events.send(
+            LLMRequestStartedEvent(
+                plugin_name=PLUGIN_NAME,
+                model=request_kwargs["model"],
+                streaming=True,
             )
+        )
 
-    async def _process_chat_stream(
+        request_start_time = time.perf_counter()
+
+        try:
+            response = await self._client.chat.completions.create(**request_kwargs)
+        except Exception:
+            logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+            yield LLMResponseFinal(original=None, text="")
+            return
+
+        async for item in self._process_streaming_response(
+            response, messages, tools, model, request_start_time
+        ):
+            yield item
+
+    async def _process_streaming_response(
         self,
         response: Any,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]],
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]],
         model: Optional[str],
-    ) -> LLMResponseEvent:
-        """Process streaming Chat Completions response.
-
-        Streaming strategy:
-        - Emit chunks immediately for real-time TTS
-        - If the response ends with tool_calls, we suppress the text (it was narration)
-        - If the response ends normally (stop), the chunks were already emitted
-        """
-        request_start_time = time.perf_counter()
-        first_token_time: Optional[float] = None
-        llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
+        request_start_time: float,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        """Process a streaming response, handling tool calls if present."""
         text_chunks: list[str] = []
         self._pending_tool_calls = {}
-        accumulated_tool_calls: List[NormalizedToolCallItem] = []
-        has_tool_call_delta = False
-        i = 0
+        accumulated_tool_calls: list[NormalizedToolCallItem] = []
+        sequence_number = 0
+        first_token_time: Optional[float] = None
+        last_chunk: ChatCompletionChunk | None = None
+        # Once a tool_call delta is seen, subsequent text is treated as narration
+        # ("Let me check...") and not yielded as deltas.
+        has_tool_call_delta_seen = False
 
         async for chunk in cast(AsyncStream[ChatCompletionChunk], response):
+            last_chunk = chunk
             if not chunk.choices:
                 continue
 
             choice = chunk.choices[0]
             content = choice.delta.content
             finish_reason = choice.finish_reason
-
-            # Track if we've seen any tool call deltas
             if choice.delta.tool_calls:
-                has_tool_call_delta = True
+                has_tool_call_delta_seen = True
                 for tc in choice.delta.tool_calls:
-                    self._accumulate_chat_tool_call(tc)
+                    self._accumulate_tool_call_chunk(tc)
 
             if content:
-                # Track time to first token
-                if first_token_time is None:
+                is_first = first_token_time is None
+                ttft_ms = None
+                if is_first:
                     first_token_time = time.perf_counter()
+                    ttft_ms = (first_token_time - request_start_time) * 1000
 
                 text_chunks.append(content)
-                # Only emit if we haven't seen tool calls yet
-                # (once tool calls start, text is likely narration like "Let me check...")
-                if not has_tool_call_delta:
-                    is_first = i == 0
-                    ttft_ms = None
-                    if is_first and first_token_time is not None:
-                        ttft_ms = (first_token_time - request_start_time) * 1000
-                    self.events.send(
-                        LLMResponseChunkEvent(
-                            plugin_name="openrouter",
-                            content_index=None,
-                            item_id=chunk.id,
-                            output_index=0,
-                            sequence_number=i,
-                            delta=content,
-                            is_first_chunk=is_first,
-                            time_to_first_token_ms=ttft_ms,
-                        )
-                    )
-                    i += 1
-
-            if finish_reason == "stop":
-                total_text = "".join(text_chunks)
-                latency_ms = (time.perf_counter() - request_start_time) * 1000
-                ttft_ms_final = None
-                if first_token_time is not None:
-                    ttft_ms_final = (first_token_time - request_start_time) * 1000
-                self.events.send(
-                    LLMResponseCompletedEvent(
-                        plugin_name="openrouter",
-                        original=chunk,
-                        text=total_text,
+                if not has_tool_call_delta_seen:
+                    yield LLMResponseDelta(
+                        content_index=None,
                         item_id=chunk.id,
-                        latency_ms=latency_ms,
-                        time_to_first_token_ms=ttft_ms_final,
-                        model=model or self.model,
+                        output_index=0,
+                        sequence_number=sequence_number,
+                        delta=content,
+                        is_first_chunk=is_first,
+                        time_to_first_token_ms=ttft_ms,
                     )
-                )
-                llm_response = LLMResponseEvent(original=chunk, text=total_text)
+                    sequence_number += 1
 
-        # Handle tool calls - the text before tool calls was narration, discard it
-        accumulated_tool_calls = self._finalize_chat_tool_calls()
+            if finish_reason:
+                if finish_reason in ("length", "content"):
+                    logger.warning(
+                        f'The model finished the response due to reason "{finish_reason}"'
+                    )
+
+                # OpenRouter sometimes emits multiple `finish_reason="tool_calls"`
+                # chunks; finalize only when there's still pending data to consume,
+                # otherwise the second pass overwrites the result with [].
+                if finish_reason == "tool_calls" and self._pending_tool_calls:
+                    accumulated_tool_calls = self._finalize_pending_tool_calls()
+
+        total_text = "".join(text_chunks)
+
+        # Handle tool calls if any were accumulated
         if accumulated_tool_calls:
-            return await self._handle_chat_tool_calls(
-                accumulated_tool_calls, messages, tools, model
-            )
+            async for item in self._handle_tool_calls(
+                accumulated_tool_calls,
+                messages,
+                tools,
+                model,
+                request_start_time,
+                first_token_time,
+                sequence_number,
+            ):
+                yield item
+            return
 
-        return llm_response
+        latency_ms = (time.perf_counter() - request_start_time) * 1000
+        ttft_ms = None
+        if first_token_time is not None:
+            ttft_ms = (first_token_time - request_start_time) * 1000
 
-    async def _process_chat_response(
-        self,
-        response: ChatCompletion,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]],
-        model: Optional[str],
-        request_start_time: Optional[float] = None,
-    ) -> LLMResponseEvent:
-        """Process non-streaming Chat Completions response."""
-        text = response.choices[0].message.content or ""
-        llm_response = LLMResponseEvent(original=response, text=text)
-
-        # Check for tool calls
-        tool_calls = self._extract_chat_tool_calls(response)
-        if tool_calls:
-            return await self._handle_chat_tool_calls(
-                tool_calls, messages, tools, model
-            )
-
-        # Calculate latency if start time provided
-        latency_ms = None
-        if request_start_time is not None:
-            latency_ms = (time.perf_counter() - request_start_time) * 1000
-
-        # Extract token usage if available
-        input_tokens = None
-        output_tokens = None
-        if response.usage:
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
-
-        self.events.send(
-            LLMResponseCompletedEvent(
-                plugin_name="openrouter",
-                original=response,
-                text=text,
-                item_id=response.id,
-                latency_ms=latency_ms,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=(input_tokens or 0) + (output_tokens or 0)
-                if input_tokens or output_tokens
-                else None,
-                model=model or self.model,
-            )
+        item_id = last_chunk.id if last_chunk is not None else None
+        yield LLMResponseFinal(
+            original=last_chunk,
+            text=total_text,
+            item_id=item_id,
+            latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_ms,
+            model=model or self.model,
         )
-        return llm_response
 
-    def _accumulate_chat_tool_call(self, tc_chunk: Any) -> None:
+    def _accumulate_tool_call_chunk(self, tc_chunk: ChoiceDeltaToolCall) -> None:
         """Accumulate tool call data from streaming chunks."""
         idx = tc_chunk.index
         if idx not in self._pending_tool_calls:
@@ -439,7 +350,7 @@ class OpenRouterLLM(OpenAILLM):
             if tc_chunk.function.arguments:
                 pending["arguments_parts"].append(tc_chunk.function.arguments)
 
-    def _finalize_chat_tool_calls(self) -> List[NormalizedToolCallItem]:
+    def _finalize_pending_tool_calls(self) -> List[NormalizedToolCallItem]:
         """Convert accumulated tool call chunks to normalized format."""
         tool_calls: List[NormalizedToolCallItem] = []
         for pending in self._pending_tool_calls.values():
@@ -462,56 +373,22 @@ class OpenRouterLLM(OpenAILLM):
         self._pending_tool_calls = {}
         return tool_calls
 
-    def _extract_chat_tool_calls(
-        self, response: ChatCompletion
-    ) -> List[NormalizedToolCallItem]:
-        """Extract tool calls from non-streaming Chat Completions response."""
-        tool_calls: List[NormalizedToolCallItem] = []
-
-        if not response.choices:
-            return tool_calls
-
-        message = response.choices[0].message
-        if not message.tool_calls:
-            return tool_calls
-
-        for tc in message.tool_calls:
-            if not isinstance(tc, ChatCompletionMessageToolCall) or not tc.function:
-                continue
-
-            args_str = tc.function.arguments or "{}"
-            try:
-                args = json.loads(args_str)
-            except json.JSONDecodeError:
-                args = {}
-
-            tool_call: NormalizedToolCallItem = {
-                "type": "tool_call",
-                "id": tc.id or "",
-                "name": tc.function.name or "unknown",
-                "arguments_json": args,
-            }
-            tool_calls.append(tool_call)
-
-        return tool_calls
-
-    async def _handle_chat_tool_calls(
+    async def _handle_tool_calls(
         self,
-        tool_calls: List[NormalizedToolCallItem],
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]],
+        tool_calls: list[NormalizedToolCallItem],
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]],
         model: Optional[str],
-    ) -> LLMResponseEvent:
-        """Execute tool calls and get follow-up response (Chat Completions).
-
-        Key behavior: We buffer ALL intermediate text and only emit the FINAL
-        response (after all tool calls complete). This prevents the model from
-        speaking "Now I'll search..." between each tool call.
-        """
-        llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
+        request_start_time: float,
+        first_token_time: Optional[float],
+        sequence_number: int,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        """Execute tool calls and get follow-up response."""
         current_tool_calls = tool_calls
         seen: set[tuple] = set()
         current_messages = list(messages)
+        last_chunk: ChatCompletionChunk | None = None
+        total_text = ""
 
         for tc in tool_calls:
             logger.debug(
@@ -522,7 +399,7 @@ class OpenRouterLLM(OpenAILLM):
 
         for round_num in range(self._tools_max_rounds):
             triples, seen = await self._dedup_and_execute(
-                current_tool_calls,  # type: ignore[arg-type]
+                current_tool_calls,
                 max_concurrency=8,
                 timeout_s=30,
                 seen=seen,
@@ -560,7 +437,7 @@ class OpenRouterLLM(OpenAILLM):
                 )
 
             if not tool_results:
-                return llm_response
+                break
 
             # Add assistant message with tool_calls, then tool results
             current_messages.append(
@@ -574,26 +451,31 @@ class OpenRouterLLM(OpenAILLM):
 
             # Make follow-up request
             effective_model = model or self.model
-            request_kwargs: Dict[str, Any] = {
+            request_kwargs: dict[str, Any] = {
                 "messages": current_messages,
                 "model": effective_model,
                 "stream": True,
             }
+            if self._max_tokens is not None:
+                request_kwargs["max_tokens"] = self._max_tokens
             if tools:
                 request_kwargs["tools"] = tools
                 if self._is_auto_model(effective_model):
                     request_kwargs["extra_body"] = {"models": TOOL_SUPPORTING_MODELS}
 
-            follow_up = await self.client.chat.completions.create(**request_kwargs)
+            try:
+                follow_up = await self._client.chat.completions.create(**request_kwargs)
+            except Exception:
+                logger.exception("Failed to get follow-up response")
+                break
 
-            # Process follow-up streaming response
             text_chunks: list[str] = []
             self._pending_tool_calls = {}
-            next_tool_calls: List[NormalizedToolCallItem] = []
-            has_tool_call_delta = False
-            seq = 0
+            next_tool_calls: list[NormalizedToolCallItem] = []
+            has_tool_call_delta_seen = False
 
             async for chunk in cast(AsyncStream[ChatCompletionChunk], follow_up):
+                last_chunk = chunk
                 if not chunk.choices:
                     continue
 
@@ -602,45 +484,52 @@ class OpenRouterLLM(OpenAILLM):
                 finish_reason = choice.finish_reason
 
                 if choice.delta.tool_calls:
-                    has_tool_call_delta = True
+                    has_tool_call_delta_seen = True
                     for tc_delta in choice.delta.tool_calls:
-                        self._accumulate_chat_tool_call(tc_delta)
+                        self._accumulate_tool_call_chunk(tc_delta)
 
                 if content:
+                    is_first = first_token_time is None
+                    ttft_ms = None
+                    if is_first:
+                        first_token_time = time.perf_counter()
+                        ttft_ms = (first_token_time - request_start_time) * 1000
+
                     text_chunks.append(content)
-                    # Stream text if no tool calls detected yet
-                    if not has_tool_call_delta:
-                        self.events.send(
-                            LLMResponseChunkEvent(
-                                plugin_name="openrouter",
-                                content_index=None,
-                                item_id=chunk.id,
-                                output_index=0,
-                                sequence_number=seq,
-                                delta=content,
-                            )
-                        )
-                        seq += 1
-
-                if finish_reason == "tool_calls":
-                    next_tool_calls = self._finalize_chat_tool_calls()
-                elif finish_reason == "stop":
-                    total_text = "".join(text_chunks)
-                    self.events.send(
-                        LLMResponseCompletedEvent(
-                            plugin_name="openrouter",
-                            original=chunk,
-                            text=total_text,
+                    if not has_tool_call_delta_seen:
+                        yield LLMResponseDelta(
+                            content_index=None,
                             item_id=chunk.id,
+                            output_index=0,
+                            sequence_number=sequence_number,
+                            delta=content,
+                            is_first_chunk=is_first,
+                            time_to_first_token_ms=ttft_ms,
                         )
-                    )
-                    llm_response = LLMResponseEvent(original=chunk, text=total_text)
+                        sequence_number += 1
 
-            # If more tool calls, continue the loop
+                if finish_reason == "tool_calls" and self._pending_tool_calls:
+                    next_tool_calls = self._finalize_pending_tool_calls()
+
+            total_text = "".join(text_chunks)
+
             if next_tool_calls and round_num < self._tools_max_rounds - 1:
                 current_tool_calls = next_tool_calls
                 continue
 
-            return llm_response
+            break
 
-        return llm_response
+        latency_ms = (time.perf_counter() - request_start_time) * 1000
+        ttft_ms = None
+        if first_token_time is not None:
+            ttft_ms = (first_token_time - request_start_time) * 1000
+
+        item_id = last_chunk.id if last_chunk is not None else None
+        yield LLMResponseFinal(
+            original=last_chunk,
+            text=total_text,
+            item_id=item_id,
+            latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_ms,
+            model=model or self.model,
+        )
