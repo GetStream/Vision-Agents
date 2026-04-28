@@ -16,12 +16,7 @@ from openai.types.chat.chat_completion_chunk import (
     ChoiceDelta,
 )
 from vision_agents.core.agents.conversation import InMemoryConversation
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
 from vision_agents.plugins.openai import ChatCompletionsLLM, ChatCompletionsVLM
-from vision_agents.plugins.openai.events import LLMErrorEvent
 
 from tests.utils import collect_simple_response
 
@@ -67,31 +62,14 @@ class TestChatCompletionsVLM:
         stream.add_chunk(content="", finish_reason="stop")
         openai_client_mock.chat.completions.create = AsyncMock(return_value=stream)
 
-        # Gather the events fired by LLM
-        events = []
-
-        @vlm.events.subscribe
-        async def listen(
-            event: LLMResponseChunkEvent | LLMResponseCompletedEvent | LLMErrorEvent,
-        ):
-            events.append(event)
-
         # Wait a few seconds to let the video forwarder consume video frames
         await asyncio.sleep(2)
 
-        response = await vlm.simple_response(text="prompt")
-        await vlm.events.wait(1)
-        assert response.text == "chunk1 chunk2"
+        deltas, final = await collect_simple_response(vlm.simple_response(text="prompt"))
+        assert final.text == "chunk1 chunk2"
+        assert [d.delta for d in deltas] == ["chunk1", " chunk2"]
 
         await vlm.stop_watching_video_track()
-
-        # Check that events are fired
-        assert len(events) == 3
-        assert events[0].type == "plugin.llm_response_chunk"
-        assert events[0].delta == "chunk1"
-        assert events[1].type == "plugin.llm_response_chunk"
-        assert events[1].delta == " chunk2"
-        assert events[2].type == "plugin.llm_response_completed"
 
         # Check that correct messages are sent to the model
         call_args = openai_client_mock.chat.completions.create.call_args_list
@@ -113,20 +91,9 @@ class TestChatCompletionsVLM:
             side_effect=ValueError("test")
         )
 
-        # Gather the events fired by LLM
-        events = []
-
-        @vlm.events.subscribe
-        async def listen(
-            event: LLMResponseChunkEvent | LLMResponseCompletedEvent | LLMErrorEvent,
-        ):
-            events.append(event)
-
-        await vlm.simple_response(text="prompt")
-        await vlm.events.wait(1)
-        assert len(events) == 1
-        assert events[0].type == "plugin.llm.error"
-        assert events[0].error_message == "test"
+        _, final = await collect_simple_response(vlm.simple_response(text="prompt"))
+        assert final.text == ""
+        assert final.original is None
 
 
 class TestChatCompletionsLLM:

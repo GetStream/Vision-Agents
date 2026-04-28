@@ -14,17 +14,12 @@ from openai import AsyncOpenAI, AsyncStream
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
     VLMInferenceStartEvent,
     VLMInferenceCompletedEvent,
-    VLMErrorEvent,
 )
-from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal, VideoLLM
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
-
-from .. import events
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +78,6 @@ class ChatCompletionsVLM(VideoLLM):
         """
         super().__init__()
         self.model = model
-        self.events.register_events_from_module(events)
 
         if client is not None:
             self._client = client
@@ -106,7 +100,7 @@ class ChatCompletionsVLM(VideoLLM):
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """
         simple_response is a standardized way to create an LLM response.
 
@@ -126,7 +120,8 @@ class ChatCompletionsVLM(VideoLLM):
             logger.warning(
                 f'Cannot request a response from the LLM "{self.model}" - the conversation has not been initialized yet.'
             )
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         # The simple_response is called directly without providing the participant -
         # assuming it's an initial prompt.
@@ -170,33 +165,16 @@ class ChatCompletionsVLM(VideoLLM):
                 model=self.model,
                 stream=True,
             )
-        except Exception as e:
-            # Send an error event if the request failed
+        except Exception:
             logger.exception(f'Failed to get a response from the model "{self.model}"')
-            self.events.send(
-                events.LLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    error_message=str(e),
-                    event_data=e,
-                )
-            )
-            self.events.send(
-                VLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    inference_id=inference_id,
-                    error=e,
-                    context="api_request",
-                )
-            )
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
-        i = 0
-        llm_response: LLMResponseEvent[Optional[ChatCompletionChunk]] = (
-            LLMResponseEvent(original=None, text="")
-        )
+        sequence_number = 0
         text_chunks: list[str] = []
-        total_text = ""
+        last_chunk: ChatCompletionChunk | None = None
         async for chunk in cast(AsyncStream[ChatCompletionChunk], response):
+            last_chunk = chunk
             if not chunk.choices:
                 continue
 
@@ -205,73 +183,56 @@ class ChatCompletionsVLM(VideoLLM):
             finish_reason = choice.finish_reason
 
             if content:
-                # Track time to first token
-                if first_token_time is None:
-                    first_token_time = time.perf_counter()
-
-                is_first = len(text_chunks) == 0
+                is_first = first_token_time is None
                 ttft_ms = None
                 if is_first:
+                    first_token_time = time.perf_counter()
                     ttft_ms = (first_token_time - request_start_time) * 1000
 
                 text_chunks.append(content)
-                # Emit delta events for each response chunk.
-                self.events.send(
-                    LLMResponseChunkEvent(
-                        plugin_name=PLUGIN_NAME,
-                        content_index=None,
-                        item_id=chunk.id,
-                        output_index=0,
-                        sequence_number=i,
-                        delta=content,
-                        is_first_chunk=is_first,
-                        time_to_first_token_ms=ttft_ms,
-                    )
+                yield LLMResponseDelta(
+                    content_index=None,
+                    item_id=chunk.id,
+                    output_index=0,
+                    sequence_number=sequence_number,
+                    delta=content,
+                    is_first_chunk=is_first,
+                    time_to_first_token_ms=ttft_ms,
+                )
+                sequence_number += 1
+
+            if finish_reason and finish_reason in ("length", "content"):
+                logger.warning(
+                    f'The model finished the response due to reason "{finish_reason}"'
                 )
 
-            if finish_reason:
-                if finish_reason in ("length", "content"):
-                    logger.warning(
-                        f'The model finished the response due to reason "{finish_reason}"'
-                    )
-                # Emit the completion event when the response stream is finished.
-                total_text = "".join(text_chunks)
-                latency_ms = (time.perf_counter() - request_start_time) * 1000
-                ttft_ms_final = None
-                if first_token_time is not None:
-                    ttft_ms_final = (first_token_time - request_start_time) * 1000
+        total_text = "".join(text_chunks)
+        latency_ms = (time.perf_counter() - request_start_time) * 1000
+        ttft_ms = None
+        if first_token_time is not None:
+            ttft_ms = (first_token_time - request_start_time) * 1000
 
-                # Emit VLM-specific completion event with metrics
-                self.events.send(
-                    VLMInferenceCompletedEvent(
-                        plugin_name=PLUGIN_NAME,
-                        inference_id=inference_id,
-                        model=self.model,
-                        text=total_text,
-                        latency_ms=latency_ms,
-                        frames_processed=frames_count,
-                    )
-                )
+        # Emit VLM-specific completion event with metrics
+        self.events.send(
+            VLMInferenceCompletedEvent(
+                plugin_name=PLUGIN_NAME,
+                inference_id=inference_id,
+                model=self.model,
+                text=total_text,
+                latency_ms=latency_ms,
+                frames_processed=frames_count,
+            )
+        )
 
-                # Also emit LLM completion for compatibility
-                self.events.send(
-                    LLMResponseCompletedEvent(
-                        plugin_name=PLUGIN_NAME,
-                        original=chunk,
-                        text=total_text,
-                        item_id=chunk.id,
-                        latency_ms=latency_ms,
-                        time_to_first_token_ms=ttft_ms_final,
-                        model=self.model,
-                    )
-                )
-
-                llm_response = LLMResponseEvent(original=chunk, text=total_text)
-                break
-
-            i += 1
-
-        return llm_response
+        item_id = last_chunk.id if last_chunk is not None else None
+        yield LLMResponseFinal(
+            original=last_chunk,
+            text=total_text,
+            item_id=item_id,
+            latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_ms,
+            model=self.model,
+        )
 
     async def watch_video_track(
         self,
