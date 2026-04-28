@@ -4,8 +4,8 @@ import os
 
 import pytest
 from dotenv import load_dotenv
+from tests.utils import collect_simple_response
 from vision_agents.core.agents.conversation import InMemoryConversation
-from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.plugins.sarvam import LLM
 from vision_agents.plugins.sarvam.llm import _ThinkTagFilter
 
@@ -94,38 +94,51 @@ class TestSarvamLLMIntegration:
         return llm
 
     async def test_simple_response(self, llm):
-        response = await llm.simple_response("Greet the user in English")
-        assert response.text
-        assert response.exception is None
+        deltas, final = await collect_simple_response(
+            llm.simple_response("Greet the user in English")
+        )
+        assert final.text
+        assert deltas
 
     async def test_streaming_chunks(self, llm):
-        chunks: list[str] = []
-
-        @llm.events.subscribe
-        async def on_chunk(event: LLMResponseChunkEvent):
-            chunks.append(event.delta)
-
-        response = await llm.simple_response(
-            "List the first 3 prime numbers, separated by commas."
+        deltas, final = await collect_simple_response(
+            llm.simple_response(
+                "List the first 3 prime numbers, separated by commas."
+            )
         )
-        await llm.events.wait()
-        assert response.text
-        assert len(chunks) > 0, f"No chunks emitted. Response text: {response.text!r}"
+        assert final.text
+        assert len(deltas) > 0, f"No chunks emitted. Response text: {final.text!r}"
 
     async def test_think_tags_stripped_from_response(self, llm):
-        response = await llm.simple_response("What is 2+2? Answer in one word.")
-        assert "<think>" not in response.text
-        assert "</think>" not in response.text
+        _, final = await collect_simple_response(
+            llm.simple_response("What is 2+2? Answer in one word.")
+        )
+        assert "<think>" not in final.text
+        assert "</think>" not in final.text
 
     async def test_think_tags_stripped_from_chunks(self, llm):
-        chunks: list[str] = []
-
-        @llm.events.subscribe
-        async def on_chunk(event: LLMResponseChunkEvent):
-            chunks.append(event.delta)
-
-        await llm.simple_response("What is 2+2? Answer in one word.")
-        await llm.events.wait()
-        full = "".join(chunks)
+        deltas, _ = await collect_simple_response(
+            llm.simple_response("What is 2+2? Answer in one word.")
+        )
+        full = "".join(d.delta for d in deltas if d.delta)
         assert "<think>" not in full
         assert "</think>" not in full
+
+    async def test_function_calling(self, llm):
+        calls: list[str] = []
+
+        @llm.register_function(description="Probe tool that records invocation")
+        async def probe_tool(ping: str) -> str:
+            calls.append(ping)
+            return f"probe_ok:{ping}"
+
+        prompt = (
+            "Call the tool named 'probe_tool' with the parameter ping='pong' now. "
+            "After receiving the tool result, reply by returning ONLY the tool result string."
+        )
+        _, final = await collect_simple_response(llm.simple_response(prompt))
+
+        assert len(calls) >= 1, "probe_tool was not invoked by the model"
+        assert "probe_ok:pong" in final.text, (
+            f"Expected 'probe_ok:pong', got: {final.text}"
+        )
