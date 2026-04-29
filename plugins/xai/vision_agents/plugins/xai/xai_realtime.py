@@ -497,6 +497,8 @@ class XAIRealtime(realtime.Realtime):
 
             elif event_type == "input_audio_buffer.speech_started":
                 logger.debug("Speech started detected")
+                await self.interrupt()
+                self._emit_audio_output_done_event(interrupted=True)
 
             elif event_type == "input_audio_buffer.speech_stopped":
                 logger.debug("Speech stopped detected")
