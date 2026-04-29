@@ -9,13 +9,13 @@ from typing import AsyncIterator, Optional, cast
 
 import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from openai import AsyncOpenAI, AsyncStream
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
-    VLMInferenceStartEvent,
     VLMInferenceCompletedEvent,
+    VLMInferenceStartEvent,
 )
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal, VideoLLM
 from vision_agents.core.utils.video_forwarder import VideoForwarder
