@@ -81,9 +81,6 @@ SCHEDULE: list[dict[str, str]] = [
     {"time": "18:00", "title": "After-party", "location": "Rooftop Bar"},
 ]
 
-# Session-only mutable state. Cleared on every restart.
-NOTES: dict[str, list[str]] = {}
-
 
 def _log_tool(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
     """Demo-only wrapper that logs each tool call's args and return value."""
@@ -119,6 +116,10 @@ def _resolve_handle(query: str) -> Optional[str]:
 
 async def create_agent(**kwargs) -> Agent:
     """Create an xAI realtime conference-companion agent."""
+    # Per-agent session notes. Scoped to this instance so concurrent or
+    # sequential sessions in the same process don't share state.
+    notes: dict[str, list[str]] = {}
+
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Conference Companion", id="agent"),
@@ -189,8 +190,8 @@ async def create_agent(**kwargs) -> Agent:
         handle = _resolve_handle(query)
         if handle is None:
             return {"saved": False, "reason": f"No attendee matched '{query}'"}
-        NOTES.setdefault(handle, []).append(note)
-        return {"saved": True, "handle": handle, "total_notes": len(NOTES[handle])}
+        notes.setdefault(handle, []).append(note)
+        return {"saved": True, "handle": handle, "total_notes": len(notes[handle])}
 
     @agent.llm.register_function(
         name="recall_notes",
@@ -210,7 +211,7 @@ async def create_agent(**kwargs) -> Agent:
             "found": True,
             "handle": handle,
             "name": ATTENDEES[handle]["name"],
-            "notes": NOTES.get(handle, []),
+            "notes": notes.get(handle, []),
         }
 
     @agent.llm.register_function(

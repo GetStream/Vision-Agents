@@ -498,7 +498,11 @@ class XAIRealtime(realtime.Realtime):
             elif event_type == "input_audio_buffer.speech_started":
                 logger.debug("Speech started detected")
                 await self.interrupt()
-                self._emit_audio_output_done_event(interrupted=True)
+                # When vad_interrupt_response=True, the server will fire
+                # response.cancelled and that branch emits the interrupted
+                # done event — skip here to avoid duplicates.
+                if not self.vad_interrupt_response:
+                    self._emit_audio_output_done_event(interrupted=True)
 
             elif event_type == "input_audio_buffer.speech_stopped":
                 logger.debug("Speech stopped detected")
