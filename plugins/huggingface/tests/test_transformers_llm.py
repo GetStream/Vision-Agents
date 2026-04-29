@@ -7,12 +7,8 @@ import pytest
 import torch
 from conftest import skip_blockbuster
 from vision_agents.core.agents.conversation import InMemoryConversation
-from vision_agents.core.llm.events import (
-    LLMRequestStartedEvent,
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.plugins.huggingface.events import LLMErrorEvent
+from tests.utils import collect_simple_response
+from vision_agents.core.llm.llm import LLMResponseFinal
 from vision_agents.plugins.huggingface.transformers_llm import (
     ModelResources,
     TransformersLLM,
@@ -92,29 +88,16 @@ async def llm(conversation):
 @skip_blockbuster
 class TestTransformersLLM:
     async def test_simple_response(self, llm, conversation):
-        """Streaming response returns text and emits expected events."""
+        """Streaming response yields deltas and a final."""
         await conversation.send_message(
             role="user", user_id="user1", content="prior message"
         )
 
-        events_received = []
+        deltas, final = await collect_simple_response(llm.simple_response(text="hello"))
 
-        @llm.events.subscribe
-        async def listen(
-            event: LLMRequestStartedEvent
-            | LLMResponseChunkEvent
-            | LLMResponseCompletedEvent,
-        ):
-            events_received.append(event)
-
-        response = await llm.simple_response(text="hello")
-        await llm.events.wait(1)
-
-        assert response.text == "Hello there!"
-
-        event_types = [e.type for e in events_received]
-        assert "plugin.llm_request_started" in event_types
-        assert "plugin.llm_response_completed" in event_types
+        assert final.text == "Hello there!"
+        assert "".join(d.delta or "" for d in deltas) == "Hello there!"
+        assert all(d.delta for d in deltas), "deltas must not be empty"
 
         # Verify messages were built from conversation
         tokenizer = llm._resources.tokenizer
@@ -123,25 +106,21 @@ class TestTransformersLLM:
 
     async def test_non_streaming_response(self, llm):
         messages = [{"role": "user", "content": "test"}]
-        response = await llm.create_response(messages=messages, stream=False)
-        assert response.text == "Hello there!"
+        _, final = await collect_simple_response(
+            llm.create_response(messages=messages, stream=False)
+        )
+        assert final.text == "Hello there!"
 
     async def test_generation_error(self, llm):
         llm._resources.model.generate.side_effect = RuntimeError("OOM")
 
-        error_events = []
-
-        @llm.events.subscribe
-        async def listen(event: LLMErrorEvent):
-            error_events.append(event)
-
         messages = [{"role": "user", "content": "test"}]
-        response = await llm.create_response(messages=messages, stream=False)
-        await llm.events.wait(1)
+        deltas, final = await collect_simple_response(
+            llm.create_response(messages=messages, stream=False)
+        )
 
-        assert response.text == ""
-        assert len(error_events) == 1
-        assert "OOM" in error_events[0].error_message
+        assert final.text == ""
+        assert deltas == []
 
     async def test_chat_template_tools_fallback(self, llm):
         """When apply_chat_template fails with tools, retries without."""
@@ -162,12 +141,14 @@ class TestTransformersLLM:
         async def test_tool() -> str:
             return "result"
 
-        response = await llm.create_response(
-            messages=[{"role": "user", "content": "test"}], stream=False
+        _, final = await collect_simple_response(
+            llm.create_response(
+                messages=[{"role": "user", "content": "test"}], stream=False
+            )
         )
 
         assert call_count == 2
-        assert response.text == "Hello there!"
+        assert final.text == "Hello there!"
 
 
 class TestToolCallParsing:
@@ -210,33 +191,48 @@ class TestToolCallParsing:
 
 @skip_blockbuster
 class TestToolCallExecution:
-    async def test_tool_calls_execute_and_generate_followup(self, llm, conversation):
-        calls_received = []
+    async def test_tool_calls_execute_and_generate_followup(self, conversation):
+        """Tool calls extracted from model output are executed and a follow-up
+        round produces the final answer."""
+        tool_call_text = (
+            '<tool_call>{"name": "get_weather", '
+            '"arguments": {"city": "SF"}}</tool_call>'
+        )
+        final_answer = "Sunny, 72F in SF."
+
+        decode_outputs = iter([tool_call_text, final_answer])
+        tokenizer = _make_mock_tokenizer()
+        tokenizer.decode.side_effect = lambda *a, **kw: next(decode_outputs)
+
+        llm = TransformersLLM(model="test-model")
+        llm.set_conversation(conversation)
+        llm.on_warmed_up(
+            ModelResources(
+                model=_make_mock_model(),
+                tokenizer=tokenizer,
+                device=torch.device("cpu"),
+            )
+        )
+
+        calls_received: list[str] = []
 
         @llm.register_function("get_weather", description="Get weather")
         async def get_weather(city: str) -> str:
             calls_received.append(city)
             return "Sunny, 72F"
 
-        tool_calls = [
-            {
-                "type": "tool_call",
-                "id": "call-1",
-                "name": "get_weather",
-                "arguments_json": {"city": "SF"},
-            }
-        ]
-
-        result = await llm._handle_tool_calls(
-            tool_calls, [{"role": "user", "content": "weather?"}], {}
+        _, final = await collect_simple_response(
+            llm.create_response(
+                messages=[{"role": "user", "content": "weather?"}], stream=True
+            )
         )
 
         assert calls_received == ["SF"]
-        assert result.text == "Hello there!"
+        assert final.text == final_answer
 
-    async def test_tool_call_events_only_emitted_for_final_answer(self, conversation):
-        """Tool call markup must never appear in events; only the final
-        natural-language answer should produce chunk + completed events."""
+    async def test_tool_call_markup_not_yielded_as_deltas(self, conversation):
+        """Tool call markup must never appear in yielded deltas; only the
+        final natural-language answer is yielded."""
         tool_call_text = (
             '<tool_call>{"name": "get_weather", '
             '"arguments": {"city": "SF"}}</tool_call>'
@@ -264,48 +260,24 @@ class TestToolCallExecution:
             tools_called.append(city)
             return "Sunny, 72F"
 
-        events_received: list[
-            LLMRequestStartedEvent | LLMResponseChunkEvent | LLMResponseCompletedEvent
-        ] = []
-
-        @llm.events.subscribe
-        async def listen(
-            event: LLMRequestStartedEvent
-            | LLMResponseChunkEvent
-            | LLMResponseCompletedEvent,
-        ):
-            events_received.append(event)
-
-        result = await llm.create_response(
-            messages=[{"role": "user", "content": "weather in SF?"}],
-            stream=True,
+        deltas, final = await collect_simple_response(
+            llm.create_response(
+                messages=[{"role": "user", "content": "weather in SF?"}],
+                stream=True,
+            )
         )
-        await llm.events.wait(1)
 
         assert tools_called == ["SF"]
-        assert result.text == final_answer
+        assert final.text == final_answer
+        assert len(deltas) == 1
+        assert deltas[0].delta == final_answer
+        assert "<tool_call>" not in final.text
+        for d in deltas:
+            assert "<tool_call>" not in (d.delta or "")
 
-        chunk_events = [
-            e for e in events_received if isinstance(e, LLMResponseChunkEvent)
-        ]
-        completed_events = [
-            e for e in events_received if isinstance(e, LLMResponseCompletedEvent)
-        ]
-
-        assert len(chunk_events) == 1
-        assert chunk_events[0].delta == final_answer
-
-        assert len(completed_events) == 1
-        assert completed_events[0].text == final_answer
-
-        for evt in chunk_events + completed_events:
-            assert "<tool_call>" not in (
-                evt.delta if hasattr(evt, "delta") else evt.text
-            )
-
-    async def test_multi_round_tool_calls_no_event_leakage(self, conversation):
-        """Multiple rounds of tool calls must not leak intermediate text
-        into events.  Only the final answer should produce events."""
+    async def test_multi_round_tool_calls_no_delta_leakage(self, conversation):
+        """Multiple rounds of tool calls must not leak intermediate text into
+        yielded deltas. Only the final answer is yielded."""
         round1_text = (
             '<tool_call>{"name": "get_weather", '
             '"arguments": {"city": "SF"}}</tool_call>'
@@ -342,34 +314,17 @@ class TestToolCallExecution:
             tools_called.append(f"time:{timezone}")
             return "14:30"
 
-        events_received: list[LLMResponseChunkEvent | LLMResponseCompletedEvent] = []
-
-        @llm.events.subscribe
-        async def listen(
-            event: LLMResponseChunkEvent | LLMResponseCompletedEvent,
-        ):
-            events_received.append(event)
-
-        result = await llm.create_response(
-            messages=[{"role": "user", "content": "weather and time?"}],
-            stream=True,
+        deltas, final = await collect_simple_response(
+            llm.create_response(
+                messages=[{"role": "user", "content": "weather and time?"}],
+                stream=True,
+            )
         )
-        await llm.events.wait(1)
 
         assert tools_called == ["weather:SF", "time:PST"]
-        assert result.text == final_answer
-
-        chunk_events = [
-            e for e in events_received if isinstance(e, LLMResponseChunkEvent)
-        ]
-        completed_events = [
-            e for e in events_received if isinstance(e, LLMResponseCompletedEvent)
-        ]
-
-        assert len(chunk_events) == 1
-        assert chunk_events[0].delta == final_answer
-        assert len(completed_events) == 1
-        assert completed_events[0].text == final_answer
+        assert final.text == final_answer
+        assert len(deltas) == 1
+        assert deltas[0].delta == final_answer
 
 
 # ---------------------------------------------------------------------------
@@ -386,12 +341,42 @@ class TestTransformersLLMIntegration:
         llm = TransformersLLM(model=model_id, max_new_tokens=30)
         conversation = InMemoryConversation("", [])
         llm.set_conversation(conversation)
+        await llm.warmup()
 
-        resources = await llm.on_warmup()
-        llm.on_warmed_up(resources)
+        deltas, final = await collect_simple_response(
+            llm.simple_response(text="Greet the user")
+        )
+        assert len(deltas) > 0
+        assert final.text
 
-        response = await llm.simple_response(text="Say hello in one word")
-        assert response.text
-        assert len(response.text) > 0
+        llm.unload()
+
+    async def test_interrupt_stops_generation(self):
+        """Calling ``interrupt()`` mid-generation stops ``model.generate``
+        within ≤1 token, even though the asyncio task is still iterating."""
+        model_id = os.getenv("TRANSFORMERS_TEST_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
+
+        llm = TransformersLLM(model=model_id, max_new_tokens=500)
+        conversation = InMemoryConversation("", [])
+        llm.set_conversation(conversation)
+        await llm.warmup()
+
+        deltas = []
+        final = None
+        async for item in llm.simple_response(
+            text="Count from 1 to 1000 spelling out every number in full English words"
+        ):
+            if isinstance(item, LLMResponseFinal):
+                final = item
+            else:
+                deltas.append(item)
+                if len(deltas) == 1:
+                    await llm.interrupt()
+
+        assert final is not None
+        # Without interrupt the response would be hundreds of tokens. With
+        # interrupt fired after the first delta, the rest of the run produces
+        # only a handful more tokens before ``model.generate`` exits.
+        assert len(deltas) < 20
 
         llm.unload()

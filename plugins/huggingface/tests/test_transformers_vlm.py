@@ -9,13 +9,10 @@ import pytest
 import torch
 from av import VideoFrame
 from conftest import skip_blockbuster
+from tests.utils import collect_simple_response
 from vision_agents.core.agents.conversation import InMemoryConversation
-from vision_agents.core.llm.events import (
-    LLMResponseCompletedEvent,
-    VLMErrorEvent,
-    VLMInferenceCompletedEvent,
-    VLMInferenceStartEvent,
-)
+from vision_agents.core.llm.llm import LLMResponseFinal
+from vision_agents.core.llm.events import VLMInferenceStartEvent
 from vision_agents.plugins.huggingface.transformers_vlm import (
     TransformersVLM,
     VLMResources,
@@ -88,40 +85,35 @@ async def vlm(conversation):
 @skip_blockbuster
 class TestTransformersVLM:
     async def test_simple_response_with_frames(self, vlm, conversation):
-        """Response with video frames passes images to processor and emits events."""
+        """Response with video frames passes images to processor and yields output."""
         for _ in range(3):
             vlm._frame_buffer.append(_random_video_frame())
 
-        events_received = []
+        start_events: list[VLMInferenceStartEvent] = []
 
         @vlm.events.subscribe
-        async def listen(
-            event: VLMInferenceStartEvent
-            | VLMInferenceCompletedEvent
-            | LLMResponseCompletedEvent,
-        ):
-            events_received.append(event)
+        async def listen(event: VLMInferenceStartEvent):
+            start_events.append(event)
 
-        response = await vlm.simple_response(text="what do you see?")
-        await vlm.events.wait(1)
+        deltas, final = await collect_simple_response(
+            vlm.simple_response(text="what do you see?")
+        )
 
-        assert response.text == "A cat on a couch"
+        assert final.text == "A cat on a couch"
+        assert "".join(d.delta or "" for d in deltas) == "A cat on a couch"
 
         # Verify images were passed to processor
         processor = vlm._resources.processor
         call_args = processor.apply_chat_template.call_args
         assert len(call_args.kwargs["images"]) == 3
 
-        # Verify VLM events
-        event_types = [e.type for e in events_received]
-        assert "plugin.vlm_inference_start" in event_types
-        assert "plugin.vlm_inference_completed" in event_types
-        assert "plugin.llm_response_completed" in event_types
+        assert len(start_events) == 1
+        assert start_events[0].frames_count == 3
 
     async def test_simple_response_no_frames(self, vlm, conversation):
         """Response works with empty frame buffer (images=None)."""
-        response = await vlm.simple_response(text="describe")
-        assert response.text == "A cat on a couch"
+        _, final = await collect_simple_response(vlm.simple_response(text="describe"))
+        assert final.text == "A cat on a couch"
 
         processor = vlm._resources.processor
         call_args = processor.apply_chat_template.call_args
@@ -130,18 +122,12 @@ class TestTransformersVLM:
     async def test_generation_error(self, vlm, conversation):
         vlm._resources.model.generate.side_effect = RuntimeError("OOM")
 
-        error_events = []
+        deltas, final = await collect_simple_response(
+            vlm.simple_response(text="describe")
+        )
 
-        @vlm.events.subscribe
-        async def listen(event: VLMErrorEvent):
-            error_events.append(event)
-
-        response = await vlm.simple_response(text="describe")
-        await vlm.events.wait(1)
-
-        assert response.text == ""
-        assert len(error_events) == 1
-        assert error_events[0].context == "generation"
+        assert final.text == ""
+        assert deltas == []
 
     async def test_processor_fallback(self, vlm):
         """When apply_chat_template fails, falls back to direct processor call."""
@@ -246,10 +232,14 @@ class TestTransformersVLM:
         image_content.append({"type": "text", "text": "what is this?"})
         messages.append({"role": "user", "content": image_content})
 
-        result = await vlm.create_response(messages=messages, frames=frames_snapshot)
+        deltas, final = await collect_simple_response(
+            vlm.create_response(messages=messages, frames=frames_snapshot)
+        )
 
         assert calls_received == ["cat"]
-        assert result.text == followup_text
+        assert final.text == followup_text
+        assert len(deltas) == 1
+        assert deltas[0].delta == followup_text
 
         # Follow-up call should reuse the same frames
         last_call = vlm._resources.processor.apply_chat_template.call_args
@@ -280,8 +270,46 @@ class TestTransformersVLMIntegration:
         # Add a frame so the VLM has something to look at
         vlm._frame_buffer.append(_random_video_frame())
 
-        response = await vlm.simple_response(text="Describe what you see")
-        assert response.text
-        assert len(response.text) > 0
+        _, final = await collect_simple_response(
+            vlm.simple_response(text="Describe what you see")
+        )
+        assert final.text
+        assert len(final.text) > 0
+
+        vlm.unload()
+
+    async def test_interrupt_stops_generation(self):
+        """Calling ``interrupt()`` mid-generation stops ``model.generate``
+        within ≤1 token."""
+        model_id = os.getenv(
+            "TRANSFORMERS_TEST_VLM", "HuggingFaceTB/SmolVLM-256M-Instruct"
+        )
+
+        vlm = TransformersVLM(model=model_id, max_new_tokens=500)
+        conversation = InMemoryConversation("", [])
+        vlm.set_conversation(conversation)
+
+        resources = await vlm.on_warmup()
+        vlm.on_warmed_up(resources)
+
+        vlm._frame_buffer.append(_random_video_frame())
+
+        deltas = []
+        final = None
+        async for item in vlm.simple_response(
+            text="Describe in extreme detail every single object you can see"
+        ):
+            if isinstance(item, LLMResponseFinal):
+                final = item
+            else:
+                deltas.append(item)
+                if len(deltas) == 1:
+                    await vlm.interrupt()
+
+        assert final is not None
+        # Without interrupt the response would run for hundreds of tokens.
+        # With interrupt fired after the first delta, the rest of the run
+        # produces only a handful more tokens before generation exits.
+        assert len(deltas) < 20
 
         vlm.unload()
