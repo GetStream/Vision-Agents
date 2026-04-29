@@ -3,27 +3,22 @@ import logging
 import os
 import time
 import uuid
-from typing import Optional, Literal
-from concurrent.futures import ThreadPoolExecutor
+from typing import AsyncIterator, Literal, Optional
 
 import aiortc
 import av
+import moondream as md
 from PIL import Image
-
 from vision_agents.core import llm
-from vision_agents.core.stt.events import STTTranscriptEvent
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-    VLMInferenceStartEvent,
-    VLMInferenceCompletedEvent,
     VLMErrorEvent,
+    VLMInferenceCompletedEvent,
+    VLMInferenceStartEvent,
 )
-from vision_agents.core.llm.llm import LLMResponseEvent
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-import moondream as md
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +57,6 @@ class CloudVLM(llm.VideoLLM):
         # Keep latest frame reference for fast synchronous access
         self._latest_frame: Optional[av.VideoFrame] = None
         self._video_forwarder: Optional[VideoForwarder] = None
-        self._stt_subscription_setup = False
-        self._processing_lock = asyncio.Lock()
-
-        self.executor = ThreadPoolExecutor(max_workers=max_workers)
 
         self._load_model()
 
@@ -98,11 +89,6 @@ class CloudVLM(llm.VideoLLM):
             )
             self._video_forwarder.add_frame_handler(self._on_frame_received)
 
-        # Setup STT subscription (only once)
-        if not self._stt_subscription_setup and self.agent:
-            self._setup_stt_subscription()
-            self._stt_subscription_setup = True
-
     async def _on_frame_received(self, frame: av.VideoFrame):
         """Callback to receive frames and add to buffer."""
         try:
@@ -111,46 +97,42 @@ class CloudVLM(llm.VideoLLM):
         except Exception as e:
             logger.error(f"Error adding frame to buffer: {e}")
 
-    def _setup_stt_subscription(self):
-        if not self.agent:
-            logger.warning("Cannot setup STT subscription: agent not set")
-            return
+    async def simple_response(
+        self,
+        text: str,
+        participant: Optional[Participant] = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        """
+        Stream a response using the latest buffered video frame.
 
-        @self.agent.events.subscribe
-        async def on_stt_transcript(event: STTTranscriptEvent):
-            await self._on_stt_transcript(event)
+        Args:
+            text: The text/question to respond to (required for VQA mode).
+            participant: optionally the participant object.
 
-    def _consume_stream(self, generator):
-        chunks = []
-        for chunk in generator:
-            logger.debug(f"Moondream stream chunk: {type(chunk)} - {chunk}")
-            if isinstance(chunk, str):
-                chunks.append(chunk)
-            else:
-                # Log unexpected types but continue processing
-                logger.warning(f"Unexpected chunk type: {type(chunk)}, value: {chunk}")
-                if chunk:
-                    chunks.append(str(chunk))
-        result = "".join(chunks)
-        logger.debug(f"Moondream stream result: {result}")
-        return result
+        Examples:
+            async for item in llm.simple_response("What do you see in this image?"):
+                ...
+        """
+        request_start_time = time.perf_counter()
+        inference_id = str(uuid.uuid4())
 
-    async def _process_frame(
-        self, text: Optional[str] = None
-    ) -> Optional[LLMResponseEvent]:
         if self._latest_frame is None:
             logger.warning("No frames available, skipping Moondream processing")
-            return None
+            yield LLMResponseFinal(original=None, text="")
+            return
 
-        if self._processing_lock.locked():
-            logger.debug("Moondream processing already in progress, skipping")
-            return None
+        if self.mode == "vqa" and not text:
+            logger.warning("VQA mode requires text/question")
+            yield LLMResponseFinal(original=None, text="")
+            return
+
+        if self.mode not in ("vqa", "caption"):
+            logger.error(f"Unknown mode: {self.mode}")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         latest_frame = self._latest_frame
-        inference_id = str(uuid.uuid4())
-        start_time = time.perf_counter()
 
-        # Emit start event
         self.events.send(
             VLMInferenceStartEvent(
                 plugin_name="moondream_cloud",
@@ -160,142 +142,101 @@ class CloudVLM(llm.VideoLLM):
             )
         )
 
-        async with self._processing_lock:
-            try:
-                # Convert frame to PIL Image
-                frame_array = latest_frame.to_ndarray(format="rgb24")
-                image = Image.fromarray(frame_array)
+        first_token_time: Optional[float] = None
+        text_chunks: list[str] = []
+        sequence_number = 0
+        sentinel = object()
 
-                # Process based on mode
-                if self.mode == "vqa":
-                    if not text:
-                        logger.warning("VQA mode requires text/question")
-                        return None
-                    # Moondream SDK returns {"answer": <generator>}, extract the generator
-                    result = self.model.query(image, text, stream=True)
-                    stream = result["answer"]
-                    answer = await asyncio.to_thread(self._consume_stream, stream)
+        try:
+            # Convert frame to PIL Image
+            frame_array = latest_frame.to_ndarray(format="rgb24")
+            image = Image.fromarray(frame_array)
 
-                    if not answer:
-                        logger.warning("Moondream query returned empty answer")
-                        return None
-
-                    latency_ms = (time.perf_counter() - start_time) * 1000
-
-                    # Emit chunk event for TTS
-                    self.events.send(LLMResponseChunkEvent(delta=answer))
-
-                    # Emit VLM-specific completion event with metrics
-                    self.events.send(
-                        VLMInferenceCompletedEvent(
-                            plugin_name="moondream_cloud",
-                            inference_id=inference_id,
-                            model="moondream-cloud",
-                            text=answer,
-                            latency_ms=latency_ms,
-                            frames_processed=1,
-                        )
-                    )
-
-                    # Also emit LLM completion for compatibility
-                    self.events.send(
-                        LLMResponseCompletedEvent(
-                            plugin_name="moondream_cloud",
-                            text=answer,
-                            latency_ms=latency_ms,
-                            model="moondream-cloud",
-                        )
-                    )
-
-                    logger.info(f"Moondream VQA response: {answer}")
-                    return LLMResponseEvent(original=answer, text=answer)
-
-                elif self.mode == "caption":
-                    # Moondream SDK returns {"caption": <generator>}, extract the generator
-                    result = self.model.caption(image, length="normal", stream=True)
-                    stream = result["caption"]
-                    caption = await asyncio.to_thread(self._consume_stream, stream)
-
-                    if not caption:
-                        logger.warning("Moondream caption returned empty result")
-                        return None
-
-                    latency_ms = (time.perf_counter() - start_time) * 1000
-
-                    # Emit chunk event for TTS
-                    self.events.send(LLMResponseChunkEvent(delta=caption))
-
-                    # Emit VLM-specific completion event with metrics
-                    self.events.send(
-                        VLMInferenceCompletedEvent(
-                            plugin_name="moondream_cloud",
-                            inference_id=inference_id,
-                            model="moondream-cloud",
-                            text=caption,
-                            latency_ms=latency_ms,
-                            frames_processed=1,
-                        )
-                    )
-
-                    # Also emit LLM completion for compatibility
-                    self.events.send(
-                        LLMResponseCompletedEvent(
-                            plugin_name="moondream_cloud",
-                            text=caption,
-                            latency_ms=latency_ms,
-                            model="moondream-cloud",
-                        )
-                    )
-
-                    logger.info(f"Moondream caption: {caption}")
-                    return LLMResponseEvent(original=caption, text=caption)
-                else:
-                    logger.error(f"Unknown mode: {self.mode}")
-                    return None
-
-            except Exception as e:
-                logger.exception(f"Error processing frame: {e}")
-                # Emit error event
-                self.events.send(
-                    VLMErrorEvent(
-                        plugin_name="moondream_cloud",
-                        inference_id=inference_id,
-                        error=e,
-                        context="frame_processing",
-                    )
+            if self.mode == "vqa":
+                # Moondream SDK returns {"answer": <generator>}, extract the generator
+                result = await asyncio.to_thread(
+                    self.model.query, image, text, stream=True
                 )
-                return LLMResponseEvent(original=None, text="", exception=e)
+                stream = result["answer"]
+            else:  # caption
+                # Moondream SDK returns {"caption": <generator>}, extract the generator
+                result = await asyncio.to_thread(
+                    self.model.caption, image, length="normal", stream=True
+                )
+                stream = result["caption"]
 
-    async def _on_stt_transcript(self, event: STTTranscriptEvent):
-        """Handle STT transcript event - process with Moondream."""
-        if not event.text:
-            return
+            while True:
+                chunk = await asyncio.to_thread(next, stream, sentinel)
+                if chunk is sentinel:
+                    break
 
-        await self._process_frame(text=event.text)
+                if not isinstance(chunk, str):
+                    # Log unexpected types but continue processing
+                    logger.warning(
+                        f"Unexpected chunk type: {type(chunk)}, value: {chunk}"
+                    )
+                    if not chunk:
+                        continue
+                    chunk = str(chunk)
 
-    async def simple_response(
-        self,
-        text: str,
-        participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent:
-        """
-        simple_response is a standardized way to create a response.
+                is_first = first_token_time is None
+                ttft_ms: Optional[float] = None
+                if is_first:
+                    first_token_time = time.perf_counter()
+                    ttft_ms = (first_token_time - request_start_time) * 1000
 
-        Args:
-            text: The text/question to respond to
-            participant: optionally the participant object
+                text_chunks.append(chunk)
+                yield LLMResponseDelta(
+                    content_index=None,
+                    item_id=inference_id,
+                    output_index=0,
+                    sequence_number=sequence_number,
+                    delta=chunk,
+                    is_first_chunk=is_first,
+                    time_to_first_token_ms=ttft_ms,
+                )
+                sequence_number += 1
 
-        Examples:
-            await llm.simple_response("What do you see in this image?")
-        """
-        result = await self._process_frame(text=text if self.mode == "vqa" else None)
-        if result is None:
-            return LLMResponseEvent(
-                original=None,
-                text="",
-                exception=ValueError("No frame available or processing failed"),
+            total_text = "".join(text_chunks)
+            latency_ms = (time.perf_counter() - request_start_time) * 1000
+            final_ttft_ms: Optional[float] = None
+            if first_token_time is not None:
+                final_ttft_ms = (first_token_time - request_start_time) * 1000
+
+            self.events.send(
+                VLMInferenceCompletedEvent(
+                    plugin_name="moondream_cloud",
+                    inference_id=inference_id,
+                    model="moondream-cloud",
+                    text=total_text,
+                    latency_ms=latency_ms,
+                    frames_processed=1,
+                )
             )
-        return result
+
+            logger.info(f"Moondream {self.mode} response: {total_text}")
+
+            yield LLMResponseFinal(
+                original=result,
+                text=total_text,
+                item_id=inference_id,
+                latency_ms=latency_ms,
+                time_to_first_token_ms=final_ttft_ms,
+                model="moondream-cloud",
+            )
+
+        except Exception as exc:
+            logger.exception("Error processing frame")
+            self.events.send(
+                VLMErrorEvent(
+                    plugin_name="moondream_cloud",
+                    inference_id=inference_id,
+                    error=exc,
+                    context="frame_processing",
+                )
+            )
+            yield LLMResponseFinal(original=None, text="")
+            return
 
     async def stop_watching_video_track(self) -> None:
         """Stop video forwarding."""
@@ -321,6 +262,4 @@ class CloudVLM(llm.VideoLLM):
     def close(self):
         """Clean up resources."""
         self._shutdown = True
-        if hasattr(self, "executor"):
-            self.executor.shutdown(wait=False)
         logger.info("🛑 Moondream Processor closed")
