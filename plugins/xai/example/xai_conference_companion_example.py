@@ -66,9 +66,17 @@ ATTENDEES: dict[str, dict[str, Any]] = {
 }
 
 SCHEDULE: list[dict[str, str]] = [
-    {"time": "10:00", "title": "Keynote — The State of Voice AI", "location": "Main Hall"},
+    {
+        "time": "10:00",
+        "title": "Keynote — The State of Voice AI",
+        "location": "Main Hall",
+    },
     {"time": "11:30", "title": "Coffee with @neevash", "location": "Sponsor Lounge"},
-    {"time": "13:00", "title": "Panel — Multimodal Agents in Production", "location": "Room 204"},
+    {
+        "time": "13:00",
+        "title": "Panel — Multimodal Agents in Production",
+        "location": "Room 204",
+    },
     {"time": "15:30", "title": "1:1 with @tschellenbach", "location": "Speakers' Room"},
     {"time": "18:00", "title": "After-party", "location": "Rooftop Bar"},
 ]
