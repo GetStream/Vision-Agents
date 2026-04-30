@@ -39,7 +39,8 @@ class TTS(tts.TTS):
             "inworld-tts-1.5-mini",
             "inworld-tts-1",
             "inworld-tts-1-max",
-        ] = "inworld-tts-1",
+            "inworld-tts-2",
+        ] = "inworld-tts-2",
         temperature: float = 1.1,
     ):
         """
