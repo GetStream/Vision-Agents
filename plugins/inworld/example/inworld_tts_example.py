@@ -36,7 +36,7 @@ async def create_agent(**kwargs) -> Agent:
         instructions="Read @inworld-audio-guide.md",
         tts=inworld.TTS(voice_id="Ashley"),
         stt=deepgram.STT(),
-        llm=gemini.LLM(),
+        llm=gemini.LLM(model="gemini-3.1-flash-lite-preview"),
         turn_detection=smart_turn.TurnDetection(),
     )
     return agent
