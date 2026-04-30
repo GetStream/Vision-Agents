@@ -56,7 +56,11 @@ class Stream(Generic[T]):
         Empty the stream but allow the running iterators to keep going.
         """
         self._items.clear()
-        self._wakeup_next_sender()
+        # Wake at most `_maxsize` senders — exactly the capacity we just freed.
+        for _ in range(self._maxsize):
+            if not self._senders:
+                break
+            self._wakeup_next_sender()
 
     def empty(self) -> bool:
         return not self._items

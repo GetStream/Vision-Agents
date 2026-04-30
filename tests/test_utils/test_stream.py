@@ -209,6 +209,33 @@ class TestStream:
         await task
         assert send_done.is_set()
 
+    async def test_clear_unblocks_all_blocked_senders(self, bounded: Stream[int]):
+        bounded.send_nowait(1)
+        bounded.send_nowait(2)
+
+        async def producer(value: int):
+            await bounded.send(value)
+
+        tasks = [asyncio.create_task(producer(v)) for v in (3, 4, 5)]
+        await asyncio.sleep(0)
+        assert all(not t.done() for t in tasks)
+
+        bounded.clear()
+
+        # clear() frees maxsize=2 slots, so only the first two senders wake
+        # and fill the buffer.
+        await asyncio.wait_for(tasks[0], timeout=1.0)
+        await asyncio.wait_for(tasks[1], timeout=1.0)
+        # The third sender stays parked — no capacity left until a get() runs.
+        assert not tasks[2].done()
+
+        assert await bounded.get() == 3
+        assert await bounded.get() == 4
+
+        # Draining freed a slot, which wakes the third sender.
+        await asyncio.wait_for(tasks[2], timeout=1.0)
+        assert await bounded.get() == 5
+
     async def test_clear_keeps_iterator_running(self, stream: Stream[int]):
         collected: list[int] = []
 
