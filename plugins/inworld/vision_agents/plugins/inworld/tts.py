@@ -92,6 +92,7 @@ class TTS(tts.TTS):
             "modelId": self.model_id,
             "audioConfig": {
                 "temperature": self.temperature,
+                "audioEncoding": "LINEAR16",
             },
         }
 
