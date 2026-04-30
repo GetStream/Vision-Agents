@@ -7,7 +7,6 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import aiortc
-import boto3
 from aws_sdk_bedrock_runtime.client import (
     BedrockRuntimeClient,
     InvokeModelWithBidirectionalStreamOperationInput,
@@ -19,11 +18,6 @@ from aws_sdk_bedrock_runtime.models import (
 )
 from getstream.video.rtc import PcmData
 from getstream.video.rtc.audio_track import AudioStreamTrack
-from smithy_aws_core.identity.components import (
-    AWSCredentialsIdentity,
-    AWSIdentityProperties,
-)
-from smithy_core.aio.interfaces.identity import IdentityResolver
 from vision_agents.core.agents.agent_types import AgentOptions
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
@@ -32,50 +26,14 @@ from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
 from vision_agents.core.warmup import Warmable
 
+from ._credentials import Boto3CredentialsResolver
+
 logger = logging.getLogger(__name__)
 
 
 DEFAULT_MODEL = "amazon.nova-2-sonic-v1:0"
 # Reconnect after 5 seconds if there is silence. If there is no break in speech reconnect after 7 seconds
 FORCE_RECONNECT_IN_MINUTES = 7.0
-
-
-class Boto3CredentialsResolver(
-    IdentityResolver[AWSCredentialsIdentity, AWSIdentityProperties]
-):
-    """IdentityResolver that delegates to boto3.Session for credential resolution.
-
-    Supports the full boto3 credential chain: env vars, shared credentials files,
-    AWS profiles, SSO, EC2 instance profiles, etc.
-    """
-
-    def __init__(self, profile_name: Optional[str] = None) -> None:
-        self._session = boto3.Session(profile_name=profile_name)
-        self._cached: Optional[AWSCredentialsIdentity] = None
-
-    async def get_identity(
-        self, *, properties: AWSIdentityProperties, **kwargs: Any
-    ) -> AWSCredentialsIdentity:
-        if self._cached is not None:
-            return self._cached
-
-        credentials = self._session.get_credentials()
-        if not credentials:
-            raise ValueError("Unable to load AWS credentials via boto3")
-
-        creds = credentials.get_frozen_credentials()
-        if not creds.access_key or not creds.secret_key:
-            raise ValueError("AWS credentials are incomplete")
-
-        expiry = getattr(credentials, "_expiry_time", None)
-
-        self._cached = AWSCredentialsIdentity(
-            access_key_id=creds.access_key,
-            secret_access_key=creds.secret_key,
-            session_token=creds.token or None,
-            expiration=expiry,
-        )
-        return self._cached
 
 
 class RealtimeConnection:
