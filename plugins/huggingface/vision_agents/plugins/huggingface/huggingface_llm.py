@@ -1,10 +1,10 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from huggingface_hub import AsyncInferenceClient
 from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import ToolSchema
 
 from . import events
@@ -79,7 +79,7 @@ class HuggingFaceLLM(LLM):
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent[Any]:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Create an LLM response from text input.
 
         This method is called when a new STT transcript is received.
@@ -93,7 +93,8 @@ class HuggingFaceLLM(LLM):
                 f'Cannot request a response from the LLM "{self.model}" - '
                 "the conversation has not been initialized yet."
             )
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         if participant is None:
             await self._conversation.send_message(
@@ -101,7 +102,8 @@ class HuggingFaceLLM(LLM):
             )
 
         messages = await self._build_model_request()
-        return await self.create_response(messages=messages)
+        async for item in self.create_response(messages=messages):
+            yield item
 
     async def create_response(
         self,
@@ -110,7 +112,7 @@ class HuggingFaceLLM(LLM):
         input: Optional[Any] = None,
         stream: bool = True,
         **kwargs: Any,
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Create a response using HuggingFace's Inference API.
 
         Args:
@@ -119,8 +121,9 @@ class HuggingFaceLLM(LLM):
             stream: Whether to stream the response.
             **kwargs: Additional arguments passed to the API.
 
-        Returns:
-            LLMResponseEvent with the response.
+        Yields:
+            ``LLMResponseDelta`` for each text chunk and a single trailing
+            ``LLMResponseFinal``.
         """
         if messages is None:
             if input is not None:
@@ -134,7 +137,7 @@ class HuggingFaceLLM(LLM):
             tools_param = convert_tools_to_hf_format(tools_spec)
 
         effective_model = kwargs.pop("model", self.model)
-        return await create_hf_response(
+        async for item in create_hf_response(
             self,
             self._client,
             effective_model,
@@ -143,7 +146,8 @@ class HuggingFaceLLM(LLM):
             tools_param,
             stream,
             **kwargs,
-        )
+        ):
+            yield item
 
     def _convert_tools_to_provider_format(
         self, tools: List[ToolSchema]

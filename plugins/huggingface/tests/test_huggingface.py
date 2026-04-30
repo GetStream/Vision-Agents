@@ -9,13 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 from av import VideoFrame
+from tests.utils import collect_simple_response
 from vision_agents.core.agents.conversation import InMemoryConversation
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
 from vision_agents.plugins.huggingface import LLM, VLM
-from vision_agents.plugins.huggingface.events import LLMErrorEvent
 
 from conftest import skip_blockbuster
 
@@ -137,26 +133,14 @@ class TestHuggingFaceVLM:
         stream.add_chunk(content="", finish_reason="stop")
         huggingface_client_mock.chat.completions.create = AsyncMock(return_value=stream)
 
-        events = []
-
-        @vlm.events.subscribe
-        async def listen(
-            event: LLMResponseChunkEvent | LLMResponseCompletedEvent | LLMErrorEvent,
-        ):
-            events.append(event)
-
         await asyncio.sleep(2)
 
-        response = await vlm.simple_response(text="prompt")
-        await vlm.events.wait(1)
-        assert response.text == "chunk1 chunk2"
+        deltas, final = await collect_simple_response(
+            vlm.simple_response(text="prompt")
+        )
 
-        assert len(events) == 3
-        assert events[0].type == "plugin.llm_response_chunk"
-        assert events[0].delta == "chunk1"
-        assert events[1].type == "plugin.llm_response_chunk"
-        assert events[1].delta == " chunk2"
-        assert events[2].type == "plugin.llm_response_completed"
+        assert final.text == "chunk1 chunk2"
+        assert [d.delta for d in deltas] == ["chunk1", " chunk2"]
 
         call_args = huggingface_client_mock.chat.completions.create.call_args_list
         assert len(call_args) == 1
@@ -176,19 +160,12 @@ class TestHuggingFaceVLM:
             side_effect=OSError("test")
         )
 
-        events = []
+        deltas, final = await collect_simple_response(
+            vlm.simple_response(text="prompt")
+        )
 
-        @vlm.events.subscribe
-        async def listen(
-            event: LLMResponseChunkEvent | LLMResponseCompletedEvent | LLMErrorEvent,
-        ):
-            events.append(event)
-
-        await vlm.simple_response(text="prompt")
-        await vlm.events.wait(1)
-        assert len(events) == 1
-        assert events[0].type == "plugin.llm.error"
-        assert events[0].error_message == "test"
+        assert deltas == []
+        assert final.text == ""
 
 
 class TestHuggingFaceLLM:
@@ -204,24 +181,12 @@ class TestHuggingFaceLLM:
         stream.add_chunk(content="", finish_reason="stop")
         huggingface_client_mock.chat.completions.create = AsyncMock(return_value=stream)
 
-        events = []
+        deltas, final = await collect_simple_response(
+            llm.simple_response(text="prompt")
+        )
 
-        @llm.events.subscribe
-        async def listen(
-            event: LLMResponseChunkEvent | LLMResponseCompletedEvent | LLMErrorEvent,
-        ):
-            events.append(event)
-
-        response = await llm.simple_response(text="prompt")
-        await llm.events.wait(1)
-        assert response.text == "chunk1 chunk2"
-
-        assert len(events) == 3
-        assert events[0].type == "plugin.llm_response_chunk"
-        assert events[0].delta == "chunk1"
-        assert events[1].type == "plugin.llm_response_chunk"
-        assert events[1].delta == " chunk2"
-        assert events[2].type == "plugin.llm_response_completed"
+        assert final.text == "chunk1 chunk2"
+        assert [d.delta for d in deltas] == ["chunk1", " chunk2"]
 
         call_args = huggingface_client_mock.chat.completions.create.call_args_list
         assert len(call_args) == 1
@@ -240,19 +205,10 @@ class TestHuggingFaceLLM:
             side_effect=OSError("test")
         )
 
-        events = []
+        deltas, final = await collect_simple_response(llm.simple_response(text=""))
 
-        @llm.events.subscribe
-        async def listen(
-            event: LLMResponseChunkEvent | LLMResponseCompletedEvent | LLMErrorEvent,
-        ):
-            events.append(event)
-
-        await llm.simple_response(text="")
-        await llm.events.wait(1)
-        assert len(events) == 1
-        assert events[0].type == "plugin.llm.error"
-        assert events[0].error_message == "test"
+        assert deltas == []
+        assert final.text == ""
 
     @pytest.mark.integration
     @skip_blockbuster
@@ -267,8 +223,10 @@ class TestHuggingFaceLLM:
         )
         llm.set_conversation(conversation)
 
-        response = await llm.simple_response(text="Say hello in one word")
-        assert response.text
+        _, final = await collect_simple_response(
+            llm.simple_response(text="Say hello in one word")
+        )
+        assert final.text
 
 
 class TestHuggingFaceLLMToolCalling:
@@ -299,10 +257,12 @@ class TestHuggingFaceLLMToolCalling:
             side_effect=[tool_stream, followup_stream]
         )
 
-        response = await llm.simple_response(text="What's the weather in SF?")
+        _, final = await collect_simple_response(
+            llm.simple_response(text="What's the weather in SF?")
+        )
 
         assert calls_received == ["SF"]
-        assert response.text == "It's sunny in SF!"
+        assert final.text == "It's sunny in SF!"
 
         # Verify follow-up call includes tool result messages
         follow_up_call = huggingface_client_mock.chat.completions.create.call_args_list[
@@ -327,7 +287,7 @@ class TestHuggingFaceLLMToolCalling:
         stream.add_chunk(finish_reason="stop")
         huggingface_client_mock.chat.completions.create = AsyncMock(return_value=stream)
 
-        await llm.simple_response(text="hi")
+        await collect_simple_response(llm.simple_response(text="hi"))
 
         call_kwargs = huggingface_client_mock.chat.completions.create.call_args.kwargs
         assert "tools" in call_kwargs
@@ -361,10 +321,12 @@ class TestHuggingFaceVLMToolCalling:
             side_effect=[tool_stream, followup_stream]
         )
 
-        response = await vlm.simple_response(text="How many people?")
+        _, final = await collect_simple_response(
+            vlm.simple_response(text="How many people?")
+        )
 
         assert calls_received == ["person"]
-        assert response.text == "I see 3 people."
+        assert final.text == "I see 3 people."
 
     async def test_vlm_create_response_passes_tools(
         self, vlm, conversation, huggingface_client_mock
@@ -380,7 +342,9 @@ class TestHuggingFaceVLMToolCalling:
         stream.add_chunk(finish_reason="stop")
         huggingface_client_mock.chat.completions.create = AsyncMock(return_value=stream)
 
-        await vlm.create_response(messages=[{"role": "user", "content": "test"}])
+        await collect_simple_response(
+            vlm.create_response(messages=[{"role": "user", "content": "test"}])
+        )
 
         call_kwargs = huggingface_client_mock.chat.completions.create.call_args.kwargs
         assert "tools" in call_kwargs

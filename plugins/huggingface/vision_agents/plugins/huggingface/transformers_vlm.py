@@ -249,7 +249,9 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
             )
         )
 
-        async for item in self.create_response(messages=messages, frames=frames_snapshot):
+        async for item in self.create_response(
+            messages=messages, frames=frames_snapshot
+        ):
             yield item
 
     async def create_response(
