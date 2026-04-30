@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from aws_sdk_transcribe_streaming.client import (
     Config,
@@ -13,12 +13,15 @@ from aws_sdk_transcribe_streaming.models import (
     AudioEvent,
     AudioStream,
     AudioStreamAudioEvent,
+    Item,
     Result,
     TranscriptEvent,
     TranscriptResultStream,
+    TranscriptResultStreamInternalFailureException,
+    TranscriptResultStreamServiceUnavailableException,
     TranscriptResultStreamTranscriptEvent,
 )
-from getstream.video.rtc.track_util import PcmData
+from getstream.video.rtc import PcmData
 from smithy_core.aio.eventstream import DuplexEventStream
 from smithy_core.aio.interfaces.eventstream import EventPublisher, EventReceiver
 from vision_agents.core import stt
@@ -28,9 +31,12 @@ from vision_agents.core.utils.utils import cancel_and_wait
 
 from ._credentials import Boto3CredentialsResolver
 
-# TODO(stt): reconnection on transport errors is deferred (see plan).
-
 logger = logging.getLogger(__name__)
+
+_RETRIABLE_STREAM_ERRORS = (
+    TranscriptResultStreamInternalFailureException,
+    TranscriptResultStreamServiceUnavailableException,
+)
 
 
 class TranscribeSTT(stt.STT):
@@ -59,7 +65,8 @@ class TranscribeSTT(stt.STT):
         aws_profile: Optional[str] = None,
         show_speaker_label: bool = False,
         enable_partial_results_stabilization: bool = False,
-        partial_results_stability: Optional[str] = None,
+        partial_results_stability: Optional[Literal["high", "medium", "low"]] = None,
+        max_reconnect_backoff_seconds: float = 30.0,
     ):
         """
         Initialize AWS Transcribe streaming STT.
@@ -77,6 +84,11 @@ class TranscribeSTT(stt.STT):
                 of partial transcripts to reduce flicker.
             partial_results_stability: ``"high"``, ``"medium"`` or ``"low"``.
                 Only meaningful when stabilization is enabled.
+            max_reconnect_backoff_seconds: Cap on the exponential backoff
+                between reconnect attempts after a transient error. The
+                sequence starts at 1s and doubles up to this cap, then
+                stays there for subsequent attempts. Reconnects are
+                unlimited.
         """
         super().__init__(provider_name="aws")
 
@@ -87,10 +99,12 @@ class TranscribeSTT(stt.STT):
         self._aws_session_token = aws_session_token
         self._aws_profile = aws_profile
         self.show_speaker_label = show_speaker_label
-        self.enable_partial_results_stabilization = (
-            enable_partial_results_stabilization
-        )
+        self.enable_partial_results_stabilization = enable_partial_results_stabilization
         self.partial_results_stability = partial_results_stability
+        self.max_reconnect_backoff_seconds = max_reconnect_backoff_seconds
+        # AWS Transcribe accepts 8000 (telephony) or 16000 (high quality).
+        # The bytes we send must match this declared rate exactly.
+        self._sample_rate = 16_000
 
         self._client: Optional[TranscribeStreamingClient] = None
         self._stream: Optional[
@@ -101,6 +115,8 @@ class TranscribeSTT(stt.STT):
         self._input_stream: Optional[EventPublisher[AudioStream]] = None
         self._output_stream: Optional[EventReceiver[TranscriptResultStream]] = None
         self._recv_task: Optional[asyncio.Task[None]] = None
+        self._supervisor_task: Optional[asyncio.Task[None]] = None
+        self._reconnect_event = asyncio.Event()
         self._current_participant: Optional[Participant] = None
         self._turn_in_progress = False
         self._audio_start_time: Optional[float] = None
@@ -115,7 +131,56 @@ class TranscribeSTT(stt.STT):
 
     async def start(self):
         await super().start()
+        await self._open_stream()
+        self._supervisor_task = asyncio.create_task(self._supervisor_loop())
+        logger.info(
+            "AWS Transcribe streaming connection established (region=%s, lang=%s)",
+            self.region_name,
+            self.language_code,
+        )
 
+    async def clear(self):
+        # AWS Transcribe has no native way to drop in-flight events. Snapshot
+        # a media-time watermark so any result whose segment began before
+        # this point is suppressed in _handle_transcript_event.
+        await super().clear()
+        async with self._watermark_lock:
+            self._start_time_watermark = self._audio_sent_seconds
+        self._audio_start_time = None
+        self._turn_in_progress = False
+        self._current_participant = None
+
+    async def close(self):
+        await super().close()
+        # Wake the supervisor so it observes self.closed and exits.
+        self._reconnect_event.set()
+        if self._supervisor_task is not None:
+            await cancel_and_wait(self._supervisor_task)
+            self._supervisor_task = None
+        self._audio_start_time = None
+        await self._close_streams()
+
+    async def process_audio(
+        self,
+        pcm_data: PcmData,
+        participant: Optional[Participant] = None,
+    ):
+        resampled = pcm_data.resample(self._sample_rate, 1)
+        self._current_participant = participant
+        if self._audio_start_time is None:
+            self._audio_start_time = time.perf_counter()
+
+        async with self._watermark_lock:
+            if self.closed or self._input_stream is None:
+                return
+            await self._input_stream.send(
+                AudioStreamAudioEvent(
+                    value=AudioEvent(audio_chunk=resampled.samples.tobytes())
+                )
+            )
+            self._audio_sent_seconds += resampled.duration
+
+    async def _open_stream(self):
         self._client = TranscribeStreamingClient(config=await self._build_config())
 
         stream = await asyncio.wait_for(
@@ -128,12 +193,6 @@ class TranscribeSTT(stt.STT):
         self._input_stream = stream.input_stream
         _, self._output_stream = await stream.await_output()
         self._recv_task = asyncio.create_task(self._recv_loop())
-
-        logger.info(
-            "AWS Transcribe streaming connection established (region=%s, lang=%s)",
-            self.region_name,
-            self.language_code,
-        )
 
     async def _build_config(self) -> Config:
         kwargs: dict[str, Any] = {
@@ -160,7 +219,7 @@ class TranscribeSTT(stt.STT):
     def _build_transcription_input(self) -> StartStreamTranscriptionInput:
         kwargs: dict[str, Any] = {
             "language_code": self.language_code,
-            "media_sample_rate_hertz": 16000,
+            "media_sample_rate_hertz": self._sample_rate,
             "media_encoding": "pcm",
         }
         if self.show_speaker_label:
@@ -168,31 +227,8 @@ class TranscribeSTT(stt.STT):
         if self.enable_partial_results_stabilization:
             kwargs["enable_partial_results_stabilization"] = True
             if self.partial_results_stability is not None:
-                kwargs["partial_results_stability"] = (
-                    self.partial_results_stability
-                )
+                kwargs["partial_results_stability"] = self.partial_results_stability
         return StartStreamTranscriptionInput(**kwargs)
-
-    async def process_audio(
-        self,
-        pcm_data: PcmData,
-        participant: Optional[Participant] = None,
-    ):
-        if self.closed or self._input_stream is None:
-            return
-
-        resampled = pcm_data.resample(16_000, 1)
-        self._current_participant = participant
-        if self._audio_start_time is None:
-            self._audio_start_time = time.perf_counter()
-
-        async with self._watermark_lock:
-            await self._input_stream.send(
-                AudioStreamAudioEvent(
-                    value=AudioEvent(audio_chunk=resampled.samples.tobytes())
-                )
-            )
-            self._audio_sent_seconds += resampled.duration
 
     async def _recv_loop(self):
         if self._output_stream is None:
@@ -201,11 +237,36 @@ class TranscribeSTT(stt.STT):
             async for event in self._output_stream:
                 if isinstance(event, TranscriptResultStreamTranscriptEvent):
                     self._handle_transcript_event(event.value)
+                elif isinstance(event, _RETRIABLE_STREAM_ERRORS):
+                    logger.warning(
+                        "Retriable AWS Transcribe error, will reconnect: %r",
+                        event,
+                    )
+                    if not self.closed:
+                        self._reconnect_event.set()
+                    return
+                else:
+                    logger.error("Permanent AWS Transcribe error: %r", event)
+                    self._emit_error_event(
+                        RuntimeError(f"AWS Transcribe error: {event!r}"),
+                        participant=self._current_participant,
+                        context="aws_transcribe",
+                    )
+                    # Stop accepting audio; supervisor stays idle (no reconnect).
+                    self._input_stream = None
+                    return
+            # Stream ended cleanly. AWS closes on idle and at the 15-minute
+            # session limit; treat that as retriable.
+            if not self.closed:
+                logger.info("AWS Transcribe stream ended, will reconnect")
+                self._reconnect_event.set()
         except asyncio.CancelledError:
             raise
         except Exception:
-            if not self.closed:
-                logger.exception("AWS Transcribe receive loop failed")
+            if self.closed:
+                return
+            logger.exception("AWS Transcribe receive loop failed, will reconnect")
+            self._reconnect_event.set()
 
     def _handle_transcript_event(self, event: TranscriptEvent):
         if event.transcript is None or not event.transcript.results:
@@ -213,9 +274,8 @@ class TranscribeSTT(stt.STT):
 
         participant = self._current_participant
         if participant is None:
-            raise ValueError(
-                "No participant set - audio must be processed with a participant"
-            )
+            logger.warning("Received transcript but no participant set")
+            return
 
         for result in event.transcript.results:
             if result.start_time < self._start_time_watermark:
@@ -240,7 +300,9 @@ class TranscribeSTT(stt.STT):
                 self._emit_turn_ended_event(participant)
 
     def _result_to_response(self, result: Result) -> TranscriptResponse:
-        items = result.alternatives[0].items or []
+        items: list[Item] = []
+        if result.alternatives:
+            items = result.alternatives[0].items or []
         scores = [i.confidence for i in items if i.confidence is not None]
         confidence = sum(scores) / len(scores) if scores else None
 
@@ -267,9 +329,7 @@ class TranscribeSTT(stt.STT):
 
         processing_time_ms: Optional[float] = None
         if self._audio_start_time is not None:
-            processing_time_ms = (
-                time.perf_counter() - self._audio_start_time
-            ) * 1000
+            processing_time_ms = (time.perf_counter() - self._audio_start_time) * 1000
 
         return TranscriptResponse(
             confidence=confidence,
@@ -279,44 +339,64 @@ class TranscribeSTT(stt.STT):
             processing_time_ms=processing_time_ms,
         )
 
-    async def clear(self):
-        # AWS Transcribe has no native way to drop in-flight events. Snapshot
-        # a media-time watermark so any result whose segment began before
-        # this point is suppressed in _handle_transcript_event.
-        await super().clear()
-        async with self._watermark_lock:
-            self._start_time_watermark = self._audio_sent_seconds
-        self._audio_start_time = None
-        self._turn_in_progress = False
-        self._current_participant = None
+    async def _supervisor_loop(self):
+        """Wait for retriable failures and rebuild the stream.
 
-    async def close(self):
-        await super().close()
+        Triggered by ``_recv_loop`` setting ``_reconnect_event``. Each
+        attempt sleeps ``min(2**n, max_reconnect_backoff_seconds)`` and
+        then tears down the old stream and opens a new one. Retries are
+        unlimited; the counter resets after a successful reconnect.
+        """
+        attempt = 0
+        while not self.closed:
+            await self._reconnect_event.wait()
+            self._reconnect_event.clear()
+            if self.closed:
+                return
+            backoff = min(2.0**attempt, self.max_reconnect_backoff_seconds)
+            attempt += 1
+            logger.info(
+                "Reconnecting to AWS Transcribe in %.1fs (attempt %d)",
+                backoff,
+                attempt,
+            )
+            await asyncio.sleep(backoff)
+            try:
+                if self._turn_in_progress and self._current_participant is not None:
+                    self._emit_turn_ended_event(self._current_participant)
+                self._turn_in_progress = False
+                self._audio_start_time = None
+                # New stream restarts AWS's media-time clock at 0. Hold the
+                # lock across close+open so process_audio cannot send into a
+                # half-torn-down or half-built stream.
+                async with self._watermark_lock:
+                    self._audio_sent_seconds = 0.0
+                    self._start_time_watermark = 0.0
+                    await self._close_streams()
+                    await self._open_stream()
+                attempt = 0
+                logger.info("AWS Transcribe reconnected")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("AWS Transcribe reconnect failed")
+                self._reconnect_event.set()
 
-        self._audio_start_time = None
-
+    async def _close_streams(self):
+        if self._recv_task is not None:
+            await cancel_and_wait(self._recv_task)
+            self._recv_task = None
         if self._input_stream is not None:
             try:
                 await self._input_stream.close()
             except Exception:
-                logger.warning(
-                    "Error closing AWS Transcribe input stream", exc_info=True
-                )
-
-        if self._recv_task is not None:
-            await cancel_and_wait(self._recv_task)
-            self._recv_task = None
-
+                logger.warning("Error closing input stream", exc_info=True)
         if self._stream is not None:
             try:
                 await self._stream.close()
             except Exception:
-                logger.warning(
-                    "Error closing AWS Transcribe stream", exc_info=True
-                )
-            finally:
-                self._stream = None
-
+                logger.warning("Error closing stream", exc_info=True)
+        self._stream = None
         self._input_stream = None
         self._output_stream = None
         self._client = None
