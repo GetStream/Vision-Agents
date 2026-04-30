@@ -6,6 +6,12 @@ from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import LLM, Realtime
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.llm.realtime import (
+    RealtimeAgentTranscript,
+    RealtimeAudioOutput,
+    RealtimeAudioOutputDone,
+    RealtimeUserTranscript,
+)
 from vision_agents.core.stt import STT
 from vision_agents.core.stt.stt import Transcript
 from vision_agents.core.tts import TTS
@@ -113,20 +119,54 @@ class LLMStub(LLM):
         return cls(factory=factory)
 
 
+RealtimeOutput = (
+    RealtimeAudioOutput
+    | RealtimeAudioOutputDone
+    | RealtimeUserTranscript
+    | RealtimeAgentTranscript
+)
+
+
 class RealtimeStub(Realtime):
+    def __init__(
+        self,
+        audio_factory: Callable[
+            [PcmData, Participant], AsyncIterator[RealtimeOutput]
+        ]
+        | None = None,
+    ) -> None:
+        super().__init__()
+        self._audio_factory = audio_factory
+
+    @classmethod
+    def from_callable(
+        cls,
+        audio_factory: Callable[
+            [PcmData, Participant], AsyncIterator[RealtimeOutput]
+        ],
+    ) -> Self:
+        return cls(audio_factory=audio_factory)
+
     async def watch_video_track(
         self,
         track: aiortc.mediastreams.MediaStreamTrack,
         shared_forwarder: Optional[VideoForwarder] = None,
     ) -> None: ...
 
-    def simple_response(
+    async def simple_response(
         self, text: str, participant: Optional[Participant] = None
-    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]: ...
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        for _ in ():
+            yield _
 
     async def connect(self): ...
 
-    async def simple_audio_response(self, pcm: PcmData, participant: Participant): ...
+    async def simple_audio_response(
+        self, pcm: PcmData, participant: Participant
+    ) -> None:
+        if self._audio_factory is not None:
+            async for ev in self._audio_factory(pcm, participant):
+                self._output.send_nowait(ev)
 
     async def close(self): ...
 
