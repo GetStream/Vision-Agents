@@ -110,6 +110,10 @@ class XAIRealtime(realtime.Realtime):
         client: Optional[AsyncClient] = None,
         turn_detection: Optional[str] = "server_vad",
         vad_interrupt_response: bool = False,
+        vad_threshold: float = 0.65,
+        vad_prefix_padding_ms: int = 50,
+        vad_silence_duration_ms: int = 200,
+        interrupt_min_speech_ms: int = 100,
         web_search: bool = True,
         x_search: bool = True,
         x_search_allowed_handles: Optional[list[str]] = None,
@@ -129,6 +133,30 @@ class XAIRealtime(realtime.Realtime):
                            assistant response on detected user speech. Defaults
                            to False because speaker-to-mic echo can otherwise
                            cancel the agent's own response mid-sentence.
+            vad_threshold: Server VAD speech-detection confidence threshold
+                           (0.0–1.0). Default 0.65 filters most brief noises
+                           at the source so the debounce can stay short. Lower
+                           (0.4–0.5) if the VAD is missing quiet speech; higher
+                           (0.75+) if echo is triggering false speech_started.
+            vad_prefix_padding_ms: Amount of audio (ms) the server VAD waits
+                           before declaring speech started. Default 50ms is
+                           snappy and works because vad_threshold is selective;
+                           raise to 100–300 if the front of utterances is
+                           being clipped from the model's input.
+            vad_silence_duration_ms: How long the server VAD requires of
+                           continuous silence before declaring the user's
+                           turn complete (fires input_audio_buffer.committed).
+                           Affects turn-end latency, not interrupt latency.
+            interrupt_min_speech_ms: Debounce window applied locally before
+                           treating detected user speech as an interruption.
+                           Default 100ms — short enough to feel snappy, long
+                           enough to filter most coughs and brief bursts that
+                           clear the VAD threshold. Set to 0 for minimum
+                           latency at the cost of cough-rejection; raise to
+                           250+ if false-triggers are still cutting the
+                           agent off. Total mouth-to-silence latency is
+                           roughly VAD detection (~100ms) + this value +
+                           ~200ms downstream pipeline tail.
             web_search: Enable web search tool. Defaults to True.
             x_search: Enable X (Twitter) search tool. Defaults to True.
             x_search_allowed_handles: Optional list of X handles to restrict search to.
@@ -140,6 +168,10 @@ class XAIRealtime(realtime.Realtime):
         self.sample_rate = DEFAULT_SAMPLE_RATE
         self.turn_detection = turn_detection
         self.vad_interrupt_response = vad_interrupt_response
+        self.vad_threshold = vad_threshold
+        self.vad_prefix_padding_ms = vad_prefix_padding_ms
+        self.vad_silence_duration_ms = vad_silence_duration_ms
+        self.interrupt_min_speech_ms = interrupt_min_speech_ms
         self.web_search = web_search
         self.x_search = x_search
         self.x_search_allowed_handles = x_search_allowed_handles
@@ -165,6 +197,15 @@ class XAIRealtime(realtime.Realtime):
         self._processing_task: Optional[asyncio.Task] = None
         self._exit_stack = contextlib.AsyncExitStack()
         self._ephemeral_token: Optional[str] = None
+        # Tool tasks grouped by the response that requested them. We fire
+        # exactly one response.create after all tool calls in a single
+        # response have completed; firing one per call causes the model
+        # to generate a separate spoken reply per parallel tool.
+        self._response_tool_tasks: dict[str, list[asyncio.Task[None]]] = {}
+        self._response_finalize_tasks: set[asyncio.Task[None]] = set()
+        self._interrupt_timer: Optional[asyncio.Task[None]] = None
+        self._interrupt_armed: bool = False
+        self._active_response_id: Optional[str] = None
 
     async def get_ephemeral_token(self, expires_seconds: int = 300) -> str:
         """
@@ -282,9 +323,9 @@ class XAIRealtime(realtime.Realtime):
             # mid-sentence; toggle via `vad_interrupt_response=True` to opt in.
             config["turn_detection"] = {
                 "type": self.turn_detection,
-                "threshold": 0.5,
-                "prefix_padding_ms": 300,
-                "silence_duration_ms": 200,
+                "threshold": self.vad_threshold,
+                "prefix_padding_ms": self.vad_prefix_padding_ms,
+                "silence_duration_ms": self.vad_silence_duration_ms,
                 "create_response": True,
                 "interrupt_response": self.vad_interrupt_response,
             }
@@ -327,7 +368,10 @@ class XAIRealtime(realtime.Realtime):
         self.connected = False
         self._emit_disconnected_event(reason="close requested", was_clean=True)
 
+        self._cancel_pending_interrupt()
         await self._await_pending_tools()
+        if self._response_finalize_tasks:
+            await asyncio.gather(*self._response_finalize_tasks, return_exceptions=True)
 
         if self._processing_task is not None:
             self._processing_task.cancel()
@@ -496,26 +540,36 @@ class XAIRealtime(realtime.Realtime):
                     )
 
             elif event_type == "input_audio_buffer.speech_started":
-                logger.debug("Speech started detected")
-                await self.interrupt()
-                # When vad_interrupt_response=True, the server will fire
-                # response.cancelled and that branch emits the interrupted
-                # done event — skip here to avoid duplicates.
-                if not self.vad_interrupt_response:
-                    self._emit_audio_output_done_event(interrupted=True)
+                if self.interrupt_min_speech_ms > 0:
+                    self._schedule_debounced_interrupt()
+                else:
+                    logger.info("🎙️  Speech detected — firing interrupt immediately")
+                    await self._apply_interrupt()
 
             elif event_type == "input_audio_buffer.speech_stopped":
+                # Don't cancel the debounce here. Server VAD fires this
+                # after silence_duration_ms (~200ms), which is shorter than
+                # the natural pauses between words/phrases — cancelling on
+                # every dip would mean the debounce timer almost never
+                # completes during real speech.
                 logger.debug("Speech stopped detected")
 
             elif event_type == "input_audio_buffer.committed":
+                # Server has decided the user's turn is truly complete.
+                # Now it's safe to disarm the debounce — anything shorter
+                # than this was a false alarm or a brief utterance.
                 logger.debug("Audio buffer committed")
+                self._cancel_pending_interrupt()
 
             elif event_type == "input_audio_buffer.cleared":
                 logger.debug("Audio buffer cleared")
 
             elif event_type == "response.created":
+                self._active_response_id = data.get("response", {}).get("id")
                 self._begin_response()
-                logger.debug("Response generation started")
+                logger.debug(
+                    "Response generation started: %s", self._active_response_id
+                )
 
             elif event_type == "response.output_item.added":
                 logger.debug("Response output item added")
@@ -551,7 +605,11 @@ class XAIRealtime(realtime.Realtime):
                 self._emit_audio_output_done_event(response_id=data.get("response_id"))
 
             elif event_type == "response.done":
+                response_id = data.get("response", {}).get("id", "")
+                if response_id == self._active_response_id:
+                    self._active_response_id = None
                 self._handle_response_done(data)
+                self._maybe_finalize_tool_response(response_id)
 
             elif event_type in ("response.cancelled", "response.cancel"):
                 # Server-initiated cancel — typically fired when server_vad
@@ -565,6 +623,8 @@ class XAIRealtime(realtime.Realtime):
                     response_id,
                     data.get("reason", "unspecified"),
                 )
+                if response_id == self._active_response_id:
+                    self._active_response_id = None
                 self._emit_audio_output_done_event(
                     response_id=response_id, interrupted=True
                 )
@@ -573,8 +633,9 @@ class XAIRealtime(realtime.Realtime):
                 logger.debug("Rate limits updated: %s", data.get("rate_limits"))
 
             elif event_type == "response.function_call_arguments.done":
-                # Function call from the model
-                self._run_tool_in_background(self._handle_function_call(data))
+                # Function call from the model. Server-side tools (web_search,
+                # x_search) are executed by the server and ignored here.
+                self._handle_function_call_arguments_done(data)
 
             elif event_type == "error":
                 error_info = data.get("error", {})
@@ -591,6 +652,82 @@ class XAIRealtime(realtime.Realtime):
                 logger.info("Unhandled xAI event type: %s", event_type)
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug("Unhandled xAI event payload: %s", data)
+
+    async def _apply_interrupt(self) -> None:
+        """Stop the in-flight response: locally and (if known) server-side.
+
+        Three things have to happen for the user to actually stop hearing
+        the agent quickly:
+
+        1. Local epoch bump so any audio events still in flight are dropped.
+        2. ``audio_output_done(interrupted=True)`` so the agent's audio
+           track flushes its buffer (which holds the model's lookahead).
+        3. ``response.cancel`` to the server so it stops generating more
+           audio chunks for this response. Without this, residual chunks
+           from the old response can leak through after a new response
+           starts (because ``_response_epoch`` is overwritten).
+        """
+        cancelled_id = self._active_response_id
+        logger.info(
+            "🛑 Applying interrupt (response_id=%s, vad_interrupt_response=%s)",
+            cancelled_id,
+            self.vad_interrupt_response,
+        )
+        await self.interrupt()
+        if not self.vad_interrupt_response:
+            self._emit_audio_output_done_event(interrupted=True)
+        if cancelled_id is not None:
+            try:
+                await self._send_event(
+                    {"type": "response.cancel", "response_id": cancelled_id}
+                )
+                logger.info("🛑 Sent response.cancel for %s", cancelled_id)
+            except (ConnectionError, websockets.WebSocketException):
+                logger.warning(
+                    "Failed to send response.cancel for %s; connection issue",
+                    cancelled_id,
+                )
+
+    def _schedule_debounced_interrupt(self) -> None:
+        """Arm the debounce on the first speech_started of a turn.
+
+        Subsequent speech_started events while already armed are ignored —
+        we measure "speech is still going N ms after it started", not
+        "N ms since the last burst", so re-arming would defeat the purpose.
+        """
+        if self._interrupt_armed:
+            return
+        self._interrupt_armed = True
+        logger.info(
+            "🎙️  Speech detected; arming interrupt timer (%dms)",
+            self.interrupt_min_speech_ms,
+        )
+        self._interrupt_timer = asyncio.create_task(self._debounced_interrupt())
+
+    def _cancel_pending_interrupt(self) -> None:
+        """Disarm the debounce — the user's turn is over (committed)."""
+        if self._interrupt_armed:
+            logger.info("🎙️  Turn committed; disarming interrupt timer")
+        self._interrupt_armed = False
+        if self._interrupt_timer is not None and not self._interrupt_timer.done():
+            self._interrupt_timer.cancel()
+        self._interrupt_timer = None
+
+    async def _debounced_interrupt(self) -> None:
+        """Sleep the debounce window; interrupt unless disarmed in the meantime."""
+        try:
+            await asyncio.sleep(self.interrupt_min_speech_ms / 1000)
+        except CancelledError:
+            return
+        if not self._interrupt_armed:
+            return
+        logger.info(
+            "🎙️  Sustained speech past %dms — firing interrupt",
+            self.interrupt_min_speech_ms,
+        )
+        await self._apply_interrupt()
+        self._interrupt_armed = False
+        self._interrupt_timer = None
 
     def _handle_conversation_item_added(self, data: dict[str, Any]) -> None:
         """Handle conversation.item.added event."""
@@ -634,23 +771,42 @@ class XAIRealtime(realtime.Realtime):
                         event = LLMResponseChunkEvent(delta=text, plugin_name="xai")
                         self.events.send(event)
 
-    async def _handle_function_call(self, data: dict[str, Any]) -> None:
-        """Handle function calls from xAI realtime."""
-        function_name = data.get("name", "unknown")
-        call_id = data.get("call_id", "")
-        arguments_str = data.get("arguments", "{}")
+    def _handle_function_call_arguments_done(self, data: dict[str, Any]) -> None:
+        """Schedule a local tool call for a finished function_call_arguments event.
 
-        # xAI also emits response.function_call_arguments.done for its
-        # server-side tools (e.g. x_search's x_keyword_search). Those are
-        # executed on the server; we must not respond with a local
-        # function_call_output or the server treats our reply as an error
-        # and generates a second, apologetic response.
+        Server-side tools (e.g. x_search's x_keyword_search) emit the same
+        event but are executed by the server; we must not reply with a
+        function_call_output for those or the server treats it as an error
+        and generates a second, apologetic response.
+
+        Local tool tasks are tracked per response_id so that
+        ``_maybe_finalize_tool_response`` can fire exactly one
+        ``response.create`` after all parallel calls in a response complete.
+        """
+        function_name = data.get("name", "unknown")
         if self.function_registry.get_function(function_name) is None:
             logger.debug(
                 "Ignoring server-side tool call %s (not in local registry)",
                 function_name,
             )
             return
+
+        response_id = data.get("response_id", "")
+        task = asyncio.create_task(self._execute_tool_call(data))
+        self._response_tool_tasks.setdefault(response_id, []).append(task)
+        self._tool_tasks.add(task)
+        task.add_done_callback(self._on_tool_task_done)
+
+    async def _execute_tool_call(self, data: dict[str, Any]) -> None:
+        """Run one local tool call and send its function_call_output.
+
+        Continuation (``response.create``) is intentionally not sent here —
+        ``_finalize_tool_response`` triggers it once after all tool calls
+        for the response have completed.
+        """
+        function_name = data.get("name", "unknown")
+        call_id = data.get("call_id", "")
+        arguments_str = data.get("arguments", "{}")
 
         try:
             arguments = json.loads(arguments_str) if arguments_str else {}
@@ -659,7 +815,6 @@ class XAIRealtime(realtime.Realtime):
 
         logger.debug(f'Calling function "{function_name}" with args "{arguments}"')
 
-        # Execute using existing tool execution infrastructure
         tc, result, error = await self._run_one_tool(
             {
                 "name": function_name,
@@ -669,14 +824,12 @@ class XAIRealtime(realtime.Realtime):
             timeout_s=30.0,
         )
 
-        # Prepare output
         if error:
             output = json.dumps({"error": str(error)})
             logger.error(f"Function call {function_name} failed: {error}")
         else:
             output = result if isinstance(result, str) else json.dumps(result)
 
-        # Send function result back to xAI
         function_output_event = {
             "type": "conversation.item.create",
             "item": {
@@ -686,12 +839,28 @@ class XAIRealtime(realtime.Realtime):
             },
         }
         await self._send_event(function_output_event)
+        logger.debug(f'Function "{function_name}" output sent')
 
-        # Request continuation
-        response_event = {"type": "response.create"}
-        await self._send_event(response_event)
+    def _maybe_finalize_tool_response(self, response_id: str) -> None:
+        """If the completed response had local tool calls, schedule a single continuation."""
+        if response_id not in self._response_tool_tasks:
+            return
+        finalize_task = asyncio.create_task(self._finalize_tool_response(response_id))
+        self._response_finalize_tasks.add(finalize_task)
+        finalize_task.add_done_callback(self._response_finalize_tasks.discard)
 
-        logger.debug(f'Function "{function_name}" response sent')
+    async def _finalize_tool_response(self, response_id: str) -> None:
+        """Await all tool tasks for ``response_id`` then trigger one continuation."""
+        tasks = self._response_tool_tasks.pop(response_id, [])
+        if not tasks:
+            return
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await self._send_event({"type": "response.create"})
+        logger.debug(
+            "Triggered continuation for response %s after %d tool call(s)",
+            response_id,
+            len(tasks),
+        )
 
     def _convert_tools_to_provider_format(
         self, tools: list[ToolSchema]
