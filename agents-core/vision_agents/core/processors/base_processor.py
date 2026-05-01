@@ -5,6 +5,7 @@ from typing import Optional
 
 import aiortc
 from getstream.video.rtc import PcmData
+from vision_agents.core.observability import MetricsCollector
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 if typing.TYPE_CHECKING:
@@ -17,6 +18,9 @@ class Processor(abc.ABC):
     """
     A base class for all audio and video processors.
     """
+
+    def __init__(self) -> None:
+        self.metrics = MetricsCollector()
 
     @property
     @abc.abstractmethod

@@ -54,6 +54,7 @@ class CloudDetectionProcessor(VideoProcessorPublisher):
         fps: int = 30,
         max_workers: int = 10,
     ):
+        super().__init__()
         self.api_key = api_key or os.getenv("MOONDREAM_API_KEY")
         self.conf_threshold = conf_threshold
         self.fps = fps

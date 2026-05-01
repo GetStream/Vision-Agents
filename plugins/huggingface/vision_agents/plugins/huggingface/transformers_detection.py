@@ -93,6 +93,7 @@ class TransformersDetectionProcessor(
         device: DeviceType = "auto",
         annotate: bool = True,
     ):
+        super().__init__()
         if not 0 <= conf_threshold <= 1.0:
             raise ValueError("Confidence threshold must be between 0 and 1.")
 
@@ -258,6 +259,12 @@ class TransformersDetectionProcessor(
                 inference_time_ms=inference_time_ms,
                 model_id=self.model_id,
             )
+        )
+        self.metrics.on_video_detection(
+            provider=self.name,
+            model=self.model_id,
+            detection_count=len(detected_objects),
+            inference_time_ms=inference_time_ms,
         )
 
     async def _run_inference(self, image: np.ndarray) -> list[DetectedObject]:

@@ -73,6 +73,7 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
             width: Output video width in pixels.
             height: Output video height in pixels.
         """
+        super().__init__()
         api_key = api_key or os.getenv("ANAM_API_KEY")
         if not api_key:
             raise ValueError("Anam API key not provided")

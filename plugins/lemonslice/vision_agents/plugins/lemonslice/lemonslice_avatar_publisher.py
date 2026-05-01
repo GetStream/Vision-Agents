@@ -63,6 +63,7 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
             width: Output video width in pixels.
             height: Output video height in pixels.
         """
+        super().__init__()
         client_kwargs: dict[str, Any] = {
             "agent_id": agent_id,
             "agent_image_url": agent_image_url,

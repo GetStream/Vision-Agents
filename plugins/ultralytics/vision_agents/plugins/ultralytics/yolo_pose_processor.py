@@ -43,6 +43,7 @@ class YOLOPoseProcessor(VideoProcessorPublisher):
         enable_hand_tracking: bool = True,
         enable_wrist_highlights: bool = True,
     ):
+        super().__init__()
         self.model_path = model_path
         self.fps = fps
         self.conf_threshold = conf_threshold
@@ -82,7 +83,7 @@ class YOLOPoseProcessor(VideoProcessorPublisher):
 
     async def process_video(
         self,
-        incoming_track: aiortc.VideoStreamTrack,
+        track: aiortc.VideoStreamTrack,
         participant_id: Optional[str],
         shared_forwarder: Optional[VideoForwarder] = None,
     ):
