@@ -99,3 +99,4 @@ Install with: `uv add "vision-agents[redis]"`
 - **EventManager**: fix crash when event handlers have return type annotations (#381)
 - **RedisSessionKVStore**: fix import error when `redis` package is not installed (#384)
 - **Agent metrics**: fix metrics storage and serialization in session registry (#387)
+- **MCPServerRemote**: fix cancel-scope leak in which closing an MCP session left a half-cancelled anyio scope that pegged the event loop. The transport lifecycle now runs inside a dedicated supervisor task so `__aenter__` / `__aexit__` task-identity holds regardless of which caller drives `connect()` and `disconnect()`. (#TBD)
