@@ -127,17 +127,19 @@ class MCPServerRemote(MCPBaseServer):
         except Exception as e:
             if not self._setup.done():
                 self._setup.set_exception(e)
-                self.logger.error(f"Failed to connect to remote MCP server: {e}")
+                self.logger.exception("Failed to connect to remote MCP server")
             else:
-                self.logger.warning(f"MCP session supervisor exited with error: {e}")
+                self.logger.warning(
+                    "MCP session supervisor exited with error", exc_info=True
+                )
         finally:
             # Make sure connect() never hangs even if we were cancelled mid-setup.
             if not self._setup.done():
                 self._setup.cancel()
             try:
                 await self._stop_timeout_monitor()
-            except Exception as e:
-                self.logger.warning(f"Error stopping timeout monitor: {e}")
+            except Exception:
+                self.logger.warning("Error stopping timeout monitor", exc_info=True)
             self._session = None
             self._get_session_id_cb = None
             self._is_connected = False
