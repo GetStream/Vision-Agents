@@ -21,11 +21,6 @@ from google.genai.types import (
 )
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.instructions import Instructions
-from vision_agents.core.llm.events import (
-    LLMRequestStartedEvent,
-    VLMInferenceCompletedEvent,
-    VLMInferenceStartEvent,
-)
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal, VideoLLM
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
@@ -49,6 +44,8 @@ class GeminiVLM(VideoLLM):
         vlm = gemini.VLM(model="gemini-3-flash-preview")
         response = await vlm.simple_response("Describe what you see.")
     """
+
+    provider_name = PLUGIN_NAME
 
     def __init__(
         self,
@@ -155,24 +152,6 @@ class GeminiVLM(VideoLLM):
             self.chat = self.client.chats.create(model=self.model, config=self._config)
 
         frames_count = len(self._frame_buffer)
-        inference_id = str(uuid.uuid4())
-
-        self.events.send(
-            VLMInferenceStartEvent(
-                plugin_name=PLUGIN_NAME,
-                inference_id=inference_id,
-                model=self.model,
-                frames_count=frames_count,
-            )
-        )
-
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name=PLUGIN_NAME,
-                model=self.model,
-                streaming=True,
-            )
-        )
 
         request_start_time = time.perf_counter()
         first_token_time: Optional[float] = None
@@ -219,17 +198,13 @@ class GeminiVLM(VideoLLM):
 
             input_tokens, output_tokens = self._extract_usage_tokens(final_chunk)
 
-            self.events.send(
-                VLMInferenceCompletedEvent(
-                    plugin_name=PLUGIN_NAME,
-                    inference_id=inference_id,
-                    model=self.model,
-                    text=total_text,
-                    latency_ms=latency_ms,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    frames_processed=frames_count,
-                )
+            self.metrics.on_vlm_inference(
+                provider=self.provider_name,
+                model=self.model,
+                latency_ms=latency_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                frames_processed=frames_count,
             )
 
             yield LLMResponseFinal(

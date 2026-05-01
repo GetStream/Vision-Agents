@@ -1,6 +1,5 @@
 import base64
 import logging
-import uuid
 from collections import deque
 from typing import Any, AsyncIterator, Iterator, Optional, cast
 
@@ -9,7 +8,6 @@ from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
 from huggingface_hub import AsyncInferenceClient
 from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import VLMInferenceStartEvent
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal, VideoLLM
 from vision_agents.core.llm.llm_types import ToolSchema
 from vision_agents.core.utils.video_forwarder import VideoForwarder
@@ -42,6 +40,8 @@ class HuggingFaceVLM(VideoLLM):
         vlm = huggingface.VLM(model="Qwen/Qwen2-VL-7B-Instruct")
 
     """
+
+    provider_name = PLUGIN_NAME
 
     def __init__(
         self,
@@ -122,18 +122,19 @@ class HuggingFaceVLM(VideoLLM):
             )
 
         messages = await self._build_model_request()
-
-        self.events.send(
-            VLMInferenceStartEvent(
-                plugin_name=PLUGIN_NAME,
-                inference_id=str(uuid.uuid4()),
-                model=self.model,
-                frames_count=len(self._frame_buffer),
-            )
-        )
+        frames_count = len(self._frame_buffer)
 
         async for item in self.create_response(messages=messages):
             yield item
+            if isinstance(item, LLMResponseFinal):
+                self.metrics.on_vlm_inference(
+                    provider=self.provider_name,
+                    model=self.model,
+                    latency_ms=item.latency_ms,
+                    input_tokens=item.input_tokens,
+                    output_tokens=item.output_tokens,
+                    frames_processed=frames_count,
+                )
 
     async def create_response(
         self,

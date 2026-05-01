@@ -34,10 +34,6 @@ from transformers import (
     PreTrainedModel,
     StoppingCriteriaList,
 )
-from vision_agents.core.llm.events import (
-    LLMRequestStartedEvent,
-    VLMInferenceStartEvent,
-)
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal, VideoLLM
 from vision_agents.core.llm.llm_types import ToolSchema
 from vision_agents.core.utils.video_forwarder import VideoForwarder
@@ -92,6 +88,8 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         max_new_tokens: Default maximum tokens to generate per response.
         max_tool_rounds: Maximum tool-call rounds per response (default 3).
     """
+
+    provider_name = PLUGIN_NAME
 
     def __init__(
         self,
@@ -240,19 +238,19 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         image_content.append({"type": "text", "text": text or "Describe what you see."})
         messages.append({"role": "user", "content": image_content})
 
-        self.events.send(
-            VLMInferenceStartEvent(
-                plugin_name=PLUGIN_NAME,
-                inference_id=str(uuid.uuid4()),
-                model=self.model_id,
-                frames_count=len(frames_snapshot),
-            )
-        )
-
         async for item in self.create_response(
             messages=messages, frames=frames_snapshot
         ):
             yield item
+            if isinstance(item, LLMResponseFinal):
+                self.metrics.on_vlm_inference(
+                    provider=self.provider_name,
+                    model=self.model_id,
+                    latency_ms=item.latency_ms,
+                    input_tokens=item.input_tokens,
+                    output_tokens=item.output_tokens,
+                    frames_processed=len(frames_snapshot),
+                )
 
     async def create_response(
         self,
@@ -297,14 +295,6 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         model = self._resources.model
         processor = self._resources.processor
         pad_token_id = processor.tokenizer.pad_token_id
-
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name=PLUGIN_NAME,
-                model=self.model_id,
-                streaming=False,
-            )
-        )
 
         current_messages = list(messages)
         seen: set[tuple[str | None, str, str]] = set()

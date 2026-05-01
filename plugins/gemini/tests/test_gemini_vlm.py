@@ -5,7 +5,6 @@ import numpy as np
 import pytest
 from dotenv import load_dotenv
 from vision_agents.core.agents.conversation import InMemoryConversation
-from vision_agents.core.llm.events import VLMInferenceCompletedEvent
 from vision_agents.plugins.gemini import VLM
 
 from tests.utils import collect_simple_response
@@ -35,12 +34,6 @@ class TestGeminiVLM:
     async def test_gemini_vlm_simple_response(self, vlm: VLM):
         vlm.add_frame(_solid_color_frame())
 
-        events: list[VLMInferenceCompletedEvent] = []
-
-        @vlm.events.subscribe
-        async def handle_event(event: VLMInferenceCompletedEvent):
-            events.append(event)
-
         deltas, final = await collect_simple_response(
             vlm.simple_response("Describe the scene.")
         )
@@ -48,4 +41,4 @@ class TestGeminiVLM:
 
         assert deltas
         assert final.text
-        assert any(e.type == "plugin.vlm_inference_completed" for e in events)
+        assert vlm.metrics.agent_metrics.vlm_inferences__total.value() == 1

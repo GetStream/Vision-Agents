@@ -2,7 +2,6 @@ import asyncio
 import base64
 import logging
 import time
-import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncIterator, Optional, cast
@@ -12,11 +11,6 @@ from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
 from openai import AsyncOpenAI, AsyncStream
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import (
-    LLMRequestStartedEvent,
-    VLMInferenceCompletedEvent,
-    VLMInferenceStartEvent,
-)
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal, VideoLLM
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
@@ -47,6 +41,8 @@ class ChatCompletionsVLM(VideoLLM):
         llm = openai.ChatCompletionsVLM(model="qwen-3-vl-32b")
 
     """
+
+    provider_name = PLUGIN_NAME
 
     def __init__(
         self,
@@ -134,26 +130,6 @@ class ChatCompletionsVLM(VideoLLM):
 
         # Count frames being processed
         frames_count = len(self._frame_buffer)
-        inference_id = str(uuid.uuid4())
-
-        # Emit VLM start event
-        self.events.send(
-            VLMInferenceStartEvent(
-                plugin_name=PLUGIN_NAME,
-                inference_id=inference_id,
-                model=self.model,
-                frames_count=frames_count,
-            )
-        )
-
-        # Emit request started event
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name=PLUGIN_NAME,
-                model=self.model,
-                streaming=True,
-            )
-        )
 
         # Track timing
         request_start_time = time.perf_counter()
@@ -212,16 +188,11 @@ class ChatCompletionsVLM(VideoLLM):
         if first_token_time is not None:
             ttft_ms = (first_token_time - request_start_time) * 1000
 
-        # Emit VLM-specific completion event with metrics
-        self.events.send(
-            VLMInferenceCompletedEvent(
-                plugin_name=PLUGIN_NAME,
-                inference_id=inference_id,
-                model=self.model,
-                text=total_text,
-                latency_ms=latency_ms,
-                frames_processed=frames_count,
-            )
+        self.metrics.on_vlm_inference(
+            provider=self.provider_name,
+            model=self.model,
+            latency_ms=latency_ms,
+            frames_processed=frames_count,
         )
 
         item_id = last_chunk.id if last_chunk is not None else None

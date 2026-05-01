@@ -12,7 +12,6 @@ from conftest import skip_blockbuster
 from tests.utils import collect_simple_response
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.llm.llm import LLMResponseFinal
-from vision_agents.core.llm.events import VLMInferenceStartEvent
 from vision_agents.plugins.huggingface.transformers_vlm import (
     TransformersVLM,
     VLMResources,
@@ -89,12 +88,6 @@ class TestTransformersVLM:
         for _ in range(3):
             vlm._frame_buffer.append(_random_video_frame())
 
-        start_events: list[VLMInferenceStartEvent] = []
-
-        @vlm.events.subscribe
-        async def listen(event: VLMInferenceStartEvent):
-            start_events.append(event)
-
         deltas, final = await collect_simple_response(
             vlm.simple_response(text="what do you see?")
         )
@@ -107,8 +100,8 @@ class TestTransformersVLM:
         call_args = processor.apply_chat_template.call_args
         assert len(call_args.kwargs["images"]) == 3
 
-        assert len(start_events) == 1
-        assert start_events[0].frames_count == 3
+        assert vlm.metrics.agent_metrics.vlm_inferences__total.value() == 1
+        assert vlm.metrics.agent_metrics.video_frames_processed__total.value() == 3
 
     async def test_simple_response_no_frames(self, vlm, conversation):
         """Response works with empty frame buffer (images=None)."""

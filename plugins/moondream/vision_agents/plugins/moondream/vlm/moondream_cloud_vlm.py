@@ -11,11 +11,6 @@ import moondream as md
 from PIL import Image
 from vision_agents.core import llm
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import (
-    VLMErrorEvent,
-    VLMInferenceCompletedEvent,
-    VLMInferenceStartEvent,
-)
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_queue import VideoLatestNQueue
@@ -37,6 +32,8 @@ class CloudVLM(llm.VideoLLM):
         mode: "vqa" for visual question answering or "caption" for image captioning (default: "vqa")
         max_workers: Number of worker threads for async operations (default: 10)
     """
+
+    provider_name = "moondream_cloud"
 
     def __init__(
         self,
@@ -133,15 +130,6 @@ class CloudVLM(llm.VideoLLM):
 
         latest_frame = self._latest_frame
 
-        self.events.send(
-            VLMInferenceStartEvent(
-                plugin_name="moondream_cloud",
-                inference_id=inference_id,
-                model="moondream-cloud",
-                frames_count=1,
-            )
-        )
-
         first_token_time: Optional[float] = None
         text_chunks: list[str] = []
         sequence_number = 0
@@ -203,15 +191,11 @@ class CloudVLM(llm.VideoLLM):
             if first_token_time is not None:
                 final_ttft_ms = (first_token_time - request_start_time) * 1000
 
-            self.events.send(
-                VLMInferenceCompletedEvent(
-                    plugin_name="moondream_cloud",
-                    inference_id=inference_id,
-                    model="moondream-cloud",
-                    text=total_text,
-                    latency_ms=latency_ms,
-                    frames_processed=1,
-                )
+            self.metrics.on_vlm_inference(
+                provider=self.provider_name,
+                model="moondream-cloud",
+                latency_ms=latency_ms,
+                frames_processed=1,
             )
 
             logger.info(f"Moondream {self.mode} response: {total_text}")
@@ -227,13 +211,9 @@ class CloudVLM(llm.VideoLLM):
 
         except Exception as exc:
             logger.exception("Error processing frame")
-            self.events.send(
-                VLMErrorEvent(
-                    plugin_name="moondream_cloud",
-                    inference_id=inference_id,
-                    error=exc,
-                    context="frame_processing",
-                )
+            self.metrics.on_vlm_error(
+                provider=self.provider_name,
+                error_type=type(exc).__name__,
             )
             yield LLMResponseFinal(original=None, text="")
             return
