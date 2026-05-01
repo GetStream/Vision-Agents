@@ -10,8 +10,7 @@ import aiohttp
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt import Transcript, TranscriptResponse
-from vision_agents.core.turn_detection import TurnEnded, TurnStarted
+from vision_agents.core.stt import TranscriptResponse
 
 logger = logging.getLogger(__name__)
 
@@ -255,9 +254,7 @@ class STT(stt.STT):
         elif msg_type == "SpeechStarted":
             participant = self._current_participant
             if participant is not None:
-                self.output.send_nowait(
-                    TurnStarted(participant=participant, confidence=0.5)
-                )
+                self._emit_turn_started_event(participant)
 
         elif msg_type == "Termination":
             logger.info(
@@ -316,24 +313,12 @@ class STT(stt.STT):
         )
 
         if data.get("end_of_turn"):
-            self.output.send_nowait(
-                Transcript(
-                    text=transcript,
-                    participant=participant,
-                    response=response,
-                    mode="final",
-                )
-            )
+            self._emit_transcript_event(transcript, participant, response, mode="final")
             self._audio_start_time = None
-            self.output.send_nowait(TurnEnded(participant=participant, confidence=0.5))
+            self._emit_turn_ended_event(participant)
         else:
-            self.output.send_nowait(
-                Transcript(
-                    text=transcript,
-                    participant=participant,
-                    response=response,
-                    mode="replacement",
-                )
+            self._emit_transcript_event(
+                transcript, participant, response, mode="replacement"
             )
 
     async def process_audio(

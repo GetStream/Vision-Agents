@@ -9,7 +9,7 @@ from fish_audio_sdk import ASRRequest, Session
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt import Transcript, TranscriptResponse
+from vision_agents.core.stt import TranscriptResponse
 
 logger = logging.getLogger(__name__)
 
@@ -135,13 +135,8 @@ class STT(stt.STT):
                     "duration_ms": response.duration,
                 },
             )
-            self.output.send_nowait(
-                Transcript(
-                    text=transcript_text,
-                    participant=participant,
-                    response=response_metadata,
-                    mode="final",
-                )
+            self._emit_transcript_event(
+                transcript_text, participant, response_metadata, mode="final"
             )
 
         except Exception:

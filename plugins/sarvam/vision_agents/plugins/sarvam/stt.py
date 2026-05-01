@@ -221,8 +221,7 @@ class STT(stt.STT):
         if not self.closed:
             self._emit_error_event(
                 ConnectionError("Sarvam STT WebSocket closed unexpectedly"),
-                self._current_participant,
-                "sarvam_ws_closed",
+                context="sarvam_ws_closed",
             )
 
     def _handle_message(self, data: dict[str, Any]) -> None:
@@ -272,8 +271,7 @@ class STT(stt.STT):
             err_msg = data.get("error") or payload.get("message") or "Sarvam STT error"
             self._emit_error_event(
                 Exception(str(err_msg)),
-                participant,
-                "sarvam_streaming",
+                context="sarvam_streaming",
             )
             return
 
@@ -311,7 +309,9 @@ class STT(stt.STT):
         if self._in_speech:
             self._pending_transcript = transcript_text
             self._pending_response = response
-            self._emit_partial_transcript_event(transcript_text, participant, response)
+            self._emit_transcript_event(
+                transcript_text, participant, response, mode="replacement"
+            )
         elif self._turn_end_pending:
             self._turn_end_pending = False
             self._emit_transcript_event(transcript_text, participant, response)

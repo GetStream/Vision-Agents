@@ -14,7 +14,7 @@ from mistralai.models import (
 )
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt import Transcript, TranscriptResponse
+from vision_agents.core.stt import TranscriptResponse
 from vision_agents.core.utils.utils import cancel_and_wait
 
 logger = logging.getLogger(__name__)
@@ -140,26 +140,16 @@ class STT(stt.STT):
         # Emit partial with just the new word/delta (not accumulated)
         text_stripped = text.strip()
         if text_stripped:
-            self.output.send_nowait(
-                Transcript(
-                    text=text_stripped,
-                    participant=participant,
-                    response=response,
-                    mode="delta",
-                )
+            self._emit_transcript_event(
+                text_stripped, participant, response, mode="delta"
             )
 
         # Check for sentence-ending punctuation - emit complete transcript
         if text.rstrip().endswith((".", "?", "!")):
             accumulated_stripped = self._accumulated_text.strip()
             if accumulated_stripped:
-                self.output.send_nowait(
-                    Transcript(
-                        text=accumulated_stripped,
-                        participant=participant,
-                        response=response,
-                        mode="final",
-                    )
+                self._emit_transcript_event(
+                    accumulated_stripped, participant, response, mode="final"
                 )
                 self._accumulated_text = ""
                 self._audio_start_time = None
@@ -180,14 +170,7 @@ class STT(stt.STT):
             model_name=event.model,
         )
 
-        self.output.send_nowait(
-            Transcript(
-                text=text,
-                participant=participant,
-                response=response,
-                mode="final",
-            )
-        )
+        self._emit_transcript_event(text, participant, response, mode="final")
         self._accumulated_text = ""
         self._audio_start_time = None
         self._done_received.set()

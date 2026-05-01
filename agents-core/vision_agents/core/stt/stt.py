@@ -8,6 +8,7 @@ from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.agents.transcript import TranscriptMode
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
+from vision_agents.core.observability import MetricsCollector
 from vision_agents.core.turn_detection import TurnEnded, TurnStarted
 from vision_agents.core.utils.stream import Stream
 
@@ -65,6 +66,7 @@ class STT(abc.ABC):
         self.provider_name = provider_name or self.__class__.__name__
 
         self.events = EventManager()
+        self.metrics = MetricsCollector()
 
         self._output: Stream[Transcript | TurnEnded | TurnStarted] = Stream()
 
@@ -93,3 +95,72 @@ class STT(abc.ABC):
     async def close(self):
         self.closed = True
         self._output.close()
+
+    def _emit_transcript_event(
+        self,
+        text: str,
+        participant: Participant,
+        response: TranscriptResponse,
+        *,
+        mode: TranscriptMode = "final",
+    ) -> None:
+        """Push a Transcript to the output stream and record metrics on final."""
+        self._output.send_nowait(
+            Transcript(
+                text=text,
+                participant=participant,
+                mode=mode,
+                response=response,
+            )
+        )
+        if mode == "final":
+            self.metrics.on_stt_transcript(
+                provider=self.provider_name,
+                model=response.model_name,
+                language=response.language,
+                processing_time_ms=response.processing_time_ms,
+                audio_duration_ms=response.audio_duration_ms,
+            )
+
+    def _emit_turn_ended_event(
+        self,
+        participant: Participant,
+        *,
+        confidence: float = 0.5,
+        eager: bool = False,
+        duration_ms: Optional[float] = None,
+        trailing_silence_ms: Optional[float] = None,
+    ) -> None:
+        """Push a TurnEnded to the output stream and record the turn metric."""
+        self._output.send_nowait(
+            TurnEnded(
+                participant=participant,
+                confidence=confidence,
+                eager=eager,
+                duration_ms=duration_ms,
+                trailing_silence_ms=trailing_silence_ms,
+            )
+        )
+        self.metrics.on_turn_ended(
+            provider=self.provider_name,
+            duration_ms=duration_ms,
+            trailing_silence_ms=trailing_silence_ms,
+        )
+
+    def _emit_turn_started_event(
+        self,
+        participant: Participant,
+        *,
+        confidence: float = 0.5,
+    ) -> None:
+        """Push a TurnStarted to the output stream."""
+        self._output.send_nowait(
+            TurnStarted(participant=participant, confidence=confidence)
+        )
+
+    def _emit_error_event(self, error: Exception, *, context: str = "") -> None:
+        """Record an STT error metric. Caller may also re-raise."""
+        self.metrics.on_stt_error(
+            provider=self.provider_name,
+            error_type=type(error).__name__,
+        )

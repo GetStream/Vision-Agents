@@ -19,7 +19,7 @@ import fal_client
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt import Transcript, TranscriptResponse
+from vision_agents.core.stt import TranscriptResponse
 
 logger = logging.getLogger(__name__)
 
@@ -119,13 +119,8 @@ class STT(stt.STT):
                             processing_time_ms=processing_time_ms,
                             model_name="wizper-v3",
                         )
-                        self.output.send_nowait(
-                            Transcript(
-                                text=text,
-                                participant=participant,
-                                response=response_metadata,
-                                mode="final",
-                            )
+                        self._emit_transcript_event(
+                            text, participant, response_metadata, mode="final"
                         )
             finally:
                 # Clean up temporary file (async to avoid blocking)

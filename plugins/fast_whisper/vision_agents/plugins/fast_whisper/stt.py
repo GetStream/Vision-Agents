@@ -10,7 +10,7 @@ from getstream.video.rtc.track_util import AudioFormat, PcmData
 from numpy.typing import NDArray
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt import Transcript, TranscriptResponse
+from vision_agents.core.stt import TranscriptResponse
 from vision_agents.core.warmup import Warmable
 
 logger = logging.getLogger(__name__)
@@ -194,14 +194,7 @@ class STT(stt.STT, Warmable[Optional[WhisperModel]]):
                     audio_duration_ms=buffer_to_process.duration_ms,
                     model_name=f"faster-whisper-{self.model_size}",
                 )
-                self.output.send_nowait(
-                    Transcript(
-                        text=text,
-                        participant=participant,
-                        response=response,
-                        mode="delta",
-                    )
-                )
+                self._emit_transcript_event(text, participant, response, mode="delta")
 
         # Emit final transcript for the complete buffer
         if text_parts:
@@ -213,14 +206,7 @@ class STT(stt.STT, Warmable[Optional[WhisperModel]]):
                 audio_duration_ms=buffer_to_process.duration_ms,
                 model_name=f"faster-whisper-{self.model_size}",
             )
-            self.output.send_nowait(
-                Transcript(
-                    text=full_text,
-                    participant=participant,
-                    response=response,
-                    mode="final",
-                )
-            )
+            self._emit_transcript_event(full_text, participant, response, mode="final")
 
     async def close(self):
         """Close the STT and cleanup resources."""
