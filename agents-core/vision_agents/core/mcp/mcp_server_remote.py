@@ -152,6 +152,7 @@ class MCPServerRemote(MCPBaseServer):
                 msg += f" (session: {self._get_session_id_cb()})"
             except Exception as e:
                 msg += f" (session ID unavailable: {e})"
+                self.logger.debug("Session ID lookup failed", exc_info=True)
         self.logger.info(msg)
 
     async def __aenter__(self):
