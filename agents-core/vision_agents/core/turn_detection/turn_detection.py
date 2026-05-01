@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Optional
 
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.events.manager import EventManager
+from vision_agents.core.observability import MetricsCollector
 
 from ..edge.types import Participant
 from ..utils.stream import Stream
@@ -45,6 +46,7 @@ class TurnDetector(ABC):
         self.provider_name = provider_name or self.__class__.__name__
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
+        self.metrics = MetricsCollector()
         self._output: Stream[TurnEnded | TurnStarted] = Stream()
 
     @property
@@ -76,3 +78,39 @@ class TurnDetector(ABC):
     async def stop(self) -> None:
         """Again, some turn detection systems want to run cleanup here"""
         self.is_active = False
+
+    async def _emit_turn_ended_event(
+        self,
+        participant: Participant,
+        *,
+        confidence: float = 0.5,
+        eager: bool = False,
+        duration_ms: Optional[float] = None,
+        trailing_silence_ms: Optional[float] = None,
+    ) -> None:
+        """Send TurnEnded to output stream and record the turn metric."""
+        await self._output.send(
+            TurnEnded(
+                participant=participant,
+                confidence=confidence,
+                eager=eager,
+                duration_ms=duration_ms,
+                trailing_silence_ms=trailing_silence_ms,
+            )
+        )
+        self.metrics.on_turn_ended(
+            provider=self.provider_name,
+            duration_ms=duration_ms,
+            trailing_silence_ms=trailing_silence_ms,
+        )
+
+    async def _emit_turn_started_event(
+        self,
+        participant: Participant,
+        *,
+        confidence: float = 0.5,
+    ) -> None:
+        """Send TurnStarted to output stream."""
+        await self._output.send(
+            TurnStarted(participant=participant, confidence=confidence)
+        )

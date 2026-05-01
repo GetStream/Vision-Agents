@@ -12,11 +12,7 @@ from transformers import WhisperFeatureExtractor
 from vision_agents.core.agents import Conversation
 from vision_agents.core.agents.agent_types import AgentOptions, default_agent_options
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.turn_detection import (
-    TurnDetector,
-    TurnEnded,
-    TurnStarted,
-)
+from vision_agents.core.turn_detection import TurnDetector
 from vision_agents.core.utils.utils import ensure_model
 from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
 from vision_agents.core.warmup import Warmable
@@ -161,7 +157,7 @@ class SmartTurnDetection(
 
     async def process_audio(
         self,
-        audio_data: PcmData,
+        data: PcmData,
         participant: Participant,
         conversation: Conversation | None = None,
     ) -> None:
@@ -171,7 +167,7 @@ class SmartTurnDetection(
         """
 
         # Just enqueue the audio packet - fast and non-blocking
-        await self._audio_queue.put((audio_data, participant, conversation))
+        await self._audio_queue.put((data, participant, conversation))
 
     async def _process_audio_loop(self):
         """
@@ -290,13 +286,11 @@ class SmartTurnDetection(
                     prediction = await self._predict_turn_completed(merged, participant)
                     turn_ended = prediction > 0.5
                     if turn_ended:
-                        await self.output.send(
-                            TurnEnded(
-                                participant=participant,
-                                confidence=prediction,
-                                trailing_silence_ms=trailing_silence_ms,
-                                duration_ms=self._active_segment.duration_ms,
-                            )
+                        await self._emit_turn_ended_event(
+                            participant,
+                            confidence=prediction,
+                            trailing_silence_ms=trailing_silence_ms,
+                            duration_ms=self._active_segment.duration_ms,
                         )
                         self._active_segment = None
                         self._silence = Silence()
@@ -307,11 +301,9 @@ class SmartTurnDetection(
                         self._pre_speech_buffer.append(merged)
                         self._pre_speech_buffer = self._pre_speech_buffer.tail(8)
             elif is_speech and self._active_segment is None:
-                await self.output.send(
-                    TurnStarted(
-                        participant=participant,
-                        confidence=speech_probability,
-                    )
+                await self._emit_turn_started_event(
+                    participant,
+                    confidence=speech_probability,
                 )
                 # create a new segment
                 self._active_segment = PcmData(
