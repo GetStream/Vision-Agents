@@ -35,6 +35,8 @@ class HuggingFaceLLM(LLM):
 
     """
 
+    provider_name = PLUGIN_NAME
+
     def __init__(
         self,
         model: str,

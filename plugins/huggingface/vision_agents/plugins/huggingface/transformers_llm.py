@@ -37,7 +37,6 @@ from transformers import (
     StoppingCriteriaList,
     TextStreamer,
 )
-from vision_agents.core.llm.events import LLMRequestStartedEvent
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.warmup import Warmable
@@ -206,6 +205,8 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         max_tool_rounds: Maximum tool-call rounds per response (default 3).
     """
 
+    provider_name = PLUGIN_NAME
+
     def __init__(
         self,
         model: str,
@@ -366,13 +367,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         if tools_param is None:
             # No tools — stream or generate normally and yield through.
-            self.events.send(
-                LLMRequestStartedEvent(
-                    plugin_name=PLUGIN_NAME,
-                    model=self.model_id,
-                    streaming=stream,
-                )
-            )
             gen = (
                 self._generate_streaming(
                     model,
@@ -402,13 +396,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         # loop. Raw model output may contain tool-call markup (e.g.
         # <tool_call>…</tool_call>) that must not be yielded as user-visible
         # deltas; only the final natural-language answer is yielded.
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name=PLUGIN_NAME,
-                model=self.model_id,
-                streaming=False,
-            )
-        )
 
         current_messages = list(messages)
         current_inputs = inputs
@@ -578,6 +565,10 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             except RuntimeError as e:
                 generation_error = e
                 logger.exception("Generation failed")
+                self.metrics.on_llm_error(
+                    provider=self.provider_name,
+                    error_type=type(e).__name__,
+                )
             finally:
                 # Flush any text still buffered inside the TextStreamer
                 # (everything after the last word boundary). model.generate

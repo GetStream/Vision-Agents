@@ -12,7 +12,6 @@ from typing import Any, AsyncIterator, Optional
 from aiohttp import ClientResponseError
 from huggingface_hub import AsyncInferenceClient, InferenceTimeoutError
 from huggingface_hub.errors import HfHubHTTPError
-from vision_agents.core.llm.events import LLMRequestStartedEvent
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem
 
@@ -113,14 +112,6 @@ async def create_hf_response(
     if tools:
         request_kwargs["tools"] = tools
 
-    llm.events.send(
-        LLMRequestStartedEvent(
-            plugin_name=plugin_name,
-            model=model_id,
-            streaming=stream,
-        )
-    )
-
     request_start = time.perf_counter()
 
     try:
@@ -132,10 +123,18 @@ async def create_hf_response(
         logger.exception(
             f'Failed to get a response from the LLM "{model_id}"; payload: {error_payload}'
         )
+        llm.metrics.on_llm_error(
+            provider=llm.provider_name,
+            error_type=type(e).__name__,
+        )
         yield LLMResponseFinal(original=None, text="")
         return
-    except Exception:
+    except Exception as e:
         logger.exception(f'Failed to get a response from the LLM "{model_id}"')
+        llm.metrics.on_llm_error(
+            provider=llm.provider_name,
+            error_type=type(e).__name__,
+        )
         yield LLMResponseFinal(original=None, text="")
         return
 
@@ -390,8 +389,12 @@ async def _run_tool_loop(
 
         try:
             follow_up = await client.chat.completions.create(**request_kwargs)
-        except (HfHubHTTPError, InferenceTimeoutError, OSError):
+        except (HfHubHTTPError, InferenceTimeoutError, OSError) as e:
             logger.exception("Failed to get follow-up response after tool execution")
+            llm.metrics.on_llm_error(
+                provider=llm.provider_name,
+                error_type=type(e).__name__,
+            )
             yield LLMResponseFinal(original=None, text="")
             return
 

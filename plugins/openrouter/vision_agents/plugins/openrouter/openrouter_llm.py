@@ -17,7 +17,6 @@ from openai.types.chat.chat_completion_chunk import (
     ChoiceDeltaToolCall,
 )
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import LLMRequestStartedEvent
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
@@ -42,6 +41,8 @@ class OpenRouterLLM(LLM):
     - Uses Chat Completions API for all models (consistent behavior)
     - Uses manual conversation history (no server-side conversation IDs)
     """
+
+    provider_name = PLUGIN_NAME
 
     def __init__(
         self,
@@ -214,20 +215,16 @@ class OpenRouterLLM(LLM):
                 )
                 request_kwargs["extra_body"] = {"models": TOOL_SUPPORTING_MODELS}
 
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name=PLUGIN_NAME,
-                model=request_kwargs["model"],
-                streaming=True,
-            )
-        )
-
         request_start_time = time.perf_counter()
 
         try:
             response = await self._client.chat.completions.create(**request_kwargs)
-        except Exception:
+        except Exception as e:
             logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+            self.metrics.on_llm_error(
+                provider=self.provider_name,
+                error_type=type(e).__name__,
+            )
             yield LLMResponseFinal(original=None, text="")
             return
 
@@ -465,8 +462,12 @@ class OpenRouterLLM(LLM):
 
             try:
                 follow_up = await self._client.chat.completions.create(**request_kwargs)
-            except Exception:
+            except Exception as e:
                 logger.exception("Failed to get follow-up response")
+                self.metrics.on_llm_error(
+                    provider=self.provider_name,
+                    error_type=type(e).__name__,
+                )
                 break
 
             text_chunks: list[str] = []

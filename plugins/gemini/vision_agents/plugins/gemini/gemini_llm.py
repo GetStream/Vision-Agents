@@ -1,3 +1,4 @@
+import logging
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, AsyncIterator, List, Optional
@@ -11,7 +12,6 @@ from google.genai.types import (
     ThinkingLevel,
 )
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import LLMRequestStartedEvent
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem
 from .utils import convert_tools_to_provider_format
@@ -21,6 +21,8 @@ from .tools import GeminiTool
 if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Message
 
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-3.1-pro-preview"
 
@@ -44,6 +46,8 @@ class GeminiLLM(LLM):
           from vision_agents.plugins import gemini
           llm = gemini.LLM()
     """
+
+    provider_name = "gemini"
 
     def __init__(
         self,
@@ -191,25 +195,27 @@ class GeminiLLM(LLM):
         # If no tools and no thinking/media config needed, don't pass config
         # This preserves the system_instruction set during chat creation
 
-        # Emit request started event
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name="gemini", model=self.model, streaming=True
-            )
-        )
-
         # Track timing
         request_start_time = time.perf_counter()
         first_token_time: Optional[float] = None
         sequence_number = 0
 
         # Generate content using the client
-        if config is not None:
-            iterator: AsyncIterator[
-                GenerateContentResponse
-            ] = await self.chat.send_message_stream(message=text, config=config)
-        else:
-            iterator = await self.chat.send_message_stream(message=text)
+        try:
+            if config is not None:
+                iterator: AsyncIterator[
+                    GenerateContentResponse
+                ] = await self.chat.send_message_stream(message=text, config=config)
+            else:
+                iterator = await self.chat.send_message_stream(message=text)
+        except Exception as e:
+            logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+            self.metrics.on_llm_error(
+                provider=self.provider_name,
+                error_type=type(e).__name__,
+            )
+            yield LLMResponseFinal(original=None, text="")
+            return
         text_parts: List[str] = []
         final_chunk = None
         original_response = None

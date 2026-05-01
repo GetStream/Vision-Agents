@@ -7,7 +7,6 @@ from openai import AsyncOpenAI
 from openai.types.responses import Response as OpenAIResponse
 from openai.types.responses import ResponseFunctionToolCall
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import LLMRequestStartedEvent
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
@@ -43,6 +42,8 @@ class OpenAILLM(LLM):
         llm = openai.LLM(model="gpt-5")
 
     """
+
+    provider_name = "openai"
 
     def __init__(
         self,
@@ -106,14 +107,6 @@ class OpenAILLM(LLM):
         if self._instructions:
             base_kwargs["instructions"] = self._instructions
 
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name="openai",
-                model=self.model,
-                streaming=True,
-            )
-        )
-
         request_start_time = time.perf_counter()
         first_token_time: Optional[float] = None
         sequence_number = 0
@@ -134,6 +127,10 @@ class OpenAILLM(LLM):
                         event.error.message if event.error else "Unknown error"
                     )
                     logger.error("OpenAI stream error: %s", error_message)
+                    self.metrics.on_llm_error(
+                        provider=self.provider_name,
+                        error_type="response.error",
+                    )
                 elif event.type == "response.output_text.delta":
                     is_first = first_token_time is None
                     if is_first:

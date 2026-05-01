@@ -1,14 +1,16 @@
 import json
+import logging
 import time
 from typing import Any, AsyncIterator
 
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import LLMRequestStartedEvent
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from xai_sdk import AsyncClient
 from xai_sdk.aio.chat import Chat
 from xai_sdk.chat import Response, system, tool, tool_result, user
+
+logger = logging.getLogger(__name__)
 
 
 class XAILLM(LLM):
@@ -31,6 +33,8 @@ class XAILLM(LLM):
         llm = xai.LLM(model="grok-4-latest")
 
     """
+
+    provider_name = "xai"
 
     def __init__(
         self,
@@ -90,13 +94,6 @@ class XAILLM(LLM):
         assert self.xai_chat is not None
         self.xai_chat.append(user(text))
 
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name="xai",
-                model=self.model,
-                streaming=True,
-            )
-        )
 
         request_start_time = time.perf_counter()
         first_token_time: float | None = None
@@ -108,7 +105,18 @@ class XAILLM(LLM):
         for round_num in range(self._tools_max_rounds + 1):
             pending_tool_calls: list[NormalizedToolCallItem] = []
 
-            async for response, chunk in self.xai_chat.stream():
+            try:
+                stream = self.xai_chat.stream()
+            except Exception as e:
+                logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+                self.metrics.on_llm_error(
+                    provider=self.provider_name,
+                    error_type=type(e).__name__,
+                )
+                yield LLMResponseFinal(original=None, text="")
+                return
+
+            async for response, chunk in stream:
                 last_response = response
 
                 if chunk.content:

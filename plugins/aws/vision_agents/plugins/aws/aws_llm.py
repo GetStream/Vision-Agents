@@ -8,7 +8,6 @@ import boto3
 from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import LLMRequestStartedEvent
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
@@ -46,6 +45,8 @@ class BedrockLLM(LLM):
             region_name="us-east-1"
         )
     """
+
+    provider_name = PLUGIN_NAME
 
     def __init__(
         self,
@@ -168,14 +169,6 @@ class BedrockLLM(LLM):
         if tools:
             request_kwargs["toolConfig"] = {"tools": tools}
 
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name=PLUGIN_NAME,
-                model=self.model,
-                streaming=True,
-            )
-        )
-
         request_start_time = time.perf_counter()
         client = await self.client
 
@@ -183,8 +176,12 @@ class BedrockLLM(LLM):
             stream_events = await asyncio.to_thread(
                 _drain_stream, client, request_kwargs
             )
-        except ClientError:
+        except ClientError as e:
             logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+            self.metrics.on_llm_error(
+                provider=self.provider_name,
+                error_type=type(e).__name__,
+            )
             yield LLMResponseFinal(original=None, text="")
             return
 
@@ -380,8 +377,12 @@ class BedrockLLM(LLM):
                 stream_events = await asyncio.to_thread(
                     _drain_stream, client, request_kwargs
                 )
-            except ClientError:
+            except ClientError as e:
                 logger.exception("Failed to get follow-up response")
+                self.metrics.on_llm_error(
+                    provider=self.provider_name,
+                    error_type=type(e).__name__,
+                )
                 break
 
             text_chunks: list[str] = []

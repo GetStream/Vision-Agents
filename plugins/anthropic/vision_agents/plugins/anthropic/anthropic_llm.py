@@ -14,7 +14,6 @@ from anthropic.types import (
 )
 from vision_agents.core.agents.conversation import Message
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import LLMRequestStartedEvent
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
@@ -44,6 +43,8 @@ class ClaudeLLM(LLM):
         from vision_agents.plugins import anthropic
         llm = anthropic.LLM(model="claude-opus-4-1-20250805")
     """
+
+    provider_name = "anthropic"
 
     def __init__(
         self,
@@ -137,23 +138,21 @@ class ClaudeLLM(LLM):
 
         # Note: Message history is tracked in _conversation, no need to emit as event here
 
-        is_streaming = kwargs.get("stream", True)
-
-        # Emit request started event
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name="anthropic",
-                model=kwargs.get("model", self.model),
-                streaming=is_streaming,
-            )
-        )
-
         # Track timing
         request_start_time = time.perf_counter()
         first_token_time: Optional[float] = None
 
         self._pending_tool_uses_by_index.clear()
-        original = await self.client.messages.create(*args, **kwargs)
+        try:
+            original = await self.client.messages.create(*args, **kwargs)
+        except anthropic.APIError as e:
+            logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+            self.metrics.on_llm_error(
+                provider=self.provider_name,
+                error_type=type(e).__name__,
+            )
+            yield LLMResponseFinal(original=None, text="")
+            return
         if isinstance(original, ClaudeMessage):
             # Extract text from Claude's response format - safely handle all text blocks
             final_original = original

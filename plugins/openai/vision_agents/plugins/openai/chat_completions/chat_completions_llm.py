@@ -6,7 +6,6 @@ from typing import Any, AsyncIterator, Optional, cast
 from openai import AsyncOpenAI, AsyncStream
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import LLMRequestStartedEvent
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
@@ -32,6 +31,8 @@ class ChatCompletionsLLM(LLM):
         llm = openai.ChatCompletionsLLM(model="deepseek-ai/DeepSeek-V3.1")
 
     """
+
+    provider_name = PLUGIN_NAME
 
     def __init__(
         self,
@@ -125,22 +126,17 @@ class ChatCompletionsLLM(LLM):
         if tools:
             request_kwargs["tools"] = tools
 
-        # Emit request started event
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name=PLUGIN_NAME,
-                model=request_kwargs["model"],
-                streaming=True,
-            )
-        )
-
         # Track timing
         request_start_time = time.perf_counter()
 
         try:
             response = await self._client.chat.completions.create(**request_kwargs)
-        except Exception:
+        except Exception as e:
             logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+            self.metrics.on_llm_error(
+                provider=self.provider_name,
+                error_type=type(e).__name__,
+            )
             yield LLMResponseFinal(original=None, text="")
             return
 
