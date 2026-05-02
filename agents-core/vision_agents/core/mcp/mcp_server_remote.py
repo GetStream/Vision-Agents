@@ -16,16 +16,14 @@ from .mcp_base import MCPBaseServer
 async def _open_mcp_session(url: str, headers: Dict[str, str], timeout_seconds: float):
     """Open the streamable-HTTP transport plus a ``ClientSession`` on top of it
     and yield the ready session together with its session-id callback."""
-    async with contextlib.AsyncExitStack() as stack:
-        client_ctx = streamablehttp_client(
-            url,
-            headers=headers,
-            timeout=timedelta(seconds=timeout_seconds),
-        )
-        read, write, get_session_id_cb = await stack.enter_async_context(client_ctx)
-        session = await stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
-        yield session, get_session_id_cb
+    async with streamablehttp_client(
+        url,
+        headers=headers,
+        timeout=timedelta(seconds=timeout_seconds),
+    ) as (read, write, get_session_id_cb):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            yield session, get_session_id_cb
 
 
 class MCPServerRemote(MCPBaseServer):
