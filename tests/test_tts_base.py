@@ -214,6 +214,16 @@ class TestTTS:
         assert len(complete_events) == 1
         assert complete_events[0].chunk_count == 3
 
+    async def test_send_iter_records_synthesis_metric(self):
+        chunks_in = [_make_pcm(100), _make_pcm(100)]
+        tts = DummyTTSAsyncIter(chunks_in)
+
+        await _drain(tts.send_iter("hello"))
+
+        assert tts.metrics.agent_metrics.tts_characters__total.value() == 5
+        assert tts.metrics.agent_metrics.tts_audio_duration_ms__total.value() > 0
+        assert tts.metrics.agent_metrics.tts_latency_ms__avg.value() is not None
+
     async def test_send_iter_error_raises(self):
         tts = DummyTTSError()
 
