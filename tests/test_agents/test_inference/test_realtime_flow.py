@@ -27,7 +27,7 @@ from vision_agents.core.llm.realtime import (
 )
 from vision_agents.core.utils.stream import Stream
 
-from .stubs import RealtimeOutput, RealtimeStub
+from .stubs import RealtimeStub
 
 
 def _silence(samples: int = 320) -> PcmData:
@@ -79,7 +79,14 @@ class TestProcessAudioInput:
     ) -> None:
         index = 0
 
-        async def echo(pcm: PcmData, p: Participant) -> AsyncIterator[RealtimeOutput]:
+        async def echo(
+            pcm: PcmData, p: Participant
+        ) -> AsyncIterator[
+            RealtimeAudioOutput
+            | RealtimeAudioOutputDone
+            | RealtimeUserTranscript
+            | RealtimeAgentTranscript
+        ]:
             nonlocal index
             index += 1
             yield RealtimeAgentTranscript(text=f"chunk-{index}", mode="final")
@@ -114,7 +121,14 @@ class TestProcessAudioInput:
     ) -> None:
         first = True
 
-        async def flaky(pcm: PcmData, p: Participant) -> AsyncIterator[RealtimeOutput]:
+        async def flaky(
+            pcm: PcmData, p: Participant
+        ) -> AsyncIterator[
+            RealtimeAudioOutput
+            | RealtimeAudioOutputDone
+            | RealtimeUserTranscript
+            | RealtimeAgentTranscript
+        ]:
             nonlocal first
             if first:
                 first = False
@@ -417,7 +431,12 @@ class TestSetConversation:
 
         # First batch: drive event 1 to completion against the original
         # conversation, then swap and drive event 2 against the replacement.
-        stream_1: Stream[RealtimeOutput] = Stream()
+        stream_1: Stream[
+            RealtimeAudioOutput
+            | RealtimeAudioOutputDone
+            | RealtimeUserTranscript
+            | RealtimeAgentTranscript
+        ] = Stream()
         task_1 = asyncio.create_task(flow.process_llm_output(stream_1, audio_output))
         stream_1.send_nowait(
             RealtimeUserTranscript(participant=participant, mode="final", text="first")
@@ -427,7 +446,12 @@ class TestSetConversation:
 
         flow.set_conversation(new_conversation)
 
-        stream_2: Stream[RealtimeOutput] = Stream()
+        stream_2: Stream[
+            RealtimeAudioOutput
+            | RealtimeAudioOutputDone
+            | RealtimeUserTranscript
+            | RealtimeAgentTranscript
+        ] = Stream()
         task_2 = asyncio.create_task(flow.process_llm_output(stream_2, audio_output))
         stream_2.send_nowait(
             RealtimeUserTranscript(participant=participant, mode="final", text="second")
