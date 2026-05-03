@@ -65,6 +65,6 @@ class TestTTSSentenceTokenizer:
         # Only the unterminated remainder flushes out.
         assert tokenizer.flush() == "Trailing"
 
-    def test_flush_does_not_sanitize_markdown(self, tokenizer: TTSSentenceTokenizer):
+    def test_flush_does_sanitizes_markdown(self, tokenizer: TTSSentenceTokenizer):
         tokenizer.update("*keep* #raw")
-        assert tokenizer.flush() == "*keep* #raw"
+        assert tokenizer.flush() == "keep raw"

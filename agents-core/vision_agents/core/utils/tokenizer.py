@@ -43,6 +43,6 @@ class TTSSentenceTokenizer(Tokenizer):
         """
         Empty the buffer and return the accumulated text.
         """
-        text = self._buffer.strip()
+        text = sanitize_text(self._buffer).strip()
         self._buffer = ""
         return text
