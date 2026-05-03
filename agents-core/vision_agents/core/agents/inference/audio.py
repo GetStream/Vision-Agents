@@ -94,7 +94,7 @@ class AudioOutputStream(Stream[AudioOutputChunk | AudioOutputFlush]):
                 )
             )
 
-    async def flush(self):
+    async def flush(self) -> None:
         """
         Write a special "flush" message to the stream to signal downstream consumers
         to empty their buffers, e.g. on interrupt.
