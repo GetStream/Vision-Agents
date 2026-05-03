@@ -576,13 +576,6 @@ class XAIRealtime(realtime.Realtime):
                     context=f"xAI error: {error_info.get('type', 'unknown')}",
                 )
 
-            else:
-                # Log unhandled events at INFO so diagnostics are visible
-                # without needing DEBUG. Full payload still logged at DEBUG.
-                logger.info("Unhandled xAI event type: %s", event_type)
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug("Unhandled xAI event payload: %s", data)
-
     def _handle_response_done(self, data: dict[str, Any]) -> None:
         """Handle response.done event."""
         response = data.get("response", {})
