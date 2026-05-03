@@ -136,49 +136,6 @@ Some important things about audio inside the library:
 5. Adjusting from stereo to mono and vice-versa can be done using the `PcmData.resample` method
 6. `PcmData` comes with convenience constructor methods to build from bytes, iterators, ndarray, ...
 
-## Simple Example
-
-```python
-import asyncio
-from getstream.video.rtc.track_util import PcmData
-from openai import AsyncOpenAI
-
-
-async def example():
-    client = AsyncOpenAI(api_key="sk-42")
-
-    resp = await client.audio.speech.create(
-        model="gpt-4o-mini-tts",
-        voice="alloy",
-        input="pcm is cool, give me some of that please",
-        response_format="pcm",
-    )
-
-    # load response into PcmData, note that you need to specify sample_rate, channels and format
-    pcm_data = PcmData.from_bytes(
-        resp.content, sample_rate=24_000, channels=1, format="s16"
-    )
-
-    # check if pcm_data is stereo (it's not in this case ofc)
-    print(pcm_data.stereo)
-
-    # write the pcm to file
-    with open("test.wav", "wb") as f:
-        f.write(pcm_data.to_wav_bytes())
-
-    # resample pcm to be 48khz stereo
-    resampled_pcm = pcm_data.resample(48_000, 2)
-
-    # play-out pcm using ffplay (you need to have PLAY_AUDIO=1 envvar)
-    from vision_agents.core.tts.manual_test import play_pcm_with_ffplay
-
-    await play_pcm_with_ffplay(resampled_pcm)
-
-
-if __name__ == "__main__":
-    asyncio.run(example())
-```
-
 ### Testing audio manually
 
 Sometimes you need to test audio manually, here's some tips:
