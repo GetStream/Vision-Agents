@@ -455,7 +455,7 @@ class AudioLLM(LLM, metaclass=abc.ABCMeta):
 
         Args:
             pcm: PCM audio frame to forward upstream.
-            participant: Optional participant information for the audio source.
+            participant: participant information for the audio source.
         """
 
 
