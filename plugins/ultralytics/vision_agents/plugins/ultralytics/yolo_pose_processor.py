@@ -100,7 +100,7 @@ class YOLOPoseProcessor(VideoProcessorPublisher):
             shared_forwarder
             if shared_forwarder
             else VideoForwarder(
-                incoming_track,
+                track,
                 max_buffer=self.fps,  # 1 second
                 fps=self.fps,
                 name="yolo_forwarder",
