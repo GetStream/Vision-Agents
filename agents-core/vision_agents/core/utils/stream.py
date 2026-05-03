@@ -82,7 +82,7 @@ class Stream(Generic[T]):
         while self.full():
             if self.closed():
                 raise StreamClosed("Stream is closed")
-            sender = asyncio.Future()
+            sender: asyncio.Future = asyncio.Future()
             self._senders.append(sender)
             try:
                 await sender
@@ -107,7 +107,7 @@ class Stream(Generic[T]):
         while self.empty():
             if self.closed() and self.empty():
                 raise StreamClosed("Stream is closed")
-            getter = asyncio.Future()
+            getter: asyncio.Future = asyncio.Future()
             self._getters.append(getter)
             try:
                 await getter
