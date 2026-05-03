@@ -5,7 +5,6 @@ import time
 from typing import Any, AsyncIterator
 
 import boto3
-from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
@@ -17,9 +16,7 @@ logger = logging.getLogger(__name__)
 PLUGIN_NAME = "aws"
 
 
-def _drain_stream(
-    client: BaseClient, request_kwargs: dict[str, Any]
-) -> list[dict[str, Any]]:
+def _drain_stream(client, request_kwargs: dict[str, Any]) -> list[dict[str, Any]]:
     """Synchronously consume a Bedrock converse_stream response into a list."""
     response = client.converse_stream(**request_kwargs)
     stream = response.get("stream")
