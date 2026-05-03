@@ -21,11 +21,7 @@ from vision_agents.core.utils.text import sanitize_text
 from vision_agents.core.utils.tokenizer import TTSSentenceTokenizer
 from vision_agents.core.utils.utils import cancel_and_wait
 
-from .audio import (
-    AudioInputStream,
-    AudioOutputChunk,
-    AudioOutputStream,
-)
+from .audio import AudioInputStream, AudioOutputChunk, AudioOutputStream
 from .base import InferenceFlow
 from .llm_turn import LLMTurn
 
@@ -42,10 +38,10 @@ class TranscribingInferenceFlow(InferenceFlow):
         audio_input: AudioInputStream,
         audio_output: AudioOutputStream,
         llm: LLM,
-        stt: STT,
         transcripts: TranscriptStore,
         agent_user_id: str,
         conversation: "Conversation",
+        stt: STT | None = None,
         turn_detector: TurnDetector | None = None,
         tts: TTS | None = None,
         otlp_context: Context | None = None,
@@ -64,7 +60,9 @@ class TranscribingInferenceFlow(InferenceFlow):
         self._turn_detector = turn_detector
         # Neither the STT nor an external TurnDetector drives turn boundaries,
         # so a final Transcript is treated as the commit signal on its own.
-        self._no_turn_detection = turn_detector is None and not stt.turn_detection
+        self._no_turn_detection = turn_detector is None and (
+            not stt or not stt.turn_detection
+        )
 
         self._transcripts = transcripts
         self._audio_input = audio_input
@@ -99,28 +97,34 @@ class TranscribingInferenceFlow(InferenceFlow):
             raise RuntimeError("The flow is already running")
         self._running = True
 
-        stt_output = self._stt.output
-        if self._turn_detector:
-            turndetector_output = self._turn_detector.output
-            self._turn_detection_task = asyncio.create_task(
-                self.process_turn_detection(turndetector_output, stt_output)
-            )
+        # Start input audio processing if STT is not None
+        # (it can be None for backwards compatibility with the old event-based Agent)
+        if self._stt:
+            stt_output = self._stt.output
+            if self._turn_detector:
+                turndetector_output = self._turn_detector.output
+                self._turn_detection_task = asyncio.create_task(
+                    self.process_turn_detection(turndetector_output, stt_output)
+                )
 
-        self._audio_input_task = asyncio.create_task(
-            self.process_audio_input(self._audio_input)
-        )
-        self._stt_output_task = asyncio.create_task(
-            self.process_stt_output(stt_output, self._llm_output)
-        )
+            self._audio_input_task = asyncio.create_task(
+                self.process_audio_input(self._audio_input)
+            )
+            self._stt_output_task = asyncio.create_task(
+                self.process_stt_output(stt_output, self._llm_output)
+            )
         self._llm_output_processing_task = asyncio.create_task(
             self.process_llm_output(self._llm_output, self._tts_input)
         )
-        self._tts_task = asyncio.create_task(
-            self.process_tts(self._tts_input, self._tts_output)
-        )
-        self._audio_output_task = asyncio.create_task(
-            self.write_audio_output(self._tts_output, self._audio_output)
-        )
+
+        # TTS can be None for backwards compatibility with the old event-based Agent
+        if self._tts:
+            self._tts_task = asyncio.create_task(
+                self.process_tts(self._tts_input, self._tts_output)
+            )
+            self._audio_output_task = asyncio.create_task(
+                self.write_audio_output(self._tts_output, self._audio_output)
+            )
 
     async def stop(self):
         self._running = False
@@ -236,6 +240,8 @@ class TranscribingInferenceFlow(InferenceFlow):
     async def process_audio_input(self, audio_input: AudioInputStream) -> None:
         turn_detector = self._turn_detector
         stt = self._stt
+        if stt is None:
+            return
 
         async for chunk in audio_input:
             with log_exceptions(logger, "Error while processing audio input"):
