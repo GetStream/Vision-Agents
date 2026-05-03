@@ -371,8 +371,7 @@ class Agent:
             interrupt: If True (default), preempt any in-flight LLM turn. If
                 False, drop silently when a turn is already in flight.
         """
-        with self.tracer.start_as_current_span("agent.simple_response") as span:
-            span.set_attribute("text", text)
+        with self.tracer.start_as_current_span("agent.simple_response"):
             if participant is None:
                 participant = Participant(
                     original=self.agent_user,
@@ -390,8 +389,7 @@ class Agent:
                 pipeline first. If False (default), queue behind ongoing speech.
         """
         self.logger.info('🔊 Agent say: "%s"', text)
-        with self.tracer.start_as_current_span("agent.say") as span:
-            span.set_attribute("text", text)
+        with self.tracer.start_as_current_span("agent.say"):
             await self._flow.say(text, interrupt=interrupt)
 
         if self.conversation is not None:
