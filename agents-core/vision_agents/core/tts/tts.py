@@ -15,6 +15,7 @@ from typing import (
 from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
+from vision_agents.core.observability import MetricsCollector
 
 from . import events
 from .events import (
@@ -84,6 +85,7 @@ class TTS(abc.ABC):
         self.provider_name = provider_name or self.__class__.__name__
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
+        self.metrics = MetricsCollector()
 
         # Monotonic epoch counter; incremented on interrupt so stale events
         # emitted before the interrupt can be identified and dropped.
@@ -408,6 +410,12 @@ class TTS(abc.ABC):
                     chunk_count=chunk_index,
                     real_time_factor=real_time_factor,
                 )
+            )
+            self.metrics.on_tts_synthesis(
+                provider=self.provider_name,
+                synthesis_time_ms=synthesis_time * 1000,
+                audio_duration_ms=estimated_audio_duration_ms,
+                character_count=len(text),
             )
         except Exception:
             raise
