@@ -29,14 +29,18 @@ class MetricsCollector:
         (``parent is None``) writes to OpenTelemetry meters, keeping OTel
         writes singular per event.
 
+        Re-merging the same child into the same parent is a no-op.
+        Merging a child that already has a different parent reparents it
+        to this collector.
+
         Raises:
-            ValueError: if ``child is self``, ``child`` already has a parent,
-                or the merge would create a cycle.
+            ValueError: if ``child is self`` or the merge would create a
+                cycle.
         """
         if child is self:
             raise ValueError("cannot merge a collector into itself")
-        if child.parent is not None:
-            raise ValueError("child already has a parent")
+        if child.parent is self:
+            return
         node: Self | None = self
         while node is not None:
             if node is child:
