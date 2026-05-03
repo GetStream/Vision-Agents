@@ -15,20 +15,19 @@ import json
 import logging
 import os
 from asyncio import CancelledError
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 from urllib.parse import urlencode
 
 import aiohttp
 import websockets
-from websockets.asyncio.client import ClientConnection
-from xai_sdk import AsyncClient
-
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
 from vision_agents.core.llm.events import LLMResponseChunkEvent
-from vision_agents.core.llm.llm import LLMResponseEvent
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import ToolSchema
+from websockets.asyncio.client import ClientConnection
+from xai_sdk import AsyncClient
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +58,8 @@ def _should_reconnect(exc: Exception) -> bool:
 
 
 class XAIRealtime(realtime.Realtime):
+    provider_name = "xai_realtime"
+
     """
     xAI Realtime API implementation for real-time voice conversations.
 
@@ -143,7 +144,6 @@ class XAIRealtime(realtime.Realtime):
         self.web_search = web_search
         self.x_search = x_search
         self.x_search_allowed_handles = x_search_allowed_handles
-        self.provider_name = "xai"
 
         # Initialize API key and client
         self._api_key = api_key or os.environ.get("XAI_API_KEY")
@@ -237,6 +237,7 @@ class XAIRealtime(realtime.Realtime):
         except (OSError, websockets.WebSocketException, asyncio.TimeoutError) as e:
             logger.error(f"Failed to connect to xAI realtime: {e}")
             logger.error("Check that XAI_API_KEY is valid and has realtime API access")
+            self._emit_error_event(error=e, context="connect")
             raise
 
         # Configure the session
@@ -347,16 +348,13 @@ class XAIRealtime(realtime.Realtime):
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent[Any]:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """
         Send a text message and request a response.
 
         Args:
             text: Text message to send.
             participant: Optional participant information.
-
-        Returns:
-            LLMResponseEvent with empty text (actual response comes via events).
         """
         try:
             # Create a conversation item with the text
@@ -373,12 +371,13 @@ class XAIRealtime(realtime.Realtime):
             response_event = {"type": "response.create"}
             await self._send_event(response_event)
 
-            return LLMResponseEvent(text="", original=None)
+            yield LLMResponseFinal()
         except (ConnectionError, websockets.WebSocketException) as e:
             if _should_reconnect(e):
                 await self.connect()
             logger.exception("Failed to send message to xAI realtime")
-            return LLMResponseEvent(text="", original=None, exception=e)
+            self._emit_error_event(error=e, context="simple_response")
+            yield LLMResponseFinal()
 
     async def simple_audio_response(
         self, pcm: PcmData, participant: Optional[Participant] = None
@@ -484,16 +483,11 @@ class XAIRealtime(realtime.Realtime):
             elif event_type == "conversation.created":
                 logger.debug("Conversation created: %s", data.get("conversation", {}))
 
-            elif event_type == "conversation.item.added":
-                self._handle_conversation_item_added(data)
-
             elif event_type == "conversation.item.input_audio_transcription.completed":
                 # User speech transcription
                 transcript = data.get("transcript", "")
                 if transcript:
-                    self._emit_user_speech_transcription(
-                        text=transcript, mode="final", original=data
-                    )
+                    self._emit_user_speech_transcription(text=transcript, mode="final")
 
             elif event_type == "input_audio_buffer.speech_started":
                 logger.debug("Speech started detected")
@@ -514,7 +508,6 @@ class XAIRealtime(realtime.Realtime):
                 logger.debug("Audio buffer cleared")
 
             elif event_type == "response.created":
-                self._begin_response()
                 logger.debug("Response generation started")
 
             elif event_type == "response.output_item.added":
@@ -526,14 +519,12 @@ class XAIRealtime(realtime.Realtime):
                     self._emit_agent_speech_transcription(
                         text=delta,
                         mode="delta",
-                        original=data,
                     )
 
             elif event_type == "response.output_audio_transcript.done":
                 self._emit_agent_speech_transcription(
                     text="",
                     mode="final",
-                    original=data,
                 )
 
             elif event_type == "response.output_audio.delta":
@@ -543,7 +534,7 @@ class XAIRealtime(realtime.Realtime):
                     audio_bytes = base64.b64decode(audio_base64)
                     pcm = PcmData.from_bytes(audio_bytes, self.sample_rate)
                     self._emit_audio_output_event(
-                        audio_data=pcm, response_id=data.get("response_id")
+                        pcm=pcm, response_id=data.get("response_id")
                     )
 
             elif event_type == "response.output_audio.done":
@@ -591,22 +582,6 @@ class XAIRealtime(realtime.Realtime):
                 logger.info("Unhandled xAI event type: %s", event_type)
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug("Unhandled xAI event payload: %s", data)
-
-    def _handle_conversation_item_added(self, data: dict[str, Any]) -> None:
-        """Handle conversation.item.added event."""
-        item = data.get("item", {})
-        item_id = item.get("id")
-        item_type = item.get("type")
-        role = item.get("role")
-        content = item.get("content", [])
-
-        self._emit_conversation_item_event(
-            item_id=item_id,
-            item_type=item_type,
-            status=item.get("status", "completed"),
-            role=role,
-            content=content,
-        )
 
     def _handle_response_done(self, data: dict[str, Any]) -> None:
         """Handle response.done event."""

@@ -1,6 +1,10 @@
+import asyncio
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Callable
+
+from vision_agents.core.utils.logging import logger
 
 
 @contextmanager
@@ -27,3 +31,18 @@ def log_exceptions(
         logger.exception(message)
         if reraise:
             raise
+
+
+def log_task_exception(message: str) -> Callable[[asyncio.Task], None]:
+    """
+    A done_callback to log exceptions in the failed tasks
+    Args:
+        message: An error message to log.
+
+    """
+
+    def wrapper(task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(message, exc_info=task.exception())
+
+    return wrapper

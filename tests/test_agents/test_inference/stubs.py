@@ -119,19 +119,17 @@ class LLMStub(LLM):
         return cls(factory=factory)
 
 
-RealtimeOutput = (
-    RealtimeAudioOutput
-    | RealtimeAudioOutputDone
-    | RealtimeUserTranscript
-    | RealtimeAgentTranscript
-)
-
-
 class RealtimeStub(Realtime):
     def __init__(
         self,
         audio_factory: Callable[
-            [PcmData, Participant], AsyncIterator[RealtimeOutput]
+            [PcmData, Participant],
+            AsyncIterator[
+                RealtimeAudioOutput
+                | RealtimeAudioOutputDone
+                | RealtimeUserTranscript
+                | RealtimeAgentTranscript
+            ],
         ]
         | None = None,
     ) -> None:
@@ -142,7 +140,13 @@ class RealtimeStub(Realtime):
     def from_callable(
         cls,
         audio_factory: Callable[
-            [PcmData, Participant], AsyncIterator[RealtimeOutput]
+            [PcmData, Participant],
+            AsyncIterator[
+                RealtimeAudioOutput
+                | RealtimeAudioOutputDone
+                | RealtimeUserTranscript
+                | RealtimeAgentTranscript
+            ],
         ],
     ) -> Self:
         return cls(audio_factory=audio_factory)

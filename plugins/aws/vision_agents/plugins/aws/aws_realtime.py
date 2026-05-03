@@ -4,7 +4,7 @@ import datetime
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import aiortc
 import boto3
@@ -27,6 +27,8 @@ from smithy_core.aio.interfaces.identity import IdentityResolver
 from vision_agents.core.agents.agent_types import AgentOptions
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.utils.exceptions import log_task_exception
 from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
@@ -189,6 +191,8 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         await llm.close()
     """
 
+    provider_name = "aws_realtime"
+
     voice_id: str
     options: AgentOptions
 
@@ -293,9 +297,11 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         self.last_connected_at = datetime.datetime.now()
 
         # Start listener task
-        self._handle_event_task = asyncio.create_task(
-            self._handle_events(self.connection)
+        handle_event_task = asyncio.create_task(self._handle_events(self.connection))
+        handle_event_task.add_done_callback(
+            log_task_exception("Failed to handle events from AWS Realtime")
         )
+        self._handle_event_task = handle_event_task
 
         # send start and prompt event
         event = self._create_session_start_event()
@@ -497,11 +503,12 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         content_name = str(uuid.uuid4())
 
         await self.audio_content_start(content_name)
-        self._emit_audio_input_event(pcm)
 
-        # Convert PcmData to base64 encoded bytes
-        audio_base64 = base64.b64encode(pcm.samples).decode("utf-8")
-        await self.audio_input(content_name, audio_base64)
+        # Nova bidi expects streaming chunks, not one giant blob.
+        # 100ms @ 24kHz mono s16 = 2400 samples per chunk.
+        for chunk in pcm.chunks(2400):
+            audio_base64 = base64.b64encode(chunk.samples).decode("utf-8")
+            await self.audio_input(content_name, audio_base64)
 
         await self.content_end(content_name)
 
@@ -509,7 +516,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ):
+    ) -> AsyncIterator["LLMResponseDelta | LLMResponseFinal"]:
         """
         Simple response standardizes how to send a text instruction to this LLM.
 
@@ -520,6 +527,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         """
         self.logger.info("Simple response called with text: %s", text)
         await self.content_input(content=text, role="USER")
+        yield LLMResponseFinal()
 
     async def content_input(self, content: str, role: str, interactive: bool = True):
         """
@@ -845,6 +853,12 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         if error:
             response_data = {"error": str(error)}
             logger.error(f"Tool call {tool_name} failed: {error}")
+            self._emit_error_event(
+                error=error
+                if isinstance(error, BaseException)
+                else Exception(str(error)),
+                context=f"tool_call:{tool_name}",
+            )
         else:
             response_data = result
 
@@ -982,7 +996,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                         self._emit_user_speech_transcription(
                                             text=_delta,
                                             mode="delta",
-                                            original=json_data,
                                         )
                                     elif (
                                         self.role == "ASSISTANT"
@@ -991,7 +1004,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                         self._emit_agent_speech_transcription(
                                             text=_delta,
                                             mode="delta",
-                                            original=json_data,
                                         )
                                 else:
                                     logger.info(
@@ -1001,7 +1013,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                     self._emit_audio_output_done_event()
 
                             elif "completionStart" in json_data["event"]:
-                                self._begin_response()
                                 logger.debug(
                                     "Completion start from AWS Bedrock: %s",
                                     json_data["event"]["completionStart"],
@@ -1014,7 +1025,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 audio_bytes = base64.b64decode(audio_content)
                                 pcm = PcmData.from_bytes(audio_bytes, self.sample_rate)
                                 self._emit_audio_output_event(
-                                    audio_data=pcm,
+                                    pcm=pcm,
                                 )
 
                             elif "toolUse" in json_data["event"]:
