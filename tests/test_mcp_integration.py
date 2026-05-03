@@ -1,14 +1,14 @@
 import asyncio
 import os
-import pytest
 
-from vision_agents.core.mcp.mcp_server_local import MCPServerLocal
-from vision_agents.core.mcp.mcp_server_remote import MCPServerRemote
+import pytest
+from dotenv import load_dotenv
 from vision_agents.core.agents import Agent
 from vision_agents.core.edge.types import User
+from vision_agents.core.mcp.mcp_server_local import MCPServerLocal
+from vision_agents.core.mcp.mcp_server_remote import MCPServerRemote
+from vision_agents.plugins import deepgram, elevenlabs, getstream
 from vision_agents.plugins.openai.openai_llm import OpenAILLM
-from vision_agents.plugins import getstream, elevenlabs, deepgram
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -353,7 +353,7 @@ async def test_openai_llm_mcp_weather_integration():
 
     try:
         # Connect to MCP server
-        await agent._connect_mcp_servers()
+        await agent.mcp_manager.connect_all()
 
         # Verify tools are registered
         available_functions = agent.llm.get_available_functions()
