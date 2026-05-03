@@ -20,7 +20,6 @@ def _has_aws_creds() -> bool:
     )
 
 
-@pytest.mark.skip
 @pytest.mark.integration
 class TestAWSPollyTTSIntegration:
     @pytest.fixture
