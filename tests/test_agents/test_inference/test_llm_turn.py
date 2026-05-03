@@ -213,6 +213,27 @@ class TestLLMTurn:
         assert m.llm_latency_ms__avg.value() == 42.0
         assert m.llm_time_to_first_token_ms__avg.value() == 7.0
 
+    async def test_finalized_when_simple_response_raises(
+        self, participant: Participant
+    ) -> None:
+        delta = LLMResponseDelta(delta="par", item_id="m1", content_index=0)
+
+        async def explode(_text: str, _participant: Participant | None):
+            yield delta
+            raise RuntimeError("boom")
+
+        llm = LLMStub.from_callable(explode)
+        turn = LLMTurn(transcript="hi", participant=participant)
+        out: Stream[LLMResponseDelta | LLMResponseFinal] = Stream()
+
+        turn.start(llm)
+        turn.confirm()
+        turn.finalize(out)
+
+        assert await out.collect(timeout=2.0) == [delta]
+        assert turn.finalized
+        assert not turn.cancelled
+
     async def test_output_stays_empty_until_finalize_then_receives_response(
         self, participant: Participant
     ) -> None:

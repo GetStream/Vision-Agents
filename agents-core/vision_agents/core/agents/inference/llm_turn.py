@@ -107,7 +107,7 @@ class LLMTurn:
         self._confirmed = True
 
     async def _do_llm_response(self, llm: LLM):
-        with tracer.start_as_current_span("simple_response") as span:
+        with tracer.start_as_current_span("simple_response"):
             try:
                 async for item in llm.simple_response(
                     self.transcript, self.participant
@@ -122,14 +122,15 @@ class LLMTurn:
                             input_tokens=item.input_tokens,
                             output_tokens=item.output_tokens,
                         )
-                        self.stream.close()
 
-                span.set_attribute("text", self.transcript)
             except asyncio.CancelledError:
                 # Interrupt llm when the turn is cancelled to give it a chance
                 # to stop some heavy async work (e.g. inference in a different thread)
                 await llm.interrupt()
                 raise
+            finally:
+                # Close stream no matter what to free consumer iterators
+                self.stream.close()
 
     async def _do_finalize(self, output: Stream[LLMResponseDelta | LLMResponseFinal]):
         """
