@@ -9,7 +9,7 @@ import pytest
 import torch
 from av import VideoFrame
 from conftest import skip_blockbuster
-from tests.utils import collect_simple_response
+from vision_agents.testing import collect_simple_response
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.llm.llm import LLMResponseFinal
 from vision_agents.plugins.huggingface.transformers_vlm import (

@@ -18,7 +18,7 @@ from openai.types.chat.chat_completion_chunk import (
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.plugins.openai import ChatCompletionsLLM, ChatCompletionsVLM
 
-from tests.utils import collect_simple_response
+from vision_agents.testing import collect_simple_response
 
 
 @pytest.fixture()

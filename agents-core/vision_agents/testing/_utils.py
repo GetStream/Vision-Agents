@@ -3,20 +3,22 @@ from typing import AsyncIterator
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 
 
-async def simple_response_final(
+async def collect_simple_response(
     it: AsyncIterator[LLMResponseDelta | LLMResponseFinal],
-) -> LLMResponseFinal | None:
+) -> tuple[list[LLMResponseDelta], LLMResponseFinal]:
     """
-    A helper to iterate over `llm.simple_response` and return only a final chunk.
-
-    Args:
-        it: An iterator over ``llm.simple_response``.
-
-    Returns:
-        LLMResponseFinal or ``None``.
-
+    Iterate over LLM.simple_response() and collect the returned chunks.
     """
-    async for chunk in it:
-        if isinstance(chunk, LLMResponseFinal):
-            return chunk
-    return None
+    deltas: list[LLMResponseDelta] = []
+    final_response: LLMResponseFinal | None = None
+
+    async for item in it:
+        if isinstance(item, LLMResponseDelta):
+            deltas.append(item)
+        else:
+            final_response = item
+
+    assert final_response is not None, (
+        "simple_response() ended without yielding an LLMResponseFinal chunk"
+    )
+    return deltas, final_response

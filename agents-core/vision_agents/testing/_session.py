@@ -15,7 +15,7 @@ from ._events import (
 )
 from ._mock_tools import mock_functions as _mock_functions
 from ._run_result import TestResponse
-from ._utils import simple_response_final
+from ._utils import collect_simple_response
 
 
 class TestSession:
@@ -124,10 +124,12 @@ class TestSession:
                     content=text,
                 )
 
-            response = await simple_response_final(self._llm.simple_response(text=text))
+            _, response = await collect_simple_response(
+                self._llm.simple_response(text=text)
+            )
 
         events: list[RunEvent] = list(self._captured_events)
-        if response and response.text:
+        if response.text:
             events.append(ChatMessageEvent(role="assistant", content=response.text))
 
             if self._conversation is not None:

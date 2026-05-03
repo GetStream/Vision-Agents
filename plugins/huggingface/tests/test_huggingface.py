@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 from av import VideoFrame
-from tests.utils import collect_simple_response
+from vision_agents.testing import collect_simple_response
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.plugins.huggingface import LLM, VLM
 

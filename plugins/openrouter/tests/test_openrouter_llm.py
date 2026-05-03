@@ -8,7 +8,7 @@ from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.instructions import Instructions
 from vision_agents.plugins.openrouter import LLM
 
-from tests.utils import collect_simple_response
+from vision_agents.testing import collect_simple_response
 
 load_dotenv()
 

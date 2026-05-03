@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
 from vision_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
 
-from tests.utils import collect_simple_response
+from vision_agents.testing import collect_simple_response
 
 load_dotenv()
 

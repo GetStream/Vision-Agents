@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from vision_agents.core.agents.conversation import Message
 from vision_agents.plugins.openai.openai_llm import OpenAILLM
 
-from tests.utils import collect_simple_response
+from vision_agents.testing import collect_simple_response
 
 load_dotenv()
 

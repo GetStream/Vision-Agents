@@ -4,7 +4,7 @@ import pytest
 from dotenv import load_dotenv
 from vision_agents.plugins.xai.llm import XAILLM
 
-from tests.utils import collect_simple_response
+from vision_agents.testing import collect_simple_response
 
 load_dotenv()
 

@@ -7,7 +7,7 @@ from vision_agents.plugins.gemini.gemini_llm import (
     GeminiLLM,
 )
 
-from tests.utils import collect_simple_response
+from vision_agents.testing import collect_simple_response
 
 load_dotenv()
 

@@ -11,7 +11,7 @@ from typing import Protocol, runtime_checkable
 
 from vision_agents.core.llm.llm import LLM
 from vision_agents.testing import ChatMessageEvent
-from vision_agents.testing._utils import simple_response_final
+from vision_agents.testing._utils import collect_simple_response
 
 logger = logging.getLogger(__name__)
 
@@ -80,11 +80,11 @@ class LLMJudge:
         )
 
         try:
-            response = await simple_response_final(
+            _, response = await collect_simple_response(
                 self._llm.simple_response(text=prompt)
             )
 
-            if not response or not response.text:
+            if not response.text:
                 return JudgeVerdict(
                     success=False, reason="LLM returned an empty response."
                 )

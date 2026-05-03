@@ -4,7 +4,7 @@ import os
 
 import pytest
 from dotenv import load_dotenv
-from tests.utils import collect_simple_response
+from vision_agents.testing import collect_simple_response
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.plugins.sarvam import LLM
 from vision_agents.plugins.sarvam.llm import _ThinkTagFilter
