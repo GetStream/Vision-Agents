@@ -77,7 +77,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     call = await agent.create_call(call_type, call_id)
 
     async with agent.join(call):
-        await agent.llm.simple_response(
+        await agent.simple_response(
             text="Say hi. After the user does their golf swing offer helpful feedback."
         )
         await agent.finish()

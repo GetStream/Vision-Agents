@@ -91,7 +91,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("Agent joined call")
 
         await asyncio.sleep(3)
-        await agent.llm.simple_response(
+        await agent.simple_response(
             text=(
                 "Thank you for contacting CloudSync Pro support. "
                 "My name is Alex. I'm here to help you get things sorted out. "
