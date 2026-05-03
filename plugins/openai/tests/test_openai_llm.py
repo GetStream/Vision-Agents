@@ -2,9 +2,8 @@ import os
 
 import pytest
 from dotenv import load_dotenv
-from vision_agents.core.agents.conversation import Message
+from vision_agents.core.agents.conversation import InMemoryConversation, Message
 from vision_agents.plugins.openai.openai_llm import OpenAILLM
-
 from vision_agents.testing import collect_simple_response
 
 load_dotenv()
@@ -13,6 +12,7 @@ load_dotenv()
 @pytest.fixture
 async def llm():
     llm = OpenAILLM(model="gpt-4o")
+    llm.set_conversation(InMemoryConversation("be friendly", []))
     yield llm
     await llm.close()
 
