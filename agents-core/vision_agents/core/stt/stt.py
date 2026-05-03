@@ -31,12 +31,7 @@ class Transcript:
 
     participant: Participant
     mode: TranscriptMode
-    text: str = ""
-    confidence: float | None = None
-    language: str | None = None
-    processing_time_ms: float | None = None
-    audio_duration_ms: float | None = None
-    model_name: str | None = None
+    text: str
     response: TranscriptResponse = field(default_factory=TranscriptResponse)
 
     def __post_init__(self):
@@ -46,6 +41,26 @@ class Transcript:
     @property
     def final(self) -> bool:
         return self.mode == "final"
+
+    @property
+    def confidence(self) -> float | None:
+        return self.response.confidence
+
+    @property
+    def language(self) -> str | None:
+        return self.response.language
+
+    @property
+    def processing_time_ms(self) -> float | None:
+        return self.response.processing_time_ms
+
+    @property
+    def audio_duration_ms(self) -> float | None:
+        return self.response.audio_duration_ms
+
+    @property
+    def model_name(self) -> str | None:
+        return self.response.model_name
 
 
 class STT(abc.ABC):
@@ -105,21 +120,20 @@ class STT(abc.ABC):
         mode: TranscriptMode = "final",
     ) -> None:
         """Push a Transcript to the output stream and record metrics on final."""
-        self._output.send_nowait(
-            Transcript(
-                text=text,
-                participant=participant,
-                mode=mode,
-                response=response,
-            )
+        transcript = Transcript(
+            participant=participant,
+            mode=mode,
+            text=text,
+            response=response,
         )
-        if mode == "final":
+        self._output.send_nowait(transcript)
+        if transcript.final:
             self.metrics.on_stt_transcript(
                 provider=self.provider_name,
-                model=response.model_name,
-                language=response.language,
-                processing_time_ms=response.processing_time_ms,
-                audio_duration_ms=response.audio_duration_ms,
+                model=transcript.model_name,
+                language=transcript.language,
+                processing_time_ms=transcript.processing_time_ms,
+                audio_duration_ms=transcript.audio_duration_ms,
             )
 
     def _emit_turn_ended_event(
