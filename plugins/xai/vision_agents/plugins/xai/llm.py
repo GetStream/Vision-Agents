@@ -94,7 +94,6 @@ class XAILLM(LLM):
         assert self.xai_chat is not None
         self.xai_chat.append(user(text))
 
-
         request_start_time = time.perf_counter()
         first_token_time: float | None = None
         sequence_number = 0
@@ -108,7 +107,9 @@ class XAILLM(LLM):
             try:
                 stream = self.xai_chat.stream()
             except Exception as e:
-                logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+                logger.exception(
+                    f'Failed to get a response from the LLM "{self.model}"'
+                )
                 self.metrics.on_llm_error(
                     provider=self.provider_name,
                     error_type=type(e).__name__,
