@@ -130,3 +130,22 @@ class TestAudioOutputStream:
         stream.send_nowait(AudioOutputChunk(data=make_pcm(10)))
         assert stream.empty()
         assert stream.buffered == pytest.approx(0.01)
+
+    async def test_buffered_ignores_flush(self, stream: AudioOutputStream):
+        stream.send_nowait(AudioOutputFlush())
+        assert stream.buffered == 0.0
+
+    async def test_buffered_ignores_chunk_with_none_data(
+        self, stream: AudioOutputStream
+    ):
+        stream.send_nowait(AudioOutputChunk(data=None, final=True))
+        assert stream.buffered == 0.0
+
+    async def test_buffered_after_final_excludes_terminal_marker(
+        self, stream: AudioOutputStream
+    ):
+        stream.send_nowait(AudioOutputChunk(data=make_pcm(20), final=True))
+        # Stream now holds the real 20ms chunk plus a zero-sample terminal marker.
+        assert len(stream.peek()) == 2
+        # Only the real chunk contributes to buffered duration.
+        assert stream.buffered == pytest.approx(0.02)

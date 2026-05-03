@@ -39,7 +39,11 @@ class AudioOutputStream(Stream[AudioOutputChunk | AudioOutputFlush]):
     @property
     def buffered(self) -> float:
         """Return the amount of seconds of audio pending in the buffer."""
-        seconds = len(self._items) * self._chunk_size_ms / 1000
+        seconds = sum(
+            item.data.duration
+            for item in self._items
+            if isinstance(item, AudioOutputChunk) and item.data is not None
+        )
         if self._carry is not None:
             seconds += self._carry.duration
         return seconds
