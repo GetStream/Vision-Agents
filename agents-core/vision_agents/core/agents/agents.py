@@ -529,9 +529,10 @@ class Agent:
             self._audio_consumer_task = asyncio.create_task(
                 self._consume_incoming_audio()
             )
-            self._audio_producer_task = asyncio.create_task(
-                self._produce_audio_output()
-            )
+            if self.publish_audio:
+                self._audio_producer_task = asyncio.create_task(
+                    self._produce_audio_output()
+                )
 
             # Start metrics broadcast if enabled
             if self._broadcast_metrics:
@@ -890,7 +891,7 @@ class Agent:
 
     async def _produce_audio_output(self):
         if self._audio_track is None:
-            raise ValueError("Output audio track is not set")
+            return
 
         try:
             while self._call_ended_event and not self._call_ended_event.is_set():
