@@ -1,17 +1,27 @@
 import abc
 
+from vision_agents.core.agents.conversation import Conversation
 from vision_agents.core.edge.types import Participant
 
 
 class InferenceFlow(abc.ABC):
     @abc.abstractmethod
-    async def start(self): ...
+    async def start(self):
+        """
+        Start the inference flow.
+        """
 
     @abc.abstractmethod
-    async def stop(self): ...
+    async def stop(self):
+        """
+        Stop the inference flow.
+        """
 
     @abc.abstractmethod
-    async def interrupt(self): ...
+    async def interrupt(self):
+        """
+        Interrupt the inference flow.
+        """
 
     @abc.abstractmethod
     async def simple_response(
@@ -40,3 +50,9 @@ class InferenceFlow(abc.ABC):
                 pipeline first. If False (default), queue behind ongoing speech.
         """
         ...
+
+    @abc.abstractmethod
+    def set_conversation(self, conversation: Conversation) -> None:
+        """
+        Provide the conversation history to the InferenceFlow.
+        """
