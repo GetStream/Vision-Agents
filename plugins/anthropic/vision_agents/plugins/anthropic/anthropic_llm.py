@@ -260,8 +260,8 @@ class ClaudeLLM(LLM):
             # Track if we've emitted the first chunk for the entire request
             emitted_first_chunk = False
             # Track usage from message_start and message_delta events
-            input_tokens: Optional[int] = None
-            output_tokens: Optional[int] = None
+            input_tokens = None
+            output_tokens = None
             sequence_number = 0
 
             # 1) First round: read stream, gather initial tool_use calls
@@ -446,16 +446,15 @@ class ClaudeLLM(LLM):
 
             # 4) Done -> yield all collected text
             total_text = "".join(text_parts)
-            final_original = last_followup_stream or original
 
             # Calculate timing metrics
             latency_ms = (time.perf_counter() - request_start_time) * 1000
-            ttft_ms: Optional[float] = None
+            ttft_ms = None
             if first_token_time is not None:
                 ttft_ms = (first_token_time - request_start_time) * 1000
 
             yield LLMResponseFinal(
-                original=final_original,
+                original=last_followup_stream or original,
                 text=total_text,
                 latency_ms=latency_ms,
                 time_to_first_token_ms=ttft_ms,
