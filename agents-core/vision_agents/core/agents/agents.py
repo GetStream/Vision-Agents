@@ -519,7 +519,6 @@ class Agent:
             )
 
             # Provide conversation to other components.
-            # TODO: Fix typings here
             self._flow.set_conversation(self.conversation)
             self.llm.set_conversation(self.conversation)
 
