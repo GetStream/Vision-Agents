@@ -5,18 +5,17 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from vision_agents.core.agents.conversation import InMemoryConversation
-from vision_agents.core.events.manager import EventManager
-from vision_agents.core.llm.events import ToolEndEvent, ToolStartEvent
 from vision_agents.core.llm.llm import LLM
 
-from vision_agents.testing import (
+from ._events import (
     ChatMessageEvent,
     FunctionCallEvent,
     FunctionCallOutputEvent,
     RunEvent,
-    TestResponse,
 )
-from vision_agents.testing._mock_tools import mock_functions as _mock_functions
+from ._mock_tools import mock_functions as _mock_functions
+from ._run_result import TestResponse
+from ._utils import simple_response_final
 
 
 class TestSession:
@@ -40,11 +39,8 @@ class TestSession:
     ) -> None:
         self._llm = llm
         self._instructions = instructions
-
-        self._event_manager: EventManager | None = None
         self._conversation: InMemoryConversation | None = None
         self._captured_events: list[RunEvent] = []
-        self._capturing = False
         self._started = False
 
     async def __aenter__(self) -> "TestSession":
@@ -60,16 +56,11 @@ class TestSession:
             return
 
         self._llm.set_instructions(self._instructions)
-        self._event_manager = self._llm.events
-
         self._conversation = InMemoryConversation(
             instructions=self._instructions,
             messages=[],
         )
         self._llm.set_conversation(self._conversation)
-
-        self._event_manager.subscribe(self._on_tool_start)
-        self._event_manager.subscribe(self._on_tool_end)
 
         self._started = True
 
@@ -77,10 +68,6 @@ class TestSession:
         """Clean up resources."""
         if not self._started:
             return
-
-        if self._event_manager is not None:
-            self._event_manager.unsubscribe(self._on_tool_start)
-            self._event_manager.unsubscribe(self._on_tool_end)
 
         self._started = False
 
@@ -128,9 +115,8 @@ class TestSession:
         start_time = time.monotonic()
 
         self._captured_events.clear()
-        self._capturing = True
 
-        try:
+        with self._observe_tool_calls():
             if self._conversation is not None:
                 await self._conversation.send_message(
                     role="user",
@@ -138,13 +124,7 @@ class TestSession:
                     content=text,
                 )
 
-            response = await self._llm.simple_response(text=text)
-
-            if self._event_manager is not None:
-                await self._event_manager.wait(timeout=5.0)
-
-        finally:
-            self._capturing = False
+            response = await simple_response_final(self._llm.simple_response(text=text))
 
         events: list[RunEvent] = list(self._captured_events)
         if response and response.text:
@@ -163,24 +143,59 @@ class TestSession:
             start_time=start_time,
         )
 
-    async def _on_tool_start(self, event: ToolStartEvent):
-        if self._capturing:
-            self._captured_events.append(
-                FunctionCallEvent(
-                    name=event.tool_name,
-                    arguments=event.arguments or {},
-                    tool_call_id=event.tool_call_id,
-                )
-            )
+    @contextmanager
+    def _observe_tool_calls(self) -> Generator[None, None, None]:
+        """Wrap registered tools so invocations are recorded into ``_captured_events``.
 
-    async def _on_tool_end(self, event: ToolEndEvent):
-        if self._capturing:
+        Sits on top of any active ``mock_functions`` wrapper so mocks are
+        observed too. Originals are restored on exit.
+        """
+        registry = self._llm.function_registry
+        originals: dict[str, Callable[..., Any]] = {}
+        for tool_name, fd in registry.functions.items():
+            originals[tool_name] = fd.function
+            fd.function = self._make_observer(tool_name, fd.function)
+        try:
+            yield
+        finally:
+            for tool_name, original in originals.items():
+                registry.functions[tool_name].function = original
+
+    def _make_observer(
+        self, name: str, original: Callable[..., Any]
+    ) -> Callable[..., Any]:
+        """Build an async wrapper that records each call into ``_captured_events``."""
+
+        async def _observed(**kwargs: Any) -> Any:
+            start = time.perf_counter()
+            self._captured_events.append(
+                FunctionCallEvent(name=name, arguments=kwargs, tool_call_id=None)
+            )
+            try:
+                result = await original(**kwargs)
+            except Exception as exc:
+                elapsed = (time.perf_counter() - start) * 1000
+                self._captured_events.append(
+                    FunctionCallOutputEvent(
+                        name=name,
+                        output={"error": str(exc)},
+                        is_error=True,
+                        tool_call_id=None,
+                        execution_time_ms=elapsed,
+                    )
+                )
+                raise
+
+            elapsed = (time.perf_counter() - start) * 1000
             self._captured_events.append(
                 FunctionCallOutputEvent(
-                    name=event.tool_name,
-                    output=event.result if event.success else {"error": event.error},
-                    is_error=not event.success,
-                    tool_call_id=event.tool_call_id,
-                    execution_time_ms=event.execution_time_ms,
+                    name=name,
+                    output=result,
+                    is_error=False,
+                    tool_call_id=None,
+                    execution_time_ms=elapsed,
                 )
             )
+            return result
+
+        return _observed
