@@ -122,14 +122,16 @@ class OpenAILLM(LLM):
 
             new_tool_calls: list[NormalizedToolCallItem] = []
             async for event in stream:
-                if event.type == "response.error":
-                    error_message = (
-                        event.error.message if event.error else "Unknown error"
+                if event.type == "response.failed":
+                    error = event.response.error if event.response else None
+                    error_message = error.message if error else "Unknown error"
+                    error_code = error.code if error else "unknown"
+                    logger.error(
+                        "OpenAI stream error: %s (code=%s)", error_message, error_code
                     )
-                    logger.error("OpenAI stream error: %s", error_message)
                     self.metrics.on_llm_error(
                         provider=self.provider_name,
-                        error_type="response.error",
+                        error_type="response.failed",
                     )
                 elif event.type == "response.output_text.delta":
                     is_first = first_token_time is None

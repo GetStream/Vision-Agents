@@ -583,6 +583,30 @@ class TestConcurrentToolExecution:
         assert end_events[0].tool_name == "test_func"
         assert end_events[0].success is True
 
+    async def test_run_one_tool_records_success_metric(self, llm: DummyLLM):
+        @llm.register_function(description="Test function")
+        async def test_func(x: int) -> int:
+            return x * 2
+
+        await llm._run_one_tool(
+            {"id": "call1", "name": "test_func", "arguments_json": {"x": 5}}, 30.0
+        )
+
+        assert llm.metrics.agent_metrics.llm_tool_calls__total.value() == 1
+        assert llm.metrics.agent_metrics.llm_tool_latency_ms__avg.value() is not None
+
+    async def test_run_one_tool_records_error_metric(self, llm: DummyLLM):
+        @llm.register_function(description="Failing function")
+        async def boom() -> int:
+            raise RuntimeError("nope")
+
+        await llm._run_one_tool(
+            {"id": "call1", "name": "boom", "arguments_json": {}}, 30.0
+        )
+
+        assert llm.metrics.agent_metrics.llm_tool_calls__total.value() == 1
+        assert llm.metrics.agent_metrics.llm_tool_latency_ms__avg.value() is not None
+
     async def test_output_sanitization(self, llm: DummyLLM):
         """Test output sanitization for large responses."""
 
