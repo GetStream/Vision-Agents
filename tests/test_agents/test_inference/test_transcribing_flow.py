@@ -537,6 +537,30 @@ class TestProcessSTTOutput:
         await stage
         assert not llm_out.peek()
 
+    async def test_process_stt_output_no_td_whitespace_final_does_not_auto_commit(
+        self, flow_no_td, participant
+    ) -> None:
+        # In no-turn-detection mode a final Transcript is the commit signal,
+        # so without the empty-transcript guard a whitespace-only final would
+        # auto-start an LLM turn with transcript="".
+        stt_out: Stream[TurnStarted | Transcript | TurnEnded] = Stream()
+        llm_out: Stream[LLMResponseDelta | LLMResponseFinal] = Stream()
+
+        stage = asyncio.create_task(flow_no_td.process_stt_output(stt_out, llm_out))
+
+        await stt_out.send(
+            Transcript(
+                text="   ",
+                mode="final",
+                participant=participant,
+                response=TranscriptResponse(),
+            )
+        )
+
+        stt_out.close()
+        await stage
+        assert not llm_out.peek()
+
     async def test_process_stt_output_no_td_partial_then_final_fires_once(
         self, flow_no_td, participant
     ) -> None:

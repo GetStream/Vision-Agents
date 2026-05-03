@@ -389,7 +389,7 @@ class TranscribingInferenceFlow(InferenceFlow):
                 transcript = buffer.text.strip() if buffer else ""
 
                 # Transcript is empty, skip processing
-                if not transcript:
+                if not buffer or not transcript:
                     continue
 
                 # There's an in-flight LLM response and
