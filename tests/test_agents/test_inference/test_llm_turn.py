@@ -116,6 +116,34 @@ class TestLLMTurn:
         assert not turn.started
         assert await out.collect(timeout=0) == []
 
+    async def test_cancel_mid_llm_signals_interrupt_to_llm(
+        self, participant: Participant
+    ) -> None:
+        # Mirrors how real plugins treat interrupt() as a stop signal
+        # (e.g. transformers_llm flips a stopping_criteria flag).
+        class InterruptingLLM(LLMStub):
+            interrupted: bool = False
+
+            async def interrupt(self) -> None:
+                self.interrupted = True
+
+        blocker = asyncio.Event()
+
+        async def hanging(_text: str, _participant: Participant | None):
+            await blocker.wait()
+            yield LLMResponseFinal(text="leaked", item_id="m1")
+
+        llm = InterruptingLLM(factory=hanging)
+        turn = LLMTurn(transcript="hi", participant=participant)
+
+        turn.start(llm)
+        await asyncio.sleep(0)
+        assert not llm.interrupted
+
+        await turn.cancel()
+
+        assert llm.interrupted
+
     async def test_cancel_before_start_is_no_op(self, participant: Participant) -> None:
         turn = LLMTurn(transcript="hi", participant=participant)
         await turn.cancel()
@@ -154,6 +182,36 @@ class TestLLMTurn:
         turn.finalize(out)
 
         assert await out.collect(timeout=2.0) == items
+
+    async def test_final_response_records_metric(
+        self, participant: Participant
+    ) -> None:
+        items = [
+            LLMResponseDelta(delta="Hi", item_id="m1", content_index=0),
+            LLMResponseFinal(
+                text="Hi",
+                item_id="m1",
+                latency_ms=42.0,
+                time_to_first_token_ms=7.0,
+                input_tokens=10,
+                output_tokens=20,
+                model="test-model",
+            ),
+        ]
+        llm = LLMStub.from_iterable(items)
+        turn = LLMTurn(transcript="hi", participant=participant)
+        out: Stream[LLMResponseDelta | LLMResponseFinal] = Stream()
+
+        turn.start(llm)
+        turn.confirm()
+        turn.finalize(out)
+        await out.collect(timeout=2.0)
+
+        m = llm.metrics.agent_metrics
+        assert m.llm_input_tokens__total.value() == 10
+        assert m.llm_output_tokens__total.value() == 20
+        assert m.llm_latency_ms__avg.value() == 42.0
+        assert m.llm_time_to_first_token_ms__avg.value() == 7.0
 
     async def test_output_stays_empty_until_finalize_then_receives_response(
         self, participant: Participant

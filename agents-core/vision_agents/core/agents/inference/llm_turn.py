@@ -1,13 +1,13 @@
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Callable
 
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import LLM
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.utils.exceptions import log_task_exception
 from vision_agents.core.utils.stream import Stream
 from vision_agents.core.utils.utils import cancel_and_wait
 
@@ -16,14 +16,6 @@ tracer: Tracer = trace.get_tracer("agents")
 
 
 __all__ = ["LLMTurn"]
-
-
-def _log_task_exception(message: str) -> Callable[[asyncio.Task], None]:
-    def wrapper(task: asyncio.Task[None]) -> None:
-        if not task.cancelled() and task.exception() is not None:
-            logger.error(message, exc_info=task.exception())
-
-    return wrapper
 
 
 @dataclass
@@ -70,7 +62,7 @@ class LLMTurn:
             raise RuntimeError("LLM response task is already running")
         task = asyncio.create_task(self._do_llm_response(llm))
         task.add_done_callback(
-            _log_task_exception("LLMTurn: failed to get a response from LLM")
+            log_task_exception("LLMTurn: failed to get a response from LLM")
         )
         self._llm_response_task = task
 
@@ -101,7 +93,7 @@ class LLMTurn:
         logger.info('🤖 Finalizing LLM turn for transcript "%s"', self.transcript)
         task = asyncio.create_task(self._do_finalize(output=output))
         task.add_done_callback(
-            _log_task_exception("LLMTurn: failed to finalize the turn")
+            log_task_exception("LLMTurn: failed to finalize the turn")
         )
         self._finalize_task = task
 
@@ -116,12 +108,28 @@ class LLMTurn:
 
     async def _do_llm_response(self, llm: LLM):
         with tracer.start_as_current_span("simple_response") as span:
-            async for item in llm.simple_response(self.transcript, self.participant):
-                await self.stream.send(item)
-                if isinstance(item, LLMResponseFinal):
-                    self.stream.close()
+            try:
+                async for item in llm.simple_response(
+                    self.transcript, self.participant
+                ):
+                    await self.stream.send(item)
+                    if isinstance(item, LLMResponseFinal):
+                        llm.metrics.on_llm_response(
+                            provider=llm.provider_name,
+                            model=item.model,
+                            latency_ms=item.latency_ms,
+                            time_to_first_token_ms=item.time_to_first_token_ms,
+                            input_tokens=item.input_tokens,
+                            output_tokens=item.output_tokens,
+                        )
+                        self.stream.close()
 
-            span.set_attribute("text", self.transcript)
+                span.set_attribute("text", self.transcript)
+            except asyncio.CancelledError:
+                # Interrupt llm when the turn is cancelled to give it a chance
+                # to stop some heavy async work (e.g. inference in a different thread)
+                await llm.interrupt()
+                raise
 
     async def _do_finalize(self, output: Stream[LLMResponseDelta | LLMResponseFinal]):
         """
