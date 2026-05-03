@@ -342,6 +342,48 @@ class TestMetricsCollector:
         assert parent.agent_metrics.llm_latency_ms__avg.value() == 100.0
         assert parent.agent_metrics.llm_input_tokens__total.value() == 5
 
+    def test_merge_is_idempotent_for_same_parent(self, mock_metrics):
+        parent = MetricsCollector()
+        child = MetricsCollector()
+        parent.merge(child)
+        parent.merge(child)
+
+        assert child.parent is parent
+
+        child.on_llm_response(provider="openai", input_tokens=3)
+
+        # Re-merging didn't duplicate the chain: OTel emitted once, parent updated once.
+        llm_input_tokens.add.assert_called_once_with(3, {"provider": "openai"})
+        assert parent.agent_metrics.llm_input_tokens__total.value() == 3
+
+    def test_merge_reparents_to_new_parent(self):
+        parent_a = MetricsCollector()
+        parent_b = MetricsCollector()
+        child = MetricsCollector()
+
+        parent_a.merge(child)
+        parent_b.merge(child)
+
+        assert child.parent is parent_b
+
+        child.on_llm_response(provider="openai", input_tokens=7)
+
+        # Forwarding follows the new parent only.
+        assert parent_b.agent_metrics.llm_input_tokens__total.value() == 7
+        assert parent_a.agent_metrics.llm_input_tokens__total.value() == 0
+
+    def test_merge_self_raises(self):
+        collector = MetricsCollector()
+        with pytest.raises(ValueError, match="cannot merge a collector into itself"):
+            collector.merge(collector)
+
+    def test_merge_cycle_raises(self):
+        a = MetricsCollector()
+        b = MetricsCollector()
+        a.merge(b)
+        with pytest.raises(ValueError, match="merge would create a cycle"):
+            b.merge(a)
+
 
 class TestAgentMetrics:
     def test_to_dict_all_fields_success(self):
