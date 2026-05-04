@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from ..utils.utils import cancel_and_wait
 
 from .mcp_base import MCPBaseServer
 
@@ -95,7 +96,7 @@ class MCPServerRemote(MCPBaseServer):
             if self._stop_event is not None:
                 self._stop_event.set()
             if self._supervisor_task is not None:
-                await self._supervisor_task
+                await cancel_and_wait(self._supervisor_task)
         finally:
             self._supervisor_task = None
             self._setup = None
