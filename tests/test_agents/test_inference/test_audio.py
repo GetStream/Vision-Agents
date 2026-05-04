@@ -111,6 +111,35 @@ class TestAudioOutputStream:
         stream.send_nowait(signal)
         assert stream.peek() == [signal]
 
+    async def test_final_marker_with_no_data_flushes_pending_carry(
+        self, stream: AudioOutputStream
+    ):
+        # Build up a sub-20ms carry, then send a data-less final marker
+        # (as the realtime flow does on RealtimeAudioOutputDone).
+        stream.send_nowait(AudioOutputChunk(data=make_pcm(5, fill=42)))
+        assert stream.empty()  # carry only, nothing emitted yet
+
+        signal = AudioOutputChunk(data=None, final=True)
+        stream.send_nowait(signal)
+
+        items = stream.peek()
+        assert len(items) == 2
+
+        padded, final = items
+        assert isinstance(padded, AudioOutputChunk)
+        assert padded.final is False
+        assert padded.data is not None
+        assert len(padded.data.samples) == 320
+        assert np.all(padded.data.samples[:80] == 42)
+        assert np.all(padded.data.samples[80:] == 0)
+
+        assert final is signal
+
+        # Carry must be cleared so a fresh utterance does not inherit it.
+        stream.clear()
+        stream.send_nowait(AudioOutputChunk(data=make_pcm(10)))
+        assert stream.empty()
+
     async def test_clear_drops_the_carry(self, stream: AudioOutputStream):
         stream.send_nowait(AudioOutputChunk(data=make_pcm(25)))
         stream.clear()

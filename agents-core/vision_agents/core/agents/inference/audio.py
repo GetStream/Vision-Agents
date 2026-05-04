@@ -57,9 +57,16 @@ class AudioOutputStream(Stream[AudioOutputChunk | AudioOutputFlush]):
         When a chunk with ``final=True`` arrives, the
         carry-over is padded to 20ms and emitted automatically.
         """
-        if isinstance(item, AudioOutputFlush) or item.data is None:
-            # Flush item or no PCM data provided.
-            # Either way, it's a control message, simply send it downstream.
+        if isinstance(item, AudioOutputFlush):
+            # Flush item, simply send it downstream.
+            super(AudioOutputStream, self).send_nowait(item)
+            return
+
+        if item.data is None:
+            # No PCM data provided. Still flush any pending carry on a final
+            # marker so trailing audio from this utterance is not stranded.
+            if item.final:
+                self._flush_carry()
             super(AudioOutputStream, self).send_nowait(item)
             return
 
@@ -78,11 +85,7 @@ class AudioOutputStream(Stream[AudioOutputChunk | AudioOutputFlush]):
                 super().send_nowait(AudioOutputChunk(data=pcm_chunk))
 
         if item.final:
-            if self._carry is not None and len(self._carry.samples) > 0:
-                chunk_size = self._carry.sample_rate // 50
-                padded = next(self._carry.chunks(chunk_size, pad_last=True))
-                super().send_nowait(AudioOutputChunk(data=padded))
-            self._carry = None
+            self._flush_carry()
             super().send_nowait(
                 AudioOutputChunk(
                     data=PcmData(
@@ -93,6 +96,13 @@ class AudioOutputStream(Stream[AudioOutputChunk | AudioOutputFlush]):
                     final=True,
                 )
             )
+
+    def _flush_carry(self) -> None:
+        if self._carry is not None and len(self._carry.samples) > 0:
+            chunk_size = self._carry.sample_rate // self._chunk_frac
+            padded = next(self._carry.chunks(chunk_size, pad_last=True))
+            super().send_nowait(AudioOutputChunk(data=padded))
+        self._carry = None
 
     async def flush(self) -> None:
         """
