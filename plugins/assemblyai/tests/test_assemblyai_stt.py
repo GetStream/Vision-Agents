@@ -28,6 +28,10 @@ class TestAssemblyAISTT:
             await stt.process_audio(chunk, participant=participant)
             await asyncio.sleep(0.001)
 
+        for chunk in silence_2s_48khz.chunks(480):
+            await stt.process_audio(chunk, participant=participant)
+            await asyncio.sleep(0.001)
+
         items = await stt.output.collect(timeout=10.0)
         transcripts = [i for i in items if isinstance(i, Transcript)]
         finals = [t for t in transcripts if t.final]
