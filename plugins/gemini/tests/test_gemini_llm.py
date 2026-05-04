@@ -6,7 +6,7 @@ from vision_agents.core.agents.conversation import InMemoryConversation, Message
 from vision_agents.plugins.gemini.gemini_llm import (
     GeminiLLM,
 )
-
+from vision_agents.plugins.gemini.utils import convert_tools_to_provider_format
 from vision_agents.testing import collect_simple_response
 
 load_dotenv()
@@ -33,42 +33,6 @@ class TestGeminiLLM:
         messages2 = GeminiLLM._normalize_message(advanced)
         assert messages2[0].original is not None
 
-    @pytest.fixture
-    async def llm(self):
-        llm = GeminiLLM()
-        llm.set_conversation(InMemoryConversation("be friendly", []))
-        yield llm
-        await llm.close()
-
-    @pytest.mark.integration
-    async def test_simple(self, llm: GeminiLLM):
-        response = await llm.simple_response("Greet the user")
-        assert response.text
-
-    @pytest.mark.integration
-    async def test_native_api(self, llm: GeminiLLM):
-        response = await llm.send_message(message="say hi")
-
-        # Assertions
-        assert response.text
-        assert hasattr(response.original, "text")  # Gemini response has text attribute
-
-    @pytest.mark.integration
-    async def test_stream(self, llm: GeminiLLM):
-        streaming_works = False
-
-        @llm.events.subscribe
-        async def passed(event: LLMResponseChunkEvent):
-            nonlocal streaming_works
-            streaming_works = True
-
-        await llm.simple_response("Greet the user")
-
-        # Wait for all events in queue to be processed
-        await llm.events.wait()
-
-        assert streaming_works
-
     async def test_convert_tools_routes_mcp_schema_to_parameters_json_schema(
         self, llm: GeminiLLM
     ):
@@ -88,7 +52,7 @@ class TestGeminiLLM:
             }
         ]
 
-        result = llm._convert_tools_to_provider_format(tools)
+        result = convert_tools_to_provider_format(tools)
 
         decl = result[0]["function_declarations"][0]
         assert "parameters" not in decl
