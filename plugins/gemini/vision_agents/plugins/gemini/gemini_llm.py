@@ -187,7 +187,7 @@ class GeminiLLM(LLM):
         if tools_spec:
             conv_tools = convert_tools_to_provider_format(tools_spec)
             config = self._build_config()
-            config.tools = conv_tools  # type: ignore[assignment]
+            config.tools = [*(config.tools or []), *conv_tools]  # type: ignore[assignment, list-item]
         elif self.thinking_level or self.media_resolution:
             # Only pass config if we need to set thinking_level or media_resolution
             # Don't pass an empty config as it overrides the system_instruction from chat creation
