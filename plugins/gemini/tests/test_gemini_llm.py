@@ -80,9 +80,9 @@ class TestGeminiLLM:
             }
         ]
 
-        schema = llm._convert_tools_to_provider_format(tools)[0][
-            "function_declarations"
-        ][0]["parameters_json_schema"]
+        schema = convert_tools_to_provider_format(tools)[0]["function_declarations"][0][
+            "parameters_json_schema"
+        ]
         assert "$schema" not in schema
         assert "$schema" not in schema["properties"]["inner"]
 
