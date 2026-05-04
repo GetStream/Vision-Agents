@@ -178,9 +178,7 @@ class TestInworldRealtimeIntegration:
         async for _ in realtime.simple_response("Say hi in one short sentence."):
             pass
 
-        await asyncio.sleep(8.0)
-
-        items = realtime.output.peek()
+        items = await realtime.output.collect(timeout=15.0)
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
         transcripts = [i for i in items if isinstance(i, RealtimeAgentTranscript)]
         assert len(audio) > 0, "Expected audio output"
