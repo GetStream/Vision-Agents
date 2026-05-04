@@ -30,7 +30,9 @@ class TestDeepgramSTT:
         items = await deepgram_stt.output.collect(timeout=10.0)
 
         transcripts = [i for i in items if isinstance(i, Transcript)]
+        assert transcripts, "No Transcript emitted by Deepgram STT"
         finals = [t for t in transcripts if t.final]
+        assert finals, "No final Transcript emitted by Deepgram STT"
         full_transcript = " ".join(t.text for t in finals)
         assert "forgotten treasures" in full_transcript.lower()
         assert transcripts[0].participant == participant
