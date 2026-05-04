@@ -86,8 +86,7 @@ class TestNvidiaVLMIntegration:
         )
 
         assert final.text
-        assert len(final.text) > 0
-        assert "cat" in final.text.lower() or len(final.text.strip()) > 0
+        assert "cat" in final.text.lower(), f"Expected 'cat' in response: {final.text}"
 
     async def test_instruction_following(self, vlm):
         """Test that system instructions are respected."""
