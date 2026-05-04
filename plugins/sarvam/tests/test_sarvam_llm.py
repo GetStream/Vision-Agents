@@ -136,7 +136,9 @@ class TestSarvamLLMIntegration:
         )
         _, final = await collect_simple_response(llm.simple_response(prompt))
 
-        assert len(calls) >= 1, "probe_tool was not invoked by the model"
+        assert "pong" in calls, (
+            f"probe_tool was not invoked with ping='pong' (got calls={calls})"
+        )
         assert "probe_ok:pong" in final.text, (
             f"Expected 'probe_ok:pong', got: {final.text}"
         )
