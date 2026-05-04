@@ -18,7 +18,8 @@ async def collect_simple_response(
         else:
             final_response = item
 
-    assert final_response is not None, (
-        "simple_response() ended without yielding an LLMResponseFinal chunk"
-    )
+    if final_response is None:
+        raise ValueError(
+            "simple_response() ended without yielding an LLMResponseFinal chunk"
+        )
     return deltas, final_response

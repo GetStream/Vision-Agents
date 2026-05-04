@@ -152,6 +152,9 @@ class TestSession:
         Sits on top of any active ``mock_functions`` wrapper so mocks are
         observed too. Originals are restored on exit.
         """
+        # TODO: not safe under overlapping simple_response() calls on the same
+        # LLM — the second wrapper wraps the first and restoration depends on
+        # exit order. Acceptable for now since tests run sessions sequentially.
         registry = self._llm.function_registry
         originals: dict[str, Callable[..., Any]] = {}
         for tool_name, fd in registry.functions.items():
@@ -168,6 +171,9 @@ class TestSession:
     ) -> Callable[..., Any]:
         """Build an async wrapper that records each call into ``_captured_events``."""
 
+        # TODO: tool_call_id is not available at the registry call site, so
+        # parallel invocations of the same tool within one response cannot be
+        # paired in the captured trace. Sequential tool calls pair by adjacency.
         async def _observed(**kwargs: Any) -> Any:
             start = time.perf_counter()
             self._captured_events.append(
