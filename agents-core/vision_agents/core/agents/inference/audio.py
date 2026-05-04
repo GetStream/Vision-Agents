@@ -79,7 +79,10 @@ class AudioOutputStream(Stream[AudioOutputChunk | AudioOutputFlush]):
             self._carry = None
 
         for pcm_chunk in pcm.chunks(chunk_size):
-            if len(pcm_chunk.samples) < chunk_size:
+            # `samples.shape[-1]` is the per-channel sample count for both
+            # mono 1D and stereo channel-major 2D arrays. `len(samples)` for
+            # 2D returns the channel count, not the sample count.
+            if pcm_chunk.samples.shape[-1] < chunk_size:
                 self._carry = pcm_chunk
             else:
                 super().send_nowait(AudioOutputChunk(data=pcm_chunk))
@@ -98,7 +101,7 @@ class AudioOutputStream(Stream[AudioOutputChunk | AudioOutputFlush]):
             )
 
     def _flush_carry(self) -> None:
-        if self._carry is not None and len(self._carry.samples) > 0:
+        if self._carry is not None and self._carry.samples.shape[-1] > 0:
             chunk_size = self._carry.sample_rate // self._chunk_frac
             padded = next(self._carry.chunks(chunk_size, pad_last=True))
             super().send_nowait(AudioOutputChunk(data=padded))
