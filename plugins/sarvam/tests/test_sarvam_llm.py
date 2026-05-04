@@ -4,10 +4,10 @@ import os
 
 import pytest
 from dotenv import load_dotenv
-from vision_agents.testing import collect_simple_response
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.plugins.sarvam import LLM
 from vision_agents.plugins.sarvam.llm import _ThinkTagFilter
+from vision_agents.testing import collect_simple_response
 
 load_dotenv()
 
@@ -89,7 +89,7 @@ class TestSarvamLLMIntegration:
 
     @pytest.fixture
     async def llm(self):
-        llm = LLM(model="sarvam-m")
+        llm = LLM(model="sarvam-30b")
         llm.set_conversation(InMemoryConversation("be friendly", []))
         return llm
 
