@@ -17,7 +17,6 @@ import logging
 from typing import Any, Optional
 from unittest.mock import AsyncMock
 
-import pytest
 
 from vision_agents.core.mcp import mcp_server_remote
 from vision_agents.core.mcp.mcp_server_remote import MCPServerRemote
@@ -69,7 +68,6 @@ def _install_transport_mocks(
     return transport_cm, session_cm
 
 
-@pytest.mark.asyncio
 async def test_transport_contexts_enter_and_exit_in_same_task(monkeypatch):
     """``connect()`` in one task and ``disconnect()`` in another must still
     leave the underlying MCP transport contexts entered and exited from a
@@ -113,7 +111,6 @@ async def test_transport_contexts_enter_and_exit_in_same_task(monkeypatch):
     assert transport_cm.enter_task is not disconnect_task
 
 
-@pytest.mark.asyncio
 async def test_double_connect_warns_and_does_not_raise(monkeypatch, caplog):
     """A second ``connect()`` while already connected must not raise; it must
     log a warning and leave the existing connection untouched."""
@@ -133,7 +130,6 @@ async def test_double_connect_warns_and_does_not_raise(monkeypatch, caplog):
     await asyncio.create_task(cleanup())
 
 
-@pytest.mark.asyncio
 async def test_double_connect_does_not_reopen_transports(monkeypatch):
     """The early-return on ``_is_connected`` must short-circuit before touching
     the transport stack again."""
