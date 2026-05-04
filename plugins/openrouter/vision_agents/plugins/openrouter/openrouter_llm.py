@@ -309,6 +309,7 @@ class OpenRouterLLM(LLM):
                 request_start_time,
                 first_token_time,
                 sequence_number,
+                initial_text=total_text,
             ):
                 yield item
             return
@@ -379,13 +380,14 @@ class OpenRouterLLM(LLM):
         request_start_time: float,
         first_token_time: Optional[float],
         sequence_number: int,
+        initial_text: str = "",
     ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Execute tool calls and get follow-up response."""
         current_tool_calls = tool_calls
         seen: set[tuple] = set()
         current_messages = list(messages)
         last_chunk: ChatCompletionChunk | None = None
-        total_text = ""
+        all_text_parts: list[str] = [initial_text] if initial_text else []
 
         for tc in tool_calls:
             logger.debug(
@@ -512,7 +514,7 @@ class OpenRouterLLM(LLM):
                 if finish_reason == "tool_calls" and self._pending_tool_calls:
                     next_tool_calls = self._finalize_pending_tool_calls()
 
-            total_text = "".join(text_chunks)
+            all_text_parts.extend(text_chunks)
 
             if next_tool_calls and round_num < self._tools_max_rounds - 1:
                 current_tool_calls = next_tool_calls
@@ -528,7 +530,7 @@ class OpenRouterLLM(LLM):
         item_id = last_chunk.id if last_chunk is not None else None
         yield LLMResponseFinal(
             original=last_chunk,
-            text=total_text,
+            text="".join(all_text_parts),
             item_id=item_id,
             latency_ms=latency_ms,
             time_to_first_token_ms=ttft_ms,
