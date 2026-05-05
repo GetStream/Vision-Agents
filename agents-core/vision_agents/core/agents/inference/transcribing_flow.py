@@ -465,17 +465,24 @@ class TranscribingInferenceFlow(InferenceFlow):
                     # Process the final response
                     text = sanitize_text(item.text) or ""
                     logger.info(f"🤖 [LLM response final]: {text}")
-                    await self._conversation.upsert_message(
-                        message_id=item.item_id,
-                        role="assistant",
-                        user_id=self._agent_user_id,
-                        content=text,
-                        completed=True,
-                        replace=True,  # Replace any partial content from deltas
-                    )
-                    # Send the full response so non-streaming TTS can speak it,
-                    # then signal end so streaming TTS can flush tokenizer state.
-                    await tts_input.send(TTSInput(text=item.text, delta=False))
+                    # Skip persistence for empty finals — these come from LLM
+                    # errors (e.g. upstream unavailable) and would otherwise
+                    # poison conversation history with an empty assistant
+                    # turn that some providers (e.g. Inworld) reject on the
+                    # next request as "message content cannot be empty".
+                    if text:
+                        await self._conversation.upsert_message(
+                            message_id=item.item_id,
+                            role="assistant",
+                            user_id=self._agent_user_id,
+                            content=text,
+                            completed=True,
+                            replace=True,  # Replace any partial content from deltas
+                        )
+                        # Send the full response so non-streaming TTS can speak it.
+                        await tts_input.send(TTSInput(text=item.text, delta=False))
+                    # Always signal end so streaming TTS flushes tokenizer state
+                    # and the pipeline doesn't hang waiting for a turn boundary.
                     await tts_input.send(TTSInputEnd())
 
     async def process_tts(

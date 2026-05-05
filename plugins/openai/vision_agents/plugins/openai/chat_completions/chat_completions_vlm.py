@@ -288,9 +288,13 @@ class ChatCompletionsVLM(VideoLLM):
                 }
             )
 
-        # Add all messages from the conversation to the prompt
+        # Add all messages from the conversation to the prompt. Skip any
+        # with empty content — providers like Inworld reject requests
+        # containing empty messages with "message content cannot be empty".
         if self._conversation is not None:
             for message in self._conversation.messages:
+                if not message.content:
+                    continue
                 messages.append(
                     {
                         "role": message.role,

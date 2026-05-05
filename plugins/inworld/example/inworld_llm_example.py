@@ -1,10 +1,21 @@
-"""Inworld AI LLM router example.
+"""Inworld AI LLM router example — tuned for low voice latency.
 
 Uses ``inworld.LLM`` — the OpenAI-compatible chat completions endpoint at
-``https://api.inworld.ai/v1`` — as the brain for a voice agent. Inworld
-routes upstream across providers; this example asks the router to pick
-the lowest-latency model with a fallback chain so that voice latency stays
-predictable even when the primary upstream is slow.
+``https://api.inworld.ai/v1`` — as the brain for a voice agent.
+
+Routing notes:
+
+- We pin ``model="openai/gpt-4o-mini"`` rather than ``"auto"``. ``auto``
+  asks Inworld to pick an upstream per request based on ``sort_by``, which
+  adds a routing-decision hop on top of the selected upstream's TTFT. For
+  voice, that variance is felt directly. A pinned fast model gives a
+  flatter, lower TTFT.
+- ``fallback_models`` keeps a vision/text-capable second choice in case
+  the primary times out per ``ttft_timeout``.
+- ``ttft_timeout="500ms"`` is Inworld's enforced minimum (anything lower
+  returns a 502 ``Upstream server unavailable`` from the router): cut
+  over to the fallback aggressively if the primary is slow to first
+  token, but no faster than the gateway allows.
 
 For full-duplex speech-to-speech (no STT/TTS hop), use ``inworld.Realtime``
 instead — that path is strictly lower-latency than STT → LLM → TTS.
@@ -25,11 +36,9 @@ load_dotenv()
 
 async def create_agent(**kwargs) -> Agent:
     llm = inworld.LLM(
-        model="auto",
-        sort_by=["latency"],
+        model="openai/gpt-4o-mini",
         ttft_timeout="500ms",
         fallback_models=[
-            "openai/gpt-4o-mini",
             "google-ai-studio/gemini-2.5-flash",
         ],
     )

@@ -13,7 +13,13 @@ from typing import Any, Optional
 from openai import AsyncOpenAI
 from vision_agents.plugins.openai import ChatCompletionsVLM
 
-from .llm import INWORLD_BASE_URL, PLUGIN_NAME, LLM
+from .llm import (
+    INWORLD_BASE_URL,
+    PLUGIN_NAME,
+    LLM,
+    TTFT_TIMEOUT_MIN_MS,
+    ttft_timeout_to_ms,
+)
 
 
 class VLM(ChatCompletionsVLM):
@@ -66,6 +72,14 @@ class VLM(ChatCompletionsVLM):
         ``frame_height``, ``max_workers``) match
         :class:`vision_agents.plugins.openai.ChatCompletionsVLM`.
         """
+        if ttft_timeout is not None:
+            ttft_ms = ttft_timeout_to_ms(ttft_timeout)
+            if ttft_ms < TTFT_TIMEOUT_MIN_MS:
+                raise ValueError(
+                    f"ttft_timeout must be >= {TTFT_TIMEOUT_MIN_MS}ms; "
+                    f"Inworld's gateway returns 502 below this. Got {ttft_timeout!r}."
+                )
+
         super().__init__(
             model=model,
             api_key=api_key or os.environ.get("INWORLD_API_KEY"),

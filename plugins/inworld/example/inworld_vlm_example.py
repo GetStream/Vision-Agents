@@ -40,11 +40,9 @@ load_dotenv()
 
 async def create_agent(**kwargs) -> Agent:
     vlm = inworld.VLM(
-        model="auto",
-        sort_by=["latency"],
+        model="google-ai-studio/gemini-2.5-flash",
         ttft_timeout="500ms",
         fallback_models=[
-            "google-ai-studio/gemini-2.5-flash",
             "openai/gpt-4o-mini",
         ],
         fps=1,

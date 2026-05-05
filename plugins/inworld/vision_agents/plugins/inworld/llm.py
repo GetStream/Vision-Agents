@@ -9,6 +9,7 @@ router-specific routing fields via constructor kwargs.
 """
 
 import os
+import re
 from typing import Any, Optional
 
 from openai import AsyncOpenAI
@@ -16,6 +17,23 @@ from vision_agents.plugins.openai import ChatCompletionsLLM
 
 INWORLD_BASE_URL = "https://api.inworld.ai/v1"
 PLUGIN_NAME = "inworld"
+
+# Inworld's gateway returns 502 "Upstream server unavailable" — confusingly
+# not a validation error — for any ttft_timeout below 500ms. We reject it
+# client-side so the failure mode is a clear ValueError at construction
+# instead of a baffling 502 storm at first request.
+TTFT_TIMEOUT_MIN_MS = 500
+_TTFT_TIMEOUT_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ms|s)\s*$")
+
+
+def ttft_timeout_to_ms(value: str) -> float:
+    match = _TTFT_TIMEOUT_PATTERN.match(value)
+    if match is None:
+        raise ValueError(
+            f"ttft_timeout must look like '500ms' or '1s'; got {value!r}"
+        )
+    amount, unit = match.groups()
+    return float(amount) * (1000.0 if unit == "s" else 1.0)
 
 
 class LLM(ChatCompletionsLLM):
@@ -81,8 +99,10 @@ class LLM(ChatCompletionsLLM):
                 ``"intelligence"``, ``"math"``, ``"coding"``. Multiple
                 metrics rank with tiebreakers.
             ttft_timeout: Trigger fallback if first token does not arrive in
-                this duration (e.g. ``"500ms"``, ``"1s"``). Inworld minimum
-                is ``"300ms"``.
+                this duration (e.g. ``"500ms"``, ``"1s"``). Inworld's gateway
+                rejects values below 500ms with a 502 ``Upstream server
+                unavailable`` response, so the plugin enforces 500ms as the
+                minimum and raises ``ValueError`` for anything lower.
             metadata: Free-form metadata dict, used by router CEL expressions
                 for conditional routing (e.g. ``{"tier": "premium"}``).
             web_search: Enable upstream web search grounding.
@@ -93,6 +113,14 @@ class LLM(ChatCompletionsLLM):
             extra_body: Raw escape hatch merged into the request's
                 ``extra_body`` after the helpers above (overrides them).
         """
+        if ttft_timeout is not None:
+            ttft_ms = ttft_timeout_to_ms(ttft_timeout)
+            if ttft_ms < TTFT_TIMEOUT_MIN_MS:
+                raise ValueError(
+                    f"ttft_timeout must be >= {TTFT_TIMEOUT_MIN_MS}ms; "
+                    f"Inworld's gateway returns 502 below this. Got {ttft_timeout!r}."
+                )
+
         super().__init__(
             model=model,
             api_key=api_key or os.environ.get("INWORLD_API_KEY"),
