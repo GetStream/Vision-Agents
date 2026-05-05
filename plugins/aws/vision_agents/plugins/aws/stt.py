@@ -193,18 +193,20 @@ class TranscribeSTT(stt.STT):
             )
             self._audio_sent_seconds += resampled.duration
 
-    async def _open_stream(self):
+    async def _open_stream(self, timeout: float = 10.0):
         self._client = TranscribeStreamingClient(config=await self._build_config())
 
-        stream = await asyncio.wait_for(
-            self._client.start_stream_transcription(
+        async def _connect():
+            _stream = await self._client.start_stream_transcription(
                 input=self._build_transcription_input()
-            ),
-            timeout=10.0,
-        )
+            )
+            _, _output_stream = await _stream.await_output()
+            return _stream, _output_stream
+
+        stream, output_stream = await asyncio.wait_for(_connect(), timeout=timeout)
         self._stream = stream
         self._input_stream = stream.input_stream
-        _, self._output_stream = await stream.await_output()
+        self._output_stream = output_stream
         self._recv_task = asyncio.create_task(self._recv_loop())
 
     async def _build_config(self) -> Config:
