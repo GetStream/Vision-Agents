@@ -13,7 +13,7 @@ license = "MIT"
 dependencies = [
     "vision-agents",
     "httpx>=0.28.1",
-    "av>=10.0.0",
+    "websockets>=14.0",
     "aiortc>=1.9",
     "openai[realtime]>=2.26.0,<3",
 ]
