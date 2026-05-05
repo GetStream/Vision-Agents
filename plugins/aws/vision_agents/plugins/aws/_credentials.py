@@ -19,14 +19,10 @@ class Boto3CredentialsResolver(
 
     def __init__(self, profile_name: Optional[str] = None) -> None:
         self._session = boto3.Session(profile_name=profile_name)
-        self._cached: Optional[AWSCredentialsIdentity] = None
 
     async def get_identity(
         self, *, properties: AWSIdentityProperties, **kwargs: Any
     ) -> AWSCredentialsIdentity:
-        if self._cached is not None:
-            return self._cached
-
         credentials = self._session.get_credentials()
         if not credentials:
             raise ValueError("Unable to load AWS credentials via boto3")
@@ -35,12 +31,9 @@ class Boto3CredentialsResolver(
         if not creds.access_key or not creds.secret_key:
             raise ValueError("AWS credentials are incomplete")
 
-        expiry = getattr(credentials, "_expiry_time", None)
-
-        self._cached = AWSCredentialsIdentity(
+        return AWSCredentialsIdentity(
             access_key_id=creds.access_key,
             secret_access_key=creds.secret_key,
             session_token=creds.token or None,
-            expiration=expiry,
+            expiration=None,
         )
-        return self._cached

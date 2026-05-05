@@ -90,6 +90,11 @@ class TranscribeSTT(stt.STT):
                 stays there for subsequent attempts. Reconnects are
                 unlimited.
         """
+        if bool(aws_access_key_id) != bool(aws_secret_access_key):
+            raise ValueError(
+                "aws_access_key_id and aws_secret_access_key must be provided together"
+            )
+
         super().__init__(provider_name="aws")
 
         self.language_code = language_code
@@ -131,8 +136,16 @@ class TranscribeSTT(stt.STT):
 
     async def start(self):
         await super().start()
-        await self._open_stream()
-        self._supervisor_task = asyncio.create_task(self._supervisor_loop())
+        try:
+            await self._open_stream()
+            self._supervisor_task = asyncio.create_task(self._supervisor_loop())
+        except BaseException:
+            self.started = False
+            if self._supervisor_task is not None:
+                await cancel_and_wait(self._supervisor_task)
+                self._supervisor_task = None
+            await self._close_streams()
+            raise
         logger.info(
             "AWS Transcribe streaming connection established (region=%s, lang=%s)",
             self.region_name,
@@ -244,6 +257,9 @@ class TranscribeSTT(stt.STT):
                         event,
                     )
                     if not self.closed:
+                        # Stop accepting audio immediately; the supervisor may
+                        # not run for up to max_reconnect_backoff_seconds.
+                        self._input_stream = None
                         self._reconnect_event.set()
                     return
                 else:
@@ -260,6 +276,7 @@ class TranscribeSTT(stt.STT):
             # session limit; treat that as retriable.
             if not self.closed:
                 logger.info("AWS Transcribe stream ended, will reconnect")
+                self._input_stream = None
                 self._reconnect_event.set()
         except asyncio.CancelledError:
             raise
@@ -267,6 +284,7 @@ class TranscribeSTT(stt.STT):
             if self.closed:
                 return
             logger.exception("AWS Transcribe receive loop failed, will reconnect")
+            self._input_stream = None
             self._reconnect_event.set()
 
     def _handle_transcript_event(self, event: TranscriptEvent):

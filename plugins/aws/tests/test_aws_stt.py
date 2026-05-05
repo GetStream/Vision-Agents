@@ -81,6 +81,12 @@ class TestTranscribeSTT:
         assert len(turn_ended) == 1
         assert turn_ended[0].participant == participant
 
+    def test_partial_static_credentials_rejected(self):
+        with pytest.raises(ValueError, match="provided together"):
+            aws.STT(aws_access_key_id="AKIA...")
+        with pytest.raises(ValueError, match="provided together"):
+            aws.STT(aws_secret_access_key="secret")
+
     async def test_clear_drops_results_before_watermark(
         self, participant, transcript_event_factory
     ):
