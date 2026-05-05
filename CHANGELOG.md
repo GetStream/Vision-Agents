@@ -94,8 +94,13 @@ Install with: `uv add "vision-agents[redis]"`
 
 `py.typed` markers added to `vision_agents.core` and `vision_agents.testing` for downstream type checking support. (#378)
 
+### Inworld TTS v2
+
+`inworld-tts-2` added to the model `Literal` and used as the default for `inworld.TTS()`. (#531)
+
 ## Bug Fixes
 
 - **EventManager**: fix crash when event handlers have return type annotations (#381)
 - **RedisSessionKVStore**: fix import error when `redis` package is not installed (#384)
 - **Agent metrics**: fix metrics storage and serialization in session registry (#387)
+- **Inworld TTS**: fix garbled / failed playback for replies that span multiple stream chunks by forcing `LINEAR16` audio encoding (#531)
