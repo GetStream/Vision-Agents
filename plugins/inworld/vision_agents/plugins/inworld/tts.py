@@ -33,7 +33,7 @@ class TTS(tts.TTS):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        voice_id: str = "Dennis",
+        voice_id: str = "Sarah",
         model_id: Literal[
             "inworld-tts-1.5-max",
             "inworld-tts-1.5-mini",
@@ -48,9 +48,9 @@ class TTS(tts.TTS):
         Args:
             api_key: Inworld AI API key. If not provided, the INWORLD_API_KEY
                     environment variable will be used.
-            voice_id: The voice ID to use for synthesis (default: "Dennis").
-            model_id: The model ID to use for synthesis. Options: "inworld-tts-1.5-max",
-                     "inworld-tts-1.5-mini" (default: "inworld-tts-1.5-max").
+            voice_id: The voice ID to use for synthesis (default: "Sarah").
+            model_id: The model ID to use for synthesis. Options: "inworld-tts-2",
+                     "inworld-tts-1.5-max", "inworld-tts-1.5-mini" (default: "inworld-tts-2").
             temperature: Determines the degree of randomness when sampling audio tokens.
                         Accepts values between 0 and 2. Default: 1.1.
         """

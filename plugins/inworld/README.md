@@ -16,18 +16,23 @@ Get your API key from the [Inworld Portal](https://studio.inworld.ai/) and set
 
 ## TTS
 
-High-quality text-to-speech with streaming support.
+High-quality text-to-speech with streaming support. The plugin now defaults
+to Inworld's **TTS-2** model (currently in research preview), which adds
+natural-language steering, 100+ languages (15 GA, 90+ experimental), and
+high-quality instant voice cloning over the previous `inworld-tts-1.5-*`
+generation.
 
 ```python
 from vision_agents.plugins import inworld
 
+# Defaults to model_id="inworld-tts-2", voice_id="Sarah"
 tts = inworld.TTS()
 
 # Or specify explicitly
 tts = inworld.TTS(
     api_key="your_inworld_api_key",
-    voice_id="Dennis",
-    model_id="inworld-tts-1.5-max",
+    voice_id="Ashley",
+    model_id="inworld-tts-2",
     temperature=1.1,
 )
 ```
@@ -35,9 +40,45 @@ tts = inworld.TTS(
 ### TTS options
 
 - `api_key`: Inworld AI API key (default: reads from `INWORLD_API_KEY`)
-- `voice_id`: Voice to use (default: `"Dennis"`)
-- `model_id`: `"inworld-tts-1.5-max"`, `"inworld-tts-1.5-mini"`, `"inworld-tts-1"`, `"inworld-tts-1-max"` (default: `"inworld-tts-1.5-max"`)
+- `voice_id`: Voice to use (default: `"Sarah"`; `"Dennis"`, `"Ashley"`, `"Olivia"`, `"Clive"` and custom/cloned voices also supported)
+- `model_id`: `"inworld-tts-2"` (default), `"inworld-tts-1.5-max"`, `"inworld-tts-1.5-mini"`. `"inworld-tts-1"` and `"inworld-tts-1-max"` are deprecated by Inworld — migrate to `inworld-tts-2` or `inworld-tts-1.5-*`.
 - `temperature`: 0–2 (default: 1.1)
+
+The plugin requests `LINEAR16` (16-bit PCM WAV) chunks from Inworld so each
+streamed chunk is self-contained and decodes cleanly under streaming TTS;
+no extra configuration needed.
+
+### Steering (TTS-2)
+
+TTS-2 takes natural-language stage directions inline with your text. Place
+the instruction in square brackets before the segment it should apply to:
+
+```python
+text = (
+    "[whisper in a hushed style] I have to tell you something. "
+    "[laugh] Just kidding! [say with force] Now let's get to work."
+)
+async for chunk in await tts.stream_audio(text):
+    ...
+```
+
+Steering covers articulation, intonation, volume, pitch, range, speed, and
+vocal style — and supports non-verbal sounds like `[laugh]`, `[breathe]`,
+`[clear throat]`, `[sigh]`, `[cough]`, `[yawn]`. Combining dimensions
+(`[whisper in a hushed style]`, `[say playfully and very fast]`) produces
+better results than bare single-word tags. See Inworld's
+[steering docs](https://docs.inworld.ai/tts/capabilities/steering) and
+[prompting guide](https://docs.inworld.ai/tts/best-practices/prompting-for-tts-2)
+for the full reference.
+
+### Agent example
+
+A complete example wiring `inworld.TTS()` into a Stream-edge agent with
+Deepgram STT, Gemini LLM, and smart-turn detection lives at
+[`example/inworld_tts_example.py`](example/inworld_tts_example.py). The
+companion [`example/inworld-audio-guide.md`](example/inworld-audio-guide.md)
+is loaded as the agent's system prompt and teaches the LLM how to emit
+TTS-2 steering tags so replies sound expressive out of the box.
 
 ## Realtime (WebRTC)
 
