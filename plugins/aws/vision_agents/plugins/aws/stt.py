@@ -233,6 +233,7 @@ class TranscribeSTT(stt.STT):
     async def _recv_loop(self):
         if self._output_stream is None:
             return
+
         try:
             async for event in self._output_stream:
                 if isinstance(event, TranscriptResultStreamTranscriptEvent):
@@ -382,15 +383,23 @@ class TranscribeSTT(stt.STT):
                 logger.exception("AWS Transcribe reconnect failed")
                 self._reconnect_event.set()
 
-    async def _close_streams(self):
-        if self._recv_task is not None:
-            await cancel_and_wait(self._recv_task)
-            self._recv_task = None
+    async def _close_streams(self, timeout=5.0):
+        # Close the input first so AWS sees END_STREAM and closes the stream.
         if self._input_stream is not None:
             try:
                 await self._input_stream.close()
             except Exception:
                 logger.warning("Error closing input stream", exc_info=True)
+        if self._recv_task is not None:
+            try:
+                # Here the _recv_task is expected to exit
+                # when the input stream is closed.
+                # The cancel below is only a fallback for the
+                # case where AWS doesn't drain quickly enough.
+                await asyncio.wait_for(asyncio.shield(self._recv_task), timeout=timeout)
+            except Exception:
+                await cancel_and_wait(self._recv_task)
+            self._recv_task = None
         if self._stream is not None:
             try:
                 await self._stream.close()
