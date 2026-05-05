@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
@@ -7,6 +8,7 @@ import uuid
 from importlib.metadata import PackageNotFoundError, version
 from typing import AsyncIterator, Iterator, Literal
 
+import av
 import websockets
 import websockets.exceptions
 from getstream.video.rtc.track_util import AudioFormat, PcmData
@@ -25,39 +27,34 @@ except PackageNotFoundError:
 USER_AGENT = f"vision-agents-plugins-inworld/{_pkg_version}"
 
 
-def _extract_wav_pcm(data: bytes) -> tuple[int | None, bytes]:
-    """Extract sample rate and PCM payload from a WAV chunk.
-
-    Falls back to the full payload when the input is not a WAV container.
-    """
+def _decode_audio(data: bytes, target_sample_rate: int) -> PcmData | None:
+    """Decode an audio chunk (WAV or raw PCM) into a PcmData object."""
     if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
-        return None, data
+        if len(data) < 2:
+            return None
+        return PcmData.from_bytes(
+            data, sample_rate=target_sample_rate, channels=1, format=AudioFormat.S16
+        )
 
-    offset = 12
-    sample_rate: int | None = None
-    data_payload: bytes | None = None
+    container = av.open(io.BytesIO(data), format="wav", mode="r")
+    try:
+        frames = list(container.decode(audio=0))
+    finally:
+        container.close()
 
-    while offset + 8 <= len(data):
-        chunk_id = data[offset : offset + 4]
-        chunk_size = int.from_bytes(data[offset + 4 : offset + 8], byteorder="little")
-        chunk_start = offset + 8
-        chunk_end = min(chunk_start + chunk_size, len(data))
+    if not frames:
+        return None
 
-        if chunk_id == b"fmt " and chunk_size >= 16 and chunk_start + 8 <= len(data):
-            # WAV fmt layout: audio_format(2), channels(2), sample_rate(4), ...
-            sample_rate = int.from_bytes(
-                data[chunk_start + 4 : chunk_start + 8], byteorder="little"
-            )
-        elif chunk_id == b"data":
-            data_payload = data[chunk_start:chunk_end]
-            break
+    result = PcmData.from_av_frame(frames[0])
+    for frame in frames[1:]:
+        result = result.append(PcmData.from_av_frame(frame))
 
-        # Chunks are padded to even byte boundaries.
-        offset = chunk_end + (chunk_size % 2)
+    if result.sample_rate != target_sample_rate:
+        result = result.resample(
+            target_sample_rate=target_sample_rate, target_channels=1
+        ).to_int16()
 
-    if data_payload is None:
-        return sample_rate, data
-    return sample_rate, data_payload
+    return result
 
 
 class TTS(tts.TTS):
@@ -142,6 +139,7 @@ class TTS(tts.TTS):
         except (websockets.exceptions.WebSocketException, OSError):
             logger.warning("Inworld TTS websocket dropped; reconnecting")
             await self._reset_connection()
+            self._active_context_id = context_id
             await self._send_text_and_flush(text, context_id)
 
         return self._receive_audio(context_id, generation)
@@ -188,7 +186,6 @@ class TTS(tts.TTS):
     ) -> AsyncIterator[PcmData]:
         websocket = await self._ensure_connection()
         should_close_context = True
-        carry = b""
 
         try:
             while True:
@@ -232,26 +229,9 @@ class TTS(tts.TTS):
                 audio_b64 = audio_chunk.get("audioContent")
                 if audio_b64:
                     decoded = base64.b64decode(audio_b64)
-                    source_rate, pcm_bytes = _extract_wav_pcm(decoded)
-                    if pcm_bytes:
-                        carry += pcm_bytes
-                        usable = len(carry) - (len(carry) % 2)
-                        if usable > 0:
-                            chunk_bytes = carry[:usable]
-                            carry = carry[usable:]
-
-                            pcm = PcmData.from_bytes(
-                                chunk_bytes,
-                                sample_rate=source_rate or self._sample_rate,
-                                channels=1,
-                                format=AudioFormat.S16,
-                            )
-                            if source_rate and source_rate != self._sample_rate:
-                                pcm = pcm.resample(
-                                    target_sample_rate=self._sample_rate,
-                                    target_channels=1,
-                                ).to_int16()
-                            yield pcm
+                    pcm = _decode_audio(decoded, self._sample_rate)
+                    if pcm:
+                        yield pcm
 
                 if "contextClosed" in result:
                     should_close_context = False
@@ -260,12 +240,6 @@ class TTS(tts.TTS):
                 if "flushCompleted" in result:
                     break
         finally:
-            if carry:
-                logger.debug(
-                    "Dropping %d trailing unaligned PCM bytes for context %s",
-                    len(carry),
-                    context_id,
-                )
             if self._active_context_id == context_id:
                 self._active_context_id = None
             if should_close_context:
@@ -316,8 +290,21 @@ class TTS(tts.TTS):
         )
 
     async def _ensure_connection(self) -> websockets.ClientConnection:
-        if self._websocket is not None:
+        if (
+            self._websocket is not None
+            and self._websocket.state is websockets.State.OPEN
+        ):
             return self._websocket
+
+        if self._websocket is not None:
+            try:
+                await self._websocket.close()
+            except (websockets.exceptions.WebSocketException, OSError):
+                pass
+            self._websocket = None
+
+        if self._keepalive_task is not None and self._keepalive_task.done():
+            self._keepalive_task = None
 
         request_id = str(uuid.uuid4())
         self._websocket = await websockets.connect(
@@ -355,7 +342,8 @@ class TTS(tts.TTS):
         if websocket is None:
             return
 
-        while True:
+        deadline = asyncio.get_running_loop().time() + 0.5
+        while asyncio.get_running_loop().time() < deadline:
             try:
                 await asyncio.wait_for(websocket.recv(), timeout=0.05)
             except TimeoutError:
@@ -371,6 +359,8 @@ class TTS(tts.TTS):
             if websocket is None:
                 return
             if websocket.state is not websockets.State.OPEN:
+                if self._websocket is websocket:
+                    self._websocket = None
                 return
             payload: dict[str, object] = {"send_text": {"text": ""}}
             if self._active_context_id:
@@ -378,5 +368,10 @@ class TTS(tts.TTS):
             try:
                 await websocket.send(json.dumps(payload))
             except (websockets.exceptions.WebSocketException, OSError):
-                await self._reset_connection()
+                if self._websocket is websocket:
+                    self._websocket = None
+                try:
+                    await websocket.close()
+                except (websockets.exceptions.WebSocketException, OSError):
+                    pass
                 return
