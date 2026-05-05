@@ -30,6 +30,14 @@ async def tts(self) -> aws.TTS:  # type: ignore[name-defined]
     return aws.TTS(voice_id=os.environ.get("AWS_POLLY_VOICE", "Joanna"))
 
 
+class TestAWSPollyTTS:
+    def test_partial_static_credentials_rejected(self):
+        with pytest.raises(ValueError, match="provided together"):
+            aws.TTS(aws_access_key_id="AKIA...")
+        with pytest.raises(ValueError, match="provided together"):
+            aws.TTS(aws_secret_access_key="secret")
+
+
 @pytest.mark.skip()
 @pytest.mark.integration
 class TestAWSPollyTTSIntegration:

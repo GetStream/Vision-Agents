@@ -102,7 +102,7 @@ agent = Agent(
 )
 ```
 
-Credentials follow the standard boto3 chain (env vars, `~/.aws/credentials`, SSO, instance profile, etc.). `region_name` falls back to `AWS_REGION` / `AWS_DEFAULT_REGION` and finally `us-east-1`.
+Credentials follow the standard boto3 chain (env vars, `~/.aws/credentials`, SSO, instance profile, etc.). Pass `aws_access_key_id` + `aws_secret_access_key` (both required together, plus `aws_session_token` for temporary credentials from STS / SSO / assumed roles) or `aws_profile` to override. You may also inject a pre-built boto3 Polly client via `client=...`. `region_name` falls back to `AWS_REGION` / `AWS_DEFAULT_REGION` and finally `us-east-1`.
 
 ### Speech-to-Text (STT)
 
