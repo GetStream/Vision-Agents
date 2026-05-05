@@ -221,8 +221,6 @@ class TranscribeSTT(stt.STT):
             if self._aws_session_token:
                 kwargs["aws_session_token"] = self._aws_session_token
         else:
-            # boto3.Session() reads ~/.aws/credentials synchronously, so the
-            # resolver has to be constructed off the event loop.
             kwargs["aws_credentials_identity_resolver"] = await asyncio.to_thread(
                 Boto3CredentialsResolver, profile_name=self._aws_profile
             )

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Optional
 
 import boto3
@@ -23,11 +24,14 @@ class Boto3CredentialsResolver(
     async def get_identity(
         self, *, properties: AWSIdentityProperties, **kwargs: Any
     ) -> AWSCredentialsIdentity:
-        credentials = self._session.get_credentials()
+        # Both calls can block: get_credentials() walks the provider chain
+        # (file I/O, IMDS, SSO, STS) on first access, and get_frozen_credentials()
+        # triggers refresh on RefreshableCredentials.
+        credentials = await asyncio.to_thread(self._session.get_credentials)
         if not credentials:
             raise ValueError("Unable to load AWS credentials via boto3")
 
-        creds = credentials.get_frozen_credentials()
+        creds = await asyncio.to_thread(credentials.get_frozen_credentials)
         if not creds.access_key or not creds.secret_key:
             raise ValueError("AWS credentials are incomplete")
 
