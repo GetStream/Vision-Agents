@@ -129,6 +129,8 @@ agent = Agent(
 
 Credentials follow the standard boto3 chain (env vars, `~/.aws/credentials`, SSO, instance profile, etc.). Pass `aws_access_key_id` + `aws_secret_access_key` (both required together) or `aws_profile` to override.
 
+See `example/aws_pipeline_example.py` for a complete STT - LLM - TTS pipeline using only AWS components.
+
 ## Function Calling
 
 ### Standard LLM (aws.LLM)
