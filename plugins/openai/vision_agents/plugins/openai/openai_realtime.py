@@ -336,12 +336,9 @@ class Realtime(realtime.Realtime):
         elif et == "output_audio_buffer.stopped":
             # Output audio buffer stopped - acknowledgment of audio playback end
             pass
-        elif et == "response.audio.done":
-            # Audio generation complete for this response item
-            self._emit_audio_output_done_event()
-        elif et == "response.output_audio.done":
-            # Output audio generation complete for this response item
-            pass
+        elif et in ("response.output_audio.done", "response.audio.done"):
+            # Audio generation complete for this response item.
+            self._emit_audio_output_done_event(response_id=event.get("response_id"))
         elif et == "response.content_part.done":
             # Content part complete - contains full transcript
             pass

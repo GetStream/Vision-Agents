@@ -10,6 +10,7 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.realtime import (
     RealtimeAgentTranscript,
     RealtimeAudioOutput,
+    RealtimeAudioOutputDone,
     RealtimeUserTranscript,
 )
 from vision_agents.plugins.openai import Realtime
@@ -127,10 +128,12 @@ class TestOpenAIRealtimeIntegration:
             pass
 
         await asyncio.sleep(3.0)
-        audio = [
-            i for i in realtime.output.peek() if isinstance(i, RealtimeAudioOutput)
-        ]
+        items = realtime.output.peek()
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        done = [i for i in items if isinstance(i, RealtimeAudioOutputDone)]
         assert len(audio) > 0
+        assert len(done) >= 1
+        assert any(not d.interrupted for d in done)
 
     async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
         # Wait for connection to be fully established
