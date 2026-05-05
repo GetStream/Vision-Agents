@@ -270,8 +270,8 @@ class TranscribeSTT(stt.STT):
                     # Stop accepting audio; supervisor stays idle (no reconnect).
                     self._input_stream = None
                     return
-            # Stream ended cleanly. AWS closes on idle and at the 15-minute
-            # session limit; treat that as retriable.
+            # Stream ended cleanly. AWS closes on idle and on audio-length
+            # limits; treat that as retriable.
             if not self.closed:
                 logger.info("AWS Transcribe stream ended, will reconnect")
                 self._input_stream = None

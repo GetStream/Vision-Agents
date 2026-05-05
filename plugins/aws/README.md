@@ -106,7 +106,7 @@ Credentials follow the standard boto3 chain (env vars, `~/.aws/credentials`, SSO
 
 ### Speech-to-Text (STT)
 
-AWS Transcribe streaming STT converts audio to text in realtime. The connection auto-reconnects with exponential backoff after AWS's 15-minute session limit or transient errors.
+AWS Transcribe streaming STT converts audio to text in realtime. The connection auto-reconnects with exponential backoff on idle timeouts, audio-length limits, and transient errors.
 
 ```python
 from vision_agents.plugins import aws
@@ -127,7 +127,7 @@ agent = Agent(
 )
 ```
 
-Credentials follow the standard boto3 chain (env vars, `~/.aws/credentials`, SSO, instance profile, etc.). Pass `aws_access_key_id` + `aws_secret_access_key` (both required together) or `aws_profile` to override.
+Credentials follow the standard boto3 chain (env vars, `~/.aws/credentials`, SSO, instance profile, etc.). Pass `aws_access_key_id` + `aws_secret_access_key` (both required together, plus `aws_session_token` for temporary credentials from STS / SSO / assumed roles) or `aws_profile` to override.
 
 See `example/aws_pipeline_example.py` for a complete STT - LLM - TTS pipeline using only AWS components.
 
