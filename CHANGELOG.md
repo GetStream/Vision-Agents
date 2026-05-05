@@ -104,3 +104,4 @@ Install with: `uv add "vision-agents[redis]"`
 - **RedisSessionKVStore**: fix import error when `redis` package is not installed (#384)
 - **Agent metrics**: fix metrics storage and serialization in session registry (#387)
 - **Inworld TTS**: fix garbled / failed playback for replies that span multiple stream chunks by forcing `LINEAR16` audio encoding (#531)
+- **MCPServerRemote**: fix cancel-scope leak in which closing an MCP session left a half-cancelled anyio scope that pegged the event loop. The transport lifecycle now runs inside a dedicated supervisor task so `__aenter__` / `__aexit__` task-identity holds regardless of which caller drives `connect()` and `disconnect()`. (#529)
