@@ -201,8 +201,15 @@ class TranscribeSTT(stt.STT):
             _stream = await client.start_stream_transcription(
                 input=self._build_transcription_input()
             )
-            _, _output_stream = await _stream.await_output()
-            return _stream, _output_stream
+            try:
+                _, _output_stream = await _stream.await_output()
+                return _stream, _output_stream
+            except asyncio.CancelledError:
+                await stream.close()
+                raise
+            except Exception:
+                await stream.close()
+                raise
 
         stream, output_stream = await asyncio.wait_for(_connect(), timeout=timeout)
         self._stream = stream
