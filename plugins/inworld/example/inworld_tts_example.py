@@ -21,7 +21,7 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import deepgram, gemini, getstream, inworld, smart_turn
+from vision_agents.plugins import deepgram, gemini, getstream, inworld
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +34,9 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),
         agent_user=User(name="Friendly AI", id="agent"),
         instructions="Read @inworld-audio-guide.md",
-        tts=inworld.TTS(voice_id="Ashley"),
+        tts=inworld.TTS(voice_id="Sarah"),
         stt=deepgram.STT(),
         llm=gemini.LLM(model="gemini-3.1-flash-lite-preview"),
-        turn_detection=smart_turn.TurnDetection(),
     )
     return agent
 
