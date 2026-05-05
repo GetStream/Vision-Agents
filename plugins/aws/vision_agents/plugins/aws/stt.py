@@ -194,10 +194,11 @@ class TranscribeSTT(stt.STT):
             self._audio_sent_seconds += resampled.duration
 
     async def _open_stream(self, timeout: float = 10.0):
-        self._client = TranscribeStreamingClient(config=await self._build_config())
+        client = TranscribeStreamingClient(config=await self._build_config())
+        self._client = client
 
         async def _connect():
-            _stream = await self._client.start_stream_transcription(
+            _stream = await client.start_stream_transcription(
                 input=self._build_transcription_input()
             )
             _, _output_stream = await _stream.await_output()
