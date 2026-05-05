@@ -81,9 +81,7 @@ class TestAudioOutputStream:
         self, stream: AudioOutputStream, channels: int
     ):
         stream.send_nowait(
-            AudioOutputChunk(
-                data=make_pcm(5, fill=100, channels=channels), final=True
-            )
+            AudioOutputChunk(data=make_pcm(5, fill=100, channels=channels), final=True)
         )
         items = stream.peek()
         assert len(items) == 2
@@ -125,7 +123,9 @@ class TestAudioOutputStream:
     async def test_carry_is_reset_after_final(
         self, stream: AudioOutputStream, channels: int
     ):
-        stream.send_nowait(AudioOutputChunk(data=make_pcm(5, channels=channels), final=True))
+        stream.send_nowait(
+            AudioOutputChunk(data=make_pcm(5, channels=channels), final=True)
+        )
         stream.clear()
         stream.send_nowait(AudioOutputChunk(data=make_pcm(10, channels=channels)))
         assert stream.empty()
@@ -149,7 +149,9 @@ class TestAudioOutputStream:
     ):
         # Build up a sub-20ms carry, then send a data-less final marker
         # (as the realtime flow does on RealtimeAudioOutputDone).
-        stream.send_nowait(AudioOutputChunk(data=make_pcm(5, fill=42, channels=channels)))
+        stream.send_nowait(
+            AudioOutputChunk(data=make_pcm(5, fill=42, channels=channels))
+        )
         assert stream.empty()  # carry only, nothing emitted yet
 
         signal = AudioOutputChunk(data=None, final=True)
@@ -214,7 +216,9 @@ class TestAudioOutputStream:
     async def test_buffered_after_final_excludes_terminal_marker(
         self, stream: AudioOutputStream, channels: int
     ):
-        stream.send_nowait(AudioOutputChunk(data=make_pcm(20, channels=channels), final=True))
+        stream.send_nowait(
+            AudioOutputChunk(data=make_pcm(20, channels=channels), final=True)
+        )
         # Stream now holds the real 20ms chunk plus a zero-sample terminal marker.
         assert len(stream.peek()) == 2
         # Only the real chunk contributes to buffered duration.
