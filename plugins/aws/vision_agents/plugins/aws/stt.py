@@ -195,7 +195,6 @@ class TranscribeSTT(stt.STT):
 
     async def _open_stream(self, timeout: float = 10.0):
         client = TranscribeStreamingClient(config=await self._build_config())
-        self._client = client
 
         async def _connect():
             _stream = await client.start_stream_transcription(
@@ -205,16 +204,25 @@ class TranscribeSTT(stt.STT):
                 _, _output_stream = await _stream.await_output()
                 return _stream, _output_stream
             except asyncio.CancelledError:
-                await stream.close()
+                await _stream.close()
                 raise
             except Exception:
-                await stream.close()
+                await _stream.close()
                 raise
 
         stream, output_stream = await asyncio.wait_for(_connect(), timeout=timeout)
-        self._stream = stream
-        self._input_stream = stream.input_stream
-        self._output_stream = output_stream
+
+        # New stream restarts AWS's media-time clock at 0. Reset counters
+        # and publish the new input stream atomically so process_audio()
+        # never observes a half-built stream and chunks mid-flight cannot
+        # escape the cutoff.
+        async with self._watermark_lock:
+            self._client = client
+            self._stream = stream
+            self._output_stream = output_stream
+            self._audio_sent_seconds = 0.0
+            self._start_time_watermark = 0.0
+            self._input_stream = stream.input_stream
         self._recv_task = asyncio.create_task(self._recv_loop())
 
     async def _build_config(self) -> Config:
@@ -393,14 +401,14 @@ class TranscribeSTT(stt.STT):
                     self._emit_turn_ended_event(self._current_participant)
                 self._turn_in_progress = False
                 self._audio_start_time = None
-                # New stream restarts AWS's media-time clock at 0. Hold the
-                # lock across close+open so process_audio cannot send into a
-                # half-torn-down or half-built stream.
-                async with self._watermark_lock:
-                    self._audio_sent_seconds = 0.0
-                    self._start_time_watermark = 0.0
-                    await self._close_streams()
-                    await self._open_stream()
+                # Slow close+open runs outside the lock so concurrent
+                # process_audio calls observe _input_stream is None and
+                # drop audio immediately instead of stalling on the lock
+                # for the whole reconnect. _open_stream takes the lock
+                # briefly to swap in the new stream and reset watermarks
+                # atomically.
+                await self._close_streams()
+                await self._open_stream()
                 attempt = 0
                 logger.info("AWS Transcribe reconnected")
             except asyncio.CancelledError:
