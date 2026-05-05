@@ -215,7 +215,9 @@ class TTS(tts.TTS):
                 if status.get("code", 0) != 0:
                     error_message = status.get("message", "Unknown Inworld error")
                     if "max contexts limit reached" in error_message.lower():
-                        logger.warning("Inworld context limit reached; resetting websocket")
+                        logger.warning(
+                            "Inworld context limit reached; resetting websocket"
+                        )
                         await self._reset_connection()
                     raise RuntimeError(f"Inworld TTS websocket error: {error_message}")
 
