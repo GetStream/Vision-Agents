@@ -154,9 +154,6 @@ class AnamAvatar(Avatar):
         Process audio input from the Agent
         """
 
-        if not self.input_audio_stream:
-            raise ValueError("Input audio stream not provided")
-
         # Init the avatar's input stream early
         self._init_avatar_input_stream()
         async for item in self.input_audio_stream:

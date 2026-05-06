@@ -43,7 +43,18 @@ class Avatar(abc.ABC):
         self.events = EventManager()
         self.metrics = MetricsCollector()
         # Avatar's input is the Agent's output
-        self.input_audio_stream: AudioOutputStream | None = None
+        self._input_audio_stream: AudioOutputStream | None = None
+
+    @property
+    def input_audio_stream(self) -> AudioOutputStream:
+        """Return the agent's audio output stream attached to this avatar.
+
+        Raises ``ValueError`` if the agent has not attached the stream yet —
+        avatars should only access this after ``start()`` has been called.
+        """
+        if self._input_audio_stream is None:
+            raise ValueError("Input audio stream not provided")
+        return self._input_audio_stream
 
     def attach_audio_input(self, stream: AudioOutputStream) -> None:
         """Receive the Agent's audio output stream.
@@ -56,7 +67,7 @@ class Avatar(abc.ABC):
         This method can be overridden by subclasses to customize
         how audio is fed into the avatar.
         """
-        self.input_audio_stream = stream
+        self._input_audio_stream = stream
 
     @abc.abstractmethod
     def video_output(self) -> aiortc.VideoStreamTrack:
