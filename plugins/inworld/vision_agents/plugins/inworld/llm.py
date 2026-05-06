@@ -29,9 +29,7 @@ _TTFT_TIMEOUT_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ms|s)\s*$")
 def ttft_timeout_to_ms(value: str) -> float:
     match = _TTFT_TIMEOUT_PATTERN.match(value)
     if match is None:
-        raise ValueError(
-            f"ttft_timeout must look like '500ms' or '1s'; got {value!r}"
-        )
+        raise ValueError(f"ttft_timeout must look like '500ms' or '1s'; got {value!r}")
     amount, unit = match.groups()
     return float(amount) * (1000.0 if unit == "s" else 1.0)
 

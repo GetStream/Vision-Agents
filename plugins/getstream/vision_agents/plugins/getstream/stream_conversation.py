@@ -65,9 +65,7 @@ class StreamConversation(Conversation):
         blocked on the REST round-trip. Tasks queue on ``_sync_lock`` to
         preserve write ordering against the same channel.
         """
-        task = asyncio.create_task(
-            self._sync_with_lock(message, state, completed)
-        )
+        task = asyncio.create_task(self._sync_with_lock(message, state, completed))
         self._pending_syncs.add(task)
         task.add_done_callback(self._pending_syncs.discard)
 
@@ -80,9 +78,7 @@ class StreamConversation(Conversation):
             except StreamAPIException:
                 logger.exception("Stream Chat sync failed for message %s", message.id)
 
-    async def _do_sync(
-        self, message: Message, state: MessageState, completed: bool
-    ):
+    async def _do_sync(self, message: Message, state: MessageState, completed: bool):
         # Split message into chunks (markdown-aware)
         chunks = self._smart_chunk(message.content, self.chunk_size)
 
