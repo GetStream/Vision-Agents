@@ -30,6 +30,11 @@ class InworldTTS(tts.TTS):
 
     streaming = True
 
+    # Each ``stream_audio`` call POSTs a full text input and streams audio
+    # back, so the agent feeds sentence-grain deltas: audio for sentence N
+    # plays while the LLM is still emitting sentence N+1.
+    streaming = True
+
     def __init__(
         self,
         api_key: str | None = None,

@@ -111,6 +111,10 @@ class ChatCompletionsLLM(LLM):
     async def close(self) -> None:
         await self._client.close()
 
+    def _extra_request_kwargs(self) -> dict[str, Any]:
+        """Hook for subclasses to inject extra fields (e.g. ``extra_body``) into ``chat.completions.create``."""
+        return {}
+
     async def _create_response_internal(
         self,
         messages: list[dict[str, Any]],
@@ -125,6 +129,7 @@ class ChatCompletionsLLM(LLM):
         }
         if tools:
             request_kwargs["tools"] = tools
+        request_kwargs.update(self._extra_request_kwargs())
 
         # Track timing
         request_start_time = time.perf_counter()
@@ -388,6 +393,7 @@ class ChatCompletionsLLM(LLM):
             }
             if tools:
                 request_kwargs["tools"] = tools
+            request_kwargs.update(self._extra_request_kwargs())
 
             try:
                 follow_up = await self._client.chat.completions.create(**request_kwargs)
