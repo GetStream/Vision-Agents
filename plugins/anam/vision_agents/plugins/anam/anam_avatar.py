@@ -196,21 +196,22 @@ class AnamAvatar(Avatar):
             except Exception:
                 logger.warning("Failed to send audio frame", exc_info=True)
 
-    def _init_avatar_input_stream(self) -> None:
+    def _init_avatar_input_stream(self) -> AgentAudioInputStream:
         if self._audio_input_stream is None:
             self._audio_input_stream = self._session.create_agent_audio_input_stream(
                 AgentAudioInputConfig(
                     encoding="pcm_s16le", sample_rate=24000, channels=1
                 )
             )
+        return self._audio_input_stream
 
     async def _send_audio(self, pcm: PcmData) -> None:
         """
         Send audio to the avatar.
         """
-        self._init_avatar_input_stream()
+        stream = self._init_avatar_input_stream()
         pcm = pcm.resample(target_channels=1, target_sample_rate=24000)
-        await self._audio_input_stream.send_audio_chunk(pcm.to_bytes())
+        await stream.send_audio_chunk(pcm.to_bytes())
 
     async def _end_turn(self) -> None:
         """
