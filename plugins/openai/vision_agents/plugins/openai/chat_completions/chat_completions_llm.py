@@ -229,13 +229,14 @@ class ChatCompletionsLLM(LLM):
             ttft_ms = (first_token_time - request_start_time) * 1000
 
         item_id = last_chunk.id if last_chunk is not None else None
+        resolved_model = last_chunk.model if last_chunk is not None else self.model
         yield LLMResponseFinal(
             original=last_chunk,
             text=total_text,
             item_id=item_id,
             latency_ms=latency_ms,
             time_to_first_token_ms=ttft_ms,
-            model=self.model,
+            model=resolved_model,
         )
 
     async def _build_model_request(self) -> list[dict]:
@@ -460,11 +461,12 @@ class ChatCompletionsLLM(LLM):
             ttft_ms = (first_token_time - request_start_time) * 1000
 
         item_id = last_chunk.id if last_chunk is not None else None
+        resolved_model = last_chunk.model if last_chunk is not None else self.model
         yield LLMResponseFinal(
             original=last_chunk,
             text=total_text,
             item_id=item_id,
             latency_ms=latency_ms,
             time_to_first_token_ms=ttft_ms,
-            model=self.model,
+            model=resolved_model,
         )

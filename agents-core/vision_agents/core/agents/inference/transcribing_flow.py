@@ -464,7 +464,8 @@ class TranscribingInferenceFlow(InferenceFlow):
                 elif isinstance(item, LLMResponseFinal):
                     # Process the final response
                     text = sanitize_text(item.text) or ""
-                    logger.info(f"🤖 [LLM response final]: {text}")
+                    model_suffix = f" ({item.model})" if item.model else ""
+                    logger.info(f"🤖 [LLM response final]{model_suffix}: {text}")
                     # Skip persistence for empty finals — these come from LLM
                     # errors (e.g. upstream unavailable) and would otherwise
                     # poison conversation history with an empty assistant

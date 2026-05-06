@@ -97,11 +97,17 @@ class InworldTTS(tts.TTS):
         self, text: str, *_, **__
     ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:
         """Convert text to speech over Inworld bidirectional WebSocket."""
-        context_id = str(uuid.uuid4())
-        self._active_context_id = context_id
         self._generation += 1
         generation = self._generation
 
+        context_id = str(uuid.uuid4())
+        await self._send_with_reconnect(text, context_id)
+
+        return self._stream_with_retry(text, context_id, generation)
+
+    async def _send_with_reconnect(self, text: str, context_id: str) -> None:
+        """Send create+text+flush, reconnecting once on connection-level errors."""
+        self._active_context_id = context_id
         try:
             await self._send_text_and_flush(text, context_id)
         except (websockets.exceptions.WebSocketException, OSError):
@@ -110,7 +116,37 @@ class InworldTTS(tts.TTS):
             self._active_context_id = context_id
             await self._send_text_and_flush(text, context_id)
 
-        return self._receive_audio(context_id, generation)
+    async def _stream_with_retry(
+        self, text: str, context_id: str, generation: int
+    ) -> AsyncIterator[PcmData]:
+        """Yield PCM frames, retrying once on the "Context not found" race.
+
+        Inworld occasionally processes ``send_text`` before ``create_context``
+        has registered, returning a status frame with ``"Context … not found
+        during sendText"``. The race only fires before any audio is emitted,
+        so we reset the connection and reissue once with a fresh context id.
+        """
+        emitted_any = False
+        try:
+            async for pcm in self._receive_audio(context_id, generation):
+                emitted_any = True
+                yield pcm
+            return
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if emitted_any or "context" not in msg or "not found" not in msg:
+                raise
+
+        logger.warning(
+            "Inworld TTS context-not-found race; retrying once with a fresh connection"
+        )
+        await self._reset_connection()
+
+        context_id = str(uuid.uuid4())
+        await self._send_with_reconnect(text, context_id)
+
+        async for pcm in self._receive_audio(context_id, generation):
+            yield pcm
 
     async def stop_audio(self) -> None:
         """Stop current synthesis by closing the active context."""

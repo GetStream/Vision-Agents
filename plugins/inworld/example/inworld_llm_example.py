@@ -5,17 +5,17 @@ Uses ``inworld.LLM`` — the OpenAI-compatible chat completions endpoint at
 
 Routing notes:
 
-- We pin ``model="openai/gpt-4o-mini"`` rather than ``"auto"``. ``auto``
-  asks Inworld to pick an upstream per request based on ``sort_by``, which
-  adds a routing-decision hop on top of the selected upstream's TTFT. For
-  voice, that variance is felt directly. A pinned fast model gives a
-  flatter, lower TTFT.
-- ``fallback_models`` keeps a vision/text-capable second choice in case
-  the primary times out per ``ttft_timeout``.
-- ``ttft_timeout="500ms"`` is Inworld's enforced minimum (anything lower
-  returns a 502 ``Upstream server unavailable`` from the router): cut
-  over to the fallback aggressively if the primary is slow to first
-  token, but no faster than the gateway allows.
+- Each *turn* picks a random primary from ``ROUTER_MODELS``, mirroring
+  the [router quickstart](https://docs.inworld.ai/router/quickstart)'s
+  weighted-variant demo but client-side so no portal config is needed.
+  The other two models become fallbacks for that same turn, so a single
+  upstream wobble does not drop the turn. The resolved model is logged
+  on every turn via the ``[LLM response final]`` line.
+- ``ttft_timeout="2s"`` gives the primary room to actually deliver
+  first token before we cut over. 500ms (Inworld's floor) trips the
+  fallback on essentially every request because real-world TTFT
+  typically lands at 1–2s; that turns the fallback into the de-facto
+  primary and amplifies a single outage into a hard failure.
 
 For full-duplex speech-to-speech (no STT/TTS hop), use ``inworld.Realtime``
 instead — that path is strictly lower-latency than STT → LLM → TTS.
@@ -26,21 +26,60 @@ Set the following before running:
 - ``DEEPGRAM_API_KEY``
 """
 
+import logging
+import random
+from typing import Any, AsyncIterator, Optional
+
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.plugins import deepgram, getstream, inworld
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
+ROUTER_MODELS = [
+    "openai/gpt-5.4-nano",
+    "google-ai-studio/gemini-3.1-flash-lite-preview",
+    "deepinfra/deepseek-v4-flash",
+]
+
+
+class RotatingInworldLLM(inworld.LLM):
+    """Demo-only LLM that picks a fresh primary on every request.
+
+    Mirrors the router quickstart's weighted-variant pattern client-side:
+    each turn ``random.choice``-s a primary out of ``models``, and the
+    rest become per-request fallbacks via ``extra_body.models``. Used by
+    the example to make the router's model-switching behavior visible.
+    """
+
+    def __init__(self, models: list[str], **kwargs: Any) -> None:
+        if not models:
+            raise ValueError("RotatingInworldLLM requires at least one model")
+        super().__init__(model=models[0], fallback_models=models[1:], **kwargs)
+        self._rotation = list(models)
+
+    async def _create_response_internal(
+        self,
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        primary = random.choice(self._rotation)
+        self.model = primary
+        self._extra_body["models"] = [m for m in self._rotation if m != primary]
+        logger.info(f"🎲 Routing this turn: primary={primary}")
+        async for item in super()._create_response_internal(messages, tools, **kwargs):
+            yield item
+
 
 async def create_agent(**kwargs) -> Agent:
-    llm = inworld.LLM(
-        model="openai/gpt-4o-mini",
-        ttft_timeout="500ms",
-        fallback_models=[
-            "google-ai-studio/gemini-2.5-flash",
-        ],
+    llm = RotatingInworldLLM(
+        models=ROUTER_MODELS,
+        ttft_timeout="2s",
     )
 
     agent = Agent(
