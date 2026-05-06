@@ -25,42 +25,7 @@ except PackageNotFoundError:
 USER_AGENT = f"vision-agents-plugins-inworld/{_pkg_version}"
 
 
-def _extract_wav_pcm(data: bytes) -> tuple[int | None, bytes]:
-    """Extract sample rate and PCM payload from a WAV chunk.
-
-    Falls back to the full payload when the input is not a WAV container.
-    """
-    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
-        return None, data
-
-    offset = 12
-    sample_rate: int | None = None
-    data_payload: bytes | None = None
-
-    while offset + 8 <= len(data):
-        chunk_id = data[offset : offset + 4]
-        chunk_size = int.from_bytes(data[offset + 4 : offset + 8], byteorder="little")
-        chunk_start = offset + 8
-        chunk_end = min(chunk_start + chunk_size, len(data))
-
-        if chunk_id == b"fmt " and chunk_size >= 16 and chunk_start + 8 <= len(data):
-            # WAV fmt layout: audio_format(2), channels(2), sample_rate(4), ...
-            sample_rate = int.from_bytes(
-                data[chunk_start + 4 : chunk_start + 8], byteorder="little"
-            )
-        elif chunk_id == b"data":
-            data_payload = data[chunk_start:chunk_end]
-            break
-
-        # Chunks are padded to even byte boundaries.
-        offset = chunk_end + (chunk_size % 2)
-
-    if data_payload is None:
-        return sample_rate, data
-    return sample_rate, data_payload
-
-
-class TTS(tts.TTS):
+class InworldTTS(tts.TTS):
     """Inworld AI Text-to-Speech plugin using bidirectional WebSocket streaming."""
 
     streaming = True
@@ -116,7 +81,6 @@ class TTS(tts.TTS):
 
         self._websocket: websockets.ClientConnection | None = None
         self._generation = 0
-        self._stop_event = asyncio.Event()
         self._active_context_id: str | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
 
@@ -128,10 +92,6 @@ class TTS(tts.TTS):
         self, text: str, *_, **__
     ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:
         """Convert text to speech over Inworld bidirectional WebSocket."""
-        if self._stop_event.is_set():
-            await self._drain()
-            self._stop_event.clear()
-
         context_id = str(uuid.uuid4())
         self._active_context_id = context_id
         self._generation += 1
@@ -150,7 +110,6 @@ class TTS(tts.TTS):
     async def stop_audio(self) -> None:
         """Stop current synthesis by closing the active context."""
         self._generation += 1
-        self._stop_event.set()
 
         if self._active_context_id and self._websocket is not None:
             try:
@@ -189,11 +148,10 @@ class TTS(tts.TTS):
     ) -> AsyncIterator[PcmData]:
         websocket = await self._ensure_connection()
         should_close_context = True
-        carry = b""
 
         try:
             while True:
-                if self._stop_event.is_set() or self._generation != generation:
+                if self._generation != generation:
                     break
 
                 try:
@@ -210,8 +168,15 @@ class TTS(tts.TTS):
                 except json.JSONDecodeError:
                     logger.warning("Skipping non-JSON Inworld TTS websocket message")
                     continue
-
                 result = data.get("result", {})
+
+                # Drop stale frames from a previously-closed context that the
+                # server is still draining onto the shared websocket — including
+                # late error frames for a context we already abandoned.
+                msg_context_id = result.get("contextId")
+                if msg_context_id and msg_context_id != context_id:
+                    continue
+
                 status = result.get("status", {})
                 if status.get("code", 0) != 0:
                     error_message = status.get("message", "Unknown Inworld error")
@@ -225,34 +190,15 @@ class TTS(tts.TTS):
                 if "error" in data:
                     raise RuntimeError(f"Inworld TTS websocket error: {data['error']}")
 
-                msg_context_id = result.get("contextId") or result.get("context_id")
-                if msg_context_id and msg_context_id != context_id:
-                    continue
-
                 audio_chunk = result.get("audioChunk", {})
                 audio_b64 = audio_chunk.get("audioContent")
                 if audio_b64:
-                    decoded = base64.b64decode(audio_b64)
-                    source_rate, pcm_bytes = _extract_wav_pcm(decoded)
-                    if pcm_bytes:
-                        carry += pcm_bytes
-                        usable = len(carry) - (len(carry) % 2)
-                        if usable > 0:
-                            chunk_bytes = carry[:usable]
-                            carry = carry[usable:]
-
-                            pcm = PcmData.from_bytes(
-                                chunk_bytes,
-                                sample_rate=source_rate or self._sample_rate,
-                                channels=1,
-                                format=AudioFormat.S16,
-                            )
-                            if source_rate and source_rate != self._sample_rate:
-                                pcm = pcm.resample(
-                                    target_sample_rate=self._sample_rate,
-                                    target_channels=1,
-                                ).to_int16()
-                            yield pcm
+                    yield PcmData.from_bytes(
+                        base64.b64decode(audio_b64),
+                        sample_rate=self._sample_rate,
+                        channels=1,
+                        format=AudioFormat.S16,
+                    )
 
                 if "contextClosed" in result:
                     should_close_context = False
@@ -261,24 +207,22 @@ class TTS(tts.TTS):
                 if "flushCompleted" in result:
                     break
         finally:
-            if carry:
-                logger.debug(
-                    "Dropping %d trailing unaligned PCM bytes for context %s",
-                    len(carry),
-                    context_id,
-                )
+            # Skip the close if stop_audio (or another caller) already cleared
+            # _active_context_id — they will have closed the context already,
+            # and a duplicate close_context provokes an error frame from the
+            # server that would derail the next utterance.
             if self._active_context_id == context_id:
                 self._active_context_id = None
-            if should_close_context:
-                try:
-                    await self._send_close_context(context_id)
-                except (websockets.exceptions.WebSocketException, OSError):
-                    await self._reset_connection()
+                if should_close_context:
+                    try:
+                        await self._send_close_context(context_id)
+                    except (websockets.exceptions.WebSocketException, OSError):
+                        await self._reset_connection()
 
     async def _send_create_context(self, context_id: str) -> None:
         websocket = await self._ensure_connection()
         audio_config: dict[str, object] = {
-            "audioEncoding": "LINEAR16",
+            "audioEncoding": "PCM",
             "sampleRateHertz": self._sample_rate,
         }
         if self._speaking_rate is not None:
@@ -362,22 +306,6 @@ class TTS(tts.TTS):
                 self._websocket = None
 
         self._active_context_id = None
-        self._stop_event.clear()
-
-    async def _drain(self) -> None:
-        websocket = self._websocket
-        if websocket is None:
-            return
-
-        deadline = asyncio.get_running_loop().time() + 0.5
-        while asyncio.get_running_loop().time() < deadline:
-            try:
-                await asyncio.wait_for(websocket.recv(), timeout=0.05)
-            except TimeoutError:
-                break
-            except (websockets.exceptions.ConnectionClosed, OSError):
-                await self._reset_connection()
-                break
 
     async def _keepalive_loop(self) -> None:
         while True:
