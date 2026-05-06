@@ -19,6 +19,7 @@ from opentelemetry.context import Token
 from opentelemetry.trace import Tracer, set_span_in_context
 from opentelemetry.trace.propagation import Context, Span
 
+from ..avatars import Avatar
 from ..edge import Call, EdgeTransport
 from ..edge.events import (
     AudioReceivedEvent,
@@ -120,6 +121,10 @@ class Agent:
         # - often combined with API calls to fetch stats etc
         # - state from each processor is passed to the LLM
         processors: Optional[list[Processor]] = None,
+        # optional avatar plugin. When set, the avatar owns the agent's
+        # outbound video/audio tracks and the inference flow's audio output
+        # is routed through the avatar provider for lipsync.
+        avatar: Optional[Avatar] = None,
         # MCP servers for external tool and resource access
         mcp_servers: Optional[list[MCPBaseServer]] = None,
         options: Optional[AgentOptions] = None,
@@ -208,6 +213,7 @@ class Agent:
         self.tts = tts
         self.turn_detection = turn_detection
         self.processors: list[Processor] = processors or []
+        self.avatar = avatar
         self.mcp_servers = mcp_servers or []
         self._call_context_token: CallContextToken | None = None
         self._context_token: Token[Context] | None = None
@@ -230,12 +236,12 @@ class Agent:
 
         self._collector = MetricsCollector()
         # Merge plugin metric collectors so plugin on_*() calls forward to the agent root
-        for plugin in [stt, tts, turn_detection, llm, *self.processors]:
+        for plugin in [stt, tts, turn_detection, llm, avatar, *self.processors]:
             if plugin is not None:
                 self._collector.merge(plugin.metrics)
 
         # Merge plugin events BEFORE subscribing to any events
-        for component in [stt, tts, turn_detection, llm, edge, profiler]:
+        for component in [stt, tts, turn_detection, llm, avatar, edge, profiler]:
             if component is not None:
                 self.logger.debug(f"Register events from plugin {component}")
                 self.events.merge(component.events)
@@ -289,6 +295,9 @@ class Agent:
 
         self._audio_input_stream = AudioInputStream()
         self._audio_output_stream = AudioOutputStream()
+        if self.avatar is not None:
+            # The agent's audio output is the avatar's input
+            self.avatar.attach_audio_input(self._audio_output_stream)
         self._flow = self.resolve_inference_flow()
 
     @property
@@ -649,6 +658,7 @@ class Agent:
             self.tts,
             self.turn_detection,
             self.edge,
+            self.avatar,
             *self.processors,
         ]
         for subclass in subclasses:
@@ -873,8 +883,16 @@ class Agent:
         if self._audio_track is None:
             return
 
+        # Avatar mode: the avatar consumes `_audio_output_stream` internally
+        # (forwarding to the provider for lipsync) and exposes the synced PCM
+        # via `output_audio_stream()`. We drain that into the outbound track.
+        stream = (
+            self.avatar.audio_output()
+            if self.avatar is not None
+            else self._audio_output_stream
+        )
         try:
-            async for audio_output in self._audio_output_stream:
+            async for audio_output in stream:
                 match audio_output:
                     case AudioOutputChunk(data=data) if data is not None:
                         await self._audio_track.write(data)
@@ -1047,7 +1065,7 @@ class Agent:
         """
         if self.tts is not None or _is_audio_llm(self.llm):
             return True
-        # Also publish audio if there are audio publishers (e.g., HeyGen avatar)
+
         if self.audio_publishers:
             return True
         return False
@@ -1055,6 +1073,10 @@ class Agent:
     @property
     def publish_video(self) -> bool:
         """Whether the agent should publish an outbound video track."""
+
+        # Avatars always publish video track
+        if self.avatar is not None:
+            return True
         return len(self.video_publishers) > 0
 
     def _needs_video(self) -> bool:
@@ -1136,29 +1158,36 @@ class Agent:
             else:
                 self._audio_track = self.edge.create_audio_track()
 
-        # Set up video track if video publishers are available
-        if self.publish_video:
-            # Get the first video publisher to create the track
-            video_publisher = self.video_publishers[0]
-            self._video_track = video_publisher.publish_video_track()
-            forwarder = VideoForwarder(
-                self._video_track,  # type: ignore[arg-type]
-                max_buffer=30,
-                fps=30,
-                # Max FPS for the producer (individual consumers can throttle down)
-                name=f"video_forwarder_{video_publisher.name}",
-            )
-            self._active_video_tracks[self._video_track.id] = TrackInfo(
-                id=self._video_track.id,
-                type=TrackType.VIDEO.value,
-                processor=video_publisher.name,
-                track=self._video_track,
-                participant=None,
-                priority=2,
-                forwarder=forwarder,
-            )
+        if not self.publish_video:
+            return
 
-            self.logger.info("🎥 Video track initialized from video publisher")
+        # Avatar owns the outbound video track. Its track is NOT placed in
+        # `_active_video_tracks` — that dict is for inputs the LLM and
+        # processors might watch.
+        if self.avatar is not None:
+            self._video_track = self.avatar.video_output()
+            return
+
+        video_publisher = self.video_publishers[0]
+        self._video_track = video_publisher.publish_video_track()
+        forwarder = VideoForwarder(
+            self._video_track,  # type: ignore[arg-type]
+            max_buffer=30,
+            fps=30,
+            # Max FPS for the producer (individual consumers can throttle down)
+            name=f"video_forwarder_{video_publisher.name}",
+        )
+        self._active_video_tracks[self._video_track.id] = TrackInfo(
+            id=self._video_track.id,
+            type=TrackType.VIDEO.value,
+            processor=video_publisher.name,
+            track=self._video_track,
+            participant=None,
+            priority=2,
+            forwarder=forwarder,
+        )
+
+        self.logger.info("🎥 Video track initialized from video publisher")
 
     async def _get_video_track_override(self) -> VideoFileTrack:
         """
