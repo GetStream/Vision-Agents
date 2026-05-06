@@ -569,6 +569,20 @@ wheels = [
 ]
 
 [[package]]
+name = "aws-sdk-transcribe-streaming"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "smithy-aws-core", extra = ["eventstream", "json"] },
+    { name = "smithy-core" },
+    { name = "smithy-http", extra = ["awscrt"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fa/a9/98b060633ef1457520860825a3331943c256c7f31983150b35fb39e71add/aws_sdk_transcribe_streaming-0.5.0.tar.gz", hash = "sha256:87753ab869c79cb260028971898fe82aa3c623b9b3167b22e0f7fbccd9395556", size = 456922, upload-time = "2026-04-07T19:24:22.454Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/9f/dfa16632c4330b2386e5567cb2424ba57c49760f4935f4b925d1a7b97f35/aws_sdk_transcribe_streaming-0.5.0-py3-none-any.whl", hash = "sha256:41f5a0a045b143b3a034043a0245bebc3a11fa6e57b2d92d7b2388f4fd60bd60", size = 60965, upload-time = "2026-04-07T19:24:23.577Z" },
+]
+
+[[package]]
 name = "awscrt"
 version = "0.32.1"
 source = { registry = "https://pypi.org/simple" }
@@ -7496,6 +7510,7 @@ name = "vision-agents-plugins-aws"
 source = { editable = "plugins/aws" }
 dependencies = [
     { name = "aws-sdk-bedrock-runtime" },
+    { name = "aws-sdk-transcribe-streaming" },
     { name = "boto3" },
     { name = "onnxruntime" },
     { name = "vision-agents" },
@@ -7510,6 +7525,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aws-sdk-bedrock-runtime", specifier = ">=0.4.0,<1" },
+    { name = "aws-sdk-transcribe-streaming", specifier = ">=0.5.0,<1" },
     { name = "boto3", specifier = ">=1.42.65,<2" },
     { name = "onnxruntime", specifier = ">=1.16.1,<2" },
     { name = "vision-agents", editable = "agents-core" },
@@ -7825,10 +7841,10 @@ name = "vision-agents-plugins-inworld"
 source = { editable = "plugins/inworld" }
 dependencies = [
     { name = "aiortc" },
-    { name = "av" },
     { name = "httpx" },
     { name = "openai", extra = ["realtime"] },
     { name = "vision-agents" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -7840,10 +7856,10 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiortc", specifier = ">=1.9" },
-    { name = "av", specifier = ">=10.0.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "openai", extras = ["realtime"], specifier = ">=2.26.0,<3" },
     { name = "vision-agents", editable = "agents-core" },
+    { name = "websockets", specifier = ">=14.0" },
 ]
 
 [package.metadata.requires-dev]

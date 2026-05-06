@@ -20,6 +20,14 @@ def _has_aws_creds() -> bool:
     )
 
 
+class TestAWSPollyTTS:
+    def test_partial_static_credentials_rejected(self):
+        with pytest.raises(ValueError, match="provided together"):
+            aws.TTS(aws_access_key_id="AKIA...")
+        with pytest.raises(ValueError, match="provided together"):
+            aws.TTS(aws_secret_access_key="secret")
+
+
 @pytest.mark.integration
 class TestAWSPollyTTSIntegration:
     @pytest.fixture

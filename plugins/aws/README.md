@@ -1,6 +1,6 @@
 # AWS Plugin for Vision Agents
 
-AWS (Bedrock) integration for Vision Agents framework with support for standard LLM, realtime with Nova Sonic, and text-to-speech with automatic session resumption.
+AWS integration for Vision Agents framework with support for standard LLM (Bedrock), realtime with Nova Sonic, text-to-speech (Polly), and streaming speech-to-text (Transcribe).
 
 ## Installation
 
@@ -80,17 +80,18 @@ See `example/aws_realtime_nova_example.py` for a complete example.
 
 ### Text-to-Speech (TTS)
 
-AWS Polly TTS is available for converting text to speech:
+AWS Polly synthesises speech from text and streams the resulting audio. Supports both standard and neural engines, plain-text or SSML input, and Polly lexicons for pronunciation overrides.
 
 ```python
 from vision_agents.plugins import aws
 
 tts = aws.TTS(
     region_name="us-east-1",
-    voice_id="Joanna",  # AWS Polly voice ID
-    engine="neural",  # 'standard' or 'neural'
-    text_type="text",  # 'text' or 'ssml'
-    language_code="en-US"
+    voice_id="Joanna",       # any Polly voice ID
+    engine="neural",         # "standard" | "neural"
+    text_type="text",        # "text" | "ssml"
+    language_code="en-US",
+    lexicon_names=None,      # optional list of Polly lexicons
 )
 
 # Use in agent
@@ -100,6 +101,35 @@ agent = Agent(
     # ... other components
 )
 ```
+
+Credentials follow the standard boto3 chain (env vars, `~/.aws/credentials`, SSO, instance profile, etc.). Pass `aws_access_key_id` + `aws_secret_access_key` (both required together, plus `aws_session_token` for temporary credentials from STS / SSO / assumed roles) or `aws_profile` to override. You may also inject a pre-built boto3 Polly client via `client=...`. `region_name` falls back to `AWS_REGION` / `AWS_DEFAULT_REGION` and finally `us-east-1`.
+
+### Speech-to-Text (STT)
+
+AWS Transcribe streaming STT converts audio to text in realtime. The connection auto-reconnects with exponential backoff on idle timeouts, audio-length limits, and transient errors.
+
+```python
+from vision_agents.plugins import aws
+
+stt = aws.STT(
+    language_code="en-US",
+    region_name="us-east-1",
+    show_speaker_label=False,
+    enable_partial_results_stabilization=False,
+    partial_results_stability=None,  # "high" | "medium" | "low"
+)
+
+# Use in agent
+agent = Agent(
+    llm=aws.LLM(model="qwen.qwen3-32b-v1:0"),
+    stt=stt,
+    # ... other components
+)
+```
+
+Credentials follow the standard boto3 chain (env vars, `~/.aws/credentials`, SSO, instance profile, etc.). Pass `aws_access_key_id` + `aws_secret_access_key` (both required together, plus `aws_session_token` for temporary credentials from STS / SSO / assumed roles) or `aws_profile` to override.
+
+See `example/aws_pipeline_example.py` for a complete STT - LLM - TTS pipeline using only AWS components.
 
 ## Function Calling
 

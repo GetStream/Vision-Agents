@@ -142,6 +142,7 @@ class TTS(tts.TTS):
         except (websockets.exceptions.WebSocketException, OSError):
             logger.warning("Inworld TTS websocket dropped; reconnecting")
             await self._reset_connection()
+            self._active_context_id = context_id
             await self._send_text_and_flush(text, context_id)
 
         return self._receive_audio(context_id, generation)
@@ -215,7 +216,9 @@ class TTS(tts.TTS):
                 if status.get("code", 0) != 0:
                     error_message = status.get("message", "Unknown Inworld error")
                     if "max contexts limit reached" in error_message.lower():
-                        logger.warning("Inworld context limit reached; resetting websocket")
+                        logger.warning(
+                            "Inworld context limit reached; resetting websocket"
+                        )
                         await self._reset_connection()
                     raise RuntimeError(f"Inworld TTS websocket error: {error_message}")
 
@@ -314,8 +317,21 @@ class TTS(tts.TTS):
         )
 
     async def _ensure_connection(self) -> websockets.ClientConnection:
-        if self._websocket is not None:
+        if (
+            self._websocket is not None
+            and self._websocket.state is websockets.State.OPEN
+        ):
             return self._websocket
+
+        if self._websocket is not None:
+            try:
+                await self._websocket.close()
+            except (websockets.exceptions.WebSocketException, OSError):
+                pass
+            self._websocket = None
+
+        if self._keepalive_task is not None and self._keepalive_task.done():
+            self._keepalive_task = None
 
         request_id = str(uuid.uuid4())
         self._websocket = await websockets.connect(
@@ -353,7 +369,8 @@ class TTS(tts.TTS):
         if websocket is None:
             return
 
-        while True:
+        deadline = asyncio.get_running_loop().time() + 0.5
+        while asyncio.get_running_loop().time() < deadline:
             try:
                 await asyncio.wait_for(websocket.recv(), timeout=0.05)
             except TimeoutError:
@@ -369,6 +386,8 @@ class TTS(tts.TTS):
             if websocket is None:
                 return
             if websocket.state is not websockets.State.OPEN:
+                if self._websocket is websocket:
+                    self._websocket = None
                 return
             payload: dict[str, object] = {"send_text": {"text": ""}}
             if self._active_context_id:
@@ -376,5 +395,10 @@ class TTS(tts.TTS):
             try:
                 await websocket.send(json.dumps(payload))
             except (websockets.exceptions.WebSocketException, OSError):
-                await self._reset_connection()
+                if self._websocket is websocket:
+                    self._websocket = None
+                try:
+                    await websocket.close()
+                except (websockets.exceptions.WebSocketException, OSError):
+                    pass
                 return
