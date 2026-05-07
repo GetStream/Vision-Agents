@@ -22,10 +22,10 @@ class Avatar(abc.ABC):
           ``__init__`` so the avatar can decide how to consume the
           inference flow's audio output.
         - Subclasses expose the avatar's lipsynced PCM via
-          ``output_audio_stream()``. The agent's audio producer drains
+          ``audio_output()``. The agent's audio producer drains
           that stream into the outbound rtc track.
         - The provider's video frames are exposed via
-          ``output_video_track()`` and become the agent's outbound video.
+          ``video_output()`` and become the agent's outbound video.
 
     Lifecycle:
         - ``output_video_track()`` is queried during ``Agent.__init__``.
