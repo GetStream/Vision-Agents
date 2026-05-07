@@ -6,6 +6,8 @@ synchronized lip-synced video and audio from the TTS audio stream.
 Required environment variables:
     LIVEAVATAR_API_KEY
     LIVEAVATAR_AVATAR_ID
+    GEMINI_API_KEY
+    DEEPGRAM_API_KEY
     STREAM_API_KEY
     STREAM_API_SECRET
 """
