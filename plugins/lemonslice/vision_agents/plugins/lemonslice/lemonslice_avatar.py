@@ -111,7 +111,6 @@ class LemonSliceAvatar(Avatar):
         await self._connect()
 
     async def close(self) -> None:
-        self._sync.close()
         if self._audio_input_task is not None:
             await cancel_and_wait(self._audio_input_task)
 
@@ -119,8 +118,14 @@ class LemonSliceAvatar(Avatar):
             await self._rtc_manager.close()
         except Exception as exc:
             logger.warning(f"Failed to close LemonSlice RTC manager: {exc}")
-        finally:
+
+        # Close sync AFTER rtc_manager so its receive tasks can't write to a
+        # closed stream during teardown.
+        self._sync.close()
+
+        try:
             await self._client.close()
+        finally:
             self._connected = False
             logger.debug("LemonSlice avatar publisher closed")
 
