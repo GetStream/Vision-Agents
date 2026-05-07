@@ -26,6 +26,7 @@ Set the following before running:
 - ``DEEPGRAM_API_KEY``
 """
 
+import asyncio
 import logging
 import random
 from typing import Any, AsyncIterator, Optional
@@ -48,32 +49,52 @@ ROUTER_MODELS = [
 
 
 class RotatingInworldLLM(inworld.LLM):
-    """Demo-only LLM that picks a fresh primary on every request.
+    """Demo subclass that re-rolls primary + fallbacks per turn.
 
-    Mirrors the router quickstart's weighted-variant pattern client-side:
-    each turn ``random.choice``-s a primary out of ``models``, and the
-    rest become per-request fallbacks via ``extra_body.models``. Used by
-    the example to make the router's model-switching behavior visible.
+    Why this exists: the router quickstart configures weighted variants in
+    the Inworld portal; doing it client-side here keeps the demo
+    self-contained and makes the resolved model visible in logs.
     """
 
     def __init__(self, models: list[str], **kwargs: Any) -> None:
-        if not models:
-            raise ValueError("RotatingInworldLLM requires at least one model")
+        if len(models) < 2:
+            raise ValueError("RotatingInworldLLM requires at least two models")
         super().__init__(model=models[0], fallback_models=models[1:], **kwargs)
         self._rotation = list(models)
+        self._last_primary: str | None = None
 
-    async def _create_response_internal(
+    def _create_response_internal(
         self,
         messages: list[dict[str, Any]],
         tools: Optional[list[dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
-        primary = random.choice(self._rotation)
+        candidates = [m for m in self._rotation if m != self._last_primary]
+        primary = random.choice(candidates)
+        self._last_primary = primary
         self.model = primary
         self._extra_body["models"] = [m for m in self._rotation if m != primary]
         logger.info(f"🎲 Routing this turn: primary={primary}")
-        async for item in super()._create_response_internal(messages, tools, **kwargs):
-            yield item
+        self._broadcast_router_model(primary)
+        return super()._create_response_internal(messages, tools, **kwargs)
+
+    def _broadcast_router_model(self, model: str) -> None:
+        """Tell connected clients which model is about to speak this turn.
+
+        The demo UI listens for `router.model` custom call events to tint its
+        agent visualizer per provider. Fire-and-forget — if the call isn't up
+        yet (e.g. unit tests, agent not joined) we just log and move on.
+        """
+        agent = self.agent
+        edge = getattr(agent, "edge", None) if agent is not None else None
+        if edge is None:
+            return
+        try:
+            asyncio.create_task(
+                edge.send_custom_event({"type": "router.model", "model": model})
+            )
+        except RuntimeError as exc:
+            logger.debug("Skipping router.model broadcast: %s", exc)
 
 
 async def create_agent(**kwargs) -> Agent:
