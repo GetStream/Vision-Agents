@@ -69,7 +69,7 @@ class Realtime(realtime.Realtime):
 
     def __init__(
         self,
-        model: str = "gpt-realtime-1.5",
+        model: str = "gpt-realtime-2",
         api_key: Optional[str] = None,
         voice: str = "marin",
         client: Optional[AsyncOpenAI] = None,
