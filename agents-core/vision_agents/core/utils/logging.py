@@ -1,6 +1,6 @@
 import logging
 import sys
-from contextvars import ContextVar, Token
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 import colorlog
@@ -99,7 +99,7 @@ def configure_fastapi_loggers(level: int) -> None:
 class CallContextToken:
     """Token capturing prior state for restoring logging context."""
 
-    context_token: Token
+    previous_context: str | None
     previous_global: str | None
 
 
@@ -132,9 +132,10 @@ def set_call_context(call_id: str) -> CallContextToken:
     global _CURRENT_CALL_ID
 
     token = CallContextToken(
-        context_token=call_id_ctx.set(call_id),
+        previous_context=call_id_ctx.get(),
         previous_global=_CURRENT_CALL_ID,
     )
+    call_id_ctx.set(call_id)
     _CURRENT_CALL_ID = call_id
     return token
 
@@ -144,8 +145,7 @@ def clear_call_context(token: CallContextToken) -> None:
 
     global _CURRENT_CALL_ID
 
-    # failing TODO: fix
-    # call_id_ctx.reset(token.context_token)
+    call_id_ctx.set(token.previous_context)
     _CURRENT_CALL_ID = token.previous_global
 
 
