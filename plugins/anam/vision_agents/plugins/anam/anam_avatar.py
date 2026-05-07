@@ -126,7 +126,6 @@ class AnamAvatar(Avatar):
         and release resources.
         """
 
-        self._sync.close()
         for task in (
             self._audio_input_task,
             self._audio_receiver_task,
@@ -135,6 +134,7 @@ class AnamAvatar(Avatar):
             if task is not None:
                 await cancel_and_wait(task)
 
+        self._sync.close()
         try:
             await self._exit_stack.aclose()
             await self._client.close()
