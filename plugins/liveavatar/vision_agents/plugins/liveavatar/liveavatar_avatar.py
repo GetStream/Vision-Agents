@@ -179,6 +179,7 @@ class LiveAvatar(Avatar):
             await self._rtc_manager.close()
             if self._websocket is not None:
                 await self._websocket.close()
+            await self._client.stop_session(session_id=self._session.session_id)
             raise
 
         self._connected = True

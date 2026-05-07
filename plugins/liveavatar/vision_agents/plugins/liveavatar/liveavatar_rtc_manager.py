@@ -96,10 +96,12 @@ class LiveAvatarRTCManager:
 
     async def close(self) -> None:
         try:
-            await cancel_and_wait(*self._tasks)
-            self._tasks.clear()
             if self._room is not None:
                 await self._room.disconnect()
+            while self._tasks:
+                tasks = tuple(self._tasks)
+                self._tasks.clear()
+                await cancel_and_wait(*tasks)
         finally:
             self._room = None
             self._connected = False

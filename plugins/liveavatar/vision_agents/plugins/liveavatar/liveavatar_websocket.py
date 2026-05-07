@@ -39,14 +39,20 @@ class LiveAvatarWebSocket:
         # liveness signal; the LiveAvatar media server stalls pong responses
         # under load and the client tears down the conn (1011) otherwise.
         self._ws = await websockets.connect(self._ws_url, ping_interval=None)
-        await self._send_json(
-            {
-                "type": "start",
-                "encoding": "pcm_s16le",
-                "sample_rate": self._sample_rate,
-                "channels": self._num_channels,
-            }
-        )
+        try:
+            await self._ws.send(
+                json.dumps(
+                    {
+                        "type": "start",
+                        "encoding": "pcm_s16le",
+                        "sample_rate": self._sample_rate,
+                        "channels": self._num_channels,
+                    }
+                )
+            )
+        except ConnectionClosed:
+            self._ws = None
+            raise
         logger.info("liveavatar_ws connected url=%s", self._ws_url)
 
     async def close(self) -> None:
