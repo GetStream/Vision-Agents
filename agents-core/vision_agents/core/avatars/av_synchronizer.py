@@ -58,8 +58,8 @@ class AVSynchronizer:
 
     async def flush(self) -> None:
         """Discard all pending video frames and flush buffered audio."""
+        # video track already flushes audio too
         await self._video_output.flush()
-        await self._audio_output.flush()
 
     def close(self):
         self._audio_output.close()
