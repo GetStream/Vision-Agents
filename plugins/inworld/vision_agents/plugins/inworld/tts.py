@@ -178,7 +178,16 @@ class InworldTTS(tts.TTS):
                     continue
 
                 status = result.get("status", {})
-                if status.get("code", 0) != 0:
+                status_code = status.get("code", 0)
+
+                # Drop messages addressed to a different context: they belong
+                # to a stale or already-closed call (or a keepalive whose
+                # context the server doesn't know about). Server-wide errors
+                # with no contextId still pass through.
+                if msg_context_id and msg_context_id != context_id:
+                    continue
+
+                if status_code != 0:
                     error_message = status.get("message", "Unknown Inworld error")
                     if "max contexts limit reached" in error_message.lower():
                         logger.warning(
@@ -317,9 +326,17 @@ class InworldTTS(tts.TTS):
                 if self._websocket is websocket:
                     self._websocket = None
                 return
-            payload: dict[str, object] = {"send_text": {"text": ""}}
-            if self._active_context_id:
-                payload["contextId"] = self._active_context_id
+            # Without an active context the server has nothing to attach a
+            # `send_text` to and responds with "Context not found", which then
+            # corrupts the next valid TTS call's receive stream. The websockets
+            # library handles TCP-level keepalive via PING/PONG on its own, so
+            # skipping iterations here is safe.
+            if self._active_context_id is None:
+                continue
+            payload: dict[str, object] = {
+                "send_text": {"text": ""},
+                "contextId": self._active_context_id,
+            }
             try:
                 await websocket.send(json.dumps(payload))
             except (websockets.exceptions.WebSocketException, OSError):
