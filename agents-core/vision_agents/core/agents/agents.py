@@ -853,19 +853,10 @@ class Agent:
                         await self._audio_input_stream.send(
                             AudioInputChunk(data=pcm, participant=participant)
                         )
-                        continue
 
                         # Pass PCM through audio processors
                         for processor in audio_processors:
                             await processor.process_audio(pcm)
-
-                        # Pass audio directly to LLM if it supports it
-                        if is_audio_llm:
-                            await self.simple_audio_response(pcm, participant)
-
-                        # Otherwise, go through stt
-                        elif self.stt:
-                            await self.stt.process_audio(pcm, participant)
 
                 # Sleep for remaining time to maintain consistent interval
                 elapsed = time.perf_counter() - loop_start
