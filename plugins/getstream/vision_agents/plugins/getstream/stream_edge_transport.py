@@ -232,7 +232,9 @@ class StreamEdge(EdgeTransport[StreamCall]):
         if not user_id or not session_id:
             return
 
-        self._track_resolver.cancel(user_id=user_id, session_id=session_id)
+        # Cancel on full leave.
+        if isinstance(event, sfu_events.ParticipantLeftEvent):
+            self._track_resolver.cancel(user_id=user_id, session_id=session_id)
 
         # Determine which tracks to remove
         if isinstance(event, sfu_events.TrackUnpublishedEvent):
