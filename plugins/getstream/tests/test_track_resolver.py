@@ -170,6 +170,56 @@ class TestTrackResolver:
         track_id = await asyncio.wait_for(resolve_task, timeout=0.5)
         assert track_id is None
 
+    async def test_stale_pending_is_evicted(self):
+        # Short TTL so we can verify the eviction without long sleeps.
+        resolver = TrackResolver(poll_interval=0.005, pending_ttl=0.05)
+
+        # Stale anonymous video registered first; would normally make the
+        # fallback ambiguous when a second anonymous video arrives.
+        resolver.register(
+            track_id="t_stale",
+            user_id=None,
+            session_id=None,
+            webrtc_kind="video",
+        )
+        await asyncio.sleep(0.08)
+
+        resolver.register(
+            track_id="t_fresh",
+            user_id=None,
+            session_id=None,
+            webrtc_kind="video",
+        )
+        track_id = await resolver.resolve(
+            user_id="u1",
+            session_id="s1",
+            stream_track_type=StreamTrackType.TRACK_TYPE_VIDEO,
+            timeout=0.5,
+        )
+        assert track_id == "t_fresh"
+
+    async def test_cancel_drops_named_pending(self, resolver):
+        # Named pending was registered (track_added fired), participant leaves
+        # before TrackPublishedEvent. cancel() should drop the orphan.
+        resolver.register(
+            track_id="t_orphan",
+            user_id="u1",
+            session_id="s1",
+            webrtc_kind="video",
+        )
+        resolver.cancel(user_id="u1", session_id="s1")
+
+        # If the orphan were still around, the next anonymous video would be
+        # ambiguous against an exact-tuple lookup attempt — but here we just
+        # verify a fresh resolve for the same key times out (no stale match).
+        with pytest.raises(TimeoutError):
+            await resolver.resolve(
+                user_id="u1",
+                session_id="s1",
+                stream_track_type=StreamTrackType.TRACK_TYPE_VIDEO,
+                timeout=0.05,
+            )
+
     async def test_cancel_before_resolve_is_noop(self, resolver):
         # Cancel arrives first; nothing in flight, no-op.
         resolver.cancel(user_id="u1", session_id="s1")

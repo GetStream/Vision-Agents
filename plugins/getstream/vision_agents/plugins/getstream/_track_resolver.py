@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
@@ -22,6 +23,14 @@ class _TrackEntry:
     published: bool
 
 
+@dataclass
+class _PendingTrack:
+    user_id: str | None
+    session_id: str | None
+    webrtc_kind: str
+    registered_at: float
+
+
 def _get_webrtc_kind(stream_track_type: StreamTrackType.ValueType) -> str:
     """Get the expected WebRTC kind (audio/video) for an SFU track type."""
     if stream_track_type in (
@@ -41,11 +50,11 @@ def _get_webrtc_kind(stream_track_type: StreamTrackType.ValueType) -> str:
 class TrackResolver:
     """Correlate SFU TrackPublished events with WebRTC track_added callbacks."""
 
-    def __init__(self, poll_interval: float = 0.01) -> None:
+    def __init__(self, poll_interval: float = 0.01, pending_ttl: float = 60.0) -> None:
         self._poll_interval = poll_interval
+        self._pending_ttl = pending_ttl
         self._track_map: dict[_TrackKey, _TrackEntry] = {}
-        # track_id -> (user_id|None, session_id|None, webrtc_kind)
-        self._pending: dict[str, tuple[str | None, str | None, str]] = {}
+        self._pending: dict[str, _PendingTrack] = {}
         # in-flight resolves; key set when participant leaves to abort the poll
         self._resolving: dict[_TrackKey, asyncio.Event] = {}
 
@@ -58,7 +67,12 @@ class TrackResolver:
         webrtc_kind: str,
     ) -> None:
         """Store a WebRTC track_added until the SFU confirms the semantic type."""
-        self._pending[track_id] = (user_id, session_id, webrtc_kind)
+        self._pending[track_id] = _PendingTrack(
+            user_id=user_id,
+            session_id=session_id,
+            webrtc_kind=webrtc_kind,
+            registered_at=time.monotonic(),
+        )
 
     async def resolve(
         self,
@@ -111,10 +125,18 @@ class TrackResolver:
         return entry.track_id
 
     def cancel(self, *, user_id: str, session_id: str) -> None:
-        """Abort any in-flight resolve for this participant (no-op if none)."""
+        """Abort any in-flight resolve for this participant and drop their pending entries."""
         for key, event in self._resolving.items():
             if key.user_id == user_id and key.session_id == session_id:
                 event.set()
+
+        orphaned = [
+            tid
+            for tid, pending in self._pending.items()
+            if pending.user_id == user_id and pending.session_id == session_id
+        ]
+        for tid in orphaned:
+            del self._pending[tid]
 
     def _reuse_known(self, track_key: _TrackKey) -> str | None:
         entry = self._track_map.get(track_key)
@@ -181,13 +203,13 @@ class TrackResolver:
         session_id: str,
         webrtc_kind: str,
     ) -> str | None:
-        for tid, (pending_user, pending_session, pending_kind) in list(
-            self._pending.items()
-        ):
+        self._clear_stale_pending()
+
+        for tid, pending in list(self._pending.items()):
             if (
-                pending_user == user_id
-                and pending_session == session_id
-                and pending_kind == webrtc_kind
+                pending.user_id == user_id
+                and pending.session_id == session_id
+                and pending.webrtc_kind == webrtc_kind
             ):
                 del self._pending[tid]
                 return tid
@@ -198,17 +220,28 @@ class TrackResolver:
         # with the same kind would be ambiguous and could misbind.
         anonymous_candidates = [
             tid
-            for tid, (
-                pending_user,
-                pending_session,
-                pending_kind,
-            ) in self._pending.items()
-            if pending_user is None
-            and pending_session is None
-            and pending_kind == webrtc_kind
+            for tid, pending in self._pending.items()
+            if pending.user_id is None
+            and pending.session_id is None
+            and pending.webrtc_kind == webrtc_kind
         ]
         if len(anonymous_candidates) == 1:
             tid = anonymous_candidates[0]
             del self._pending[tid]
             return tid
         return None
+
+    def _clear_stale_pending(self) -> None:
+        now = time.monotonic()
+        stale = [
+            tid
+            for tid, pending in self._pending.items()
+            if pending.registered_at <= now - self._pending_ttl
+        ]
+        for tid in stale:
+            evicted = self._pending.pop(tid)
+            logger.warning(
+                f"Evicting stale pending track: id={tid} user={evicted.user_id} "
+                f"session={evicted.session_id} kind={evicted.webrtc_kind} "
+                f"age={now - evicted.registered_at:.1f}s"
+            )
