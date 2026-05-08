@@ -107,7 +107,7 @@ To see how the agent work open up agents.py
 * STT then fires the STTPartialTranscriptEvent and STTTranscriptEvent event.
 * The agent receives this event and calls agent.llm.simple_response.
 * The LLM triggers LLMResponseEvent, and the agent calls
-* await self.tts.send(llm_response.text)
+* async for chunk in self.tts.send_iter(llm_response.text): ...
 
 ### Realtime STS flow
 

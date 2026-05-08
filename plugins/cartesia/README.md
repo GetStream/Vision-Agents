@@ -52,9 +52,10 @@ These are the parameters available in the CartesiaTTS plugin for you to customis
 
 ### Send text to convert to speech
 
-The `send()` method sends the text passed in for the service to synthesize.
-The resulting audio is then played through the configured output track.
+The `send_iter()` method sends the text passed in for the service to synthesize
+and yields `TTSOutputChunk`s containing the produced PCM audio.
 
 ```python  theme={null}
-tts.send("Demo text you want AI voice to say")
+async for chunk in tts.send_iter("Demo text you want AI voice to say"):
+    pass
 ```

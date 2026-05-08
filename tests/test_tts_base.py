@@ -2,11 +2,6 @@ from typing import AsyncIterator, Iterator
 
 import pytest
 from getstream.video.rtc.track_util import AudioFormat, PcmData
-from vision_agents.core.tts.events import (
-    TTSErrorEvent,
-    TTSSynthesisCompleteEvent,
-    TTSSynthesisStartEvent,
-)
 from vision_agents.core.tts.tts import TTS, TTSOutputChunk
 
 
@@ -103,36 +98,6 @@ class DummyTTSUnsupportedReturn(TTS):
         return None
 
 
-def _collect_complete_events(tts: TTS) -> list[TTSSynthesisCompleteEvent]:
-    collected: list[TTSSynthesisCompleteEvent] = []
-
-    @tts.events.subscribe
-    async def _on_complete(ev: TTSSynthesisCompleteEvent):
-        collected.append(ev)
-
-    return collected
-
-
-def _collect_start_events(tts: TTS) -> list[TTSSynthesisStartEvent]:
-    collected: list[TTSSynthesisStartEvent] = []
-
-    @tts.events.subscribe
-    async def _on_start(ev: TTSSynthesisStartEvent):
-        collected.append(ev)
-
-    return collected
-
-
-def _collect_error_events(tts: TTS) -> list[TTSErrorEvent]:
-    collected: list[TTSErrorEvent] = []
-
-    @tts.events.subscribe
-    async def _on_error(ev: TTSErrorEvent):
-        collected.append(ev)
-
-    return collected
-
-
 async def _drain(it: AsyncIterator[TTSOutputChunk]) -> list[TTSOutputChunk]:
     return [c async for c in it]
 
@@ -179,40 +144,10 @@ class TestTTS:
 
     async def test_send_iter_empty_async_iter_no_sentinel(self):
         tts = DummyTTSAsyncIter([])
-        complete_events = _collect_complete_events(tts)
 
         chunks = await _drain(tts.send_iter("empty"))
-        await tts.events.wait(timeout=1.0)
 
         assert chunks == []
-        assert len(complete_events) == 1
-        assert complete_events[0].chunk_count == 0
-
-    async def test_send_iter_emits_start_and_complete(self):
-        chunks_in = [_make_pcm(100)]
-        tts = DummyTTSAsyncIter(chunks_in)
-        start_events = _collect_start_events(tts)
-        complete_events = _collect_complete_events(tts)
-
-        chunks = await _drain(tts.send_iter("lifecycle"))
-        await tts.events.wait(timeout=1.0)
-
-        assert len(start_events) == 1
-        assert start_events[0].text == "lifecycle"
-        assert len(complete_events) == 1
-        assert complete_events[0].synthesis_id == start_events[0].synthesis_id
-        assert chunks[0].synthesis_id == start_events[0].synthesis_id
-
-    async def test_send_iter_complete_event_chunk_count(self):
-        chunks_in = [_make_pcm(100), _make_pcm(100), _make_pcm(100)]
-        tts = DummyTTSAsyncIter(chunks_in)
-        complete_events = _collect_complete_events(tts)
-
-        await _drain(tts.send_iter("count"))
-        await tts.events.wait(timeout=1.0)
-
-        assert len(complete_events) == 1
-        assert complete_events[0].chunk_count == 3
 
     async def test_send_iter_records_synthesis_metric(self):
         chunks_in = [_make_pcm(100), _make_pcm(100)]

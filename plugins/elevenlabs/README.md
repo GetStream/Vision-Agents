@@ -32,7 +32,8 @@ def on_audio(audio_data, user):
     print(f"Received audio chunk: {len(audio_data)} bytes")
 
 # Send text to be converted to speech
-await tts.send("Hello, this is a test of the ElevenLabs text-to-speech plugin.")
+async for chunk in tts.send_iter("Hello, this is a test of the ElevenLabs text-to-speech plugin."):
+    pass
 ```
 
 ## Configuration Options
