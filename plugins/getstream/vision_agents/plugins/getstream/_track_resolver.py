@@ -55,8 +55,10 @@ class TrackResolver:
         self._pending_ttl = pending_ttl
         self._track_map: dict[_TrackKey, _TrackEntry] = {}
         self._pending: dict[str, _PendingTrack] = {}
-        # in-flight resolves; key set when participant leaves to abort the poll
+        # in-flight resolves; event set when participant leaves to abort the poll
         self._resolving: dict[_TrackKey, asyncio.Event] = {}
+        # serialize resolves per key so duplicate TrackPublishedEvents don't race
+        self._resolve_locks: dict[_TrackKey, asyncio.Lock] = {}
 
     def register(
         self,
@@ -94,16 +96,22 @@ class TrackResolver:
             stream_track_type=stream_track_type,
         )
 
-        track_id = self._reuse_known(track_key)
-        if track_id is None:
-            track_id = self._migrate_session(track_key=track_key)
-        if track_id is None:
-            track_id = await self._await_pending(track_key=track_key, timeout=timeout)
+        lock = self._resolve_locks.setdefault(track_key, asyncio.Lock())
+        async with lock:
+            track_id = self._reuse_known(track_key)
             if track_id is None:
-                return None
+                track_id = self._migrate_session(track_key=track_key)
+            if track_id is None:
+                track_id = await self._await_pending(
+                    track_key=track_key, timeout=timeout
+                )
+                if track_id is None:
+                    return None
 
-        self._track_map[track_key] = _TrackEntry(track_id=track_id, published=True)
-        return track_id
+            self._track_map[track_key] = _TrackEntry(
+                track_id=track_id, published=True
+            )
+            return track_id
 
     def unpublish(
         self,
@@ -245,3 +253,11 @@ class TrackResolver:
                 f"session={evicted.session_id} kind={evicted.webrtc_kind} "
                 f"age={now - evicted.registered_at:.1f}s"
             )
+
+        # Drop resolve locks with no holder and no waiters; safe because
+        # setdefault will create a fresh one if a future resolve needs it.
+        free_keys = [
+            key for key, lock in self._resolve_locks.items() if not lock.locked()
+        ]
+        for key in free_keys:
+            del self._resolve_locks[key]

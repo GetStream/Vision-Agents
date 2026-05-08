@@ -198,6 +198,35 @@ class TestTrackResolver:
         )
         assert track_id == "t_fresh"
 
+    async def test_concurrent_resolves_serialized(self, resolver):
+        # Duplicate TrackPublishedEvent (e.g. from republish_tracks) starts two
+        # resolves for the same key. Both must succeed with the same track_id.
+        task_a = asyncio.create_task(
+            resolver.resolve(
+                user_id="u1",
+                session_id="s1",
+                stream_track_type=StreamTrackType.TRACK_TYPE_AUDIO,
+                timeout=0.5,
+            )
+        )
+        task_b = asyncio.create_task(
+            resolver.resolve(
+                user_id="u1",
+                session_id="s1",
+                stream_track_type=StreamTrackType.TRACK_TYPE_AUDIO,
+                timeout=0.5,
+            )
+        )
+        await asyncio.sleep(0.02)
+        resolver.register(
+            track_id="t1",
+            user_id="u1",
+            session_id="s1",
+            webrtc_kind="audio",
+        )
+        results = await asyncio.gather(task_a, task_b)
+        assert results == ["t1", "t1"]
+
     async def test_cancel_drops_named_pending(self, resolver):
         # Named pending was registered (track_added fired), participant leaves
         # before TrackPublishedEvent. cancel() should drop the orphan.

@@ -239,9 +239,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         # Determine which tracks to remove
         if isinstance(event, sfu_events.TrackUnpublishedEvent):
             # Single track
-            tracks_to_remove = cast(
-                list[StreamTrackType.ValueType], [event.payload.type]
-            )
+            tracks_to_remove = [event.payload.type]
             event_desc = "Track unpublished"
         else:
             # ParticipantLeftEvent - all published tracks
