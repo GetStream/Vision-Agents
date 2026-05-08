@@ -36,6 +36,10 @@ class Stream(Generic[T]):
             raise StopAsyncIteration
 
     def __aiter__(self) -> AsyncIterator[T]:
+        """
+        Iterate over this Stream with `async for`.
+        Parallel iterators consume from the same internal buffer.
+        """
         return self
 
     def close(self) -> None:
@@ -93,7 +97,7 @@ class Stream(Generic[T]):
                 if not self.full() and not sender.cancelled():
                     self._wakeup_next_sender()
                 raise
-        return self.send_nowait(item)
+        self.send_nowait(item)
 
     def send_nowait(self, item: T) -> None:
         if self.closed():

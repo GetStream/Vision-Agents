@@ -153,7 +153,8 @@ class TranscribingInferenceFlow(InferenceFlow):
         if self._llm_turn is not None:
             await self._llm_turn.cancel()
             self._llm_turn = None
-        await self._llm.interrupt()
+        else:
+            await self._llm.interrupt()
         self._transcripts.flush_users_transcripts()
         self._llm_output.clear()
         self._tts_input.clear()
