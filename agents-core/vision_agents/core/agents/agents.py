@@ -799,12 +799,6 @@ class Agent:
         )
         return call
 
-    def _on_rtc_reconnect(self):
-        # update the code to listen?
-        # republish the audio track and video track?
-        # TODO: implement me
-        pass
-
     def set_video_track_override_path(self, path: str):
         if not path or not self.publish_video:
             return
