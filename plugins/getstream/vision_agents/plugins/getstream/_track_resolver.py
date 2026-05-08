@@ -108,9 +108,7 @@ class TrackResolver:
                 if track_id is None:
                     return None
 
-            self._track_map[track_key] = _TrackEntry(
-                track_id=track_id, published=True
-            )
+            self._track_map[track_key] = _TrackEntry(track_id=track_id, published=True)
             return track_id
 
     def unpublish(
