@@ -4,7 +4,7 @@ import typing
 from typing import Optional
 
 import aiortc
-from getstream.video.rtc import PcmData
+from getstream.video.rtc import AudioStreamTrack, PcmData
 from vision_agents.core.observability import MetricsCollector
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
@@ -100,7 +100,7 @@ class AudioPublisher(Processor, metaclass=abc.ABCMeta):
     """
 
     @abc.abstractmethod
-    def publish_audio_track(self) -> aiortc.AudioStreamTrack: ...
+    def publish_audio_track(self) -> AudioStreamTrack: ...
 
 
 class AudioProcessor(Processor, metaclass=abc.ABCMeta):
