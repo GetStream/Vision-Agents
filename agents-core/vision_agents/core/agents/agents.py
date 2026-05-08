@@ -125,10 +125,6 @@ class Agent:
         options: Optional[AgentOptions] = None,
         tracer: Tracer = trace.get_tracer("agents"),
         profiler: Optional[Profiler] = None,
-        # Send text to TTS as sentences stream from the LLM rather than
-        # waiting for the complete response. Reduces perceived latency for
-        # non-realtime LLMs that emit LLMResponseChunkEvent.
-        streaming_tts: bool = False,
         # Metrics broadcasting to call participants
         broadcast_metrics: bool = False,
         broadcast_metrics_interval: float = 5.0,
@@ -894,13 +890,12 @@ class Agent:
             return
 
         try:
-            while self._call_ended_event and not self._call_ended_event.is_set():
-                async for audio_output in self._audio_output_stream:
-                    match audio_output:
-                        case AudioOutputChunk(data=data) if data is not None:
-                            await self._audio_track.write(audio_output.data)
-                        case AudioOutputFlush():
-                            await self._audio_track.flush()
+            async for audio_output in self._audio_output_stream:
+                match audio_output:
+                    case AudioOutputChunk(data=data) if data is not None:
+                        await self._audio_track.write(data)
+                    case AudioOutputFlush():
+                        await self._audio_track.flush()
 
         except asyncio.CancelledError:
             self.logger.info("🎵 Audio producer task cancelled")

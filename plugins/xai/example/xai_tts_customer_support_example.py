@@ -74,9 +74,6 @@ async def create_agent(**kwargs) -> Agent:
             silence_duration_ms=2000,
             speech_probability_threshold=0.5,
         ),
-        # Stream LLM output to TTS sentence-by-sentence so the first audio
-        # plays well before the LLM finishes generating.
-        streaming_tts=True,
     )
     return agent
 
