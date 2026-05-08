@@ -417,7 +417,11 @@ class TTS(abc.ABC):
                 audio_duration_ms=estimated_audio_duration_ms,
                 character_count=len(text),
             )
-        except Exception:
+        except Exception as e:
+            self.metrics.on_tts_error(
+                provider=self.provider_name,
+                error_type=e.__class__.__name__,
+            )
             raise
 
     async def close(self):
