@@ -833,7 +833,6 @@ class Agent:
         # Store audio processors in the variable to avoid calling
         # the property all the time
         audio_processors = self.audio_processors
-        is_audio_llm = _is_audio_llm(self.llm)
 
         try:
             while self._call_ended_event and not self._call_ended_event.is_set():
