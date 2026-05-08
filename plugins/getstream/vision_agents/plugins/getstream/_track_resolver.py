@@ -161,7 +161,7 @@ class TrackResolver:
                 and old_key.session_id != track_key.session_id
             ):
                 del self._track_map[old_key]
-                logger.info(
+                logger.debug(
                     f"Migrated track for {track_key.user_id} from session "
                     f"{old_key.session_id} to {track_key.session_id}"
                 )
@@ -246,7 +246,7 @@ class TrackResolver:
         ]
         for tid in stale:
             evicted = self._pending.pop(tid)
-            logger.warning(
+            logger.debug(
                 f"Evicting stale pending track: id={tid} user={evicted.user_id} "
                 f"session={evicted.session_id} kind={evicted.webrtc_kind} "
                 f"age={now - evicted.registered_at:.1f}s"
