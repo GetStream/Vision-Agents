@@ -158,11 +158,10 @@ class BedrockLLM(LLM):
                         "content": [{"text": message.content}],
                     }
                 )
-        new_user = {"role": "user", "content": [{"text": text}]}
-        if messages and messages[-1].get("role") == "user":
-            messages[-1] = new_user
-        else:
-            messages.append(new_user)
+        user_message = {"role": "user", "content": [{"text": text}]}
+        last = messages[-1] if messages else None
+        if last != user_message:
+            messages.append(user_message)
         return messages
 
     async def _create_response_internal(
