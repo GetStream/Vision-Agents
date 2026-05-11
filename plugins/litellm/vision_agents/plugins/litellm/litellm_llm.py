@@ -9,6 +9,7 @@ import logging
 import time
 
 import litellm
+from litellm.types.utils import ModelResponse
 from vision_agents.core.llm.events import (
     LLMRequestStartedEvent,
     LLMResponseChunkEvent,
@@ -50,6 +51,15 @@ class LiteLLMChatCompletions(LLM):
         text: str,
         participant: object | None = None,
     ) -> LLMResponseEvent:
+        """Request an LLM response for the given text.
+
+        Args:
+            text: The text to respond to.
+            participant: Participant info. When None the message is added
+                to the conversation as a plain user message. When provided
+                the message is assumed to already be in the conversation
+                (e.g. added by the STT pipeline).
+        """
         if self._conversation is None:
             logger.warning(
                 'Cannot request a response from "%s" '
@@ -161,17 +171,16 @@ class LiteLLMChatCompletions(LLM):
 
             if delta.tool_calls:
                 for tc in delta.tool_calls:
-                    idx = getattr(tc, "index", 0)
+                    idx = tc.index if tc.index is not None else 0
                     entry = self._pending_tool_calls.setdefault(
                         idx, {"id": "", "name": "", "arguments": ""}
                     )
                     if tc.id:
                         entry["id"] = tc.id
-                    if tc.function:
-                        if tc.function.name:
-                            entry["name"] = tc.function.name
-                        if tc.function.arguments:
-                            entry["arguments"] += tc.function.arguments
+                    if tc.function and tc.function.name:
+                        entry["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        entry["arguments"] += tc.function.arguments
 
         full_text = "".join(content_parts)
         total_time = time.perf_counter() - request_start
@@ -192,6 +201,11 @@ class LiteLLMChatCompletions(LLM):
         self, params: dict[str, object], request_start: float
     ) -> LLMResponseEvent:
         response = await litellm.acompletion(**params)
+
+        if not response.choices:
+            logger.warning("LiteLLM returned empty choices")
+            return LLMResponseEvent(original=response, text="")
+
         content = response.choices[0].message.content or ""
         total_time = time.perf_counter() - request_start
 
@@ -230,20 +244,25 @@ class LiteLLMChatCompletions(LLM):
         ]
 
     def _extract_tool_calls_from_response(
-        self, response: object
+        self, response: ModelResponse
     ) -> list[NormalizedToolCallItem]:
-        choices = getattr(response, "choices", None)
-        if not choices:
+        if not response.choices:
             return []
-        message = choices[0].message
-        tool_calls = getattr(message, "tool_calls", None)
-        if not tool_calls:
+        message = response.choices[0].message
+        if not message.tool_calls:
             return []
-        return [
-            NormalizedToolCallItem(
-                id=tc.id,
-                name=tc.function.name,
-                arguments_json=json.loads(tc.function.arguments),
+        result: list[NormalizedToolCallItem] = []
+        for tc in message.tool_calls:
+            try:
+                args = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                logger.warning("Malformed tool call arguments for %s", tc.function.name)
+                args = {}
+            result.append(
+                NormalizedToolCallItem(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments_json=args,
+                )
             )
-            for tc in tool_calls
-        ]
+        return result
