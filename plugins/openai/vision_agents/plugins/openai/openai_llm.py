@@ -162,7 +162,9 @@ class OpenAILLM(LLM):
                                 new_tool_calls.append(c)
                                 seen_calls.add(key)
             except APIError as e:
-                logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+                logger.exception(
+                    f'Failed to get a response from the LLM "{self.model}"'
+                )
                 self.metrics.on_llm_error(
                     provider=self.provider_name,
                     error_type=type(e).__name__,
