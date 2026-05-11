@@ -201,14 +201,14 @@ class LLM(abc.ABC):
         # Default implementation - should be overridden
         return []
 
-    def _attach_agent(self, agent: Agent):
+    def _attach_agent(self, agent: "Agent"):
         """
         Attach agent to the llm
         """
         self.agent = agent
         self.set_instructions(agent.instructions)
 
-    def set_conversation(self, conversation: Conversation):
+    def set_conversation(self, conversation: "Conversation"):
         """
         Provide the Conversation object to the LLM to access the chat history.
         To be called by the Agent after it joins the call.
