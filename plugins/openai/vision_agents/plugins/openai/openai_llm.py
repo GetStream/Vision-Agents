@@ -3,7 +3,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional
 
-from openai import AsyncOpenAI
+from openai import APIError, AsyncOpenAI
 from openai.types.responses import Response as OpenAIResponse
 from openai.types.responses import ResponseFunctionToolCall
 from vision_agents.core.edge.types import Participant
@@ -116,48 +116,57 @@ class OpenAILLM(LLM):
 
         current_input: Any = text
         for round_num in range(self.max_tool_rounds + 1):
-            stream = await self.client.responses.create(
-                **base_kwargs, input=current_input
-            )
-
             new_tool_calls: list[NormalizedToolCallItem] = []
-            async for event in stream:
-                if event.type == "response.failed":
-                    error = event.response.error if event.response else None
-                    error_message = error.message if error else "Unknown error"
-                    error_code = error.code if error else "unknown"
-                    logger.error(
-                        "OpenAI stream error: %s (code=%s)", error_message, error_code
-                    )
-                    self.metrics.on_llm_error(
-                        provider=self.provider_name,
-                        error_type="response.failed",
-                    )
-                elif event.type == "response.output_text.delta":
-                    is_first = first_token_time is None
-                    if is_first:
-                        first_token_time = time.perf_counter()
-                    ttft_ms = (
-                        (first_token_time - request_start_time) * 1000
-                        if is_first and first_token_time is not None
-                        else None
-                    )
-                    yield LLMResponseDelta(
-                        delta=event.delta,
-                        item_id=event.item_id,
-                        output_index=event.output_index,
-                        sequence_number=sequence_number,
-                        is_first_chunk=is_first,
-                        time_to_first_token_ms=ttft_ms,
-                    )
-                    sequence_number += 1
-                elif event.type == "response.completed":
-                    last_response = event.response
-                    for c in self._extract_tool_calls_from_response(event.response):
-                        key = tool_call_dedup_key(c)
-                        if key not in seen_calls:
-                            new_tool_calls.append(c)
-                            seen_calls.add(key)
+            try:
+                stream = await self.client.responses.create(
+                    **base_kwargs, input=current_input
+                )
+                async for event in stream:
+                    if event.type == "response.failed":
+                        error = event.response.error if event.response else None
+                        error_message = error.message if error else "Unknown error"
+                        error_code = error.code if error else "unknown"
+                        logger.error(
+                            "OpenAI stream error: %s (code=%s)",
+                            error_message,
+                            error_code,
+                        )
+                        self.metrics.on_llm_error(
+                            provider=self.provider_name,
+                            error_type="response.failed",
+                        )
+                    elif event.type == "response.output_text.delta":
+                        is_first = first_token_time is None
+                        if is_first:
+                            first_token_time = time.perf_counter()
+                        ttft_ms = (
+                            (first_token_time - request_start_time) * 1000
+                            if is_first and first_token_time is not None
+                            else None
+                        )
+                        yield LLMResponseDelta(
+                            delta=event.delta,
+                            item_id=event.item_id,
+                            output_index=event.output_index,
+                            sequence_number=sequence_number,
+                            is_first_chunk=is_first,
+                            time_to_first_token_ms=ttft_ms,
+                        )
+                        sequence_number += 1
+                    elif event.type == "response.completed":
+                        last_response = event.response
+                        for c in self._extract_tool_calls_from_response(event.response):
+                            key = tool_call_dedup_key(c)
+                            if key not in seen_calls:
+                                new_tool_calls.append(c)
+                                seen_calls.add(key)
+            except APIError as e:
+                logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+                self.metrics.on_llm_error(
+                    provider=self.provider_name,
+                    error_type=type(e).__name__,
+                )
+                break
 
             if not new_tool_calls or round_num >= self.max_tool_rounds:
                 break
