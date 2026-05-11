@@ -401,7 +401,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         current_inputs = inputs
         seen: set[tuple[str | None, str, str]] = set()
 
-        for round_num in range(self._max_tool_rounds):
+        for round_num in range(self._max_tool_rounds + 1):
             text = ""
             original: Any = None
             async for item in self._generate_non_streaming(
@@ -443,6 +443,9 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                     model=self.model_id,
                 )
                 return
+
+            if round_num >= self._max_tool_rounds:
+                break
 
             logger.info(
                 "Tool call round %d: executing %d call(s) — %s",
