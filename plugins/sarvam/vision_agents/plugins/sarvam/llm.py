@@ -100,6 +100,8 @@ class SarvamLLM(ChatCompletionsLLM):
         llm = sarvam.LLM(model="sarvam-30b")
     """
 
+    provider_name = "sarvam"
+
     def __init__(
         self,
         model: str = DEFAULT_MODEL,
