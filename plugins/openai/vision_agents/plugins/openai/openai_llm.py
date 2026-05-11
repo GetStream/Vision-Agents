@@ -135,6 +135,7 @@ class OpenAILLM(LLM):
                             provider=self.provider_name,
                             error_type="response.failed",
                         )
+                        break
                     elif event.type == "response.output_text.delta":
                         is_first = first_token_time is None
                         if is_first:
