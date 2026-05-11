@@ -7,7 +7,6 @@ supporting 100+ providers through a single interface.
 import json
 import logging
 import time
-from typing import Any, Dict, Optional
 
 import litellm
 from vision_agents.core.llm.events import (
@@ -44,17 +43,18 @@ class LiteLLMChatCompletions(LLM):
         self.model = model
         self._api_key = api_key
         self._tools_max_rounds = max(tools_max_rounds, 1)
-        self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
+        self._pending_tool_calls: dict[int, dict[str, str]] = {}
 
     async def simple_response(
         self,
         text: str,
-        participant: Optional[Any] = None,
+        participant: object | None = None,
     ) -> LLMResponseEvent:
         if self._conversation is None:
             logger.warning(
-                f'Cannot request a response from "{self.model}" '
-                "- conversation not initialized yet."
+                'Cannot request a response from "%s" '
+                "- conversation not initialized yet.",
+                self.model,
             )
             return LLMResponseEvent(original=None, text="")
 
@@ -68,9 +68,9 @@ class LiteLLMChatCompletions(LLM):
 
     async def create_response(
         self,
-        messages: list[dict[str, Any]] | None = None,
+        messages: list[dict[str, object]] | None = None,
         stream: bool = True,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> LLMResponseEvent:
         if messages is None:
             messages = await self._build_model_request()
@@ -89,14 +89,14 @@ class LiteLLMChatCompletions(LLM):
 
     async def _create_response_internal(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]] | None = None,
         stream: bool = True,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> LLMResponseEvent:
-        model = kwargs.get("model", self.model)
+        model = str(kwargs.get("model", self.model))
 
-        params: dict[str, Any] = {
+        params: dict[str, object] = {
             "model": model,
             "messages": messages,
             "stream": stream,
@@ -121,12 +121,21 @@ class LiteLLMChatCompletions(LLM):
             if stream:
                 return await self._handle_streaming(params, request_start)
             return await self._handle_non_streaming(params, request_start)
-        except Exception as exc:
-            logger.exception(f"LiteLLM error for model {model}")
+        except litellm.exceptions.AuthenticationError as exc:
+            logger.exception("LiteLLM auth error for model %s", model)
+            return LLMResponseEvent(original=None, text="", exception=exc)
+        except litellm.exceptions.RateLimitError as exc:
+            logger.exception("LiteLLM rate limit for model %s", model)
+            return LLMResponseEvent(original=None, text="", exception=exc)
+        except litellm.exceptions.APIConnectionError as exc:
+            logger.exception("LiteLLM connection error for model %s", model)
+            return LLMResponseEvent(original=None, text="", exception=exc)
+        except litellm.exceptions.APIError as exc:
+            logger.exception("LiteLLM API error for model %s", model)
             return LLMResponseEvent(original=None, text="", exception=exc)
 
     async def _handle_streaming(
-        self, params: dict[str, Any], request_start: float
+        self, params: dict[str, object], request_start: float
     ) -> LLMResponseEvent:
         response = await litellm.acompletion(**params)
 
@@ -152,7 +161,7 @@ class LiteLLMChatCompletions(LLM):
 
             if delta.tool_calls:
                 for tc in delta.tool_calls:
-                    idx = tc.index if hasattr(tc, "index") else 0
+                    idx = getattr(tc, "index", 0)
                     entry = self._pending_tool_calls.setdefault(
                         idx, {"id": "", "name": "", "arguments": ""}
                     )
@@ -180,7 +189,7 @@ class LiteLLMChatCompletions(LLM):
         return LLMResponseEvent(original=None, text=full_text)
 
     async def _handle_non_streaming(
-        self, params: dict[str, Any], request_start: float
+        self, params: dict[str, object], request_start: float
     ) -> LLMResponseEvent:
         response = await litellm.acompletion(**params)
         content = response.choices[0].message.content or ""
@@ -197,8 +206,8 @@ class LiteLLMChatCompletions(LLM):
 
         return LLMResponseEvent(original=response, text=content)
 
-    async def _build_model_request(self) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = []
+    async def _build_model_request(self) -> list[dict[str, object]]:
+        messages: list[dict[str, object]] = []
         if self._instructions:
             messages.append({"role": "system", "content": self._instructions})
         if self._conversation:
@@ -207,7 +216,7 @@ class LiteLLMChatCompletions(LLM):
 
     def _convert_tools_to_provider_format(
         self, tools: list[ToolSchema]
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, object]]:
         return [
             {
                 "type": "function",
@@ -221,12 +230,14 @@ class LiteLLMChatCompletions(LLM):
         ]
 
     def _extract_tool_calls_from_response(
-        self, response: Any
+        self, response: object
     ) -> list[NormalizedToolCallItem]:
-        if not hasattr(response, "choices") or not response.choices:
+        choices = getattr(response, "choices", None)
+        if not choices:
             return []
-        message = response.choices[0].message
-        if not hasattr(message, "tool_calls") or not message.tool_calls:
+        message = choices[0].message
+        tool_calls = getattr(message, "tool_calls", None)
+        if not tool_calls:
             return []
         return [
             NormalizedToolCallItem(
@@ -234,5 +245,5 @@ class LiteLLMChatCompletions(LLM):
                 name=tc.function.name,
                 arguments_json=json.loads(tc.function.arguments),
             )
-            for tc in message.tool_calls
+            for tc in tool_calls
         ]
