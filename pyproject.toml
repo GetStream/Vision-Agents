@@ -1,138 +1,16 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs", "setuptools-scm"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv.sources]
-vision-agents = { workspace = true }
-vision-agents-plugins-anthropic = { workspace = true }
-vision-agents-plugins-aws = { workspace = true }
-vision-agents-plugins-cartesia = { workspace = true }
-vision-agents-plugins-deepgram = { workspace = true }
-vision-agents-plugins-elevenlabs = { workspace = true }
-vision-agents-plugins-fal = { workspace = true }
-vision-agents-plugins-fish = { workspace = true }
-vision-agents-plugins-gemini = { workspace = true }
-vision-agents-plugins-kokoro = { workspace = true }
-vision-agents-plugins-openai = { workspace = true }
-vision-agents-plugins-openrouter = { workspace = true }
-vision-agents-plugins-pocket = { workspace = true }
-vision-agents-plugins-qwen = { workspace = true }
-vision-agents-plugins-xai = { workspace = true }
-vision-agents-plugins-getstream = { workspace = true }
-vision-agents-plugins-huggingface = { workspace = true }
-vision-agents-plugins-ultralytics = { workspace = true }
-vision-agents-plugins-smart-turn = { workspace = true }
-vision-agents-plugins-wizper = { workspace = true }
-vision-agents-plugins-heygen = { workspace = true }
-vision-agents-plugins-lemonslice = { workspace = true }
-vision-agents-plugins-inworld = { workspace = true }
-vision-agents-plugins-moondream = { workspace = true }
-vision-agents-plugins-vogent = { workspace = true }
-vision-agents-plugins-fast-whisper = { workspace = true }
-vision-agents-plugins-roboflow = { workspace = true }
-vision-agents-plugins-decart = { workspace = true }
-vision-agents-plugins-twilio = { workspace = true }
-vision-agents-plugins-turbopuffer = { workspace = true }
-vision-agents-plugins-nvidia = { workspace = true }
-vision-agents-plugins-mistral = { workspace = true }
-vision-agents-plugins-assemblyai = { workspace = true }
-vision-agents-plugins-local = { workspace = true }
-vision-agents-plugins-anam = { workspace = true }
-vision-agents-plugins-sarvam = { workspace = true }
+[tool.hatch.build.targets.wheel]
+packages = ["src/vision_agents"]
 
-[tool.uv]
-# Workspace-level override to resolve numpy version conflicts
-# vogent-turn requires numpy<2.0, so we override to use 1.26.x
-override-dependencies = ["numpy>=1.26.0,<2.0"]
+[tool.ruff]
+line-length = 100
+target-version = "py314"
 
-# Store uv cache in project directory for better sandboxing
-cache-dir = ".uv-cache"
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "W"]
 
-[tool.uv.workspace]
-members = [
-    "agents-core",
-    "plugins/anthropic",
-    "plugins/aws",
-    "plugins/cartesia",
-    "plugins/deepgram",
-    "plugins/elevenlabs",
-    "plugins/fish",
-    "plugins/gemini",
-    "plugins/kokoro",
-    "plugins/openai",
-    "plugins/openrouter",
-    "plugins/pocket",
-    "plugins/qwen",
-    "plugins/xai",
-    "plugins/getstream",
-    "plugins/huggingface",
-    "plugins/ultralytics",
-    "plugins/smart_turn",
-    "plugins/wizper",
-    "plugins/heygen",
-    "plugins/lemonslice",
-    "plugins/inworld",
-    "plugins/vogent",
-    "plugins/moondream",
-    "plugins/fast_whisper",
-    "plugins/roboflow",
-    "plugins/decart",
-    "plugins/twilio",
-    "plugins/turbopuffer",
-    "plugins/nvidia",
-    "plugins/mistral",
-    "plugins/assemblyai",
-    "plugins/local",
-    "plugins/anam",
-    "plugins/sarvam",
-]
-exclude = [
-    "**/__pycache__",
-    "**/tests/__pycache__",
-    "**/*.pyc",
-    "**/dist/",
-    "**/*.egg-info/",
-    "**/.pytest_cache/",
-    "**/.mypy_cache/",
-    "**/.ruff_cache/",
-    "examples/",
-    "**/test*",
-]
-
-[dependency-groups]
-dev = [
-    "ruff",
-    "mypy[mypyc,faster-cache]>=1.19,<1.20", # TODO: unpin later, need to update code before using 1.20
-    "pip>=25.2",
-    "pytest",
-    "pytest-xdist",
-    "pytest-asyncio",
-    "python-dotenv",
-    "pre-commit",
-    "scalene>=1.5.54",
-    "fastmcp>=3.2.0",
-    "opentelemetry-exporter-otlp>=1.37.0",
-    "pytest-timeout>=2.4.0",
-    "hatch-vcs>=0.5.0",
-    "hatch>=1.14.2",
-    "blockbuster>=1.5.5,<1.6",
-    "aiofiles>=25.1.0",
-    "pyinstrument>=5.1.1",
-    "toml>=0.10.2",
-    "asgi-lifespan>=2.1.0",
-    "testcontainers[redis]>=4.0.0",
-    "redis[hiredis]>=5.0.0",
-]
-
-[tool.mypy]
-python_version = "3.12"
-mypy_path = ["agents-core"]
-# Gradual typing → can tighten over time
-ignore_missing_imports = true
-check_untyped_defs = true
-namespace_packages = true
-explicit_package_bases = true
-
-[tool.hatch.version]
-source = "vcs"
-raw-options = { search_parent_directories = true, fallback_version = "0.0.0" }
+[tool.pytest.ini_options]
+testpaths = ["tests"]

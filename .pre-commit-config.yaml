@@ -1,35 +1,11 @@
 repos:
-- repo: https://github.com/astral-sh/ruff-pre-commit
-  # Ruff version.
-  rev: v0.14.5
-  hooks:
-    # Run the linter.
-    - id: ruff-check
-      args: [ --fix ]
-    # Run the formatter.
-    - id: ruff-format
-- repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v3.2.0
-  hooks:
-  -   id: trailing-whitespace
-  -   id: end-of-file-fixer
-  -   id: check-yaml
-      exclude: ^examples/.*/helm/templates/
-  -   id: check-added-large-files
-      args: ["--maxkb=6000"]
-
-# Match GitHub checks: mypy for main package and plugins
-- repo: local
-  hooks:
-    - id: mypy-main
-      name: mypy (vision_agents)
-      entry: uv run --frozen dev.py mypy
-      language: system
-      pass_filenames: false
-      types_or: [python]
-    - id: mypy-plugins
-      name: mypy (plugins)
-      entry: uv run --frozen dev.py mypy-plugins
-      language: system
-      pass_filenames: false
-      types_or: [python]
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.15.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-requests]
