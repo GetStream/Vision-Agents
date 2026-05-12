@@ -20,9 +20,13 @@ from google.genai.types import (
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.core.llm.realtime import (
+    RealtimeAgentSpeechEnded,
+    RealtimeAgentSpeechStarted,
     RealtimeAgentTranscript,
     RealtimeAudioOutput,
     RealtimeAudioOutputDone,
+    RealtimeUserSpeechEnded,
+    RealtimeUserSpeechStarted,
     RealtimeUserTranscript,
 )
 from vision_agents.plugins.gemini import Realtime
@@ -611,10 +615,16 @@ class TestGeminiRealtimeIntegration:
             pass
 
         await asyncio.sleep(3.0)
-        audio = [
-            i for i in realtime.output.peek() if isinstance(i, RealtimeAudioOutput)
+        items = realtime.output.peek()
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        agent_started = [
+            i for i in items if isinstance(i, RealtimeAgentSpeechStarted)
         ]
+        agent_ended = [i for i in items if isinstance(i, RealtimeAgentSpeechEnded)]
         assert len(audio) > 0
+        assert len(agent_started) >= 1
+        assert len(agent_ended) >= 1
+        assert any(not e.interrupted for e in agent_ended)
 
     async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
         async for _ in realtime.simple_response(
@@ -625,10 +635,15 @@ class TestGeminiRealtimeIntegration:
         await realtime.simple_audio_response(mia_audio_16khz)
 
         await asyncio.sleep(10.0)
-        audio = [
-            i for i in realtime.output.peek() if isinstance(i, RealtimeAudioOutput)
+        items = realtime.output.peek()
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        user_started = [
+            i for i in items if isinstance(i, RealtimeUserSpeechStarted)
         ]
+        user_ended = [i for i in items if isinstance(i, RealtimeUserSpeechEnded)]
         assert len(audio) > 0
+        assert len(user_started) >= 1
+        assert len(user_ended) >= 1
 
     async def test_video_sending_flow(self, realtime, bunny_video_track):
         async for _ in realtime.simple_response(

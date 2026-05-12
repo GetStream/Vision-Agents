@@ -7,16 +7,27 @@ from opentelemetry.context import Context
 from opentelemetry.trace import Tracer
 
 from ...edge.types import Participant
+from ...events import EventManager
 from ...llm import Realtime
 from ...llm.realtime import (
+    RealtimeAgentSpeechEnded,
+    RealtimeAgentSpeechStarted,
     RealtimeAgentTranscript,
     RealtimeAudioOutput,
     RealtimeAudioOutputDone,
+    RealtimeUserSpeechEnded,
+    RealtimeUserSpeechStarted,
     RealtimeUserTranscript,
 )
 from ...utils.exceptions import log_exceptions
 from ...utils.stream import Stream
 from ...utils.utils import cancel_and_wait
+from ..events import (
+    AgentTurnEndedEvent,
+    AgentTurnStartedEvent,
+    UserTurnEndedEvent,
+    UserTurnStartedEvent,
+)
 from ..transcript import TranscriptStore
 from .audio import (
     AudioInputStream,
@@ -41,12 +52,14 @@ class RealtimeInferenceFlow(InferenceFlow):
         transcripts: TranscriptStore,
         agent_user_id: str,
         conversation: "Conversation",
+        events: EventManager,
         otlp_context: Context | None = None,
     ):
         self._transcripts = transcripts
         self._audio_input = audio_input
         self._audio_output = audio_output
         self._llm = llm
+        self._events = events
         self._llm_output_processing_task: asyncio.Task | None = None
         self._audio_input_task: asyncio.Task | None = None
         self._audio_output_task: asyncio.Task | None = None
@@ -112,6 +125,10 @@ class RealtimeInferenceFlow(InferenceFlow):
             | RealtimeAudioOutputDone
             | RealtimeUserTranscript
             | RealtimeAgentTranscript
+            | RealtimeUserSpeechStarted
+            | RealtimeUserSpeechEnded
+            | RealtimeAgentSpeechStarted
+            | RealtimeAgentSpeechEnded
         ],
         audio_output: AudioOutputStream,
     ) -> None:
@@ -130,6 +147,20 @@ class RealtimeInferenceFlow(InferenceFlow):
                     else:
                         # The model finished talking, emit a final empty chunk.
                         await audio_output.send(AudioOutputChunk(final=True))
+                elif isinstance(item, RealtimeUserSpeechStarted):
+                    self._events.send(
+                        UserTurnStartedEvent(participant=item.participant)
+                    )
+                elif isinstance(item, RealtimeUserSpeechEnded):
+                    self._events.send(
+                        UserTurnEndedEvent(participant=item.participant)
+                    )
+                elif isinstance(item, RealtimeAgentSpeechStarted):
+                    self._events.send(AgentTurnStartedEvent())
+                elif isinstance(item, RealtimeAgentSpeechEnded):
+                    self._events.send(
+                        AgentTurnEndedEvent(interrupted=item.interrupted)
+                    )
                 elif isinstance(item, RealtimeUserTranscript):
                     # Received a user transcript.
                     # Sync it to the conversation.

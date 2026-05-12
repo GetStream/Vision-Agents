@@ -33,6 +33,8 @@ from google.genai.types import (
     SpeechConfigDict,
     StartSensitivity,
     TurnCoverage,
+    VadSignalType,
+    VoiceActivityType,
     VoiceConfigDict,
 )
 from vision_agents.core.edge.types import Participant
@@ -198,6 +200,8 @@ class GeminiRealtime(realtime.Realtime):
         self._processing_task: Optional[asyncio.Task] = None
         self._exit_stack = contextlib.AsyncExitStack()
         self._executor = ThreadPoolExecutor(max_workers=1)
+        # Gemini Live has no agent-speech-started wire event; fire once per turn.
+        self._agent_audio_started: bool = False
 
     @property
     def _session(self):
@@ -425,6 +429,22 @@ class GeminiRealtime(realtime.Realtime):
 
             handled = False
 
+            # VAD signals at the message level: explicit user speech start/end.
+            vad_signal = server_message.voice_activity_detection_signal
+            if vad_signal and vad_signal.vad_signal_type:
+                if vad_signal.vad_signal_type == VadSignalType.VAD_SIGNAL_TYPE_SOS:
+                    self._emit_user_speech_started()
+                elif vad_signal.vad_signal_type == VadSignalType.VAD_SIGNAL_TYPE_EOS:
+                    self._emit_user_speech_ended()
+                handled = True
+            voice_activity = server_message.voice_activity
+            if voice_activity and voice_activity.voice_activity_type:
+                if voice_activity.voice_activity_type == VoiceActivityType.ACTIVITY_START:
+                    self._emit_user_speech_started()
+                elif voice_activity.voice_activity_type == VoiceActivityType.ACTIVITY_END:
+                    self._emit_user_speech_ended()
+                handled = True
+
             if server_content and server_content.input_transcription:
                 text = server_content.input_transcription.text
                 if text:
@@ -452,6 +472,9 @@ class GeminiRealtime(realtime.Realtime):
                         self.events.send(event)
                     if part.inline_data:
                         pcm = PcmData.from_bytes(part.inline_data.data, 24000)
+                        if not self._agent_audio_started:
+                            self._agent_audio_started = True
+                            self._emit_agent_speech_started()
                         self._emit_audio_output_event(pcm=pcm)
                     if part.function_call:
                         self._run_tool_in_background(
@@ -460,9 +483,15 @@ class GeminiRealtime(realtime.Realtime):
 
             if server_content and server_content.interrupted:
                 await self.interrupt()
+                if self._agent_audio_started:
+                    self._agent_audio_started = False
+                    self._emit_agent_speech_ended(interrupted=True)
                 self._emit_audio_output_done_event(interrupted=True)
                 handled = True
             elif server_content and server_content.turn_complete:
+                if self._agent_audio_started:
+                    self._agent_audio_started = False
+                    self._emit_agent_speech_ended()
                 self._emit_audio_output_done_event()
                 handled = True
 

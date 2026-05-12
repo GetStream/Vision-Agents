@@ -433,6 +433,7 @@ class Agent:
                 ),
                 transcripts=self.transcripts,
                 agent_user_id=self._agent_user_id,
+                events=self.events,
             )
         else:
             return TranscribingInferenceFlow(
