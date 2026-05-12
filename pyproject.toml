@@ -134,7 +134,11 @@ namespace_packages = true
 explicit_package_bases = true
 
 [tool.ruff]
+line-length = 200
 target-version = "py314"
+
+[tool.ruff.lint]
+ignore = ["N803", "N806", "N811", "N814", "N818", "N999", "E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
