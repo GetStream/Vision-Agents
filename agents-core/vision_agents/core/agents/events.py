@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from vision_agents.core.events import BaseEvent, PluginBaseEvent
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.events import BaseEvent, Event, PluginBaseEvent
 
 
 @dataclass
@@ -61,3 +62,35 @@ class AgentSayErrorEvent(PluginBaseEvent):
     @property
     def error_message(self) -> str:
         return str(self.error) if self.error else "Unknown error"
+
+
+@dataclass
+class UserTurnStartedEvent(Event):
+    """Emitted when the user starts speaking."""
+
+    # TODO: remove ``type`` once EventManager dispatches by ``type(event)``.
+    type: str = field(default="agent.user_turn_started", init=False)
+    participant: Optional[Participant] = None
+
+
+@dataclass
+class UserTurnEndedEvent(Event):
+    """Emitted when the user stops speaking."""
+
+    type: str = field(default="agent.user_turn_ended", init=False)
+    participant: Optional[Participant] = None
+
+
+@dataclass
+class AgentTurnStartedEvent(Event):
+    """Emitted when the agent starts speaking (first audio chunk leaving the pipeline)."""
+
+    type: str = field(default="agent.agent_turn_started", init=False)
+
+
+@dataclass
+class AgentTurnEndedEvent(Event):
+    """Emitted when the agent stops speaking. ``interrupted`` is True for barge-in."""
+
+    type: str = field(default="agent.agent_turn_ended", init=False)
+    interrupted: bool = False

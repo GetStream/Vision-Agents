@@ -30,6 +30,15 @@ class AudioFormat(Enum):
     OGG = "ogg"
 
 
+# TODO: Merge it together with BaseEvent
+@dataclass
+class Event:
+    """Slim event base. Subclasses add only what they need (e.g. participant)."""
+
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    session_id: Optional[str] = None
+
+
 @dataclass
 class BaseEvent(DataClassJsonMixin):
     """Base class for all events."""
