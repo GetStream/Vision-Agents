@@ -139,6 +139,7 @@ target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "W"]
+ignore = ["UP031"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
