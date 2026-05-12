@@ -17,8 +17,6 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
-from . import events
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -64,8 +62,6 @@ class ClaudeLLM(LLM):
             tools_max_rounds: max calling rounds for multi-hop tool call. Default - ``3``.
         """
         super().__init__()
-        self.events.register_events_from_module(events)
-        self.model = model
         self._tools_max_rounds = max(tools_max_rounds, 1)
         self._pending_tool_uses_by_index: Dict[
             int, Dict[str, Any]
