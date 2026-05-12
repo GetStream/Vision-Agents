@@ -237,9 +237,7 @@ class Realtime(OmniLLM):
     ):
         """Emit an agent-speech-ended signal when the model stops producing audio."""
         self._output.send_nowait(
-            RealtimeAgentSpeechEnded(
-                response_id=response_id, interrupted=interrupted
-            )
+            RealtimeAgentSpeechEnded(response_id=response_id, interrupted=interrupted)
         )
 
     def _emit_user_speech_transcription(

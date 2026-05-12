@@ -439,9 +439,14 @@ class GeminiRealtime(realtime.Realtime):
                 handled = True
             voice_activity = server_message.voice_activity
             if voice_activity and voice_activity.voice_activity_type:
-                if voice_activity.voice_activity_type == VoiceActivityType.ACTIVITY_START:
+                if (
+                    voice_activity.voice_activity_type
+                    == VoiceActivityType.ACTIVITY_START
+                ):
                     self._emit_user_speech_started()
-                elif voice_activity.voice_activity_type == VoiceActivityType.ACTIVITY_END:
+                elif (
+                    voice_activity.voice_activity_type == VoiceActivityType.ACTIVITY_END
+                ):
                     self._emit_user_speech_ended()
                 handled = True
 

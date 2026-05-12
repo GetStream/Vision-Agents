@@ -45,6 +45,13 @@ class TTSOutputChunk:
     synthesis_id: str | None = None
 
 
+@dataclass
+class TTSOutputEnd:
+    """Sentinel marking end of TTS output; ``interrupted`` set on barge-in."""
+
+    interrupted: bool = False
+
+
 class TTS(abc.ABC):
     """
     Text-to-Speech base class.

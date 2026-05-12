@@ -125,8 +125,8 @@ class TestGeminiRealtimeProcessEvents:
         await rt._process_events()
 
         items = rt.output.peek()
-        assert len(items) == 1
-        assert isinstance(items[0], RealtimeAudioOutput)
+        assert any(isinstance(i, RealtimeAgentSpeechStarted) for i in items)
+        assert any(isinstance(i, RealtimeAudioOutput) for i in items)
 
     async def test_model_turn_function_call(self):
         rt = _make_realtime()
@@ -617,9 +617,7 @@ class TestGeminiRealtimeIntegration:
         await asyncio.sleep(3.0)
         items = realtime.output.peek()
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
-        agent_started = [
-            i for i in items if isinstance(i, RealtimeAgentSpeechStarted)
-        ]
+        agent_started = [i for i in items if isinstance(i, RealtimeAgentSpeechStarted)]
         agent_ended = [i for i in items if isinstance(i, RealtimeAgentSpeechEnded)]
         assert len(audio) > 0
         assert len(agent_started) >= 1
@@ -637,9 +635,7 @@ class TestGeminiRealtimeIntegration:
         await asyncio.sleep(10.0)
         items = realtime.output.peek()
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
-        user_started = [
-            i for i in items if isinstance(i, RealtimeUserSpeechStarted)
-        ]
+        user_started = [i for i in items if isinstance(i, RealtimeUserSpeechStarted)]
         user_ended = [i for i in items if isinstance(i, RealtimeUserSpeechEnded)]
         assert len(audio) > 0
         assert len(user_started) >= 1

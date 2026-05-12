@@ -313,16 +313,12 @@ class Realtime(realtime.Realtime):
                 err = Exception(
                     f"OpenAI realtime failure {response_done_event.response}"
                 )
-                self._emit_agent_speech_ended(
-                    response_id=response_id, interrupted=True
-                )
+                self._emit_agent_speech_ended(response_id=response_id, interrupted=True)
                 self._emit_error_event(error=err, context="response.done")
                 raise err
             elif response_done_event.response.status == "cancelled":
                 logger.debug("Response cancelled (user interrupted)")
-                self._emit_agent_speech_ended(
-                    response_id=response_id, interrupted=True
-                )
+                self._emit_agent_speech_ended(response_id=response_id, interrupted=True)
             else:
                 self._emit_agent_speech_ended(response_id=response_id)
         elif et == "error":

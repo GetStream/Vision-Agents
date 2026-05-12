@@ -5,6 +5,12 @@ import pytest
 from getstream.video.rtc import PcmData
 from getstream.video.rtc.track_util import AudioFormat
 from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.agents.events import (
+    AgentTurnEndedEvent,
+    AgentTurnStartedEvent,
+    UserTurnEndedEvent,
+    UserTurnStartedEvent,
+)
 from vision_agents.core.agents.inference.audio import (
     AudioInputChunk,
     AudioInputStream,
@@ -17,12 +23,18 @@ from vision_agents.core.agents.inference.transcribing_flow import (
 )
 from vision_agents.core.agents.transcript import TranscriptStore
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.events import EventManager
 from vision_agents.core.llm import LLM
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.stt import STT
 from vision_agents.core.stt.stt import Transcript, TranscriptResponse
 from vision_agents.core.tts import TTS
-from vision_agents.core.tts.tts import TTSInput, TTSInputEnd, TTSOutputChunk
+from vision_agents.core.tts.tts import (
+    TTSInput,
+    TTSInputEnd,
+    TTSOutputChunk,
+    TTSOutputEnd,
+)
 from vision_agents.core.turn_detection import TurnDetector, TurnEnded, TurnStarted
 from vision_agents.core.utils.stream import Stream
 
@@ -53,7 +65,12 @@ def conversation() -> InMemoryConversation:
 
 
 @pytest.fixture
-def flow_factory(transcripts, conversation):
+async def events() -> EventManager:
+    return EventManager()
+
+
+@pytest.fixture
+def flow_factory(transcripts, conversation, events):
     def _build(
         *,
         llm: LLM | None = None,
@@ -71,6 +88,7 @@ def flow_factory(transcripts, conversation):
             transcripts=transcripts,
             agent_user_id="agent-1",
             conversation=conversation,
+            events=events,
             turn_detector=turn_detector,
             tts=tts,
         )
@@ -97,7 +115,9 @@ class TestProcessSTTOutput:
         )
 
     @pytest.fixture
-    async def flow(self, llm, transcripts, conversation) -> TranscribingInferenceFlow:
+    async def flow(
+        self, llm, transcripts, conversation, events
+    ) -> TranscribingInferenceFlow:
         return TranscribingInferenceFlow(
             audio_input=AudioInputStream(),
             audio_output=AudioOutputStream(),
@@ -106,11 +126,12 @@ class TestProcessSTTOutput:
             transcripts=transcripts,
             agent_user_id="agent-1",
             conversation=conversation,
+            events=events,
         )
 
     @pytest.fixture
     async def flow_no_td(
-        self, llm, transcripts, conversation
+        self, llm, transcripts, conversation, events
     ) -> TranscribingInferenceFlow:
         # Neither STT nor external TurnDetector drives turns — a final
         # Transcript is the commit signal on its own.
@@ -122,6 +143,7 @@ class TestProcessSTTOutput:
             transcripts=transcripts,
             agent_user_id="agent-1",
             conversation=conversation,
+            events=events,
         )
 
     async def test_process_stt_output_final_transcript_turn_confirmed(
@@ -129,6 +151,14 @@ class TestProcessSTTOutput:
     ) -> None:
         stt_out: Stream[TurnStarted | Transcript | TurnEnded] = Stream()
         llm_out: Stream[LLMResponseDelta | LLMResponseFinal] = Stream()
+        user_started: list[UserTurnStartedEvent] = []
+        user_ended: list[UserTurnEndedEvent] = []
+
+        @flow.events.subscribe
+        async def _on(event: UserTurnStartedEvent | UserTurnEndedEvent):
+            (
+                user_started if isinstance(event, UserTurnStartedEvent) else user_ended
+            ).append(event)
 
         stage = asyncio.create_task(flow.process_stt_output(stt_out, llm_out))
 
@@ -155,6 +185,7 @@ class TestProcessSTTOutput:
 
         stt_out.close()
         await stage
+        await flow.events.wait()
         items = llm_out.peek()
 
         deltas = [i for i in items if isinstance(i, LLMResponseDelta)]
@@ -162,6 +193,10 @@ class TestProcessSTTOutput:
         assert len(deltas) == 2
         assert len(finals) == 1
         assert finals[0].text == "Hi there"
+        assert len(user_started) == 1
+        assert user_started[0].participant is participant
+        assert len(user_ended) == 1
+        assert user_ended[0].participant is participant
 
     async def test_process_stt_output_no_transcripts(self, flow, participant) -> None:
         stt_out: Stream[TurnStarted | Transcript | TurnEnded] = Stream()
@@ -630,7 +665,7 @@ class TestProcessSTTOutput:
         assert len(finals) == 2
 
     async def test_simple_response_then_process_stt_output_no_td(
-        self, transcripts, conversation, participant
+        self, transcripts, conversation, participant, events
     ) -> None:
         """After ``simple_response`` returns, ``process_stt_output`` still runs a no-TD final."""
 
@@ -648,6 +683,7 @@ class TestProcessSTTOutput:
             transcripts=transcripts,
             agent_user_id="agent-1",
             conversation=conversation,
+            events=events,
         )
         stt_out: Stream[TurnStarted | Transcript | TurnEnded] = Stream()
         llm_out: Stream[LLMResponseDelta | LLMResponseFinal] = Stream()
@@ -671,7 +707,7 @@ class TestProcessSTTOutput:
         assert [f.text for f in finals] == ["stt"]
 
     async def test_simple_response_then_turn_ended_before_final_with_turn_detector(
-        self, transcripts, conversation, participant
+        self, transcripts, conversation, participant, events
     ) -> None:
         """TurnDetector path: ``TurnEnded`` arrives before the final STT transcript."""
 
@@ -690,6 +726,7 @@ class TestProcessSTTOutput:
             transcripts=transcripts,
             agent_user_id="agent-1",
             conversation=conversation,
+            events=events,
         )
         stt_out: Stream[TurnStarted | Transcript | TurnEnded] = Stream()
         llm_out: Stream[LLMResponseDelta | LLMResponseFinal] = Stream()
@@ -1232,7 +1269,16 @@ class TestProcessTTS:
 class TestWriteAudioOutput:
     async def test_forwards_chunks_preserving_final_flag(self, flow_factory) -> None:
         flow = flow_factory()
-        tts_out: Stream[TTSOutputChunk] = Stream()
+        started: list[AgentTurnStartedEvent] = []
+        ended: list[AgentTurnEndedEvent] = []
+
+        @flow.events.subscribe
+        async def _on(event: AgentTurnStartedEvent | AgentTurnEndedEvent):
+            (started if isinstance(event, AgentTurnStartedEvent) else ended).append(
+                event
+            )
+
+        tts_out: Stream[TTSOutputChunk | TTSOutputEnd] = Stream()
         audio_out = AudioOutputStream()
 
         stage = asyncio.create_task(flow.write_audio_output(tts_out, audio_out))
@@ -1244,8 +1290,56 @@ class TestWriteAudioOutput:
 
         tts_out.close()
         await stage
+        await flow.events.wait()
 
         assert audio_out.peek() == [
             AudioOutputChunk(data=None, final=False),
             AudioOutputChunk(data=None, final=True),
         ]
+        assert len(started) == 1
+        assert len(ended) == 1
+        assert ended[0].interrupted is False
+
+    async def test_tts_output_end_emits_interrupted_agent_turn_ended(
+        self, flow_factory
+    ) -> None:
+        flow = flow_factory()
+        seen: list[AgentTurnEndedEvent] = []
+
+        @flow.events.subscribe
+        async def _on(event: AgentTurnEndedEvent):
+            seen.append(event)
+
+        tts_out: Stream[TTSOutputChunk | TTSOutputEnd] = Stream()
+        audio_out = AudioOutputStream()
+        stage = asyncio.create_task(flow.write_audio_output(tts_out, audio_out))
+
+        await tts_out.send(TTSOutputChunk(data=None, final=False))
+        await tts_out.send(TTSOutputEnd(interrupted=True))
+        tts_out.close()
+        await stage
+        await flow.events.wait()
+
+        assert len(seen) == 1
+        assert seen[0].interrupted is True
+
+    async def test_tts_output_end_without_started_emits_nothing(
+        self, flow_factory
+    ) -> None:
+        flow = flow_factory()
+        seen: list[AgentTurnEndedEvent] = []
+
+        @flow.events.subscribe
+        async def _on(event: AgentTurnEndedEvent):
+            seen.append(event)
+
+        tts_out: Stream[TTSOutputChunk | TTSOutputEnd] = Stream()
+        audio_out = AudioOutputStream()
+        stage = asyncio.create_task(flow.write_audio_output(tts_out, audio_out))
+
+        await tts_out.send(TTSOutputEnd(interrupted=True))
+        tts_out.close()
+        await stage
+        await flow.events.wait()
+
+        assert seen == []

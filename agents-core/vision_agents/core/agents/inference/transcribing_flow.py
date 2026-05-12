@@ -6,14 +6,26 @@ from uuid import uuid4
 from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.trace import Tracer
+from vision_agents.core.agents.events import (
+    AgentTurnEndedEvent,
+    AgentTurnStartedEvent,
+    UserTurnEndedEvent,
+    UserTurnStartedEvent,
+)
 from vision_agents.core.agents.transcript import TranscriptStore
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.events import EventManager
 from vision_agents.core.llm import LLM, Realtime
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.stt import STT
 from vision_agents.core.stt.stt import Transcript
 from vision_agents.core.tts import TTS
-from vision_agents.core.tts.tts import TTSInput, TTSInputEnd, TTSOutputChunk
+from vision_agents.core.tts.tts import (
+    TTSInput,
+    TTSInputEnd,
+    TTSOutputChunk,
+    TTSOutputEnd,
+)
 from vision_agents.core.turn_detection import TurnDetector, TurnEnded, TurnStarted
 from vision_agents.core.utils.exceptions import log_exceptions
 from vision_agents.core.utils.stream import Stream
@@ -41,6 +53,7 @@ class TranscribingInferenceFlow(InferenceFlow):
         transcripts: TranscriptStore,
         agent_user_id: str,
         conversation: "Conversation",
+        events: EventManager,
         stt: STT | None = None,
         turn_detector: TurnDetector | None = None,
         tts: TTS | None = None,
@@ -51,6 +64,13 @@ class TranscribingInferenceFlow(InferenceFlow):
                 f"Realtime LLMs are not supported by {self.__class__.__name__}"
             )
         self._llm = llm
+        self.events = events
+        self.events.register(
+            UserTurnStartedEvent,
+            UserTurnEndedEvent,
+            AgentTurnStartedEvent,
+            AgentTurnEndedEvent,
+        )
 
         if turn_detector and stt and stt.turn_detection:
             logger.warning(
@@ -79,7 +99,7 @@ class TranscribingInferenceFlow(InferenceFlow):
         self._tts = tts
         self._tts_task: asyncio.Task | None = None
         self._tts_input = Stream[TTSInput | TTSInputEnd]()
-        self._tts_output = Stream[TTSOutputChunk]()
+        self._tts_output = Stream[TTSOutputChunk | TTSOutputEnd]()
         self._audio_output_task: asyncio.Task | None = None
         self._tts_tokenizer = TTSSentenceTokenizer()
 
@@ -162,6 +182,7 @@ class TranscribingInferenceFlow(InferenceFlow):
         if self._tts:
             await self._tts.interrupt()
         self._tts_output.clear()
+        self._tts_output.send_nowait(TTSOutputEnd(interrupted=True))
 
         self._audio_output.clear()
         # flush() signals downstream consumers (e.g. rtc audio track)
@@ -307,6 +328,7 @@ class TranscribingInferenceFlow(InferenceFlow):
                         "👉 Participant %s barged-in, interrupting the agent",
                         event.participant.user_id,
                     )
+                    self.events.send(UserTurnStartedEvent(participant=participant))
                     await self.interrupt()
 
                 elif isinstance(event, Transcript):
@@ -438,6 +460,7 @@ class TranscribingInferenceFlow(InferenceFlow):
                     and not llm_turn.finalized
                 ):
                     llm_turn.finalize(llm_output)
+                    self.events.send(UserTurnEndedEvent(participant=event.participant))
                     buffer.reset()
 
     async def process_llm_output(
@@ -482,7 +505,7 @@ class TranscribingInferenceFlow(InferenceFlow):
     async def process_tts(
         self,
         tts_input: Stream[TTSInput | TTSInputEnd],
-        tts_output: Stream[TTSOutputChunk],
+        tts_output: Stream[TTSOutputChunk | TTSOutputEnd],
     ) -> None:
         # No TTS provided, exit early
         if not self._tts:
@@ -512,10 +535,26 @@ class TranscribingInferenceFlow(InferenceFlow):
                             await tts_output.send(chunk)
 
     async def write_audio_output(
-        self, tts_output: Stream[TTSOutputChunk], audio_output: AudioOutputStream
+        self,
+        tts_output: Stream[TTSOutputChunk | TTSOutputEnd],
+        audio_output: AudioOutputStream,
     ):
+        speaking = False
         async for item in tts_output:
             with log_exceptions(logger, "Error while processing TTS output"):
+                if isinstance(item, TTSOutputEnd):
+                    if speaking:
+                        self.events.send(
+                            AgentTurnEndedEvent(interrupted=item.interrupted)
+                        )
+                        speaking = False
+                    continue
+                if not speaking:
+                    self.events.send(AgentTurnStartedEvent())
+                    speaking = True
                 await audio_output.send(
                     AudioOutputChunk(data=item.data, final=item.final)
                 )
+                if item.final:
+                    self.events.send(AgentTurnEndedEvent())
+                    speaking = False

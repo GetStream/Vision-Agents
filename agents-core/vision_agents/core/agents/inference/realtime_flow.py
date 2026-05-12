@@ -59,7 +59,13 @@ class RealtimeInferenceFlow(InferenceFlow):
         self._audio_input = audio_input
         self._audio_output = audio_output
         self._llm = llm
-        self._events = events
+        self.events = events
+        self.events.register(
+            UserTurnStartedEvent,
+            UserTurnEndedEvent,
+            AgentTurnStartedEvent,
+            AgentTurnEndedEvent,
+        )
         self._llm_output_processing_task: asyncio.Task | None = None
         self._audio_input_task: asyncio.Task | None = None
         self._audio_output_task: asyncio.Task | None = None
@@ -148,19 +154,13 @@ class RealtimeInferenceFlow(InferenceFlow):
                         # The model finished talking, emit a final empty chunk.
                         await audio_output.send(AudioOutputChunk(final=True))
                 elif isinstance(item, RealtimeUserSpeechStarted):
-                    self._events.send(
-                        UserTurnStartedEvent(participant=item.participant)
-                    )
+                    self.events.send(UserTurnStartedEvent(participant=item.participant))
                 elif isinstance(item, RealtimeUserSpeechEnded):
-                    self._events.send(
-                        UserTurnEndedEvent(participant=item.participant)
-                    )
+                    self.events.send(UserTurnEndedEvent(participant=item.participant))
                 elif isinstance(item, RealtimeAgentSpeechStarted):
-                    self._events.send(AgentTurnStartedEvent())
+                    self.events.send(AgentTurnStartedEvent())
                 elif isinstance(item, RealtimeAgentSpeechEnded):
-                    self._events.send(
-                        AgentTurnEndedEvent(interrupted=item.interrupted)
-                    )
+                    self.events.send(AgentTurnEndedEvent(interrupted=item.interrupted))
                 elif isinstance(item, RealtimeUserTranscript):
                     # Received a user transcript.
                     # Sync it to the conversation.

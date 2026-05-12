@@ -135,9 +135,7 @@ class TestOpenAIRealtimeIntegration:
         items = realtime.output.peek()
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
         done = [i for i in items if isinstance(i, RealtimeAudioOutputDone)]
-        agent_started = [
-            i for i in items if isinstance(i, RealtimeAgentSpeechStarted)
-        ]
+        agent_started = [i for i in items if isinstance(i, RealtimeAgentSpeechStarted)]
         agent_ended = [i for i in items if isinstance(i, RealtimeAgentSpeechEnded)]
         assert len(audio) > 0
         assert len(done) >= 1
@@ -172,9 +170,7 @@ class TestOpenAIRealtimeIntegration:
         await asyncio.sleep(10.0)
         items = realtime.output.peek()
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
-        user_started = [
-            i for i in items if isinstance(i, RealtimeUserSpeechStarted)
-        ]
+        user_started = [i for i in items if isinstance(i, RealtimeUserSpeechStarted)]
         user_ended = [i for i in items if isinstance(i, RealtimeUserSpeechEnded)]
         assert len(audio) > 0
         assert len(user_started) >= 1
