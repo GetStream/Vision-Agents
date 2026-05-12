@@ -30,15 +30,9 @@ class AudioFormat(Enum):
     OGG = "ogg"
 
 
-# TODO: Merge it together with BaseEvent
-@dataclass
-class Event:
-    """Slim event base. Subclasses add only what they need (e.g. participant)."""
-
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    session_id: Optional[str] = None
-
-
+# TODO: Remove participant, event_id, user_metadata
+# TODO: remove ``type`` once EventManager dispatches by ``type(event)``.
+# TODO: remove DataClassJsonMixin.
 @dataclass
 class BaseEvent(DataClassJsonMixin):
     """Base class for all events."""
