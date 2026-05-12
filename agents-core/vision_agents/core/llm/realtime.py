@@ -41,6 +41,35 @@ class RealtimeAgentTranscript:
     text: str = ""
 
 
+@dataclass(slots=True)
+class RealtimeUserSpeechStarted:
+    """Server-side VAD signal: the user started speaking."""
+
+    participant: Participant
+
+
+@dataclass(slots=True)
+class RealtimeUserSpeechEnded:
+    """Server-side VAD signal: the user stopped speaking."""
+
+    participant: Participant
+
+
+@dataclass(slots=True)
+class RealtimeAgentSpeechStarted:
+    """The model started producing audio output for a response."""
+
+    response_id: str | None = None
+
+
+@dataclass(slots=True)
+class RealtimeAgentSpeechEnded:
+    """The model finished producing audio output for a response."""
+
+    interrupted: bool = False
+    response_id: str | None = None
+
+
 class Realtime(OmniLLM):
     """
     Realtime is an abstract base class for LLMs that can receive audio and video
@@ -79,6 +108,10 @@ class Realtime(OmniLLM):
             | RealtimeAudioOutputDone
             | RealtimeUserTranscript
             | RealtimeAgentTranscript
+            | RealtimeUserSpeechStarted
+            | RealtimeUserSpeechEnded
+            | RealtimeAgentSpeechStarted
+            | RealtimeAgentSpeechEnded
         ] = Stream()
 
     @property
@@ -89,6 +122,10 @@ class Realtime(OmniLLM):
         | RealtimeAudioOutputDone
         | RealtimeUserTranscript
         | RealtimeAgentTranscript
+        | RealtimeUserSpeechStarted
+        | RealtimeUserSpeechEnded
+        | RealtimeAgentSpeechStarted
+        | RealtimeAgentSpeechEnded
     ]:
         """Pipeline output stream: consumers iterate, subclasses push via send_nowait."""
         return self._output
@@ -174,6 +211,36 @@ class Realtime(OmniLLM):
             response_id=response_id, interrupted=interrupted
         )
         self._output.send_nowait(event)
+
+    def _emit_user_speech_started(self):
+        """Emit a user-speech-started signal from server-side VAD."""
+        if self._current_participant is None:
+            return
+        self._output.send_nowait(
+            RealtimeUserSpeechStarted(participant=self._current_participant)
+        )
+
+    def _emit_user_speech_ended(self):
+        """Emit a user-speech-ended signal from server-side VAD."""
+        if self._current_participant is None:
+            return
+        self._output.send_nowait(
+            RealtimeUserSpeechEnded(participant=self._current_participant)
+        )
+
+    def _emit_agent_speech_started(self, response_id: str | None = None):
+        """Emit an agent-speech-started signal when the model begins audio output."""
+        self._output.send_nowait(RealtimeAgentSpeechStarted(response_id=response_id))
+
+    def _emit_agent_speech_ended(
+        self, response_id: str | None = None, interrupted: bool = False
+    ):
+        """Emit an agent-speech-ended signal when the model stops producing audio."""
+        self._output.send_nowait(
+            RealtimeAgentSpeechEnded(
+                response_id=response_id, interrupted=interrupted
+            )
+        )
 
     def _emit_user_speech_transcription(
         self,
