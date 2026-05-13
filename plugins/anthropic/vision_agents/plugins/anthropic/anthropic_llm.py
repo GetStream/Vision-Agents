@@ -3,6 +3,11 @@ import logging
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
+from vision_agents.core.agents.conversation import Message
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
+
 import anthropic
 from anthropic import AsyncAnthropic, AsyncStream
 from anthropic.types import (
@@ -12,10 +17,6 @@ from anthropic.types import (
     RawContentBlockDeltaEvent,
     RawMessageStreamEvent,
 )
-from vision_agents.core.agents.conversation import Message
-from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
-from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ class ClaudeLLM(LLM):
             tools_max_rounds: max calling rounds for multi-hop tool call. Default - ``3``.
         """
         super().__init__()
+        self.model = model
         self._tools_max_rounds = max(tools_max_rounds, 1)
         self._pending_tool_uses_by_index: Dict[
             int, Dict[str, Any]
