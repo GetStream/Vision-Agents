@@ -1,9 +1,22 @@
+"""LiveAvatar example.
+
+Adds a real-time HeyGen avatar to an AI agent. LiveAvatar generates
+synchronized lip-synced video and audio from the TTS audio stream.
+
+Required environment variables:
+    LIVEAVATAR_API_KEY
+    LIVEAVATAR_AVATAR_ID
+    GEMINI_API_KEY
+    DEEPGRAM_API_KEY
+    STREAM_API_KEY
+    STREAM_API_SECRET
+"""
+
 import logging
 
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner, User
-from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import anam, deepgram, gemini, getstream
+from vision_agents.plugins import deepgram, gemini, getstream, liveavatar
 
 logger = logging.getLogger(__name__)
 
@@ -16,25 +29,13 @@ INSTRUCTIONS = (
 )
 
 
-def setup_llm(model: str = "gemini-3.1-flash-lite-preview") -> gemini.LLM:
-    llm = gemini.LLM(model)
-
-    @llm.register_function(description="Get current weather for a location")
-    async def get_weather(location: str) -> dict[str, object]:
-        return await get_weather_by_location(location)
-
-    return llm
-
-
 async def create_agent(**kwargs) -> Agent:
-    llm = setup_llm()
-
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="My happy AI friend", id="agent"),
+        agent_user=User(name="Avatar Agent", id="agent"),
         instructions=INSTRUCTIONS,
-        avatar=anam.Avatar(),
-        llm=llm,
+        avatar=liveavatar.Avatar(),
+        llm=gemini.LLM("gemini-3.1-flash-lite-preview"),
         tts=deepgram.TTS(),
         stt=deepgram.STT(eager_turn_detection=True),
     )
@@ -45,11 +46,9 @@ async def create_agent(**kwargs) -> Agent:
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     call = await agent.create_call(call_type, call_id)
 
-    # Have the agent join the call/room
     async with agent.join(call):
         await agent.simple_response("tell me something interesting in a short sentence")
 
-        # run till the call ends
         await agent.finish()
 
 

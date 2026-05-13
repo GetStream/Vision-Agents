@@ -1,5 +1,3 @@
-from .lemonslice_avatar_publisher import LemonSliceAvatarPublisher
+from .lemonslice_avatar import LemonSliceAvatar as Avatar
 
-__all__ = [
-    "LemonSliceAvatarPublisher",
-]
+__all__ = ["Avatar"]

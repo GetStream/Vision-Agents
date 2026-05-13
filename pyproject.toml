@@ -39,6 +39,7 @@ vision-agents-plugins-assemblyai = { workspace = true }
 vision-agents-plugins-local = { workspace = true }
 vision-agents-plugins-anam = { workspace = true }
 vision-agents-plugins-sarvam = { workspace = true }
+vision-agents-plugins-liveavatar = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -85,6 +86,7 @@ members = [
     "plugins/local",
     "plugins/anam",
     "plugins/sarvam",
+    "plugins/liveavatar",
 ]
 exclude = [
     "**/__pycache__",

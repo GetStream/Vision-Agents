@@ -1,19 +1,17 @@
 import asyncio
 import logging
+import os
 from typing import Any
 
 import av
-from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
-from vision_agents.core.llm.events import (
-    RealtimeAudioOutputDoneEvent,
-    RealtimeAudioOutputEvent,
+from vision_agents.core.agents.inference import (
+    AudioOutputChunk,
+    AudioOutputFlush,
+    AudioOutputStream,
 )
-from vision_agents.core.llm.realtime import Realtime
-from vision_agents.core.processors.base_processor import AudioPublisher, VideoPublisher
-from vision_agents.core.tts.events import TTSAudioEvent
-from vision_agents.core.turn_detection import TurnStartedEvent
-from vision_agents.core.utils.av_synchronizer import AVSynchronizer
+from vision_agents.core.avatars import Avatar, AVSynchronizer
+from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 from .lemonslice_client import LemonSliceClient
@@ -22,7 +20,16 @@ from .lemonslice_rtc_manager import LemonSliceRTCManager
 logger = logging.getLogger(__name__)
 
 
-class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
+def _task_done_callback(task: asyncio.Task[None]) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error(
+            "LemonSlice avatar background task %s failed",
+            task.get_name(),
+            exc_info=task.exception(),
+        )
+
+
+class LemonSliceAvatar(Avatar):
     """LemonSlice avatar video and audio publisher.
 
     Sends TTS audio to LemonSlice over LiveKit and receives synchronized
@@ -32,7 +39,7 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
     For Realtime LLMs: LemonSlice provides video only; LLM provides audio.
     """
 
-    name = "lemonslice_avatar"
+    provider_name = "lemonslice_avatar"
 
     def __init__(
         self,
@@ -64,6 +71,9 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
             height: Output video height in pixels.
         """
         super().__init__()
+        agent_id = agent_id or os.getenv("LEMONSLICE_AGENT_ID")
+        agent_image_url = agent_image_url or os.getenv("LEMONSLICE_AGENT_IMAGE_URL")
+
         client_kwargs: dict[str, Any] = {
             "agent_id": agent_id,
             "agent_image_url": agent_image_url,
@@ -86,73 +96,61 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
         self._sync = AVSynchronizer(width=width, height=height)
 
         self._connected = False
-        self._agent: Any = None
-        self._send_lock = asyncio.Lock()
+        self._audio_input_task: asyncio.Task[None] | None = None
 
         logger.debug(f"LemonSlice AvatarPublisher initialized ({width}x{height})")
 
-    def publish_video_track(self) -> QueuedVideoTrack:
-        return self._sync.video_track
+    def video_output(self) -> QueuedVideoTrack:
+        return self._sync.video_output
 
-    def publish_audio_track(self) -> AudioStreamTrack:
-        return self._sync.audio_track
-
-    def attach_agent(self, agent: Any) -> None:
-        self._agent = agent
-        self._subscribe_to_audio_events()
+    def audio_output(self) -> AudioOutputStream:
+        return self._sync.audio_output
 
     async def start(self) -> None:
         """Connect to LemonSlice. Called by Agent via _apply("start") during join()."""
         await self._connect()
 
     async def close(self) -> None:
+        if self._audio_input_task is not None:
+            await cancel_and_wait(self._audio_input_task)
+
         try:
             await self._rtc_manager.close()
         except Exception as exc:
             logger.warning(f"Failed to close LemonSlice RTC manager: {exc}")
-        finally:
+
+        # Close sync AFTER rtc_manager so its receive tasks can't write to a
+        # closed stream during teardown.
+        self._sync.close()
+
+        try:
             await self._client.close()
+        finally:
             self._connected = False
             logger.debug("LemonSlice avatar publisher closed")
 
-    def _is_stale_epoch(self, epoch: int) -> bool:
-        """Check if an event's epoch is behind the current LLM epoch."""
-        llm = self._agent.llm
-        return isinstance(llm, Realtime) and epoch != llm.epoch
+    async def _process_audio_input(self) -> None:
+        """
+        Process audio input from the Agent
+        """
 
-    def _subscribe_to_audio_events(self) -> None:
-        @self._agent.events.subscribe
-        async def on_tts_audio(event: TTSAudioEvent):
-            # Use the lock because TTS events arrive asynchronously
-            async with self._send_lock:
-                if event.data is not None:
-                    await self._rtc_manager.send_audio(event.data)
-                if event.is_final_chunk:
-                    await self._rtc_manager.flush()
+        async for item in self.input_audio_stream:
+            if isinstance(item, AudioOutputChunk):
+                # Received normal audio, send it to the avatar
+                if item.data is not None:
+                    await self._rtc_manager.send_audio(item.data)
+                # Received final audio chunk (end-of-utterance), flush avatar's audio
+                if item.final:
+                    await self._end_turn()
 
-        @self._agent.events.subscribe
-        async def on_realtime_audio(event: RealtimeAudioOutputEvent):
-            async with self._send_lock:
-                if event.data is not None and not self._is_stale_epoch(event.epoch):
-                    await self._rtc_manager.send_audio(event.data)
+            elif isinstance(item, AudioOutputFlush):
+                # Audio was interrupted
+                await self._end_turn()
+                await self._sync.flush()
+                await self._rtc_manager.interrupt()
 
-        @self._agent.events.subscribe
-        async def on_realtime_audio_done(event: RealtimeAudioOutputDoneEvent):
-            async with self._send_lock:
-                await self._rtc_manager.flush()
-                if event.interrupted:
-                    await self._sync.flush()
-                    await self._rtc_manager.interrupt()
-
-        @self._agent.events.subscribe
-        async def on_turn_started(event: TurnStartedEvent):
-            if (
-                event.participant
-                and event.participant.user_id != self._agent.agent_user.id
-            ):
-                async with self._send_lock:
-                    await self._sync.flush()
-                    await self._rtc_manager.interrupt()
+    async def _end_turn(self) -> None:
+        await self._rtc_manager.flush()
 
     async def _connect(self) -> None:
         credentials = self._rtc_manager.generate_credentials()
@@ -161,11 +159,15 @@ class LemonSliceAvatarPublisher(AudioPublisher, VideoPublisher):
             await self._client.create_session(
                 credentials.livekit_url, credentials.livekit_token
             )
-            self._connected = True
-            logger.info("LemonSlice avatar connection established")
         except Exception:
-            logger.exception("Failed to create a LemonSlice session")
             await self._rtc_manager.close()
+            raise
+        self._connected = True
+        logger.info("LemonSlice avatar connection established")
+
+        if self._audio_input_task is None:
+            self._audio_input_task = asyncio.create_task(self._process_audio_input())
+            self._audio_input_task.add_done_callback(_task_done_callback)
 
     async def _on_video_frame(self, frame: av.VideoFrame) -> None:
         await self._sync.write_video(frame)

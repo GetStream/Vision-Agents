@@ -12,18 +12,14 @@ from anam import (
     PersonaConfig,
     Session,
 )
-from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
-from vision_agents.core import Agent
-from vision_agents.core.llm.events import (
-    RealtimeAudioOutputDoneEvent,
-    RealtimeAudioOutputEvent,
+from vision_agents.core.agents.inference import (
+    AudioOutputChunk,
+    AudioOutputFlush,
+    AudioOutputStream,
 )
-from vision_agents.core.llm.realtime import Realtime
-from vision_agents.core.processors.base_processor import AudioPublisher, VideoPublisher
-from vision_agents.core.tts.events import TTSAudioEvent
-from vision_agents.core.turn_detection import TurnStartedEvent
-from vision_agents.core.utils.av_synchronizer import AVSynchronizer
+from vision_agents.core.avatars import Avatar
+from vision_agents.core.avatars.av_synchronizer import AVSynchronizer
 from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
@@ -37,8 +33,8 @@ def _task_done_callback(task: asyncio.Task[None]) -> None:
         )
 
 
-class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
-    """Anam avatar video and audio publisher.
+class AnamAvatar(Avatar):
+    """Anam avatar plugin.
 
     References:
     - https://anam.ai/
@@ -48,7 +44,7 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
     avatar video and audio back.
     """
 
-    name = "anam_avatar"
+    provider_name = "anam_avatar"
 
     def __init__(
         self,
@@ -107,30 +103,18 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         self._session_ready = asyncio.Event()
         self._exit_stack = contextlib.AsyncExitStack()
         self._real_session: Session | None = None
-        self._real_agent: Agent | None = None
         self._audio_input_stream: AgentAudioInputStream | None = None
-        self._send_lock = asyncio.Lock()
         self._audio_receiver_task: asyncio.Task[None] | None = None
         self._video_receiver_task: asyncio.Task[None] | None = None
+        self._audio_input_task: asyncio.Task[None] | None = None
 
-    def publish_video_track(self) -> QueuedVideoTrack:
+    def video_output(self) -> QueuedVideoTrack:
         """Return the video track that receives avatar video frames."""
-        return self._sync.video_track
+        return self._sync.video_output
 
-    def publish_audio_track(self) -> AudioStreamTrack:
-        """Return the audio track that receives avatar audio frames."""
-        return self._sync.audio_track
-
-    def attach_agent(self, agent: Agent) -> None:
-        """
-        Attach a running Agent to the Avatar publisher and subscribe
-        to incoming audio events.
-
-        Args:
-            agent: Agent to attach.
-        """
-        self._real_agent = agent
-        self._subscribe_to_audio_events()
+    def audio_output(self) -> AudioOutputStream:
+        """Return the video track that receives avatar video frames."""
+        return self._sync.audio_output
 
     async def start(self) -> None:
         """Connect to Anam. Called by Agent via _apply("start") during join()."""
@@ -141,10 +125,16 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         Close the Anam avatar publisher, cancel audio & video processing tasks
         and release resources.
         """
-        for task in (self._audio_receiver_task, self._video_receiver_task):
+
+        for task in (
+            self._audio_input_task,
+            self._audio_receiver_task,
+            self._video_receiver_task,
+        ):
             if task is not None:
                 await cancel_and_wait(task)
 
+        self._sync.close()
         try:
             await self._exit_stack.aclose()
             await self._client.close()
@@ -159,18 +149,33 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
             raise RuntimeError("Anam avatar session not initialized")
         return self._real_session
 
-    @property
-    def _agent(self) -> Agent:
-        if self._real_agent is None:
-            raise RuntimeError("Agent is not attached yet")
-        return self._real_agent
+    async def _process_audio_input(self) -> None:
+        """
+        Process audio input from the Agent
+        """
 
-    def _is_stale_epoch(self, epoch: int) -> bool:
-        """Check if an event's epoch is behind the current LLM epoch."""
-        llm = self._agent.llm
-        return isinstance(llm, Realtime) and epoch != llm.epoch
+        # Init the avatar's input stream early
+        self._init_avatar_input_stream()
+        async for item in self.input_audio_stream:
+            if isinstance(item, AudioOutputChunk):
+                # Received normal audio, send it to the avatar
+                if item.data is not None:
+                    await self._send_audio(item.data)
+                # Received final audio chunk (end-of-utterance), flush avatar's audio
+                if item.final:
+                    await self._end_turn()
+
+            elif isinstance(item, AudioOutputFlush):
+                # Audio was interrupted
+                await self._end_turn()
+                await self._sync.flush()
+                await self._session.interrupt()
 
     async def _video_receiver(self) -> None:
+        """
+        Receive video from avatar.
+        """
+
         async for frame in self._session.video_frames():
             try:
                 await self._sync.write_video(frame)
@@ -178,61 +183,39 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
                 logger.warning("Failed to write video frame", exc_info=True)
 
     async def _audio_receiver(self) -> None:
+        """
+        Receive audio from avatar.
+        """
+
         async for frame in self._session.audio_frames():
             try:
                 await self._sync.write_audio(PcmData.from_av_frame(frame))
             except Exception:
                 logger.warning("Failed to send audio frame", exc_info=True)
 
-    async def _send_audio(self, pcm: PcmData) -> None:
+    def _init_avatar_input_stream(self) -> AgentAudioInputStream:
         if self._audio_input_stream is None:
             self._audio_input_stream = self._session.create_agent_audio_input_stream(
                 AgentAudioInputConfig(
                     encoding="pcm_s16le", sample_rate=24000, channels=1
                 )
             )
-        for chunk in pcm.resample(target_channels=1, target_sample_rate=24000).chunks(
-            2400  # 100ms
-        ):
-            await self._audio_input_stream.send_audio_chunk(chunk.to_bytes())
+        return self._audio_input_stream
 
-    async def _flush_audio(self) -> None:
+    async def _send_audio(self, pcm: PcmData) -> None:
+        """
+        Send audio to the avatar.
+        """
+        stream = self._init_avatar_input_stream()
+        pcm = pcm.resample(target_channels=1, target_sample_rate=24000)
+        await stream.send_audio_chunk(pcm.to_bytes())
+
+    async def _end_turn(self) -> None:
+        """
+        Signal end of the turn to the avatar.
+        """
         if self._audio_input_stream is not None:
             await self._audio_input_stream.end_sequence()
-
-    def _subscribe_to_audio_events(self) -> None:
-        @self._agent.events.subscribe
-        async def on_tts_audio(event: TTSAudioEvent):
-            # Use the lock because TTS events arrive asynchronously
-            async with self._send_lock:
-                if event.data is not None:
-                    await self._send_audio(event.data)
-                if event.is_final_chunk:
-                    await self._flush_audio()
-
-        @self._agent.events.subscribe
-        async def on_realtime_audio(event: RealtimeAudioOutputEvent):
-            async with self._send_lock:
-                if event.data is not None and not self._is_stale_epoch(event.epoch):
-                    await self._send_audio(event.data)
-
-        @self._agent.events.subscribe
-        async def on_realtime_audio_done(event: RealtimeAudioOutputDoneEvent):
-            async with self._send_lock:
-                await self._flush_audio()
-                if event.interrupted:
-                    await self._sync.flush()
-                    await self._session.interrupt()
-
-        @self._agent.events.subscribe
-        async def on_turn_started(event: TurnStartedEvent):
-            if (
-                event.participant
-                and event.participant.user_id != self._agent.agent_user.id
-            ):
-                async with self._send_lock:
-                    await self._sync.flush()
-                    await self._session.interrupt()
 
     async def _connect(self) -> None:
         if self._real_session is None:
@@ -248,6 +231,9 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         if self._video_receiver_task is None:
             self._video_receiver_task = asyncio.create_task(self._video_receiver())
             self._video_receiver_task.add_done_callback(_task_done_callback)
+        if self._audio_input_task is None:
+            self._audio_input_task = asyncio.create_task(self._process_audio_input())
+            self._audio_input_task.add_done_callback(_task_done_callback)
 
     async def _on_connection_established(self):
         """

@@ -2,10 +2,13 @@ import asyncio
 from typing import Any, Optional
 from uuid import uuid4
 
+import aiortc
 import pytest
 from getstream.video.rtc import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import Agent, User
+from vision_agents.core.agents.inference import AudioOutputStream
+from vision_agents.core.avatars import Avatar
 from vision_agents.core.edge import Call, EdgeTransport
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
@@ -13,6 +16,7 @@ from vision_agents.core.processors.base_processor import AudioPublisher
 from vision_agents.core.stt import STT as BaseSTT
 from vision_agents.core.tts import TTS
 from vision_agents.core.turn_detection import TurnDetector
+from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.core.warmup import Warmable
 
 
@@ -158,6 +162,23 @@ class RecordingEdge(DummyEdge):
 
     def create_audio_track(self, *args, **kwargs) -> WriteRecordingTrack:
         return self.recorded_audio_track
+
+
+class DummyAvatar(Avatar):
+    def __init__(self) -> None:
+        super().__init__()
+        self._video_track = QueuedVideoTrack(width=640, height=480, fps=30)
+        self._audio_output = AudioOutputStream()
+
+    def video_output(self) -> aiortc.VideoStreamTrack:
+        return self._video_track
+
+    def audio_output(self) -> AudioOutputStream:
+        return self._audio_output
+
+    async def start(self) -> None: ...
+
+    async def close(self) -> None: ...
 
 
 class TestAgent:
@@ -406,3 +427,35 @@ class TestAgent:
         await agent.authenticate()
         async with agent.join(call):
             assert edge.authenticate_call_count == 1
+
+    async def test_avatar_wiring(self):
+        """Avatar metrics forward to agent metrics after merge, and the
+        avatar's video track becomes the agent's outbound video track."""
+        avatar = DummyAvatar()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            avatar=avatar,
+        )
+        avatar.metrics.on_llm_response(input_tokens=7)
+        assert agent.metrics.llm_input_tokens__total.value() == 7
+        assert agent._video_track is avatar.video_output()
+
+    async def test_publish_video_true_with_avatar_false_without(self):
+        agent_with = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            avatar=DummyAvatar(),
+        )
+        agent_without = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        assert agent_with.publish_video is True
+        assert agent_without.publish_video is False
