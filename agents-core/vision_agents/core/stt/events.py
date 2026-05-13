@@ -1,6 +1,6 @@
-from vision_agents.core.events import PluginBaseEvent, ConnectionState
+from vision_agents.core.events import PluginBaseEvent
 from dataclasses import dataclass, field
-from typing import Optional, Any
+from typing import Optional
 
 
 @dataclass
@@ -94,11 +94,16 @@ class STTErrorEvent(PluginBaseEvent):
 
 
 @dataclass
-class STTConnectionEvent(PluginBaseEvent):
-    """Event emitted for STT connection state changes."""
+class STTConnectedEvent(PluginBaseEvent):
+    """Event emitted when an STT connection is established."""
 
-    type: str = field(default="plugin.stt_connection", init=False)
-    connection_state: Optional[ConnectionState] = None
-    provider: Optional[str] = None
-    details: Optional[dict[str, Any]] = None
-    reconnect_attempts: int = 0
+    type: str = field(default="plugin.stt_connected", init=False)
+
+
+@dataclass
+class STTDisconnectedEvent(PluginBaseEvent):
+    """Event emitted when an STT connection is closed."""
+
+    type: str = field(default="plugin.stt_disconnected", init=False)
+    reason: Optional[str] = None
+    clean: bool = True

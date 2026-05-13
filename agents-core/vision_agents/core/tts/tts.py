@@ -18,7 +18,12 @@ from vision_agents.core.events.manager import EventManager
 from vision_agents.core.observability import MetricsCollector
 
 from . import events
-from .events import TTSSynthesisCompleteEvent, TTSSynthesisStartEvent
+from .events import (
+    TTSConnectedEvent,
+    TTSDisconnectedEvent,
+    TTSSynthesisCompleteEvent,
+    TTSSynthesisStartEvent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +107,20 @@ class TTS(abc.ABC):
         """Increment epoch and stop audio. Stale events will be discarded."""
         self._epoch += 1
         await self.stop_audio()
+
+    def _on_connected(self) -> None:
+        """Emit TTSConnectedEvent."""
+        self.events.send(TTSConnectedEvent(plugin_name=self.provider_name))
+
+    def _on_disconnected(
+        self, reason: Optional[str] = None, clean: bool = True
+    ) -> None:
+        """Emit TTSDisconnectedEvent."""
+        self.events.send(
+            TTSDisconnectedEvent(
+                plugin_name=self.provider_name, reason=reason, clean=clean
+            )
+        )
 
     async def _iter_pcm(self, resp: Any) -> AsyncGenerator[PcmData, None]:
         """Yield PcmData chunks from a provider response of various shapes."""

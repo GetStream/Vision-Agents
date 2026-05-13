@@ -87,6 +87,7 @@ class TTS(tts.TTS):
             except (websockets.exceptions.WebSocketException, OSError) as exc:
                 logger.warning("Error sending close to Deepgram TTS: %s", exc)
         await self._reset_connection()
+        self._on_disconnected()
         await super().close()
 
     async def stream_audio(self, text: str, *_, **__) -> AsyncIterator[PcmData]:
@@ -143,6 +144,7 @@ class TTS(tts.TTS):
             )
         )
         self._socket = socket
+        self._on_connected()
         logger.debug("Deepgram TTS websocket connected at %dHz", self.sample_rate)
         return socket
 

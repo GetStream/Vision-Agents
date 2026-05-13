@@ -43,3 +43,19 @@ class TTSSynthesisCompleteEvent(PluginBaseEvent):
     audio_duration_ms: Optional[float] = None
     chunk_count: int = 1
     real_time_factor: Optional[float] = None
+
+
+@dataclass
+class TTSConnectedEvent(PluginBaseEvent):
+    """Event emitted when a TTS connection is established."""
+
+    type: str = field(default="plugin.tts_connected", init=False)
+
+
+@dataclass
+class TTSDisconnectedEvent(PluginBaseEvent):
+    """Event emitted when a TTS connection is closed."""
+
+    type: str = field(default="plugin.tts_disconnected", init=False)
+    reason: Optional[str] = None
+    clean: bool = True

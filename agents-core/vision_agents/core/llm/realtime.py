@@ -190,7 +190,6 @@ class Realtime(OmniLLM):
         self.events.send(
             RealtimeConnectedEvent(
                 plugin_name=self.provider_name,
-                provider=self.provider_name,
                 session_id=self.session_id,
                 session_config=session_config,
                 capabilities=capabilities,
@@ -203,7 +202,6 @@ class Realtime(OmniLLM):
         self.events.send(
             RealtimeDisconnectedEvent(
                 plugin_name=self.provider_name,
-                provider=self.provider_name,
                 session_id=self.session_id,
                 reason=reason,
                 clean=clean,

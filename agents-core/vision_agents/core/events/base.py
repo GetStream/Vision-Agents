@@ -10,16 +10,6 @@ from dataclasses_json import DataClassJsonMixin
 from vision_agents.core.edge.types import Participant
 
 
-class ConnectionState(Enum):
-    """Connection states for streaming plugins."""
-
-    DISCONNECTED = "disconnected"
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    RECONNECTING = "reconnecting"
-    ERROR = "error"
-
-
 class AudioFormat(Enum):
     """Supported audio formats."""
 

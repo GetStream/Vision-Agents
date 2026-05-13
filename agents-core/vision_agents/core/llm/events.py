@@ -12,7 +12,6 @@ class RealtimeConnectedEvent(PluginBaseEvent):
     """Event emitted when realtime connection is established."""
 
     type: str = field(default="plugin.realtime_connected", init=False)
-    provider: Optional[str] = None
     session_id: Optional[str] = None
     session_config: Optional[dict[str, Any]] = None
     capabilities: Optional[list[str]] = None
@@ -23,7 +22,6 @@ class RealtimeDisconnectedEvent(PluginBaseEvent):
     """Event emitted when realtime connection is closed."""
 
     type: str = field(default="plugin.realtime_disconnected", init=False)
-    provider: Optional[str] = None
     session_id: Optional[str] = None
     reason: Optional[str] = None
     clean: bool = True
