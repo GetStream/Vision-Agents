@@ -149,6 +149,9 @@ class Agent:
                 Not needed when using a realtime LLM.
             processors: Processors that run alongside the agent (e.g. video analysis,
                 data fetching). Their state is passed to the LLM.
+            avatar: Optional avatar plugin. When set, the avatar owns the
+                agent's outbound video/audio tracks and the agent's
+                audio output is routed through the avatar for lip-sync.
             mcp_servers: MCP servers for external tool and resource access.
             options: Agent configuration options. Merged with defaults when provided.
             tracer: OpenTelemetry tracer for distributed tracing.
@@ -883,9 +886,8 @@ class Agent:
         if self._audio_track is None:
             return
 
-        # Avatar mode: the avatar consumes `_audio_output_stream` internally
-        # (forwarding to the provider for lipsync) and exposes the synced PCM
-        # via `output_audio_stream()`. We drain that into the outbound track.
+        # When `avatar` is provided, we use its audio output instead of the
+        # default one.
         stream = (
             self.avatar.audio_output()
             if self.avatar is not None
