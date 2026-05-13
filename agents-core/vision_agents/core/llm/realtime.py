@@ -3,17 +3,42 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Coroutine
-from typing import (
-    Any,
-    Optional,
-)
+from dataclasses import dataclass
 
 from getstream.video.rtc.track_util import PcmData
+from vision_agents.core.agents.transcript import TranscriptMode
 from vision_agents.core.edge.types import Participant
-
-from . import OmniLLM, events
+from vision_agents.core.llm import OmniLLM
+from vision_agents.core.utils.stream import Stream
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class RealtimeAudioOutput:
+    data: PcmData
+    response_id: str | None = None
+
+
+@dataclass(slots=True)
+class RealtimeAudioOutputDone:
+    """Event emitted when audio output generation is complete for a response."""
+
+    interrupted: bool = False
+    response_id: str | None = None
+
+
+@dataclass(slots=True)
+class RealtimeUserTranscript:
+    participant: Participant
+    mode: TranscriptMode
+    text: str = ""
+
+
+@dataclass(slots=True)
+class RealtimeAgentTranscript:
+    mode: TranscriptMode
+    text: str = ""
 
 
 class Realtime(OmniLLM):
@@ -25,12 +50,6 @@ class Realtime(OmniLLM):
         llm = Realtime()
         llm.connect()
         llm.simple_response("what do you see?")
-
-    Emits the following events:
-
-    TODO: document/ evaluate how many events we want/ need...
-        - Transcript incoming audio
-        - Transcript outgoing audio
 
     """
 
@@ -44,11 +63,10 @@ class Realtime(OmniLLM):
         super().__init__()
         self.connected = False
 
-        self.provider_name = "realtime_base"
         self.session_id = str(uuid.uuid4())
         self.fps = fps
         # Store current participant for user speech transcription events
-        self._current_participant: Optional[Participant] = None
+        self._current_participant: Participant | None = None
 
         # Background tool tasks — tracked to prevent GC and awaited on close
         self._tool_tasks: set[asyncio.Task[None]] = set()
@@ -56,19 +74,43 @@ class Realtime(OmniLLM):
         # Monotonic epoch counter; incremented on interrupt so stale events
         # emitted before the interrupt can be identified and dropped.
         self._epoch: int = 0
-        self._response_epoch: int = 0
+        self._output: Stream[
+            RealtimeAudioOutput
+            | RealtimeAudioOutputDone
+            | RealtimeUserTranscript
+            | RealtimeAgentTranscript
+        ] = Stream()
+
+    @property
+    def output(
+        self,
+    ) -> Stream[
+        RealtimeAudioOutput
+        | RealtimeAudioOutputDone
+        | RealtimeUserTranscript
+        | RealtimeAgentTranscript
+    ]:
+        """Pipeline output stream: consumers iterate, subclasses push via send_nowait."""
+        return self._output
+
+    @abc.abstractmethod
+    async def connect(self): ...
+
+    @abc.abstractmethod
+    async def simple_audio_response(self, pcm: PcmData, participant: Participant): ...
+
+    @abc.abstractmethod
+    async def close(self): ...
 
     @property
     def epoch(self) -> int:
         return self._epoch
 
-    def _begin_response(self) -> None:
-        """Snapshot the current epoch for this response."""
-        self._response_epoch = self._epoch
-
     async def interrupt(self) -> None:
         """Increment epoch so stale audio output events are discarded."""
         self._epoch += 1
+        self._current_participant = None
+        self._output.clear()
 
     def _run_tool_in_background(self, coro: Coroutine[None, None, None]) -> None:
         """Run a tool coroutine as a background task without blocking the WS reader."""
@@ -88,85 +130,73 @@ class Realtime(OmniLLM):
             await asyncio.gather(*self._tool_tasks, return_exceptions=True)
             self._tool_tasks.clear()
 
-    @abc.abstractmethod
-    async def connect(self): ...
-
-    @abc.abstractmethod
-    async def simple_audio_response(
-        self, pcm: PcmData, participant: Optional[Participant] = None
-    ): ...
+    async def process_audio(self, pcm: PcmData, participant: Participant) -> None:
+        self._current_participant = participant
+        await self.simple_audio_response(pcm, participant)
 
     async def stop_watching_video_track(self) -> None:
         """Optionally overridden by providers that support video input."""
-        return None
+        ...
 
     def _emit_connected_event(self, session_config=None, capabilities=None):
-        """Emit a structured connected event."""
+        """Mark the session connected."""
         self.connected = True
         # Mark ready when connected if provider uses base emitter
         try:
             self._ready_event.set()  # type: ignore[attr-defined]
         except Exception:
             pass
-        event = events.RealtimeConnectedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            session_config=session_config,
-            capabilities=capabilities,
-        )
-        self.events.send(event)
 
     def _emit_disconnected_event(self, reason=None, was_clean=True):
-        """Emit a structured disconnected event."""
+        """Mark the session disconnected."""
         self.connected = False
-        event = events.RealtimeDisconnectedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            reason=reason,
-            was_clean=was_clean,
-        )
-        self.events.send(event)
 
-    def _emit_audio_input_event(self, audio_data: PcmData, user_metadata=None):
-        """Emit a structured audio input event."""
-        event = events.RealtimeAudioInputEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            data=audio_data,
-            participant=user_metadata,
-        )
-        self.events.send(event)
-
-    # TODO: discussion around event vs output_track... why do we have both?
-    def _emit_audio_output_event(
-        self, audio_data: PcmData, response_id=None, user_metadata=None
-    ):
+    def _emit_audio_output_event(self, pcm: PcmData, response_id: str | None = None):
         """Emit a structured audio output event."""
-        event = events.RealtimeAudioOutputEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            data=audio_data,
+        event = RealtimeAudioOutput(
+            data=pcm,
             response_id=response_id,
-            epoch=self._response_epoch,
-            participant=user_metadata,
         )
-        self.events.send(event)
+        self._output.send_nowait(event)
+        self.metrics.on_realtime_audio_output(
+            byte_count=pcm.samples.nbytes,
+            duration_ms=pcm.duration_ms,
+            provider=self.provider_name,
+        )
 
     def _emit_audio_output_done_event(
         self,
         response_id: str | None = None,
-        user_metadata=None,
         interrupted: bool = False,
     ):
         """Emit an event signaling audio output is complete."""
-        event = events.RealtimeAudioOutputDoneEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            response_id=response_id,
-            interrupted=interrupted,
-            participant=user_metadata,
+        event = RealtimeAudioOutputDone(
+            response_id=response_id, interrupted=interrupted
         )
-        self.events.send(event)
+        self._output.send_nowait(event)
+
+    def _emit_user_speech_transcription(
+        self,
+        text: str,
+        *,
+        mode: TranscriptMode,
+    ):
+        """Emit a user speech transcription event with participant info."""
+        # _current_participant can be None when the response is interrupted.
+        if self._current_participant is not None:
+            event = RealtimeUserTranscript(
+                text=text,
+                mode=mode,
+                participant=self._current_participant,
+            )
+            self._output.send_nowait(event)
+            self.metrics.on_realtime_user_transcription(provider=self.provider_name)
+
+    def _emit_agent_speech_transcription(self, text: str, *, mode: TranscriptMode):
+        """Emit an agent speech transcription event."""
+        event = RealtimeAgentTranscript(text=text, mode=mode)
+        self._output.send_nowait(event)
+        self.metrics.on_realtime_agent_transcription(provider=self.provider_name)
 
     def _emit_response_event(
         self,
@@ -176,80 +206,13 @@ class Realtime(OmniLLM):
         conversation_item_id=None,
         user_metadata=None,
     ):
-        """Emit a structured response event."""
-        event = events.RealtimeResponseEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            text=text,
-            response_id=response_id,
-            is_complete=is_complete,
-            conversation_item_id=conversation_item_id,
-            participant=user_metadata,
-        )
-        self.events.send(event)
-
-    def _emit_conversation_item_event(
-        self, item_id, item_type, status, role, content=None, user_metadata=None
-    ):
-        """Emit a structured conversation item event."""
-        event = events.RealtimeConversationItemEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            item_id=item_id,
-            item_type=item_type,
-            status=status,
-            role=role,
-            content=content,
-            participant=user_metadata,
-        )
-        self.events.send(event)
+        """Record metrics for a completed response."""
+        if is_complete:
+            self.metrics.on_realtime_response_completed(provider=self.provider_name)
 
     def _emit_error_event(self, error, context="", user_metadata=None):
-        """Emit a structured error event."""
-        event = events.RealtimeErrorEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            error=error,
-            context=context,
-            participant=user_metadata,
+        """Record metrics for a realtime error."""
+        self.metrics.on_realtime_error(
+            provider=self.provider_name,
+            error_type=type(error).__name__ if error is not None else None,
         )
-        self.events.send(event)
-
-    @abc.abstractmethod
-    async def close(self):
-        raise NotImplementedError("llm.close isn't implemented")
-
-    def _emit_user_speech_transcription(
-        self,
-        text: str,
-        *,
-        mode: events.TranscriptMode,
-        original: Any = None,
-    ):
-        """Emit a user speech transcription event with participant info."""
-        event = events.RealtimeUserSpeechTranscriptionEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            text=text,
-            mode=mode,
-            original=original,
-            participant=self._current_participant,
-        )
-        self.events.send(event)
-
-    def _emit_agent_speech_transcription(
-        self,
-        text: str,
-        *,
-        mode: events.TranscriptMode,
-        original: Any = None,
-    ):
-        """Emit an agent speech transcription event."""
-        event = events.RealtimeAgentSpeechTranscriptionEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            text=text,
-            mode=mode,
-            original=original,
-        )
-        self.events.send(event)

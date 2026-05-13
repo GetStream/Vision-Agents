@@ -4,7 +4,7 @@ import copy
 import logging
 from asyncio import CancelledError
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional, cast
+from typing import Any, AsyncIterator, Optional, cast
 
 import aiortc
 import av
@@ -40,7 +40,10 @@ from vision_agents.core.llm import realtime
 from vision_agents.core.llm.events import (
     LLMResponseChunkEvent,
 )
-from vision_agents.core.llm.llm import LLMResponseEvent
+from vision_agents.core.llm.llm import (
+    LLMResponseDelta,
+    LLMResponseFinal,
+)
 from vision_agents.core.llm.llm_types import ToolSchema
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_png_bytes
@@ -145,6 +148,8 @@ class GeminiRealtime(realtime.Realtime):
     - Input audio is natively 16kHz, but the Live API will resample if needed
     """
 
+    provider_name = "gemini_realtime"
+
     def __init__(
         self,
         model: str = DEFAULT_MODEL,
@@ -204,7 +209,7 @@ class GeminiRealtime(realtime.Realtime):
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent[Any]:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """
         Simple response standardizes how to send a text instruction to this LLM.
 
@@ -214,13 +219,14 @@ class GeminiRealtime(realtime.Realtime):
         """
         try:
             await self._session.send_realtime_input(text=text)
-            return LLMResponseEvent(text="", original=None)
+            yield LLMResponseFinal()
         except Exception as e:
             action, _, _ = _classify_loop_error(e)
             if action == RECONNECT:
                 await self.connect()
             logger.exception("Failed to send realtime input to Gemini")
-            return LLMResponseEvent(text="", original=None, exception=e)
+            self._emit_error_event(error=e, context="send_realtime_input")
+            yield LLMResponseFinal()
 
     async def simple_audio_response(
         self, pcm: PcmData, participant: Optional[Participant] = None
@@ -422,25 +428,16 @@ class GeminiRealtime(realtime.Realtime):
             if server_content and server_content.input_transcription:
                 text = server_content.input_transcription.text
                 if text:
-                    self._emit_user_speech_transcription(
-                        text=text,
-                        mode="delta",
-                        original=server_message,
-                    )
+                    self._emit_user_speech_transcription(text=text, mode="delta")
                     handled = True
 
             if server_content and server_content.output_transcription:
                 text = server_content.output_transcription.text
                 if text:
-                    self._emit_agent_speech_transcription(
-                        text=text,
-                        mode="delta",
-                        original=server_message,
-                    )
+                    self._emit_agent_speech_transcription(text=text, mode="delta")
                     handled = True
 
             if server_content and server_content.model_turn:
-                self._begin_response()
                 handled = True
                 # Store the resumption id so we can resume a broken connection
                 if server_message.session_resumption_update:
@@ -455,7 +452,7 @@ class GeminiRealtime(realtime.Realtime):
                         self.events.send(event)
                     if part.inline_data:
                         pcm = PcmData.from_bytes(part.inline_data.data, 24000)
-                        self._emit_audio_output_event(audio_data=pcm)
+                        self._emit_audio_output_event(pcm=pcm)
                     if part.function_call:
                         self._run_tool_in_background(
                             self._handle_function_call(part.function_call)
@@ -514,6 +511,7 @@ class GeminiRealtime(realtime.Realtime):
                         consecutive_errors,
                         max_consecutive_errors,
                     )
+                    self._emit_error_event(error=exc, context="processing_loop")
                     if consecutive_errors >= max_consecutive_errors:
                         logger.error(
                             "Too many consecutive errors, stopping processing loop"

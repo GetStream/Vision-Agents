@@ -1,4 +1,3 @@
-from .stt import STT
-from .events import TranscriptResponse
+from .stt import STT, Transcript, TranscriptResponse
 
-__all__ = ["STT", "TranscriptResponse"]
+__all__ = ["STT", "Transcript", "TranscriptResponse"]

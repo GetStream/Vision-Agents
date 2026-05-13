@@ -1,34 +1,13 @@
 from typing import AsyncIterator, Iterator
 
 import pytest
-
 from getstream.video.rtc.track_util import AudioFormat, PcmData
-
-from vision_agents.core.tts.events import (
-    TTSAudioEvent,
-    TTSSynthesisCompleteEvent,
-    TTSSynthesisStartEvent,
-)
-from vision_agents.core.tts.testing import TTSSession
-from vision_agents.core.tts.tts import TTS as BaseTTS
+from vision_agents.core.tts.tts import TTS, TTSOutputChunk
 
 
-class DummyTTSPcmStereoToMono(BaseTTS):
+class DummyTTSPcm(TTS):
     async def stream_audio(self, text: str, *_, **__) -> PcmData:
-        # 2 channels interleaved: 100 frames (per channel) -> 200 samples -> 400 bytes
-        frames = b"\x01\x00\x01\x00" * 100  # L(1), R(1)
-        pcm = PcmData.from_bytes(
-            frames, sample_rate=16000, channels=2, format=AudioFormat.S16
-        )
-        return pcm
-
-    async def stop_audio(self) -> None:  # pragma: no cover - noop
-        return None
-
-
-class DummyTTSPcmResample(BaseTTS):
-    async def stream_audio(self, text: str, *_, **__) -> PcmData:
-        # 16k mono, 200 samples (duration = 200/16000 s)
+        # 16k mono, 200 samples
         data = b"\x00\x00" * 200
         pcm = PcmData.from_bytes(
             data, sample_rate=16000, channels=1, format=AudioFormat.S16
@@ -39,7 +18,7 @@ class DummyTTSPcmResample(BaseTTS):
         return None
 
 
-class DummyTTSError(BaseTTS):
+class DummyTTSError(TTS):
     async def stream_audio(self, text: str, *_, **__):
         raise RuntimeError("boom")
 
@@ -54,7 +33,7 @@ def _make_pcm(n_samples: int = 100, sample_rate: int = 16000) -> PcmData:
     )
 
 
-class DummyTTSAsyncIter(BaseTTS):
+class DummyTTSAsyncIter(TTS):
     """stream_audio returns an async iterator of PcmData chunks."""
 
     def __init__(self, chunks: list[PcmData]):
@@ -72,7 +51,7 @@ class DummyTTSAsyncIter(BaseTTS):
         return None
 
 
-class DummyTTSSyncIter(BaseTTS):
+class DummyTTSSyncIter(TTS):
     """stream_audio returns a sync iterator of PcmData chunks."""
 
     def __init__(self, chunks: list[PcmData]):
@@ -86,7 +65,7 @@ class DummyTTSSyncIter(BaseTTS):
         return None
 
 
-class DummyTTSAsyncIterBadType(BaseTTS):
+class DummyTTSAsyncIterBadType(TTS):
     """stream_audio yields non-PcmData from an async iterator."""
 
     async def stream_audio(self, text: str, *_, **__) -> AsyncIterator[PcmData]:
@@ -99,7 +78,7 @@ class DummyTTSAsyncIterBadType(BaseTTS):
         return None
 
 
-class DummyTTSSyncIterBadType(BaseTTS):
+class DummyTTSSyncIterBadType(TTS):
     """stream_audio yields non-PcmData from a sync iterator."""
 
     async def stream_audio(self, text: str, *_, **__):
@@ -109,7 +88,7 @@ class DummyTTSSyncIterBadType(BaseTTS):
         return None
 
 
-class DummyTTSUnsupportedReturn(BaseTTS):
+class DummyTTSUnsupportedReturn(TTS):
     """stream_audio returns raw bytes (unsupported)."""
 
     async def stream_audio(self, text: str, *_, **__) -> bytes:
@@ -119,210 +98,110 @@ class DummyTTSUnsupportedReturn(BaseTTS):
         return None
 
 
-def _collect_audio_events(tts: BaseTTS) -> list[TTSAudioEvent]:
-    collected: list[TTSAudioEvent] = []
-
-    @tts.events.subscribe
-    async def _on_audio(ev: TTSAudioEvent):
-        collected.append(ev)
-
-    return collected
-
-
-def _collect_complete_events(tts: BaseTTS) -> list[TTSSynthesisCompleteEvent]:
-    collected: list[TTSSynthesisCompleteEvent] = []
-
-    @tts.events.subscribe
-    async def _on_complete(ev: TTSSynthesisCompleteEvent):
-        collected.append(ev)
-
-    return collected
-
-
-def _collect_start_events(tts: BaseTTS) -> list[TTSSynthesisStartEvent]:
-    collected: list[TTSSynthesisStartEvent] = []
-
-    @tts.events.subscribe
-    async def _on_start(ev: TTSSynthesisStartEvent):
-        collected.append(ev)
-
-    return collected
+async def _drain(it: AsyncIterator[TTSOutputChunk]) -> list[TTSOutputChunk]:
+    return [c async for c in it]
 
 
 class TestTTS:
-    async def test_stereo_to_mono_halves_bytes(self):
-        tts = DummyTTSPcmStereoToMono()
-        tts.set_output_format(sample_rate=16000, channels=1)
-        session = TTSSession(tts)
+    async def test_send_iter_single_pcm_is_final(self):
+        tts = DummyTTSPcm()
 
-        await tts.send("x")
-        await tts.events.wait(timeout=1.0)
-        assert len(session.speeches) == 1
-        assert 180 <= len(session.speeches[0].to_bytes()) <= 220
+        chunks = await _drain(tts.send_iter("fast"))
 
-    async def test_resample_changes_size_reasonably(self):
-        tts = DummyTTSPcmResample()
-        tts.set_output_format(sample_rate=8000, channels=1)
-        session = TTSSession(tts)
+        assert len(chunks) == 1
+        assert chunks[0].index == 0
+        assert chunks[0].final is True
+        assert chunks[0].data is not None
 
-        await tts.send("y")
-        await tts.events.wait(timeout=1.0)
-        assert len(session.speeches) == 1
-        assert 150 <= len(session.speeches[0].to_bytes()) <= 250
+    async def test_send_iter_async_iter_yields_chunks_plus_sentinel(self):
+        chunks_in = [_make_pcm(100), _make_pcm(200), _make_pcm(150)]
+        tts = DummyTTSAsyncIter(chunks_in)
 
-    async def test_error_emits_and_raises(self):
+        chunks = await _drain(tts.send_iter("hello"))
+
+        assert len(chunks) == 4
+        for i in range(3):
+            assert chunks[i].index == i
+            assert chunks[i].final is False
+            assert chunks[i].data is not None
+
+        sentinel = chunks[3]
+        assert sentinel.index == 3
+        assert sentinel.final is True
+        assert sentinel.data is None
+
+    async def test_send_iter_sync_iter_yields_chunks_plus_sentinel(self):
+        chunks_in = [_make_pcm(100), _make_pcm(200)]
+        tts = DummyTTSSyncIter(chunks_in)
+
+        chunks = await _drain(tts.send_iter("hello"))
+
+        assert len(chunks) == 3
+        assert chunks[0].data is not None
+        assert chunks[1].data is not None
+        assert chunks[2].final is True
+        assert chunks[2].data is None
+
+    async def test_send_iter_empty_async_iter_no_sentinel(self):
+        tts = DummyTTSAsyncIter([])
+
+        chunks = await _drain(tts.send_iter("empty"))
+
+        assert chunks == []
+
+    async def test_send_iter_records_synthesis_metric(self):
+        chunks_in = [_make_pcm(100), _make_pcm(100)]
+        tts = DummyTTSAsyncIter(chunks_in)
+
+        await _drain(tts.send_iter("hello"))
+
+        assert tts.metrics.agent_metrics.tts_characters__total.value() == 5
+        assert tts.metrics.agent_metrics.tts_audio_duration_ms__total.value() > 0
+        assert tts.metrics.agent_metrics.tts_latency_ms__avg.value() is not None
+
+    async def test_send_iter_error_raises(self):
         tts = DummyTTSError()
-        session = TTSSession(tts)
 
         with pytest.raises(RuntimeError):
-            await tts.send("boom")
-        await tts.events.wait(timeout=1.0)
-        assert len(session.errors) >= 1
+            await _drain(tts.send_iter("boom"))
 
-    async def test_async_iter_emits_per_chunk_events(self):
-        chunks = [_make_pcm(100), _make_pcm(200), _make_pcm(150)]
-        tts = DummyTTSAsyncIter(chunks)
-        tts.set_output_format(sample_rate=16000, channels=1)
-        audio_events = _collect_audio_events(tts)
-
-        await tts.send("hello")
-        await tts.events.wait(timeout=1.0)
-
-        assert len(audio_events) == 4
-        for i in range(3):
-            assert audio_events[i].chunk_index == i
-            assert audio_events[i].is_final_chunk is False
-            assert audio_events[i].data is not None
-
-        final = audio_events[3]
-        assert final.chunk_index == 3
-        assert final.is_final_chunk is True
-        assert final.data is None
-
-    async def test_sync_iter_emits_per_chunk_events(self):
-        chunks = [_make_pcm(100), _make_pcm(200)]
-        tts = DummyTTSSyncIter(chunks)
-        tts.set_output_format(sample_rate=16000, channels=1)
-        audio_events = _collect_audio_events(tts)
-
-        await tts.send("hello")
-        await tts.events.wait(timeout=1.0)
-
-        assert len(audio_events) == 3
-        assert audio_events[0].data is not None
-        assert audio_events[1].data is not None
-        assert audio_events[2].is_final_chunk is True
-        assert audio_events[2].data is None
-
-    async def test_single_pcm_fast_path_is_final(self):
-        tts = DummyTTSPcmResample()
-        tts.set_output_format(sample_rate=16000, channels=1)
-        audio_events = _collect_audio_events(tts)
-
-        await tts.send("fast")
-        await tts.events.wait(timeout=1.0)
-
-        assert len(audio_events) == 1
-        assert audio_events[0].chunk_index == 0
-        assert audio_events[0].is_final_chunk is True
-        assert audio_events[0].data is not None
-
-    async def test_streaming_completion_event_has_correct_chunk_count(self):
-        chunks = [_make_pcm(100), _make_pcm(100), _make_pcm(100)]
-        tts = DummyTTSAsyncIter(chunks)
-        tts.set_output_format(sample_rate=16000, channels=1)
-        complete_events = _collect_complete_events(tts)
-
-        await tts.send("count")
-        await tts.events.wait(timeout=1.0)
-
-        assert len(complete_events) == 1
-        assert complete_events[0].chunk_count == 3
-
-    async def test_streaming_emits_start_and_complete(self):
-        chunks = [_make_pcm(100)]
-        tts = DummyTTSAsyncIter(chunks)
-        start_events = _collect_start_events(tts)
-        complete_events = _collect_complete_events(tts)
-
-        await tts.send("lifecycle")
-        await tts.events.wait(timeout=1.0)
-
-        assert len(start_events) == 1
-        assert start_events[0].text == "lifecycle"
-        assert len(complete_events) == 1
-        assert complete_events[0].synthesis_id == start_events[0].synthesis_id
-
-    async def test_async_iter_bad_type_raises_and_emits_error(self):
+    async def test_send_iter_async_iter_bad_type_raises(self):
         tts = DummyTTSAsyncIterBadType()
-        session = TTSSession(tts)
 
         with pytest.raises(TypeError, match="stream_audio must yield PcmData"):
-            await tts.send("bad")
-        await tts.events.wait(timeout=1.0)
-        assert len(session.errors) >= 1
+            await _drain(tts.send_iter("bad"))
 
-    async def test_sync_iter_bad_type_raises_and_emits_error(self):
+    async def test_send_iter_sync_iter_bad_type_raises(self):
         tts = DummyTTSSyncIterBadType()
-        session = TTSSession(tts)
 
         with pytest.raises(TypeError, match="stream_audio must yield PcmData"):
-            await tts.send("bad")
-        await tts.events.wait(timeout=1.0)
-        assert len(session.errors) >= 1
+            await _drain(tts.send_iter("bad"))
 
-    async def test_unsupported_return_type_raises_and_emits_error(self):
+    async def test_send_iter_unsupported_return_type_raises(self):
         tts = DummyTTSUnsupportedReturn()
-        session = TTSSession(tts)
 
         with pytest.raises(TypeError, match="Unsupported return type"):
-            await tts.send("bad")
-        await tts.events.wait(timeout=1.0)
-        assert len(session.errors) >= 1
+            await _drain(tts.send_iter("bad"))
 
-    async def test_streaming_resamples_each_chunk(self):
-        chunks = [_make_pcm(160, sample_rate=16000), _make_pcm(160, sample_rate=16000)]
-        tts = DummyTTSAsyncIter(chunks)
-        tts.set_output_format(sample_rate=48000, channels=1)
-        audio_events = _collect_audio_events(tts)
+    async def test_send_iter_synthesis_id_consistent_across_chunks(self):
+        chunks_in = [_make_pcm(100), _make_pcm(100)]
+        tts = DummyTTSAsyncIter(chunks_in)
 
-        await tts.send("resample")
-        await tts.events.wait(timeout=1.0)
+        chunks = await _drain(tts.send_iter("hello"))
 
-        for ev in audio_events:
-            if ev.data is not None:
-                assert ev.data.sample_rate == 48000
+        sid = chunks[0].synthesis_id
+        assert sid
+        assert all(c.synthesis_id == sid for c in chunks)
+        assert all(c.text == "hello" for c in chunks)
 
-    async def test_empty_async_iter_no_final_sentinel(self):
-        tts = DummyTTSAsyncIter([])
-        audio_events = _collect_audio_events(tts)
-        complete_events = _collect_complete_events(tts)
+    async def test_send_iter_interrupt_stops_iteration(self):
+        chunks_in = [_make_pcm(100), _make_pcm(100), _make_pcm(100)]
+        tts = DummyTTSAsyncIter(chunks_in)
 
-        await tts.send("empty")
-        await tts.events.wait(timeout=1.0)
+        collected: list[TTSOutputChunk] = []
+        async for chunk in tts.send_iter("interruptible"):
+            collected.append(chunk)
+            if len(collected) == 1:
+                await tts.interrupt()
 
-        assert len(audio_events) == 0
-        assert len(complete_events) == 1
-        assert complete_events[0].chunk_count == 0
-
-    async def test_emit_chunk_stamps_current_epoch(self):
-        chunks = [_make_pcm(160, sample_rate=16000)]
-        tts = DummyTTSAsyncIter(chunks)
-        audio_events = _collect_audio_events(tts)
-
-        await tts.send("epoch-0")
-        await tts.events.wait(timeout=1.0)
-        assert audio_events[0].epoch == 0
-
-    async def test_interrupt_increments_epoch(self):
-        chunks = [_make_pcm(160, sample_rate=16000)]
-        tts = DummyTTSAsyncIter(chunks)
-
-        assert tts.epoch == 0
-        await tts.interrupt()
-        assert tts.epoch == 1
-
-        audio_events = _collect_audio_events(tts)
-        await tts.send("epoch-1")
-        await tts.events.wait(timeout=1.0)
-        assert audio_events[0].epoch == 1
+        assert len(collected) == 1

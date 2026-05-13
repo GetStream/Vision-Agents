@@ -70,7 +70,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     async with agent.join(call):
         logger.info("Agent joined call %s/%s", call_type, call_id)
         await asyncio.sleep(2)
-        await agent.llm.simple_response(
+        await agent.simple_response(
             text=(
                 "Open the show. Welcome the inventor of pineapple on pizza in "
                 "one punchy sentence, then ask your first short question. "

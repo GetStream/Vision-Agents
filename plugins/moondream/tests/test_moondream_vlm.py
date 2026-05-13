@@ -19,6 +19,7 @@ import pytest
 import av
 from PIL import Image
 
+from vision_agents.core.llm.llm import LLMResponseFinal
 from vision_agents.plugins.moondream import CloudVLM
 
 
@@ -68,42 +69,23 @@ async def vlm_caption() -> CloudVLM:
 @pytest.mark.skipif(
     not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set"
 )
-async def test_vqa_mode(golf_frame: av.VideoFrame, vlm_vqa: CloudVLM):
-    """Test VQA mode with a question about the image."""
-    # Set the latest frame so _process_frame can access it
-    vlm_vqa._latest_frame = golf_frame
+class TestMoondreamCloudVLMIntegration:
+    async def test_vqa_mode(self, golf_frame: av.VideoFrame, vlm_vqa: CloudVLM):
+        """Test VQA mode with a question about the image."""
+        vlm_vqa._latest_frame = golf_frame
 
-    # Ask a question about the image
-    question = "What sport is being played in this image?"
-    response = await vlm_vqa.simple_response(question)
+        question = "What sport is being played in this image?"
+        items = [item async for item in vlm_vqa.simple_response(question)]
+        final = next(item for item in items if isinstance(item, LLMResponseFinal))
 
-    # Verify we got a response
-    assert response is not None
-    assert response.text is not None
-    assert len(response.text) > 0
-    assert response.exception is None
+        assert len(final.text) > 0
+        assert "golf" in final.text.lower()
 
-    # Verify the response mentions golf (should be in the image)
-    assert "golf" in response.text.lower()
+    async def test_caption_mode(self, golf_frame: av.VideoFrame, vlm_caption: CloudVLM):
+        """Test caption mode to generate a description of the image."""
+        vlm_caption._latest_frame = golf_frame
 
+        items = [item async for item in vlm_caption.simple_response("")]
+        final = next(item for item in items if isinstance(item, LLMResponseFinal))
 
-@pytest.mark.integration
-@pytest.mark.skipif(
-    not os.getenv("MOONDREAM_API_KEY"), reason="MOONDREAM_API_KEY not set"
-)
-async def test_caption_mode(golf_frame: av.VideoFrame, vlm_caption: CloudVLM):
-    """Test caption mode to generate a description of the image."""
-    # Set the latest frame so _process_frame can access it
-    vlm_caption._latest_frame = golf_frame
-
-    # Generate caption (text is not needed for caption mode)
-    response = await vlm_caption.simple_response("")
-
-    # Verify we got a response
-    assert response is not None
-    assert response.text is not None
-    assert len(response.text) > 0
-    assert response.exception is None
-
-    # Verify the caption is descriptive (not empty)
-    assert len(response.text.strip()) > 0
+        assert len(final.text.strip()) > 0

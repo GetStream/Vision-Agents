@@ -16,6 +16,7 @@ import aiortc
 from vision_agents.core.agents.agents import Agent
 from vision_agents.core.edge.types import Participant, TrackType, User
 from vision_agents.core.llm.llm import LLM, VideoLLM
+from vision_agents.core.observability import MetricsCollector
 from vision_agents.core.processors.base_processor import (
     VideoProcessor,
 )
@@ -37,6 +38,7 @@ class MockVideoProcessor(VideoProcessor):
     """Mock video processor that tracks calls"""
 
     def __init__(self, name: str = "mock_video_processor"):
+        super().__init__()
         self.process_video_calls = []
         self._name = name
 
@@ -378,8 +380,8 @@ class TestAgentTrackHandling:
         from vision_agents.core.events.manager import EventManager
 
         mock_tts = Mock()
-        mock_tts.set_output_format = Mock()
         mock_tts.events = EventManager()  # TTS needs an events manager
+        mock_tts.metrics = MetricsCollector()
 
         agent = self.create_mock_agent(llm=video_llm, processors=[], tts=mock_tts)
 

@@ -122,6 +122,7 @@ dev = [
     "asgi-lifespan>=2.1.0",
     "testcontainers[redis]>=4.0.0",
     "redis[hiredis]>=5.0.0",
+    "pytest-cov>=7.1.0",
 ]
 
 [tool.mypy]

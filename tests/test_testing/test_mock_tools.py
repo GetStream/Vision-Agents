@@ -82,14 +82,14 @@ async def test_mock_functions_restores_on_exit():
     async def get_weather(location: str) -> dict:
         return {"temp": 70}
 
-    original_fn = llm.function_registry._functions["get_weather"].function
+    original_fn = llm.function_registry.functions["get_weather"].function
 
     async with TestSession(llm=llm) as session:
         with session.mock_functions({"get_weather": _fake_weather_99}) as mocked:
-            active_fn = llm.function_registry._functions["get_weather"].function
+            active_fn = llm.function_registry.functions["get_weather"].function
             assert active_fn is mocked["get_weather"]
 
-        restored_fn = llm.function_registry._functions["get_weather"].function
+        restored_fn = llm.function_registry.functions["get_weather"].function
         assert restored_fn is original_fn
 
 

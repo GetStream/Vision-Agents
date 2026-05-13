@@ -1,5 +1,6 @@
 """Tests for the Sarvam STT plugin."""
 
+import asyncio
 import json
 import os
 
@@ -7,9 +8,8 @@ import pytest
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.stt import Transcript
 from vision_agents.plugins.sarvam import STT
-
-from conftest import STTSession
 
 load_dotenv()
 
@@ -127,20 +127,18 @@ class TestSarvamSTTIntegration:
     async def test_transcribe_mia_audio_48khz(
         self, stt, mia_audio_48khz, silence_2s_48khz
     ):
-        session = STTSession(stt)
+        participant = Participant({}, user_id="id", id="id")
+        for chunk in mia_audio_48khz.chunks(480):
+            await stt.process_audio(chunk, participant=participant)
+            await asyncio.sleep(0.001)
 
-        await stt.process_audio(
-            mia_audio_48khz, participant=Participant({}, user_id="hi", id="hi")
-        )
-        await stt.process_audio(
-            silence_2s_48khz, participant=Participant({}, user_id="hi", id="hi")
-        )
+        for chunk in silence_2s_48khz.chunks(480):
+            await stt.process_audio(chunk, participant=participant)
+            await asyncio.sleep(0.001)
 
-        await session.wait_for_result(timeout=30.0)
-        assert not session.errors
-
-        full_transcript = session.get_full_transcript()
-        assert full_transcript is not None
-        normalized = full_transcript.lower().strip()
-        assert normalized
-        assert any(keyword in normalized for keyword in ("forgotten", "treasure"))
+        items = await stt.output.collect(timeout=10.0)
+        transcripts = [i for i in items if isinstance(i, Transcript)]
+        finals = [t for t in transcripts if t.final]
+        full_transcript = " ".join(t.text for t in finals)
+        assert "forgotten treasures" in full_transcript.lower()
+        assert transcripts[0].participant == participant

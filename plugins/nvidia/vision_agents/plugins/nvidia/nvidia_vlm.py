@@ -1,22 +1,17 @@
 import json
 import logging
 import os
+import time
 from collections import deque
-from typing import Optional, cast
+from typing import AsyncIterator, Optional, cast
 
 import aiohttp
 import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal, VideoLLM
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
-
-from . import events
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +80,6 @@ class NvidiaVLM(VideoLLM):
         """
         super().__init__()
         self.model = model
-        self.events.register_events_from_module(events)
 
         self._api_key = api_key or os.getenv("NVIDIA_API_KEY")
         if not self._api_key:
@@ -188,7 +182,7 @@ class NvidiaVLM(VideoLLM):
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """
         Create an LLM response from text input with video context.
 
@@ -203,7 +197,8 @@ class NvidiaVLM(VideoLLM):
                 f'Cannot request a response from the LLM "{self.model}" - '
                 "the conversation has not been initialized yet."
             )
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         if participant is None:
             await self._conversation.send_message(
@@ -211,6 +206,8 @@ class NvidiaVLM(VideoLLM):
             )
 
         asset_ids: list[str] = []
+        request_start_time = time.perf_counter()
+        first_token_time: Optional[float] = None
         try:
             messages, asset_ids = await self._build_model_request()
             if asset_ids:
@@ -243,13 +240,10 @@ class NvidiaVLM(VideoLLM):
             ) as resp:
                 resp.raise_for_status()
 
-                i = 0
-                llm_response: LLMResponseEvent = LLMResponseEvent(
-                    original=None, text=""
-                )
+                sequence_number = 0
                 text_chunks: list[str] = []
-                total_text = ""
                 chunk_id = ""
+                last_chunk_data: Optional[dict] = None
 
                 buffer = ""
                 done = False
@@ -272,6 +266,7 @@ class NvidiaVLM(VideoLLM):
                             break
 
                         chunk_data = json.loads(data_str)
+                        last_chunk_data = chunk_data
                         chunk_id = chunk_data.get("id", chunk_id)
 
                         if not chunk_data.get("choices"):
@@ -283,50 +278,51 @@ class NvidiaVLM(VideoLLM):
                         finish_reason = choice.get("finish_reason")
 
                         if content:
+                            is_first = first_token_time is None
+                            ttft_ms = None
+                            if is_first:
+                                first_token_time = time.perf_counter()
+                                ttft_ms = (first_token_time - request_start_time) * 1000
+
                             text_chunks.append(content)
-                            self.events.send(
-                                LLMResponseChunkEvent(
-                                    plugin_name=PLUGIN_NAME,
-                                    content_index=None,
-                                    item_id=chunk_id,
-                                    output_index=0,
-                                    sequence_number=i,
-                                    delta=content,
-                                )
+                            yield LLMResponseDelta(
+                                content_index=None,
+                                item_id=chunk_id,
+                                output_index=0,
+                                sequence_number=sequence_number,
+                                delta=content,
+                                is_first_chunk=is_first,
+                                time_to_first_token_ms=ttft_ms,
+                            )
+                            sequence_number += 1
+
+                        if finish_reason and finish_reason in (
+                            "length",
+                            "content_filter",
+                        ):
+                            logger.warning(
+                                f'The model finished the response due to reason "{finish_reason}"'
                             )
 
-                        if finish_reason:
-                            if finish_reason in ("length", "content_filter"):
-                                logger.warning(
-                                    f'The model finished the response due to reason "{finish_reason}"'
-                                )
-                            total_text = "".join(text_chunks)
-                            self.events.send(
-                                LLMResponseCompletedEvent(
-                                    plugin_name=PLUGIN_NAME,
-                                    original=chunk_data,
-                                    text=total_text,
-                                    item_id=chunk_id,
-                                )
-                            )
+                total_text = "".join(text_chunks)
+                latency_ms = (time.perf_counter() - request_start_time) * 1000
+                ttft_ms = None
+                if first_token_time is not None:
+                    ttft_ms = (first_token_time - request_start_time) * 1000
 
-                        llm_response = LLMResponseEvent(
-                            original=chunk_data, text=total_text
-                        )
-                        i += 1
-
-                return llm_response
-
-        except Exception as e:
-            logger.exception(f'Failed to get a response from the model "{self.model}"')
-            self.events.send(
-                events.LLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    error_message=str(e),
-                    event_data=e,
+                yield LLMResponseFinal(
+                    original=last_chunk_data,
+                    text=total_text,
+                    item_id=chunk_id or None,
+                    latency_ms=latency_ms,
+                    time_to_first_token_ms=ttft_ms,
+                    model=self.model,
                 )
-            )
-            return LLMResponseEvent(original=None, text="")
+
+        except Exception:
+            logger.exception(f'Failed to get a response from the model "{self.model}"')
+            yield LLMResponseFinal(original=None, text="")
+            return
         finally:
             cleanup_ids = asset_ids if asset_ids else self._current_asset_ids
             for asset_id in cleanup_ids:

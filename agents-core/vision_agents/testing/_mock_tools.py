@@ -43,14 +43,14 @@ def mock_functions(
     registry = llm.function_registry
 
     for tool_name in mocks:
-        if registry._functions.get(tool_name) is None:
+        if registry.functions.get(tool_name) is None:
             raise KeyError(f"Tool '{tool_name}' is not registered on this LLM")
 
     originals: dict[str, Callable[..., Any]] = {}
     wrapped: dict[str, AsyncMock] = {}
 
     for tool_name, user_fn in mocks.items():
-        func_def = registry._functions[tool_name]
+        func_def = registry.functions[tool_name]
         originals[tool_name] = func_def.function
         async_mock = AsyncMock(side_effect=user_fn)
         wrapped[tool_name] = async_mock
@@ -60,4 +60,4 @@ def mock_functions(
         yield wrapped
     finally:
         for tool_name, original_fn in originals.items():
-            registry._functions[tool_name].function = original_fn
+            registry.functions[tool_name].function = original_fn

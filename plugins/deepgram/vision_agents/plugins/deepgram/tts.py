@@ -34,6 +34,9 @@ class TTS(tts.TTS):
     - https://developers.deepgram.com/docs/tts-models
     """
 
+    # This implementation accepts partial text detlas
+    streaming = True
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -54,6 +57,11 @@ class TTS(tts.TTS):
         if not api_key:
             api_key = os.environ.get("DEEPGRAM_API_KEY")
 
+        if sample_rate not in _SUPPORTED_RATES:
+            raise ValueError(
+                f"Deepgram TTS supports sample rates {sorted(_SUPPORTED_RATES)}; got {sample_rate}"
+            )
+
         if client is not None:
             self.client = client
         else:
@@ -67,7 +75,6 @@ class TTS(tts.TTS):
 
         self._generation = 0
         self._stop_event = asyncio.Event()
-        self._effective_rate = sample_rate
 
     async def start(self) -> None:
         await self._ensure_connection()
@@ -128,20 +135,15 @@ class TTS(tts.TTS):
         if self._socket is not None:
             return self._socket
 
-        if self._desired_sample_rate in _SUPPORTED_RATES:
-            self._effective_rate = self._desired_sample_rate
-        else:
-            self._effective_rate = self.sample_rate
-
         socket = await self._exit_stack.enter_async_context(
             self.client.speak.v1.connect(
                 model=self.model,
                 encoding="linear16",
-                sample_rate=str(self._effective_rate),
+                sample_rate=str(self.sample_rate),
             )
         )
         self._socket = socket
-        logger.debug("Deepgram TTS websocket connected at %dHz", self._effective_rate)
+        logger.debug("Deepgram TTS websocket connected at %dHz", self.sample_rate)
         return socket
 
     async def _reset_connection(self) -> None:
@@ -175,14 +177,13 @@ class TTS(tts.TTS):
         """
         Yield PcmData for each websocket message until flushed.
         """
-        rate = self._effective_rate
         async for message in socket:
             if self._stop_event.is_set() or self._generation != generation:
                 break
             if isinstance(message, bytes):
                 yield PcmData.from_bytes(
                     message,
-                    sample_rate=rate,
+                    sample_rate=self.sample_rate,
                     channels=1,
                     format=AudioFormat.S16,
                 )

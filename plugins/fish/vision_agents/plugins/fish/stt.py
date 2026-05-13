@@ -135,7 +135,9 @@ class STT(stt.STT):
                     "duration_ms": response.duration,
                 },
             )
-            self._emit_transcript_event(transcript_text, participant, response_metadata)
+            self._emit_transcript_event(
+                transcript_text, participant, response_metadata, mode="final"
+            )
 
         except Exception:
             logger.exception("Error during Fish Audio transcription")

@@ -23,7 +23,7 @@ import re
 import time
 import uuid
 from threading import Thread
-from typing import Any, Callable, Literal, Optional, cast
+from typing import Any, AsyncIterator, Callable, Literal, Optional, cast
 
 import jinja2
 import torch
@@ -33,22 +33,16 @@ from transformers import (
     BitsAndBytesConfig,
     PreTrainedModel,
     PreTrainedTokenizerBase,
+    StoppingCriteria,
+    StoppingCriteriaList,
     TextStreamer,
 )
-from vision_agents.core.llm.events import (
-    LLMRequestStartedEvent,
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 from vision_agents.core.warmup import Warmable
 
 from . import events
-from ._tool_call_loop import (
-    convert_tools_to_chat_completions_format,
-    run_tool_call_loop,
-)
+from ._tool_call_loop import convert_tools_to_chat_completions_format
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +157,24 @@ def extract_tool_calls_from_text(text: str) -> list[NormalizedToolCallItem]:
     return tool_calls
 
 
+class _CancelStoppingCriteria(StoppingCriteria):
+    """``model.generate`` consults this between tokens; calling ``cancel()``
+    ends generation within ≤1 token. ``reset()`` clears the flag for the next
+    generation."""
+
+    def __init__(self) -> None:
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def reset(self) -> None:
+        self._cancelled = False
+
+    def __call__(self, input_ids: Any, scores: Any, **kwargs: Any) -> bool:
+        return self._cancelled
+
+
 class ModelResources:
     """Container for a loaded model, tokenizer, and target device."""
 
@@ -193,6 +205,8 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         max_tool_rounds: Maximum tool-call rounds per response (default 3).
     """
 
+    provider_name = PLUGIN_NAME
+
     def __init__(
         self,
         model: str,
@@ -214,8 +228,14 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         self._max_tool_rounds = max_tool_rounds
 
         self._resources: Optional[ModelResources] = None
+        self._stopping_criteria = _CancelStoppingCriteria()
 
         self.events.register_events_from_module(events)
+
+    async def interrupt(self) -> None:
+        """Stop any in-flight ``model.generate`` call within ≤1 token."""
+        await super().interrupt()
+        self._stopping_criteria.cancel()
 
     async def on_warmup(self) -> ModelResources:
         logger.info(f"Loading model: {self.model_id}")
@@ -265,12 +285,13 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         self,
         text: str,
         participant: Optional[Any] = None,
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         if self._conversation is None:
             logger.warning(
                 "Conversation not initialized. Call set_conversation() first."
             )
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         if participant is None:
             await self._conversation.send_message(
@@ -278,7 +299,8 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             )
 
         messages = self._build_messages()
-        return await self.create_response(messages=messages, stream=True)
+        async for item in self.create_response(messages=messages, stream=True):
+            yield item
 
     async def create_response(
         self,
@@ -288,14 +310,19 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         max_new_tokens: Optional[int] = None,
         temperature: float = 0.7,
         do_sample: bool = True,
-        **kwargs: Any,
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         if self._resources is None:
             logger.error("Model not loaded. Ensure warmup() was called.")
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         if messages is None:
             messages = self._build_messages()
+
+        # Reset cancellation for the new turn. ``interrupt()`` flips
+        # the criterion; ``model.generate`` checks it between tokens.
+        self._stopping_criteria.reset()
+        stopping_criteria = StoppingCriteriaList([self._stopping_criteria])
 
         model = self._resources.model
         tokenizer = self._resources.tokenizer
@@ -332,81 +359,161 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                 tools_param = None
             else:
                 logger.exception("Failed to apply chat template")
-                return LLMResponseEvent(original=None, text="")
+                yield LLMResponseFinal(original=None, text="")
+                return
 
         inputs = {k: v.to(device) for k, v in inputs.items()}
         max_tokens = max_new_tokens or self._max_new_tokens
 
-        # When tools are registered, always suppress streaming events and use
-        # non-streaming generation. The model output may contain tool call
-        # markup (e.g. <tool_call>…</tool_call>) that must not be spoken by
-        # TTS.  We only emit the completed event once we confirm the response
-        # contains no tool calls (i.e. the final natural-language answer).
-        is_tool_followup = kwargs.pop("_tool_followup", False)
-        suppress_events = tools_param is not None
-
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name=PLUGIN_NAME,
-                model=self.model_id,
-                streaming=stream and not suppress_events,
+        if tools_param is None:
+            # No tools — stream or generate normally and yield through.
+            gen = (
+                self._generate_streaming(
+                    model,
+                    tokenizer,
+                    inputs,
+                    max_tokens,
+                    temperature,
+                    do_sample,
+                    stopping_criteria,
+                )
+                if stream
+                else self._generate_non_streaming(
+                    model,
+                    tokenizer,
+                    inputs,
+                    max_tokens,
+                    temperature,
+                    do_sample,
+                    stopping_criteria,
+                )
             )
-        )
+            async for item in gen:
+                yield item
+            return
 
-        if stream and not suppress_events:
-            result = await self._generate_streaming(
-                model, tokenizer, inputs, max_tokens, temperature, do_sample
-            )
-        else:
-            result = await self._generate_non_streaming(
+        # Tools registered — force non-streaming and run an inline tool-call
+        # loop. Raw model output may contain tool-call markup (e.g.
+        # <tool_call>…</tool_call>) that must not be yielded as user-visible
+        # deltas; only the final natural-language answer is yielded.
+
+        current_messages = list(messages)
+        current_inputs = inputs
+        seen: set[tuple[str | None, str, str]] = set()
+
+        for round_num in range(self._max_tool_rounds + 1):
+            text = ""
+            original: Any = None
+            async for item in self._generate_non_streaming(
                 model,
                 tokenizer,
-                inputs,
+                current_inputs,
                 max_tokens,
                 temperature,
                 do_sample,
-                emit_events=not suppress_events,
-            )
+                stopping_criteria,
+            ):
+                if isinstance(item, LLMResponseFinal):
+                    text = item.text
+                    original = item.original
 
-        if suppress_events and result.text:
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("Raw model output (tools registered): %s", result.text)
-            tool_calls = extract_tool_calls_from_text(result.text)
-            if tool_calls:
-                if is_tool_followup:
-                    # Return to run_tool_call_loop — it will handle these
-                    # tool calls in the next round without nesting loops.
-                    return result
-                return await self._handle_tool_calls(tool_calls, messages, kwargs)
-            # No tool calls — this is the final answer. Emit events
-            # that were suppressed during generation. Only emit a
-            # synthetic chunk when the caller requested streaming
-            # (needed for streaming-TTS sentence buffering).
-            response_id = str(uuid.uuid4())
-            if stream:
-                self.events.send(
-                    LLMResponseChunkEvent(
-                        plugin_name=PLUGIN_NAME,
-                        content_index=None,
-                        item_id=response_id,
-                        output_index=0,
-                        sequence_number=0,
-                        delta=result.text,
-                        is_first_chunk=True,
-                        time_to_first_token_ms=None,
-                    )
+                logger.debug("Raw model output (tools registered): %s", text)
+
+            if not text:
+                yield LLMResponseFinal(original=None, text="")
+                return
+
+            tool_calls = extract_tool_calls_from_text(text)
+            if not tool_calls:
+                response_id = str(uuid.uuid4())
+                yield LLMResponseDelta(
+                    content_index=None,
+                    item_id=response_id,
+                    output_index=0,
+                    sequence_number=0,
+                    delta=text,
+                    is_first_chunk=True,
+                    time_to_first_token_ms=None,
                 )
-            self.events.send(
-                LLMResponseCompletedEvent(
-                    plugin_name=PLUGIN_NAME,
-                    original=None,
-                    text=result.text,
+                yield LLMResponseFinal(
+                    original=original,
+                    text=text,
                     item_id=response_id,
                     model=self.model_id,
                 )
-            )
+                return
 
-        return result
+            if round_num >= self._max_tool_rounds:
+                break
+
+            logger.info(
+                "Tool call round %d: executing %d call(s) — %s",
+                round_num + 1,
+                len(tool_calls),
+                ", ".join(tc.get("name", "?") for tc in tool_calls),
+            )
+            triples, seen = await self._dedup_and_execute(
+                tool_calls, max_concurrency=8, timeout_s=30, seen=seen
+            )
+            if not triples:
+                yield LLMResponseFinal(original=None, text="")
+                return
+
+            assistant_tool_calls: list[dict[str, Any]] = []
+            tool_results: list[dict[str, Any]] = []
+            for call_index, (tc, res, err) in enumerate(triples):
+                cid = tc.get("id") or f"tool_call_{round_num}_{call_index}"
+                name = tc["name"]
+                args = tc.get("arguments_json", {})
+                if err is not None:
+                    logger.warning("  [tool] %s(%s) failed: %s", name, args, err)
+                else:
+                    logger.info("  [tool] %s(%s) → %s", name, args, res)
+                assistant_tool_calls.append(
+                    {
+                        "id": cid,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": json.dumps(tc.get("arguments_json", {})),
+                        },
+                    }
+                )
+                tool_results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": cid,
+                        "content": self._sanitize_tool_output(
+                            err if err is not None else res
+                        ),
+                    }
+                )
+            current_messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": assistant_tool_calls,
+                }
+            )
+            current_messages.extend(tool_results)
+
+            round_template_kwargs: dict[str, Any] = {
+                "add_generation_prompt": True,
+                "return_dict": True,
+                "return_tensors": "pt",
+                "tools": tools_param,
+            }
+            next_inputs = cast(
+                dict[str, Any],
+                tokenizer.apply_chat_template(
+                    current_messages, **round_template_kwargs
+                ),
+            )
+            current_inputs = {k: v.to(device) for k, v in next_inputs.items()}
+
+        # Max rounds exhausted without a final answer.
+        yield LLMResponseFinal(original=None, text="")
 
     async def _generate_streaming(
         self,
@@ -416,7 +523,8 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         max_new_tokens: int,
         temperature: float,
         do_sample: bool,
-    ) -> LLMResponseEvent:
+        stopping_criteria: StoppingCriteriaList,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         loop = asyncio.get_running_loop()
         async_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
 
@@ -424,7 +532,8 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             """Bridges token text to an ``asyncio.Queue`` without blocking the event loop."""
 
             def on_finalized_text(self, text: str, stream_end: bool = False) -> None:
-                loop.call_soon_threadsafe(async_queue.put_nowait, text)
+                if text:
+                    loop.call_soon_threadsafe(async_queue.put_nowait, text)
                 if stream_end:
                     loop.call_soon_threadsafe(async_queue.put_nowait, None)
 
@@ -438,6 +547,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             **inputs,
             "max_new_tokens": max_new_tokens,
             "streamer": streamer,
+            "stopping_criteria": stopping_criteria,
             "do_sample": do_sample,
             "temperature": temperature if do_sample else 1.0,
             "pad_token_id": tokenizer.pad_token_id,
@@ -458,7 +568,16 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             except RuntimeError as e:
                 generation_error = e
                 logger.exception("Generation failed")
+                self.metrics.on_llm_error(
+                    provider=self.provider_name,
+                    error_type=type(e).__name__,
+                )
             finally:
+                # Flush any text still buffered inside the TextStreamer
+                # (everything after the last word boundary). model.generate
+                # does not call streamer.end() itself, so without this we
+                # silently drop the tail of the response.
+                streamer.end()
                 loop.call_soon_threadsafe(async_queue.put_nowait, None)
 
         thread = Thread(target=run_generation, daemon=True)
@@ -469,39 +588,29 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             if item is None:
                 break
 
-            if first_token_time is None:
+            is_first = first_token_time is None
+            ttft_ms: Optional[float] = None
+            if is_first:
                 first_token_time = time.perf_counter()
                 ttft_ms = (first_token_time - request_start) * 1000
-            else:
-                ttft_ms = None
 
             text_chunks.append(item)
-
-            self.events.send(
-                LLMResponseChunkEvent(
-                    plugin_name=PLUGIN_NAME,
-                    content_index=None,
-                    item_id=response_id,
-                    output_index=0,
-                    sequence_number=chunk_index,
-                    delta=item,
-                    is_first_chunk=(chunk_index == 0),
-                    time_to_first_token_ms=ttft_ms,
-                )
+            yield LLMResponseDelta(
+                content_index=None,
+                item_id=response_id,
+                output_index=0,
+                sequence_number=chunk_index,
+                delta=item,
+                is_first_chunk=is_first,
+                time_to_first_token_ms=ttft_ms,
             )
             chunk_index += 1
 
         thread.join(timeout=5.0)
 
         if generation_error:
-            self.events.send(
-                events.LLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    error_message=str(generation_error),
-                    event_data=generation_error,
-                )
-            )
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         total_text = "".join(text_chunks)
         latency_ms = (time.perf_counter() - request_start) * 1000
@@ -509,19 +618,14 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             (first_token_time - request_start) * 1000 if first_token_time else None
         )
 
-        self.events.send(
-            LLMResponseCompletedEvent(
-                plugin_name=PLUGIN_NAME,
-                original=None,
-                text=total_text,
-                item_id=response_id,
-                latency_ms=latency_ms,
-                time_to_first_token_ms=ttft_final,
-                model=self.model_id,
-            )
+        yield LLMResponseFinal(
+            original=None,
+            text=total_text,
+            item_id=response_id,
+            latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_final,
+            model=self.model_id,
         )
-
-        return LLMResponseEvent(original=None, text=total_text)
 
     async def _generate_non_streaming(
         self,
@@ -531,14 +635,15 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         max_new_tokens: int,
         temperature: float,
         do_sample: bool,
-        emit_events: bool = True,
-    ) -> LLMResponseEvent:
+        stopping_criteria: StoppingCriteriaList,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         request_start = time.perf_counter()
         response_id = str(uuid.uuid4())
 
         generate_kwargs = {
             **inputs,
             "max_new_tokens": max_new_tokens,
+            "stopping_criteria": stopping_criteria,
             "do_sample": do_sample,
             "temperature": temperature if do_sample else 1.0,
             "pad_token_id": tokenizer.pad_token_id,
@@ -552,35 +657,33 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         try:
             outputs = await asyncio.to_thread(_do_generate)
-        except RuntimeError as e:
+        except RuntimeError:
             logger.exception("Generation failed")
-            self.events.send(
-                events.LLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    error_message=str(e),
-                    event_data=e,
-                )
-            )
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         input_length = inputs["input_ids"].shape[1]
         generated_ids = outputs[0][input_length:]
         text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+        latency_ms = (time.perf_counter() - request_start) * 1000
 
-        if emit_events:
-            latency_ms = (time.perf_counter() - request_start) * 1000
-            self.events.send(
-                LLMResponseCompletedEvent(
-                    plugin_name=PLUGIN_NAME,
-                    original=outputs,
-                    text=text,
-                    item_id=response_id,
-                    latency_ms=latency_ms,
-                    model=self.model_id,
-                )
+        if text:
+            yield LLMResponseDelta(
+                content_index=None,
+                item_id=response_id,
+                output_index=0,
+                sequence_number=0,
+                delta=text,
+                is_first_chunk=True,
+                time_to_first_token_ms=None,
             )
-
-        return LLMResponseEvent(original=outputs, text=text)
+        yield LLMResponseFinal(
+            original=outputs,
+            text=text,
+            item_id=response_id,
+            latency_ms=latency_ms,
+            model=self.model_id,
+        )
 
     def _build_messages(self) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
@@ -595,31 +698,6 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         self, tools: list[ToolSchema]
     ) -> list[dict[str, Any]]:
         return convert_tools_to_transformers_format(tools)
-
-    async def _handle_tool_calls(
-        self,
-        tool_calls: list[NormalizedToolCallItem],
-        messages: list[dict[str, Any]],
-        kwargs: dict[str, Any],
-    ) -> LLMResponseEvent:
-        """Execute tool calls and generate follow-up responses."""
-
-        async def _generate_followup(
-            current_messages: list[dict[str, Any]],
-        ) -> tuple[LLMResponseEvent, list[NormalizedToolCallItem]]:
-            result = await self.create_response(
-                messages=current_messages, _tool_followup=True, **kwargs
-            )
-            next_calls = extract_tool_calls_from_text(result.text)
-            return result, next_calls
-
-        return await run_tool_call_loop(
-            self,
-            tool_calls,
-            messages,
-            _generate_followup,
-            max_rounds=self._max_tool_rounds,
-        )
 
     def unload(self) -> None:
         logger.info(f"Unloading model: {self.model_id}")

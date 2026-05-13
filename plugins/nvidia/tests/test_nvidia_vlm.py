@@ -17,11 +17,9 @@ from dotenv import load_dotenv
 from PIL import Image
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.plugins.nvidia import VLM, events
+from vision_agents.plugins.nvidia import VLM
+
+from vision_agents.testing import collect_simple_response
 
 load_dotenv()
 
@@ -47,7 +45,7 @@ async def vlm() -> VLM:
     if not api_key:
         pytest.skip("NVIDIA_API_KEY not set")
 
-    vlm_instance = VLM(model="nvidia/cosmos-reason2-8b")
+    vlm_instance = VLM(model="meta/llama-3.2-11b-vision-instruct")
     vlm_instance.set_conversation(InMemoryConversation("be friendly", []))
     try:
         yield vlm_instance
@@ -56,161 +54,54 @@ async def vlm() -> VLM:
 
 
 @pytest.mark.integration
-@pytest.mark.skip('The "nvidia/cosmos-reason2-8b" model is not available')
 @pytest.mark.skipif(not os.getenv("NVIDIA_API_KEY"), reason="NVIDIA_API_KEY not set")
 class TestNvidiaVLMIntegration:
     """Test suite for NvidiaVLM class."""
 
-    async def test_simple(self, vlm: VLM):
-        """Test basic text-only response."""
-        response = await vlm.simple_response(
-            "Explain quantum computing in 1 paragraph",
+    async def test_simple_response(self, vlm: VLM):
+        """Test streaming responses yield deltas and a final response."""
+        deltas, final = await collect_simple_response(
+            vlm.simple_response("Explain quantum computing in 1 paragraph")
         )
 
-        assert response.text
-        assert len(response.text) > 0
-
-    async def test_streaming(self, vlm: VLM):
-        """Test streaming responses emit chunk and completion events."""
-        streaming_works = False
-
-        @vlm.events.subscribe
-        async def passed(event: LLMResponseChunkEvent):
-            nonlocal streaming_works
-            streaming_works = True
-
-        response = await vlm.simple_response(
-            "Explain quantum computing in 1 paragraph",
-        )
-
-        await vlm.events.wait()
-
-        assert response.text
-        assert streaming_works
+        assert final.text
+        assert len(deltas) > 0
 
     async def test_memory(self, vlm: VLM):
         """Test conversation memory across multiple messages."""
-        await vlm.simple_response(
-            text="There are 2 dogs in the room",
+        await collect_simple_response(
+            vlm.simple_response(text="There are 2 dogs in the room")
         )
-        response = await vlm.simple_response(
-            text="How many paws are there in the room?",
+        _, final = await collect_simple_response(
+            vlm.simple_response(text="How many paws are there in the room?")
         )
-        assert "8" in response.text or "eight" in response.text
-
-    async def test_events(self, vlm: VLM):
-        """Test that LLM events are properly emitted during streaming responses."""
-        chunk_events = []
-        complete_events = []
-        nvidia_stream_events = []
-        error_events = []
-
-        @vlm.events.subscribe
-        async def handle_chunk_event(event: LLMResponseChunkEvent):
-            chunk_events.append(event)
-
-        @vlm.events.subscribe
-        async def handle_complete_event(event: LLMResponseCompletedEvent):
-            complete_events.append(event)
-
-        @vlm.events.subscribe
-        async def handle_nvidia_stream_event(event: events.NvidiaStreamEvent):
-            nvidia_stream_events.append(event)
-
-        @vlm.events.subscribe
-        async def handle_error_event(event: events.LLMErrorEvent):
-            error_events.append(event)
-
-        response = await vlm.simple_response(
-            "Create a small story about the weather in the Netherlands. Make it at least 2 paragraphs long.",
-        )
-
-        await vlm.events.wait()
-
-        assert response.text, "Response should have text content"
-        assert len(response.text) > 50, "Response should be substantial"
-
-        assert len(chunk_events) > 0, (
-            "Should have received chunk events during streaming"
-        )
-
-        assert len(complete_events) > 0, "Should have received completion event"
-        assert len(complete_events) == 1, "Should have exactly one completion event"
-
-        assert len(error_events) == 0, (
-            f"Should not have error events, but got: {error_events}"
-        )
-
-        total_delta_text = ""
-        chunk_item_ids = set()
-        for chunk_event in chunk_events:
-            assert chunk_event.delta is not None, (
-                "Chunk events should have delta content"
-            )
-            assert isinstance(chunk_event.delta, str), "Delta should be a string"
-            assert chunk_event.item_id is not None, (
-                "Chunk events should have non-null item_id"
-            )
-            assert chunk_event.item_id != "", (
-                "Chunk events should have non-empty item_id"
-            )
-            chunk_item_ids.add(chunk_event.item_id)
-            total_delta_text += chunk_event.delta
-
-        complete_event = complete_events[0]
-        assert complete_event.text == response.text, (
-            "Completion event text should match response text"
-        )
-        assert complete_event.original is not None, (
-            "Completion event should have original response"
-        )
-        assert complete_event.item_id is not None, (
-            "Completion event should have non-null item_id"
-        )
-        assert complete_event.item_id != "", (
-            "Completion event should have non-empty item_id"
-        )
-
-        assert complete_event.item_id in chunk_item_ids, (
-            f"Completion event item_id '{complete_event.item_id}' should match one of the chunk event item_ids: {chunk_item_ids}"
-        )
-
-        assert len(total_delta_text) > 0, "Should have accumulated delta text"
-        assert len(total_delta_text) >= len(response.text) * 0.8, (
-            "Delta text should be substantial portion of final text"
-        )
+        assert "8" in final.text or "eight" in final.text
 
     async def test_with_video_frames(self, vlm: VLM, cat_frame: av.VideoFrame):
         """Test VLM with buffered video frames."""
         vlm._frame_buffer.append(cat_frame)
 
-        response = await vlm.simple_response(
-            "What do you see in this image?",
+        _, final = await collect_simple_response(
+            vlm.simple_response("What do you see in this image?")
         )
 
-        assert response.text
-        assert len(response.text) > 0
-        assert "cat" in response.text.lower() or len(response.text.strip()) > 0
+        assert final.text
+        assert "cat" in final.text.lower(), f"Expected 'cat' in response: {final.text}"
 
-    async def test_instruction_following(self):
+    async def test_instruction_following(self, vlm):
         """Test that system instructions are respected."""
-        api_key = os.getenv("NVIDIA_API_KEY")
-        if not api_key:
-            pytest.skip("NVIDIA_API_KEY not set")
 
-        vlm_instance = VLM(model="nvidia/cosmos-reason2-8b")
-        vlm_instance.set_conversation(
+        vlm.set_conversation(
             InMemoryConversation("only reply in 2 letter country shortcuts", [])
         )
-        vlm_instance.set_instructions("only reply in 2 letter country shortcuts")
+        vlm.set_instructions("only reply in 2 letter country shortcuts")
 
-        try:
-            response = await vlm_instance.simple_response(
+        _, final = await collect_simple_response(
+            vlm.simple_response(
                 text="Which country is rainy, protected from water with dikes and below sea level?",
             )
-            assert "nl" in response.text.lower()
-        finally:
-            await vlm_instance.close()
+        )
+        assert "nl" in final.text.lower()
 
     async def test_with_participant(self, vlm: VLM):
         """Test that LLM does not duplicate user messages when participant is provided.
@@ -229,13 +120,12 @@ class TestNvidiaVLMIntegration:
             role="user", user_id="test_user_123", content=user_question
         )
 
-        response = await vlm.simple_response(
-            text=user_question,
-            participant=test_participant,
+        _, final = await collect_simple_response(
+            vlm.simple_response(text=user_question, participant=test_participant)
         )
 
-        assert response.text
-        assert len(response.text) > 0
+        assert final.text
+        assert len(final.text) > 0
 
         # Verify no duplicate user message was added by the LLM
         user_messages = [

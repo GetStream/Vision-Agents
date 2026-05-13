@@ -1,12 +1,11 @@
 import asyncio
+import os
 from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import PcmData
-from vision_agents.core.tts.manual_test import manual_tts_to_wav
-from vision_agents.core.tts.testing import TTSSession
 from vision_agents.plugins import deepgram
 from vision_agents.plugins.deepgram.tts import (
     SpeakV1Cleared,
@@ -50,6 +49,9 @@ class _MockConnectCtx:
         self.exit_called = True
 
 
+@pytest.mark.skipif(
+    os.getenv("DEEPGRAM_API_KEY") is None, reason="DEEPGRAM_API_KEY not set"
+)
 @pytest.mark.integration
 class TestDeepgramTTSIntegration:
     """Integration tests for Deepgram TTS."""
@@ -59,20 +61,17 @@ class TestDeepgramTTSIntegration:
         return deepgram.TTS()
 
     async def test_deepgram_tts_convert_text_to_audio(self, tts: deepgram.TTS):
-        tts.set_output_format(sample_rate=16000, channels=1)
-        session = TTSSession(tts)
         text = "Hello from Deepgram."
 
-        await tts.send(text)
-        await session.wait_for_result(timeout=15.0)
+        out = []
+        async for item in tts.send_iter(text):
+            out.append(item)
 
-        assert not session.errors
-        assert len(session.speeches) > 0
-
-    async def test_deepgram_tts_convert_text_to_audio_manual_test(
-        self, tts: deepgram.TTS
-    ):
-        await manual_tts_to_wav(tts, sample_rate=48000, channels=2)
+        assert len(out) > 0
+        # First chunk must have some audio
+        assert out[0].data
+        # Last chunk must be marked as "final"
+        assert out[-1].final
 
 
 class TestDeepgramTTS:

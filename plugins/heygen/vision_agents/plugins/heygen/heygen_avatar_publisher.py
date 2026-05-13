@@ -58,6 +58,7 @@ class AvatarPublisher(AudioPublisher, VideoPublisher):
             interval: Processing interval (not used, kept for compatibility).
             **kwargs: Additional arguments passed to parent class.
         """
+        super().__init__()
         self.avatar_id = avatar_id
         self.quality = quality
         self.resolution = resolution

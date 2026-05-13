@@ -26,9 +26,9 @@ class TestFunctionRegistry:
             """Test function with default parameter."""
             return x + y
 
-        assert "test_func" in registry._functions
-        assert registry._functions["test_func"].description == "Test function"
-        assert len(registry._functions["test_func"].parameters) == 2
+        assert "test_func" in registry.functions
+        assert registry.functions["test_func"].description == "Test function"
+        assert len(registry.functions["test_func"].parameters) == 2
 
     async def test_call_function(self):
         """Test calling a registered function."""
@@ -126,14 +126,14 @@ class TestGlobalRegistry:
     async def test_global_registry(self):
         """Test that the global registry works."""
         # Clear any existing functions
-        function_registry._functions.clear()
+        function_registry.functions.clear()
 
         @function_registry.register(description="Global test function")
         async def global_test_func(x: int) -> int:
             """Global test function."""
             return x * 3
 
-        assert "global_test_func" in function_registry._functions
+        assert "global_test_func" in function_registry.functions
         result = await function_registry.call_function("global_test_func", {"x": 4})
         assert result == 12
 
@@ -582,6 +582,30 @@ class TestConcurrentToolExecution:
         assert start_events[0].tool_name == "test_func"
         assert end_events[0].tool_name == "test_func"
         assert end_events[0].success is True
+
+    async def test_run_one_tool_records_success_metric(self, llm: DummyLLM):
+        @llm.register_function(description="Test function")
+        async def test_func(x: int) -> int:
+            return x * 2
+
+        await llm._run_one_tool(
+            {"id": "call1", "name": "test_func", "arguments_json": {"x": 5}}, 30.0
+        )
+
+        assert llm.metrics.agent_metrics.llm_tool_calls__total.value() == 1
+        assert llm.metrics.agent_metrics.llm_tool_latency_ms__avg.value() is not None
+
+    async def test_run_one_tool_records_error_metric(self, llm: DummyLLM):
+        @llm.register_function(description="Failing function")
+        async def boom() -> int:
+            raise RuntimeError("nope")
+
+        await llm._run_one_tool(
+            {"id": "call1", "name": "boom", "arguments_json": {}}, 30.0
+        )
+
+        assert llm.metrics.agent_metrics.llm_tool_calls__total.value() == 1
+        assert llm.metrics.agent_metrics.llm_tool_latency_ms__avg.value() is not None
 
     async def test_output_sanitization(self, llm: DummyLLM):
         """Test output sanitization for large responses."""

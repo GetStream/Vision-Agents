@@ -5,9 +5,6 @@ import wave
 import numpy as np
 import pytest
 from dotenv import load_dotenv
-
-from vision_agents.core.tts.manual_test import manual_tts_to_wav
-from vision_agents.core.tts.testing import TTSSession
 from vision_agents.plugins import xai
 from vision_agents.plugins.xai.tts import VOICE_DESCRIPTIONS, XAITTS
 
@@ -135,21 +132,14 @@ class TestXAITTS:
     async def test_xai_tts_with_real_api(self):
         tts = xai.TTS(api_key=os.environ["XAI_API_KEY"])
         try:
-            tts.set_output_format(sample_rate=16000, channels=1)
-            session = TTSSession(tts)
-            await tts.send("Hello from xAI text to speech.")
-            result = await session.wait_for_result(timeout=30.0)
-            assert not result.errors
-            assert len(result.speeches) > 0
-        finally:
-            await tts.close()
+            out = []
+            async for item in tts.send_iter(
+                "This is a test of the xAI text-to-speech API."
+            ):
+                out.append(item)
 
-    @pytest.mark.integration
-    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
-    async def test_xai_tts_manual_wav(self):
-        tts = xai.TTS(api_key=os.environ["XAI_API_KEY"])
-        try:
-            path = await manual_tts_to_wav(tts, sample_rate=48000, channels=2)
-            assert path
+            assert len(out) > 0
+            assert out[0].data
+            assert out[-1].final
         finally:
             await tts.close()

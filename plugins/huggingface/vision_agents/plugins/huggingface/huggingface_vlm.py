@@ -1,21 +1,14 @@
 import base64
 import logging
-import time
-import uuid
 from collections import deque
-from typing import Any, Iterator, Optional, cast
+from typing import Any, AsyncIterator, Iterator, Optional, cast
 
 import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from huggingface_hub import AsyncInferenceClient
 from huggingface_hub.inference._providers import PROVIDER_OR_POLICY_T
-from vision_agents.core.llm.events import (
-    VLMErrorEvent,
-    VLMInferenceCompletedEvent,
-    VLMInferenceStartEvent,
-)
-from vision_agents.core.llm.llm import LLMResponseEvent, VideoLLM
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal, VideoLLM
 from vision_agents.core.llm.llm_types import ToolSchema
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
@@ -47,6 +40,8 @@ class HuggingFaceVLM(VideoLLM):
         vlm = huggingface.VLM(model="Qwen/Qwen2-VL-7B-Instruct")
 
     """
+
+    provider_name = PLUGIN_NAME
 
     def __init__(
         self,
@@ -104,7 +99,7 @@ class HuggingFaceVLM(VideoLLM):
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent[Any]:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Create an LLM response from text input with video context.
 
         This method is called when a new STT transcript is received.
@@ -118,7 +113,8 @@ class HuggingFaceVLM(VideoLLM):
                 f'Cannot request a response from the LLM "{self.model}" - '
                 "the conversation has not been initialized yet."
             )
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         if participant is None:
             await self._conversation.send_message(
@@ -126,45 +122,19 @@ class HuggingFaceVLM(VideoLLM):
             )
 
         messages = await self._build_model_request()
-
         frames_count = len(self._frame_buffer)
-        inference_id = str(uuid.uuid4())
 
-        self.events.send(
-            VLMInferenceStartEvent(
-                plugin_name=PLUGIN_NAME,
-                inference_id=inference_id,
-                model=self.model,
-                frames_count=frames_count,
-            )
-        )
-
-        request_start_time = time.perf_counter()
-        response = await self.create_response(messages=messages)
-        latency_ms = (time.perf_counter() - request_start_time) * 1000
-
-        if response.exception is not None:
-            self.events.send(
-                VLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    inference_id=inference_id,
-                    error=response.exception,
-                    context="generation",
-                )
-            )
-        else:
-            self.events.send(
-                VLMInferenceCompletedEvent(
-                    plugin_name=PLUGIN_NAME,
-                    inference_id=inference_id,
+        async for item in self.create_response(messages=messages):
+            yield item
+            if isinstance(item, LLMResponseFinal):
+                self.metrics.on_vlm_inference(
+                    provider=self.provider_name,
                     model=self.model,
-                    text=response.text,
-                    latency_ms=latency_ms,
+                    latency_ms=item.latency_ms,
+                    input_tokens=item.input_tokens,
+                    output_tokens=item.output_tokens,
                     frames_processed=frames_count,
                 )
-            )
-
-        return response
 
     async def create_response(
         self,
@@ -172,7 +142,7 @@ class HuggingFaceVLM(VideoLLM):
         *,
         stream: bool = True,
         **kwargs: Any,
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Create a response using HuggingFace's Inference API with video context.
 
         Args:
@@ -181,8 +151,9 @@ class HuggingFaceVLM(VideoLLM):
             stream: Whether to stream the response.
             **kwargs: Additional arguments passed to the API.
 
-        Returns:
-            LLMResponseEvent with the response.
+        Yields:
+            ``LLMResponseDelta`` for each text chunk and a single trailing
+            ``LLMResponseFinal``.
         """
         if messages is None:
             messages = await self._build_model_request()
@@ -192,7 +163,7 @@ class HuggingFaceVLM(VideoLLM):
         if tools_spec:
             tools_param = convert_tools_to_hf_format(tools_spec)
 
-        return await create_hf_response(
+        async for item in create_hf_response(
             self,
             self._client,
             self.model,
@@ -201,7 +172,8 @@ class HuggingFaceVLM(VideoLLM):
             tools_param,
             stream,
             **kwargs,
-        )
+        ):
+            yield item
 
     def _convert_tools_to_provider_format(
         self, tools: list[ToolSchema]

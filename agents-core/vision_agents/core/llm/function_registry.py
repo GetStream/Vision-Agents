@@ -48,7 +48,7 @@ class FunctionRegistry:
     """Registry for managing available functions that can be called by LLMs."""
 
     def __init__(self):
-        self._functions: Dict[str, FunctionDefinition | _ExplicitSchemaFunction] = {}
+        self.functions: Dict[str, FunctionDefinition | _ExplicitSchemaFunction] = {}
 
     def register(
         self,
@@ -81,7 +81,7 @@ class FunctionRegistry:
 
             # If explicit schema provided, use it directly
             if parameters_schema is not None:
-                self._functions[func_name] = _ExplicitSchemaFunction(
+                self.functions[func_name] = _ExplicitSchemaFunction(
                     name=func_name,
                     description=func_description,
                     parameters_schema=parameters_schema,
@@ -130,7 +130,7 @@ class FunctionRegistry:
                 returns=return_type,
             )
 
-            self._functions[func_name] = function_def
+            self.functions[func_name] = function_def
             return func
 
         return decorator
@@ -139,16 +139,16 @@ class FunctionRegistry:
         self, name: str
     ) -> Optional[FunctionDefinition | _ExplicitSchemaFunction]:
         """Get a function definition by name."""
-        return self._functions.get(name)
+        return self.functions.get(name)
 
     def list_functions(self) -> List[str]:
         """Get a list of all registered function names."""
-        return list(self._functions.keys())
+        return list(self.functions.keys())
 
     def get_tool_schemas(self) -> List[ToolSchema]:
         """Get tool schemas for all registered functions."""
         schemas = []
-        for func_def in self._functions.values():
+        for func_def in self.functions.values():
             if isinstance(func_def, _ExplicitSchemaFunction):
                 # Use the explicitly provided schema
                 schemas.append(
@@ -178,10 +178,10 @@ class FunctionRegistry:
             KeyError: If the function is not registered.
             TypeError: If the arguments don't match the function signature.
         """
-        if name not in self._functions:
+        if name not in self.functions:
             raise KeyError(f"Function '{name}' is not registered")
 
-        func_def = self._functions[name]
+        func_def = self.functions[name]
 
         # For explicit schema functions, just call directly (validation is external)
         if isinstance(func_def, _ExplicitSchemaFunction):
@@ -209,10 +209,10 @@ class FunctionRegistry:
         Raises:
             KeyError: If the function is not registered
         """
-        if name not in self._functions:
+        if name not in self.functions:
             raise KeyError(f"Function '{name}' is not registered")
 
-        return self._functions[name].function
+        return self.functions[name].function
 
     def _function_to_tool_schema(self, func_def: FunctionDefinition) -> ToolSchema:
         """Convert a function definition to a tool schema."""

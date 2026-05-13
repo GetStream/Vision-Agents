@@ -51,7 +51,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("Agent joined call")
 
         await asyncio.sleep(3)
-        await agent.llm.simple_response(text="Hello! I'm running Pocket TTS locally.")
+        await agent.simple_response(text="Hello! I'm running Pocket TTS locally.")
 
         await agent.finish()
 
