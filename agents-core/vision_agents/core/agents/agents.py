@@ -512,6 +512,7 @@ class Agent:
             with self.span("edge.join"):
                 self._connection = await self.edge.join(self, call)
             self.logger.info(f"🤖 Agent joined call: {call.id}")
+            self.events.send(events.AgentJoinedCallEvent(call=call))
 
             # Set up audio and video tracks together to avoid SDP issues
             audio_track = self._audio_track if self.publish_audio else None
@@ -724,6 +725,8 @@ class Agent:
     async def _close(self):
         # Set call_ended event again in case the agent is closed externally
         self.logger.info("🤖 Stopping the agent")
+        if self.call is not None:
+            self.events.send(events.AgentLeftCallEvent(call=self.call))
         if self._call_ended_event is not None:
             self._call_ended_event.set()
 

@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from vision_agents.core.edge.call import Call
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events import BaseEvent, PluginBaseEvent
 
@@ -17,6 +18,22 @@ class AgentFinishEvent(BaseEvent):
     """Event emitted when agent.finish() call ended."""
 
     type: str = field(default="agent.finish", init=False)
+
+
+@dataclass
+class AgentJoinedCallEvent(BaseEvent):
+    """Event emitted after the agent has joined a call."""
+
+    type: str = field(default="agent.joined_call", init=False)
+    call: Call = field(kw_only=True)
+
+
+@dataclass
+class AgentLeftCallEvent(BaseEvent):
+    """Event emitted when the agent leaves a call."""
+
+    type: str = field(default="agent.left_call", init=False)
+    call: Call = field(kw_only=True)
 
 
 @dataclass
