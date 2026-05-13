@@ -12,7 +12,6 @@ from aiortc import VideoStreamTrack
 from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import Realtime
-from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
@@ -251,12 +250,6 @@ class Qwen3Realtime(Realtime):
             elif event_type == "input_audio_buffer.speech_started":
                 if self._is_responding:
                     await self._on_interruption()
-            elif event_type == "response.text.delta":
-                self.events.send(
-                    LLMResponseChunkEvent(
-                        plugin_name=PLUGIN_NAME, delta=str(event["delta"])
-                    )
-                )
             elif event_type == "response.audio.delta":
                 audio_bytes = base64.b64decode(event["delta"])
                 pcm = PcmData.from_bytes(audio_bytes, 24000)

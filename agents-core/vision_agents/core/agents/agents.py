@@ -56,7 +56,7 @@ from ..utils.utils import await_or_run, cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
 from . import events
-from .agent_types import AgentOptions, LLMTurn, TrackInfo, default_agent_options
+from .agent_types import AgentOptions, TrackInfo, default_agent_options
 from .conversation import Conversation, InMemoryConversation
 from .inference import (
     AudioInputChunk,
@@ -177,7 +177,6 @@ class Agent:
             self.agent_user.id = self._agent_user_id
 
         self._id = str(uuid4())
-        self._pending_turn: Optional[LLMTurn] = None
         self.call: Optional[Call] = None
 
         self._active_processed_track_id: Optional[str] = None

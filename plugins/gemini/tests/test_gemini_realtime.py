@@ -18,7 +18,6 @@ from google.genai.types import (
     Transcription,
 )
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.core.llm.realtime import (
     RealtimeAgentSpeechEnded,
     RealtimeAgentSpeechStarted,
@@ -89,26 +88,6 @@ class TestGeminiRealtimeProcessEvents:
         assert len(items) == 1
         assert isinstance(items[0], RealtimeAgentTranscript)
         assert items[0].text == "world"
-
-    async def test_model_turn_text(self):
-        rt = _make_realtime()
-        msg = LiveServerMessage(
-            server_content=LiveServerContent(
-                model_turn=Content(
-                    parts=[Part(text="response text")],
-                ),
-            ),
-        )
-        rt._real_session = _make_session([msg])
-
-        emitted: list[object] = []
-        rt.events.send = lambda e: emitted.append(e)
-
-        await rt._process_events()
-
-        assert len(emitted) == 1
-        assert isinstance(emitted[0], LLMResponseChunkEvent)
-        assert emitted[0].delta == "response text"
 
     async def test_model_turn_audio(self):
         rt = _make_realtime()
@@ -201,7 +180,6 @@ class TestGeminiRealtimeProcessEvents:
 
         await rt._process_events()
 
-        assert any(isinstance(e, LLMResponseChunkEvent) for e in emitted)
         assert any(isinstance(i, RealtimeAudioOutputDone) for i in rt.output.peek())
 
     async def test_part_with_text_and_audio(self):
@@ -222,7 +200,6 @@ class TestGeminiRealtimeProcessEvents:
 
         await rt._process_events()
 
-        assert any(isinstance(e, LLMResponseChunkEvent) for e in emitted)
         assert any(isinstance(i, RealtimeAudioOutput) for i in rt.output.peek())
 
     async def test_transcription_with_audio_same_message(self):

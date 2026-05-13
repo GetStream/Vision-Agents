@@ -39,9 +39,6 @@ from google.genai.types import (
 )
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-)
 from vision_agents.core.llm.llm import (
     LLMResponseDelta,
     LLMResponseFinal,
@@ -475,9 +472,6 @@ class GeminiRealtime(realtime.Realtime):
 
                 parts = server_content.model_turn.parts or []
                 for part in parts:
-                    if part.text and not part.thought:
-                        event = LLMResponseChunkEvent(delta=part.text)
-                        self.events.send(event)
                     if part.inline_data:
                         pcm = PcmData.from_bytes(part.inline_data.data, 24000)
                         if not self._agent_audio_started:
