@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from getstream.video.rtc import audio_track
 from vision_agents.core.events import EventManager
@@ -77,3 +79,78 @@ class TestAnamAvatarPublisher:
         assert agent.events.has_subscribers(RealtimeAudioOutputEvent)
         assert agent.events.has_subscribers(RealtimeAudioOutputDoneEvent)
         assert agent.events.has_subscribers(TurnStartedEvent)
+
+    async def test_start_is_idempotent(self):
+        """Repeated `start()` runs `_connect()` once and short-circuits after.
+
+        Callers warm up the publisher before `agent.join()` to keep Anam's
+        ~3s session creation off the join critical path. The framework
+        then calls `start()` again from `_apply("start")` — that second
+        call must be a no-op.
+        """
+        pub = _make_publisher()
+
+        call_count = 0
+
+        async def fake_connect():
+            nonlocal call_count
+            call_count += 1
+
+        pub._connect = fake_connect  # type: ignore[method-assign]
+
+        await pub.start()
+        await pub.start()
+        await pub.start()
+
+        assert call_count == 1
+        assert pub._started is True
+
+    async def test_start_serializes_concurrent_callers(self):
+        """Two tasks calling `start()` at the same time produce one connect.
+
+        Without the lock, both would see `_started is False` and race into
+        `_connect()`, double-opening the Anam session.
+        """
+        pub = _make_publisher()
+
+        call_count = 0
+        proceed = asyncio.Event()
+
+        async def slow_connect():
+            nonlocal call_count
+            call_count += 1
+            await proceed.wait()
+
+        pub._connect = slow_connect  # type: ignore[method-assign]
+
+        task_a = asyncio.create_task(pub.start())
+        task_b = asyncio.create_task(pub.start())
+        await asyncio.sleep(0)  # let both tasks acquire/queue on the lock
+        proceed.set()
+        await asyncio.gather(task_a, task_b)
+
+        assert call_count == 1
+
+    async def test_start_failure_allows_retry(self):
+        """A failing first `start()` leaves `_started=False` so the next
+        attempt can retry instead of silently no-op'ing on a half-connected
+        publisher."""
+        pub = _make_publisher()
+
+        attempts = 0
+
+        async def flaky_connect():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("anam unreachable")
+
+        pub._connect = flaky_connect  # type: ignore[method-assign]
+
+        with pytest.raises(RuntimeError, match="anam unreachable"):
+            await pub.start()
+        assert pub._started is False
+
+        await pub.start()
+        assert pub._started is True
+        assert attempts == 2

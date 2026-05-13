@@ -111,6 +111,8 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         self._send_lock = asyncio.Lock()
         self._audio_receiver_task: asyncio.Task[None] | None = None
         self._video_receiver_task: asyncio.Task[None] | None = None
+        self._start_lock = asyncio.Lock()
+        self._started = False
 
     def publish_video_track(self) -> QueuedVideoTrack:
         """Return the video track that receives avatar video frames."""
@@ -132,8 +134,22 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         self._subscribe_to_audio_events()
 
     async def start(self) -> None:
-        """Connect to Anam. Called by Agent via _apply("start") during join()."""
-        await self._connect()
+        """Connect to Anam.
+
+        Idempotent. The Anam REST session creation + WebRTC handshake takes
+        ~3-5 seconds, which would otherwise sit in the critical path of
+        `agent.join()` (Agent.`_apply("start")` runs subsystem starts
+        sequentially). Callers can kick this off as a background task before
+        join and the framework's eventual call from `_apply` will see the
+        already-started publisher and return immediately. Concurrent calls
+        wait on the same in-flight connect via `_start_lock` rather than
+        racing into `_connect`.
+        """
+        async with self._start_lock:
+            if self._started:
+                return
+            await self._connect()
+            self._started = True
 
     async def close(self) -> None:
         """
