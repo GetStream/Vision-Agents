@@ -5,7 +5,9 @@ from dataclasses import dataclass, field
 from opentelemetry import trace
 from opentelemetry.trace import Tracer
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.events import EventManager
 from vision_agents.core.llm import LLM
+from vision_agents.core.llm.events import LLMResponseFinalEvent
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.utils.exceptions import log_task_exception
 from vision_agents.core.utils.stream import Stream
@@ -22,6 +24,7 @@ __all__ = ["LLMTurn"]
 class LLMTurn:
     transcript: str
     participant: Participant
+    events: EventManager
     stream: Stream[LLMResponseDelta | LLMResponseFinal] = field(
         init=False, default_factory=Stream
     )
@@ -114,6 +117,13 @@ class LLMTurn:
                 ):
                     await self.stream.send(item)
                     if isinstance(item, LLMResponseFinal):
+                        self.events.send(
+                            LLMResponseFinalEvent(
+                                plugin_name=llm.provider_name,
+                                text=item.text,
+                                model=item.model or llm.model,
+                            )
+                        )
                         llm.metrics.on_llm_response(
                             provider=llm.provider_name,
                             model=item.model,

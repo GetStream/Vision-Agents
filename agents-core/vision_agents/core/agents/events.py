@@ -98,6 +98,15 @@ class UserTurnEndedEvent(BaseEvent):
 
 
 @dataclass
+class UserTranscriptEvent(BaseEvent):
+    """Emitted with the final user transcript that triggers an LLM turn."""
+
+    type: str = field(default="agent.user_transcript", init=False)
+    text: str = ""
+    participant: Optional[Participant] = None
+
+
+@dataclass
 class AgentTurnStartedEvent(BaseEvent):
     """Emitted when the agent starts speaking (first audio chunk leaving the pipeline)."""
 

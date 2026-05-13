@@ -9,6 +9,7 @@ from opentelemetry.trace import Tracer
 from vision_agents.core.agents.events import (
     AgentTurnEndedEvent,
     AgentTurnStartedEvent,
+    UserTranscriptEvent,
     UserTurnEndedEvent,
     UserTurnStartedEvent,
 )
@@ -16,6 +17,7 @@ from vision_agents.core.agents.transcript import TranscriptStore
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm import LLM, Realtime
+from vision_agents.core.llm.events import LLMResponseFinalEvent
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.stt import STT
 from vision_agents.core.stt.stt import Transcript
@@ -68,8 +70,10 @@ class TranscribingInferenceFlow(InferenceFlow):
         self.events.register(
             UserTurnStartedEvent,
             UserTurnEndedEvent,
+            UserTranscriptEvent,
             AgentTurnStartedEvent,
             AgentTurnEndedEvent,
+            LLMResponseFinalEvent,
         )
 
         if turn_detector and stt and stt.turn_detection:
@@ -228,7 +232,9 @@ class TranscribingInferenceFlow(InferenceFlow):
             if busy:
                 await self.interrupt()
 
-            llm_turn = LLMTurn(transcript=text, participant=participant)
+            llm_turn = LLMTurn(
+                transcript=text, participant=participant, events=self.events
+            )
             llm_turn.start(llm=self._llm)
             llm_turn.confirm()
             llm_turn.finalize(self._llm_output)
@@ -335,6 +341,12 @@ class TranscribingInferenceFlow(InferenceFlow):
                     if event.final:
                         # Final transcript is ready
                         logger.info(f"🎤 [Transcript Complete]: {event.text}")
+                        self.events.send(
+                            UserTranscriptEvent(
+                                text=event.text or "",
+                                participant=participant,
+                            )
+                        )
 
                         # Update the bufferred transcript and mark it as "final".
                         self._transcripts.update_user_transcript(
@@ -391,7 +403,9 @@ class TranscribingInferenceFlow(InferenceFlow):
                         # and the user stopped speaking, but the STT is slow, and we
                         # haven't received any transcripts yet.
                         self._llm_turn = LLMTurn(
-                            transcript=transcript, participant=event.participant
+                            transcript=transcript,
+                            participant=event.participant,
+                            events=self.events,
                         )
                         self._llm_turn.confirm()
                     elif event.eager and transcript:
@@ -403,7 +417,9 @@ class TranscribingInferenceFlow(InferenceFlow):
 
                         # Start a new LLM turn
                         self._llm_turn = LLMTurn(
-                            transcript=transcript, participant=event.participant
+                            transcript=transcript,
+                            participant=event.participant,
+                            events=self.events,
                         )
                         logger.info(
                             '🤖 Starting eager LLM turn for transcript "%s"', transcript
@@ -436,7 +452,9 @@ class TranscribingInferenceFlow(InferenceFlow):
                     confirmed = llm_turn and llm_turn.confirmed
                     # Start a new turn for the final transcript.
                     llm_turn = LLMTurn(
-                        transcript=transcript, participant=event.participant
+                        transcript=transcript,
+                        participant=event.participant,
+                        events=self.events,
                     )
                     logger.info(
                         '🤖 Starting non-eager LLM turn for transcript "%s"', transcript

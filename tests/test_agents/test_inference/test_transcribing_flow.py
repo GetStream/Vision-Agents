@@ -8,6 +8,7 @@ from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.agents.events import (
     AgentTurnEndedEvent,
     AgentTurnStartedEvent,
+    UserTranscriptEvent,
     UserTurnEndedEvent,
     UserTurnStartedEvent,
 )
@@ -153,12 +154,18 @@ class TestProcessSTTOutput:
         llm_out: Stream[LLMResponseDelta | LLMResponseFinal] = Stream()
         user_started: list[UserTurnStartedEvent] = []
         user_ended: list[UserTurnEndedEvent] = []
+        user_transcripts: list[UserTranscriptEvent] = []
 
         @flow.events.subscribe
-        async def _on(event: UserTurnStartedEvent | UserTurnEndedEvent):
-            (
-                user_started if isinstance(event, UserTurnStartedEvent) else user_ended
-            ).append(event)
+        async def _on(
+            event: UserTurnStartedEvent | UserTurnEndedEvent | UserTranscriptEvent,
+        ):
+            if isinstance(event, UserTurnStartedEvent):
+                user_started.append(event)
+            elif isinstance(event, UserTurnEndedEvent):
+                user_ended.append(event)
+            else:
+                user_transcripts.append(event)
 
         stage = asyncio.create_task(flow.process_stt_output(stt_out, llm_out))
 
@@ -197,6 +204,9 @@ class TestProcessSTTOutput:
         assert user_started[0].participant is participant
         assert len(user_ended) == 1
         assert user_ended[0].participant is participant
+        assert len(user_transcripts) == 1
+        assert user_transcripts[0].text == "hello"
+        assert user_transcripts[0].participant is participant
 
     async def test_process_stt_output_no_transcripts(self, flow, participant) -> None:
         stt_out: Stream[TurnStarted | Transcript | TurnEnded] = Stream()

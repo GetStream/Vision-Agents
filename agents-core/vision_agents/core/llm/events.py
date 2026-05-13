@@ -96,6 +96,19 @@ class RealtimeErrorEvent(PluginBaseEvent):
 
 
 @dataclass
+class LLMResponseFinalEvent(PluginBaseEvent):
+    """Event emitted when a final LLM response is received."""
+
+    type: str = field(default="plugin.llm_response_final", init=False)
+
+    text: str = ""
+    """Full LLM response text."""
+
+    model: Optional[str] = None
+    """Model being used for this response."""
+
+
+@dataclass
 class LLMRequestStartedEvent(PluginBaseEvent):
     """Event emitted when an LLM request begins."""
 
