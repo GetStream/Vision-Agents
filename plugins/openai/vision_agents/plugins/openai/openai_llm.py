@@ -10,7 +10,6 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
-from . import events
 from .tool_utils import (
     convert_tools_to_openai_format,
     parse_tool_arguments,
@@ -64,7 +63,6 @@ class OpenAILLM(LLM):
             max_tool_rounds: Maximum number of tool calling rounds (default 3).
         """
         super().__init__()
-        self.events.register_events_from_module(events)
         self.model = model
         self.max_tool_rounds = max_tool_rounds
         self.openai_conversation: Optional[Any] = None
@@ -131,9 +129,9 @@ class OpenAILLM(LLM):
                             error_message,
                             error_code,
                         )
-                        self.metrics.on_llm_error(
-                            provider=self.provider_name,
+                        self.on_llm_error(
                             error_type="response.failed",
+                            error_code=error_code,
                         )
                         break
                     elif event.type == "response.output_text.delta":
@@ -165,10 +163,7 @@ class OpenAILLM(LLM):
                 logger.exception(
                     f'Failed to get a response from the LLM "{self.model}"'
                 )
-                self.metrics.on_llm_error(
-                    provider=self.provider_name,
-                    error_type=type(e).__name__,
-                )
+                self.on_llm_error(error=e)
                 break
 
             if not new_tool_calls or round_num >= self.max_tool_rounds:

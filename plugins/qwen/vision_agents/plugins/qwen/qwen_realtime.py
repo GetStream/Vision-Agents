@@ -17,7 +17,6 @@ from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
 
-from . import events
 from .client import Qwen3RealtimeClient
 
 DEFAULT_BASE_URL = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"
@@ -48,7 +47,6 @@ class Qwen3Realtime(Realtime):
         self.model = model
         self.voice = voice
         self.session_id = str(uuid.uuid4())
-        self.events.register_events_from_module(events)
 
         self._base_url = base_url or DEFAULT_BASE_URL
 

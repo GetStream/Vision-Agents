@@ -221,10 +221,7 @@ class OpenRouterLLM(LLM):
             response = await self._client.chat.completions.create(**request_kwargs)
         except Exception as e:
             logger.exception(f'Failed to get a response from the LLM "{self.model}"')
-            self.metrics.on_llm_error(
-                provider=self.provider_name,
-                error_type=type(e).__name__,
-            )
+            self.on_llm_error(error=e)
             yield LLMResponseFinal(original=None, text="")
             return
 
@@ -466,10 +463,7 @@ class OpenRouterLLM(LLM):
                 follow_up = await self._client.chat.completions.create(**request_kwargs)
             except Exception as e:
                 logger.exception("Failed to get follow-up response")
-                self.metrics.on_llm_error(
-                    provider=self.provider_name,
-                    error_type=type(e).__name__,
-                )
+                self.on_llm_error(error=e)
                 break
 
             text_chunks: list[str] = []

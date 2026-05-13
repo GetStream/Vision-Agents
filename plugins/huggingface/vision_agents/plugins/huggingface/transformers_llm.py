@@ -568,10 +568,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             except RuntimeError as e:
                 generation_error = e
                 logger.exception("Generation failed")
-                self.metrics.on_llm_error(
-                    provider=self.provider_name,
-                    error_type=type(e).__name__,
-                )
+                self.on_llm_error(error=e)
             finally:
                 # Flush any text still buffered inside the TextStreamer
                 # (everything after the last word boundary). model.generate

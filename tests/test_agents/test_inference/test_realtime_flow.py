@@ -586,5 +586,3 @@ class TestStartStop:
                 await flow.start()
         finally:
             await flow.stop()
-
-

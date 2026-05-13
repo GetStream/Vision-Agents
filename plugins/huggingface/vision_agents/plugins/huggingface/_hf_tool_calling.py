@@ -123,18 +123,12 @@ async def create_hf_response(
         logger.exception(
             f'Failed to get a response from the LLM "{model_id}"; payload: {error_payload}'
         )
-        llm.metrics.on_llm_error(
-            provider=llm.provider_name,
-            error_type=type(e).__name__,
-        )
+        llm.on_llm_error(error=e)
         yield LLMResponseFinal(original=None, text="")
         return
     except Exception as e:
         logger.exception(f'Failed to get a response from the LLM "{model_id}"')
-        llm.metrics.on_llm_error(
-            provider=llm.provider_name,
-            error_type=type(e).__name__,
-        )
+        llm.on_llm_error(error=e)
         yield LLMResponseFinal(original=None, text="")
         return
 
@@ -391,10 +385,7 @@ async def _run_tool_loop(
             follow_up = await client.chat.completions.create(**request_kwargs)
         except (HfHubHTTPError, InferenceTimeoutError, OSError) as e:
             logger.exception("Failed to get follow-up response after tool execution")
-            llm.metrics.on_llm_error(
-                provider=llm.provider_name,
-                error_type=type(e).__name__,
-            )
+            llm.on_llm_error(error=e)
             yield LLMResponseFinal(original=None, text="")
             return
 
