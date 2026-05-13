@@ -243,8 +243,7 @@ class XAIRealtime(realtime.Realtime):
         # Configure the session
         await self._configure_session()
 
-        self.connected = True
-        self._emit_connected_event(
+        self._on_connected(
             session_config={
                 "voice": self.voice,
                 "turn_detection": self.turn_detection,
@@ -325,8 +324,7 @@ class XAIRealtime(realtime.Realtime):
 
     async def close(self):
         """Close the connection and clean up resources."""
-        self.connected = False
-        self._emit_disconnected_event(reason="close requested", was_clean=True)
+        self._on_disconnected()
 
         await self._await_pending_tools()
 

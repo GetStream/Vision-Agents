@@ -151,7 +151,7 @@ class Realtime(realtime.Realtime):
         await self.rtc.connect()
 
         # Emit connected/ready
-        self._emit_connected_event(
+        self._on_connected(
             session_config={"model": self.model, "voice": self.voice},
             capabilities=["text", "audio", "function_calling"],
         )
@@ -192,6 +192,7 @@ class Realtime(realtime.Realtime):
     async def close(self):
         await self._await_pending_tools()
         await self.rtc.close()
+        self._on_disconnected()
 
     async def _handle_openai_event(self, event: dict) -> None:
         """Process events received from the OpenAI Realtime API.

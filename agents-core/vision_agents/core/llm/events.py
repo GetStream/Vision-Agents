@@ -26,7 +26,7 @@ class RealtimeDisconnectedEvent(PluginBaseEvent):
     provider: Optional[str] = None
     session_id: Optional[str] = None
     reason: Optional[str] = None
-    was_clean: bool = True
+    clean: bool = True
 
 
 @dataclass

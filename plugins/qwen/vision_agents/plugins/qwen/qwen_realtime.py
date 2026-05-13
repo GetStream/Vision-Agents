@@ -126,7 +126,7 @@ class Qwen3Realtime(Realtime):
         yield LLMResponseFinal()
 
     async def close(self):
-        self.connected = False
+        self._on_disconnected()
         await self.stop_watching_video_track()
         if self._processing_task is not None:
             self._processing_task.cancel()

@@ -208,7 +208,7 @@ class Realtime(realtime.Realtime):
                 "Timed out waiting for Inworld session.updated; proceeding anyway"
             )
 
-        self._emit_connected_event(
+        self._on_connected(
             session_config={"model": self.model, "voice": self.voice},
             capabilities=["text", "audio", "function_calling"],
         )
@@ -239,7 +239,7 @@ class Realtime(realtime.Realtime):
         await self._await_pending_tools()
         self._pending_tool_calls.clear()
         await self.rtc.close()
-        self._emit_disconnected_event(reason="client_close", was_clean=True)
+        self._on_disconnected()
 
     async def watch_video_track(
         self,

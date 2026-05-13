@@ -276,7 +276,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
             )
         await self.content_input(self._instructions, "SYSTEM")
 
-        self.connected = True
+        self._on_connected(session_config={"model": self.model})
 
         # Start reconnection check task
         self._reconnection_check_task = asyncio.create_task(
@@ -372,7 +372,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                         logger.exception(
                             "Error closing provisional new connection during reconnect cleanup"
                         )
-                self.connected = False
+                self._on_disconnected(reason="reconnect_failed", clean=False)
 
     def _should_reconnect(self) -> bool:
         """Check if connection should be reconnected based on runtime.
@@ -862,7 +862,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                     "AWS Bedrock listener did not drain within 10s; leaking task"
                 )
 
-        self.connected = False
+        self._on_disconnected()
 
     async def _handle_events(self, connection: RealtimeConnection):
         """Process incoming responses from AWS Bedrock.

@@ -4,11 +4,16 @@ import logging
 import uuid
 from collections.abc import Coroutine
 from dataclasses import dataclass
+from typing import Any
 
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.agents.transcript import TranscriptMode
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import OmniLLM
+from vision_agents.core.llm.events import (
+    RealtimeConnectedEvent,
+    RealtimeDisconnectedEvent,
+)
 from vision_agents.core.utils.stream import Stream
 
 logger = logging.getLogger(__name__)
@@ -175,18 +180,35 @@ class Realtime(OmniLLM):
         """Optionally overridden by providers that support video input."""
         ...
 
-    def _emit_connected_event(self, session_config=None, capabilities=None):
-        """Mark the session connected."""
+    def _on_connected(
+        self,
+        session_config: dict[str, Any] | None = None,
+        capabilities: list[str] | None = None,
+    ):
+        """Mark the session connected and emit RealtimeConnectedEvent."""
         self.connected = True
-        # Mark ready when connected if provider uses base emitter
-        try:
-            self._ready_event.set()  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        self.events.send(
+            RealtimeConnectedEvent(
+                plugin_name=self.provider_name,
+                provider=self.provider_name,
+                session_id=self.session_id,
+                session_config=session_config,
+                capabilities=capabilities,
+            )
+        )
 
-    def _emit_disconnected_event(self, reason=None, was_clean=True):
-        """Mark the session disconnected."""
+    def _on_disconnected(self, reason: str | None = None, clean: bool = True):
+        """Mark the session disconnected and emit RealtimeDisconnectedEvent."""
         self.connected = False
+        self.events.send(
+            RealtimeDisconnectedEvent(
+                plugin_name=self.provider_name,
+                provider=self.provider_name,
+                session_id=self.session_id,
+                reason=reason,
+                clean=clean,
+            )
+        )
 
     def _emit_audio_output_event(self, pcm: PcmData, response_id: str | None = None):
         """Emit a structured audio output event."""
