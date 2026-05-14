@@ -63,49 +63,44 @@ class EventManager:
     Example:
         ```python
         from vision_agents.core.events.manager import EventManager
-        from vision_agents.core.vad.events import VADSpeechStartEvent, VADSpeechEndEvent
-        from vision_agents.core.stt.events import STTTranscriptEvent
-        from vision_agents.core.tts.events import TTSAudioEvent
+        from vision_agents.core.agents.events import (
+            AgentTurnEndedEvent,
+            AgentTurnStartedEvent,
+            UserTranscriptEvent,
+        )
+        from vision_agents.core.llm.events import LLMResponseFinalEvent
 
         # Create event manager
         manager = EventManager()
 
         # Register events
-        manager.register(VADSpeechStartEvent)
-        manager.register(VADSpeechEndEvent)
-        manager.register(STTTranscriptEvent)
-        manager.register(TTSAudioEvent)
+        manager.register(AgentTurnStartedEvent)
+        manager.register(AgentTurnEndedEvent)
+        manager.register(UserTranscriptEvent)
+        manager.register(LLMResponseFinalEvent)
 
-        # Subscribe to VAD events
+        # Subscribe to turn events
         @manager.subscribe
-        async def handle_speech_start(event: VADSpeechStartEvent):
-            print(f"Speech started with probability {event.speech_probability}")
+        async def handle_turn_start(event: AgentTurnStartedEvent):
+            print("Agent started speaking")
 
         @manager.subscribe
-        async def handle_speech_end(event: VADSpeechEndEvent):
-            print(f"Speech ended after {event.total_speech_duration_ms}ms")
+        async def handle_turn_end(event: AgentTurnEndedEvent):
+            print(f"Agent stopped speaking (interrupted={event.interrupted})")
 
-        # Subscribe to STT events
+        # Subscribe to user transcripts
         @manager.subscribe
-        async def handle_transcript(event: STTTranscriptEvent):
-            print(f"Transcript: {event.text} (confidence: {event.confidence})")
+        async def handle_transcript(event: UserTranscriptEvent):
+            print(f"Transcript: {event.text}")
 
         # Subscribe to multiple event types using Union
         @manager.subscribe
-        async def handle_audio_events(event: VADSpeechStartEvent | VADSpeechEndEvent):
-            print(f"VAD event: {event.type}")
+        async def handle_turn_events(event: AgentTurnStartedEvent | AgentTurnEndedEvent):
+            print(f"Turn event: {event.type}")
 
         # Send events
-        manager.send(VADSpeechStartEvent(
-            plugin_name="silero",
-            speech_probability=0.95,
-            activation_threshold=0.5
-        ))
-        manager.send(STTTranscriptEvent(
-            plugin_name="deepgram",
-            text="Hello world",
-            confidence=0.98
-        ))
+        manager.send(AgentTurnStartedEvent())
+        manager.send(UserTranscriptEvent(text="Hello world"))
 
         # Before shutdown, ensure all events are processed
         await manager.shutdown()
@@ -149,11 +144,11 @@ class EventManager:
 
         Example:
             ```python
-            from vision_agents.core.vad.events import VADSpeechStartEvent
-            from vision_agents.core.stt.events import STTTranscriptEvent
+            from vision_agents.core.agents.events import UserTranscriptEvent
+            from vision_agents.core.llm.events import LLMResponseFinalEvent
 
             manager = EventManager()
-            manager.register(VADSpeechStartEvent, STTTranscriptEvent)
+            manager.register(UserTranscriptEvent, LLMResponseFinalEvent)
             ```
 
         Args:
@@ -208,17 +203,13 @@ class EventManager:
 
         Example:
             ```python
-            # Register all VAD events from the core module
-            from vision_agents.core import vad
-            manager.register_events_from_module(vad.events, prefix="plugin.vad")
-
             # Register all TTS events from the core module
-            from vision_agents.core import tts
-            manager.register_events_from_module(tts.events, prefix="plugin.tts")
+            from vision_agents.core.tts import events as tts_events
+            manager.register_events_from_module(tts_events, prefix="plugin.tts")
 
-            # Register all events from a plugin module
-            from vision_agents.plugins.silero import events as silero_events
-            manager.register_events_from_module(silero_events, prefix="plugin.silero")
+            # Register all LLM events from the core module
+            from vision_agents.core.llm import events as llm_events
+            manager.register_events_from_module(llm_events, prefix="plugin.")
             ```
 
         Args:
@@ -245,11 +236,11 @@ class EventManager:
         Example:
             ```python
             @manager.subscribe
-            async def speech_handler(event: VADSpeechStartEvent):
-                print("Speech started")
+            async def turn_handler(event: AgentTurnStartedEvent):
+                print("Agent started speaking")
 
             # Later, unsubscribe the handler
-            manager.unsubscribe(speech_handler)
+            manager.unsubscribe(turn_handler)
             ```
 
         Args:
@@ -275,13 +266,13 @@ class EventManager:
             ```python
             # Single event type
             @manager.subscribe
-            async def handle_speech_start(event: VADSpeechStartEvent):
-                print(f"Speech started with probability {event.speech_probability}")
+            async def handle_turn_start(event: AgentTurnStartedEvent):
+                print("Agent started speaking")
 
             # Multiple event types using Union
             @manager.subscribe
-            async def handle_audio_events(event: VADSpeechStartEvent | VADSpeechEndEvent):
-                print(f"VAD event: {event.type}")
+            async def handle_turn_events(event: AgentTurnStartedEvent | AgentTurnEndedEvent):
+                print(f"Turn event: {event.type}")
             ```
 
         Args:
@@ -417,23 +408,17 @@ class EventManager:
         Example:
             ```python
             # Send single event
-            manager.send(VADSpeechStartEvent(
-                plugin_name="silero",
-                speech_probability=0.95,
-                activation_threshold=0.5
-            ))
+            manager.send(AgentTurnStartedEvent())
 
             # Send multiple events
             manager.send(
-                VADSpeechStartEvent(plugin_name="silero", speech_probability=0.95),
-                STTTranscriptEvent(plugin_name="deepgram", text="Hello world")
+                AgentTurnStartedEvent(),
+                UserTranscriptEvent(text="Hello world"),
             )
 
             # Send event from dictionary
             manager.send({
-                "type": "plugin.vad_speech_start",
-                "plugin_name": "silero",
-                "speech_probability": 0.95
+                "type": "agent.agent_turn_started",
             })
             ```
 
