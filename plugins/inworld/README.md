@@ -1,7 +1,8 @@
 # Inworld AI Plugin
 
-Inworld AI integration for Vision Agents. Provides both text-to-speech and
-a WebRTC-based Realtime speech-to-speech conversational API.
+Inworld AI integration for Vision Agents. Provides speech-to-text (STT),
+text-to-speech (TTS), and a WebRTC-based Realtime speech-to-speech
+conversational API.
 
 ## Installation
 
@@ -13,6 +14,59 @@ uv add vision-agents-plugins-inworld
 
 Get your API key from the [Inworld Portal](https://studio.inworld.ai/) and set
 `INWORLD_API_KEY` in your environment (or pass `api_key=` explicitly).
+
+## STT
+
+Real-time speech-to-text via Inworld's bidirectional WebSocket streaming API.
+Supports multiple STT backends, built-in turn detection, and voice activity
+detection.
+
+```python
+from vision_agents.plugins import inworld
+
+# Defaults to model_id="inworld/inworld-stt-1", language="en-US"
+stt = inworld.STT()
+
+# Or configure explicitly
+stt = inworld.STT(
+    model_id="inworld/inworld-stt-1",
+    language="en-US",
+    vad_threshold=0.6,
+    min_end_of_turn_silence_when_confident=300,
+    end_of_turn_confidence_threshold=0.6,
+)
+```
+
+### STT options
+
+- `api_key`: Inworld AI API key (default: reads from `INWORLD_API_KEY`)
+- `model_id`: STT model identifier. Any model supported by the Inworld STT API
+  is accepted — `"inworld/inworld-stt-1"` (default), `"assemblyai/universal-streaming-multilingual"`,
+  `"assemblyai/u3-rt-pro"`, `"soniox/stt-rt-v4"`, etc.
+- `language`: BCP-47 language code (default: `"en-US"`)
+- `sample_rate`: Audio sample rate in Hz (default: `16000`)
+- `end_of_turn_confidence_threshold`: Confidence threshold for end-of-turn
+  detection. Range [0.0, 1.0], higher = fewer false positives (default: `0.6`)
+- `vad_threshold`: Voice activity detection sensitivity. Range [0.0, 1.0]
+  (default: server default). Raise to filter out background noise.
+- `min_end_of_turn_silence_when_confident`: Minimum silence in ms before
+  committing an end-of-turn when confidence is high (default: server default).
+  Higher values give the model more context on short utterances.
+
+### Turn detection
+
+Inworld STT provides server-side turn detection via `speechStarted` /
+`speechStopped` events. When using `inworld.STT()`, you do not need a
+separate `TurnDetector` plugin:
+
+```python
+agent = Agent(
+    stt=inworld.STT(),   # turn detection built in
+    tts=inworld.TTS(),
+    llm=my_llm,
+    # no turn_detection= needed
+)
+```
 
 ## TTS
 
@@ -73,12 +127,9 @@ for the full reference.
 
 ### Agent example
 
-A complete example wiring `inworld.TTS()` into a Stream-edge agent with
-Deepgram STT, Gemini LLM, and smart-turn detection lives at
-[`example/inworld_tts_example.py`](example/inworld_tts_example.py). The
-companion [`example/inworld-audio-guide.md`](example/inworld-audio-guide.md)
-is loaded as the agent's system prompt and teaches the LLM how to emit
-TTS-2 steering tags so replies sound expressive out of the box.
+A complete example wiring `inworld.STT()` and `inworld.TTS()` into a
+Stream-edge agent with Gemini LLM lives at
+[`example/inworld_tts_example.py`](example/inworld_tts_example.py).
 
 ## Realtime (WebRTC)
 
