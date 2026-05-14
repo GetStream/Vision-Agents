@@ -96,7 +96,7 @@ class LLMResponseFinal:
 class LLM(abc.ABC):
     provider_name: Optional[str] = None
     # The model identifier this LLM is configured to use.
-    model: Optional[str] = None
+    model: str = ""
 
     def __init__(self):
         super().__init__()
