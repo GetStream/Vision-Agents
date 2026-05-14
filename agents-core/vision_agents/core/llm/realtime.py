@@ -11,6 +11,7 @@ from vision_agents.core.agents.transcript import TranscriptMode
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import OmniLLM
 from vision_agents.core.llm.events import (
+    LLMErrorEvent,
     RealtimeConnectedEvent,
     RealtimeDisconnectedEvent,
 )
@@ -296,8 +297,15 @@ class Realtime(OmniLLM):
             self.metrics.on_realtime_response_completed(provider=self.provider_name)
 
     def _emit_error_event(self, error, context="", user_metadata=None):
-        """Record metrics for a realtime error."""
+        """Record metrics and emit LLMErrorEvent for a model error."""
         self.metrics.on_realtime_error(
             provider=self.provider_name,
             error_type=type(error).__name__ if error is not None else None,
+        )
+        self.events.send(
+            LLMErrorEvent(
+                plugin_name=self.provider_name,
+                error=error,
+                context=context,
+            )
         )
