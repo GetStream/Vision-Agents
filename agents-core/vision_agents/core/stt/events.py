@@ -85,8 +85,6 @@ class STTErrorEvent(PluginBaseEvent):
     error: Optional[Exception] = None
     error_code: Optional[str] = None
     context: Optional[str] = None
-    retry_count: int = 0
-    is_recoverable: bool = True
 
     @property
     def error_message(self) -> str:
