@@ -21,6 +21,7 @@ from . import events
 from .events import (
     TTSConnectedEvent,
     TTSDisconnectedEvent,
+    TTSErrorEvent,
     TTSSynthesisCompleteEvent,
     TTSSynthesisStartEvent,
 )
@@ -119,6 +120,20 @@ class TTS(abc.ABC):
         self.events.send(
             TTSDisconnectedEvent(
                 plugin_name=self.provider_name, reason=reason, clean=clean
+            )
+        )
+
+    def _emit_error_event(self, error: Exception, *, context: str = "") -> None:
+        """Record metric and emit TTSErrorEvent. Caller may also re-raise."""
+        self.metrics.on_tts_error(
+            provider=self.provider_name,
+            error_type=type(error).__name__,
+        )
+        self.events.send(
+            TTSErrorEvent(
+                plugin_name=self.provider_name,
+                error=error,
+                context=context,
             )
         )
 
@@ -308,10 +323,7 @@ class TTS(abc.ABC):
                 character_count=len(text),
             )
         except Exception as e:
-            self.metrics.on_tts_error(
-                provider=self.provider_name,
-                error_type=e.__class__.__name__,
-            )
+            self._emit_error_event(e, context="synthesis")
             raise
 
     async def close(self):

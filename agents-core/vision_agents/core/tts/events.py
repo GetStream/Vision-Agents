@@ -2,21 +2,21 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
-from getstream.video.rtc import PcmData
 from vision_agents.core.events import PluginBaseEvent
 
 
 @dataclass
-class TTSAudioEvent(PluginBaseEvent):
-    """Event emitted when TTS audio data is available."""
+class TTSErrorEvent(PluginBaseEvent):
+    """Event emitted when a TTS error occurs."""
 
-    type: str = field(default="plugin.tts_audio", init=False)
-    data: Optional[PcmData] = None
-    chunk_index: int = 0
-    is_final_chunk: bool = True
-    text_source: Optional[str] = None
-    synthesis_id: Optional[str] = None
-    epoch: int = 0
+    type: str = field(default="plugin.tts_error", init=False)
+    error: Optional[Exception] = None
+    error_code: Optional[str] = None
+    context: Optional[str] = None
+
+    @property
+    def error_message(self) -> str:
+        return str(self.error) if self.error else "Unknown error"
 
 
 @dataclass
