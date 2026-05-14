@@ -288,6 +288,97 @@ class TestEventManager:
         assert not any("Called handler valid_handler" in msg for msg in log_messages)
         assert not any("Called handler another_handler" in msg for msg in log_messages)
 
+    async def test_merge_preserves_in_flight_tasks_from_child(self):
+        """Tasks dispatched on em before merge must remain visible to self.wait()."""
+        manager1 = EventManager()
+        manager2 = EventManager()
+
+        manager2.register(ValidEvent)
+
+        completed = False
+
+        @manager2.subscribe
+        async def slow_handler(event: ValidEvent):
+            nonlocal completed
+            await asyncio.sleep(0.05)
+            completed = True
+
+        manager2.send(ValidEvent(field=1))
+        # Yield so the task is scheduled but not yet finished
+        await asyncio.sleep(0)
+
+        manager1.merge(manager2)
+
+        await manager1.wait(timeout=2.0)
+
+        assert completed is True
+
+    async def test_merge_preserves_handlers_when_event_types_overlap(self):
+        """Overlapping event-type keys must accumulate handlers, not replace them."""
+        manager1 = EventManager()
+        manager2 = EventManager()
+
+        manager1.register(ValidEvent)
+        manager2.register(ValidEvent)
+
+        called: list[str] = []
+
+        @manager1.subscribe
+        async def handler_a(event: ValidEvent):
+            called.append("a")
+
+        @manager2.subscribe
+        async def handler_b(event: ValidEvent):
+            called.append("b")
+
+        manager1.merge(manager2)
+
+        manager1.send(ValidEvent(field=1))
+        await manager1.wait(timeout=2.0)
+
+        assert sorted(called) == ["a", "b"]
+
+    async def test_subscribe_same_handler_twice_runs_once(self):
+        """Subscribing the same function twice on one manager must not double-invoke it."""
+        manager = EventManager()
+        manager.register(ValidEvent)
+
+        called: list[int] = []
+
+        async def handler(event: ValidEvent):
+            called.append(event.field)
+
+        manager.subscribe(handler)
+        manager.subscribe(handler)
+
+        manager.send(ValidEvent(field=7))
+        await manager.wait(timeout=2.0)
+
+        assert called == [7]
+
+    async def test_merge_does_not_duplicate_shared_handler(self):
+        """The same function registered on both managers must run only once after merge."""
+        manager1 = EventManager()
+        manager2 = EventManager()
+
+        manager1.register(ValidEvent)
+        manager2.register(ValidEvent)
+
+        called: list[int] = []
+
+        async def shared_handler(event: ValidEvent):
+            called.append(event.field)
+
+        manager1.subscribe(shared_handler)
+        manager2.subscribe(shared_handler)
+
+        manager1.merge(manager2)
+
+        manager1.send(ValidEvent(field=1))
+        await manager1.wait(timeout=2.0)
+
+        assert called == [1]
+
     async def test_wait_completes_when_handler_tasks_finish(self):
         """wait() should return promptly once all handler tasks are done."""
         manager = EventManager()

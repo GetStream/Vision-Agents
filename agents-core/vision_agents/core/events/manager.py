@@ -125,7 +125,8 @@ class EventManager:
                 Defaults to True.
         """
         self._events: dict[str, type] = {}
-        self._handlers: dict[str, list[typing.Callable]] = {}
+        # Use dict with None keys here to preserve insert order
+        self._handlers: dict[str, dict[typing.Callable, None]] = {}
         self._modules: dict[str, list[type]] = {}
         self._ignore_unknown_events = ignore_unknown_events
         self._closed = False
@@ -182,8 +183,10 @@ class EventManager:
         # Merge all data from the other manager
         self._events.update(em._events)
         self._modules.update(em._modules)
-        self._handlers.update(em._handlers)
+        for event_type, handlers in em._handlers.items():
+            self._handlers.setdefault(event_type, {}).update(handlers)
         self._silent_events.update(em._silent_events)
+        self._handler_tasks.update(em._handler_tasks)
 
         # NOTE: we are merged into one manager and all children
         # reference main one
@@ -252,12 +255,8 @@ class EventManager:
         Args:
             function: The function to unsubscribe from all event types.
         """
-        # NOTE: not the efficient but will delete proper pointer to fucntion
         for funcs in self._handlers.values():
-            try:
-                funcs.remove(function)
-            except ValueError:
-                pass
+            funcs.pop(function, None)
 
     def has_subscribers(
         self, event_class: type[BaseEvent] | type[ExceptionEvent]
@@ -328,7 +327,7 @@ class EventManager:
 
                 if event_type in self._events:
                     subscribed = True
-                    self._handlers.setdefault(event_type, []).append(function)
+                    self._handlers.setdefault(event_type, {})[function] = None
                     module_name = getattr(function, "__module__", "unknown")
                     logger.debug(
                         f"Handler {function.__name__} from {module_name} registered for event {event_type}"
@@ -457,7 +456,7 @@ class EventManager:
             event = self._prepare_event(event)
             if not event:
                 continue
-            for handler in self._handlers.get(event.type, []):
+            for handler in self._handlers.get(event.type, ()):
                 if event.type not in self._silent_events:
                     module_name = getattr(handler, "__module__", "unknown")
                     logger.debug(
