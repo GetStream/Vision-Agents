@@ -155,7 +155,7 @@ class TestEventManager:
             data: str
             type: str = "custom.unregistered"
 
-        # The event will be queued but there are no handlers for its type
+        # send() raises synchronously when the event type is not registered
         with pytest.raises(RuntimeError):
             manager.send(UnregisteredEvent(data="oops"))
 
@@ -203,20 +203,19 @@ class TestEventManager:
         # Merge manager2 into manager1
         manager1.merge(manager2)
 
-        # Verify that manager2's processing task is stopped
-        assert manager2._processing_task is None
+        # After merge, child aliases parent's handler-task set so wait() on
+        # either manager observes tasks created via either send()
+        assert manager2._handler_tasks is manager1._handler_tasks
 
         # Send new events to both managers after merging
         manager1.send(ValidEvent(field=2))
         manager2.send(AnotherEvent(value="merged"))
 
-        # Wait for events to be processed (only manager1's task should be running)
+        # Waiting on either manager should drain both
         await manager1.wait()
 
-        # After merging, both events should be processed by manager1's task
-        # (manager2's processing task should be stopped)
+        # After merging, both events should be processed via the shared handler set
         assert len(all_events_processed) == 2
-        # Both events should be processed by manager1's task
         assert all_events_processed[0][0] == "manager1"  # ValidEvent
         assert isinstance(all_events_processed[0][1], ValidEvent)
         assert all_events_processed[0][1].field == 2
@@ -226,8 +225,8 @@ class TestEventManager:
         assert isinstance(all_events_processed[1][1], AnotherEvent)
         assert all_events_processed[1][1].value == "merged"
 
-        # Verify that manager2 can still send events but they go to manager1's queue
-        # and are processed by manager1's task
+        # Verify that manager2 can still send events and they are dispatched via
+        # the shared handler map
         all_events_processed.clear()
         manager2.send(AnotherEvent(value="from_manager2"))
         await manager1.wait()
@@ -341,6 +340,27 @@ class TestEventManager:
         assert handler_cancelled.is_set()
         assert len(manager._handler_tasks) == 0
         assert len(manager._handlers) == 0
+
+    async def test_send_after_shutdown_is_dropped(self):
+        """send() after shutdown() must drop the event and not invoke handlers."""
+        manager = EventManager()
+        manager.register(ValidEvent)
+
+        called = False
+
+        @manager.subscribe
+        async def on_event(event: ValidEvent):
+            nonlocal called
+            called = True
+
+        await manager.shutdown()
+
+        manager.send(ValidEvent(field=1))
+        # Yield once so any (incorrectly) scheduled task would get to run
+        await asyncio.sleep(0)
+
+        assert called is False
+        assert len(manager._handler_tasks) == 0
 
     async def test_handler_tasks_removes_ref_when_done(self):
         """

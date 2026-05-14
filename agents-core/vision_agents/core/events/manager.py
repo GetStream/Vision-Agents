@@ -1,9 +1,8 @@
 import asyncio
-import collections
 import logging
 import types
 import typing
-from typing import Any, Deque, Dict, Optional, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
 
 from ..utils.utils import cancel_and_wait
 from .base import BaseEvent, ExceptionEvent
@@ -51,8 +50,8 @@ class EventManager:
     A comprehensive event management system for handling asynchronous event-driven communication.
 
     The EventManager provides a centralized way to register events, subscribe handlers,
-    and process events asynchronously. It supports event queuing, error handling,
-    and automatic exception event generation.
+    and process events asynchronously. Each `send()` call dispatches the event
+    immediately by creating one `asyncio.Task` per matching handler.
 
     Features:
     - Event registration and validation
@@ -60,7 +59,6 @@ class EventManager:
     - Asynchronous event processing
     - Error handling with automatic exception events
     - Support for Union types in handlers
-    - Event queuing and batch processing
 
     Example:
         ```python
@@ -126,21 +124,15 @@ class EventManager:
             ignore_unknown_events (bool): If True, unknown events are ignored rather than raising errors.
                 Defaults to True.
         """
-        self._queue: Deque[Any] = collections.deque([])
-        self._events: Dict[str, type] = {}
-        self._handlers: Dict[str, typing.List[typing.Callable]] = {}
-        self._modules: Dict[str, typing.List[type]] = {}
+        self._events: dict[str, type] = {}
+        self._handlers: dict[str, list[typing.Callable]] = {}
+        self._modules: dict[str, list[type]] = {}
         self._ignore_unknown_events = ignore_unknown_events
-        self._processing_task: Optional[asyncio.Task[Any]] = None
-        self._shutdown = False
+        self._closed = False
         self._silent_events: set[str] = set()
         self._handler_tasks: set[asyncio.Task[Any]] = set()
-        self._received_event = asyncio.Event()
 
         self.register(ExceptionEvent)
-
-        # Start background processing task
-        self._start_processing_task()
 
     def register(
         self,
@@ -187,26 +179,19 @@ class EventManager:
                 )
 
     def merge(self, em: "EventManager"):
-        # Stop the processing task in the merged manager
-        em.stop()
-
         # Merge all data from the other manager
         self._events.update(em._events)
         self._modules.update(em._modules)
         self._handlers.update(em._handlers)
         self._silent_events.update(em._silent_events)
-        for event in em._queue:
-            self._queue.append(event)
 
         # NOTE: we are merged into one manager and all children
         # reference main one
         em._events = self._events
         em._modules = self._modules
         em._handlers = self._handlers
-        em._queue = self._queue
         em._silent_events = self._silent_events
-        em._processing_task = None  # Clear the stopped task reference
-        em._received_event = self._received_event
+        em._handler_tasks = self._handler_tasks
 
     def register_events_from_module(
         self, module, prefix="", ignore_not_compatible=True
@@ -246,22 +231,6 @@ class EventManager:
             ):
                 self.register(class_, ignore_not_compatible=ignore_not_compatible)
                 self._modules.setdefault(module.__name__, []).append(class_)
-
-    def _generate_import_file(self):
-        import_file = []
-        for module_name, events in self._modules.items():
-            import_file.append(f"from {module_name} import (")
-            for event in events:
-                import_file.append(f"    {event.__name__},")
-            import_file.append(")")
-        import_file.append("")
-        import_file.append("__all__ = [")
-        for module_name, events in self._modules.items():
-            for event in events:
-                import_file.append(f'    "{event.__name__}",')
-        import_file.append("]")
-        import_file.append("")
-        return import_file
 
     def unsubscribe(self, function):
         """
@@ -341,7 +310,7 @@ class EventManager:
 
         for name, event_class in params_annotations.items():
             origin = get_origin(event_class)
-            events: typing.List[type] = []
+            events: list[type] = []
 
             if origin is Union or isinstance(event_class, types.UnionType):
                 events = list(get_args(event_class))
@@ -424,6 +393,7 @@ class EventManager:
                 "Use self.register(EventClass) to register it. "
                 "Or self.register_events_from_module(module) to register all events from a module."
             )
+            return
         else:
             raise RuntimeError(f"Event not registered {event}")
 
@@ -440,9 +410,10 @@ class EventManager:
         """
         Send one or more events for processing.
 
-        Events are added to the queue and will be processed by the background
-        processing task. If an event handler raises an exception, an ExceptionEvent
-        is automatically created and queued for processing.
+        Events are dispatched immediately: one asyncio.Task is created per
+        matching handler. If a handler raises an exception, an ExceptionEvent
+        is automatically dispatched in turn. Sends after ``shutdown()`` are
+        dropped silently.
 
         Example:
             ```python
@@ -475,61 +446,47 @@ class EventManager:
         Raises:
             RuntimeError: If event type is not registered and ignore_unknown_events is False
         """
+        if self._closed:
+            logger.debug(
+                "send() called after shutdown; dropping %d event(s)", len(events)
+            )
+            return
+
+        loop = asyncio.get_running_loop()
         for event in events:
             event = self._prepare_event(event)
-            if event:
-                self._queue.append(event)
-
-        self._received_event.set()
+            if not event:
+                continue
+            for handler in self._handlers.get(event.type, []):
+                if event.type not in self._silent_events:
+                    module_name = getattr(handler, "__module__", "unknown")
+                    logger.debug(
+                        f"Called handler {handler.__name__} from {module_name} for event {event.type}"
+                    )
+                handler_task = loop.create_task(self._run_handler(handler, event))
+                # Store references to the tasks to prevent GC from destroying them
+                # and clean them up when they are done
+                self._handler_tasks.add(handler_task)
+                handler_task.add_done_callback(self._handler_tasks.discard)
 
     async def wait(self, timeout: float = 10.0):
         """
-        Wait for all queued events to be processed.
+        Wait for all dispatched handler tasks to complete.
 
-        This is useful in tests to ensure events are processed before assertions.
+        Tasks created by handlers themselves (e.g. follow-up sends) are awaited
+        too — the loop continues until ``_handler_tasks`` is empty or the
+        timeout elapses.
 
         Args:
             timeout: Maximum time to wait for processing to complete
         """
-        start_time = asyncio.get_event_loop().time()
-        while (asyncio.get_event_loop().time() - start_time) < timeout:
-            if not self._queue and all(t.done() for t in self._handler_tasks):
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while self._handler_tasks:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
                 break
-            await asyncio.sleep(0.01)
-
-    def _start_processing_task(self):
-        """Start the background event processing task."""
-        if self._processing_task and not self._processing_task.done():
-            return
-
-        loop = asyncio.get_running_loop()
-        self._processing_task = loop.create_task(self._process_events_loop())
-
-    async def _process_events_loop(self):
-        """
-        Background task that continuously processes events from the queue.
-
-        This task runs until shutdown is requested and processes all events
-        in the queue. It's shielded from cancellation to ensure all events
-        are processed before shutdown.
-        """
-        cancelled_exc = None
-        while True:
-            if self._queue:
-                event = self._queue.popleft()
-                try:
-                    await self._process_single_event(event)
-                except asyncio.CancelledError as exc:
-                    cancelled_exc = exc
-                    logger.debug(
-                        f"Event processing task was cancelled, processing remaining events, {len(self._queue)}"
-                    )
-                    await self._process_single_event(event)
-            elif cancelled_exc:
-                raise cancelled_exc
-            else:
-                await self._received_event.wait()
-                self._received_event.clear()
+            await asyncio.wait(list(self._handler_tasks), timeout=remaining)
 
     async def _run_handler(self, handler, event):
         try:
@@ -541,38 +498,18 @@ class EventManager:
                 f"Error calling handler {handler.__name__} from {module_name} for event {event.type}"
             )
 
-    async def _process_single_event(self, event):
-        """Process a single event."""
-        for handler in self._handlers.get(event.type, []):
-            module_name = getattr(handler, "__module__", "unknown")
-            if event.type not in self._silent_events:
-                logger.debug(
-                    f"Called handler {handler.__name__} from {module_name} for event {event.type}"
-                )
-
-            loop = asyncio.get_running_loop()
-            handler_task = loop.create_task(self._run_handler(handler, event))
-            # Store references to the tasks to prevent GC from destroying them
-            # and clean them up when they are done
-            self._handler_tasks.add(handler_task)
-            handler_task.add_done_callback(self._handler_tasks.discard)
-
-    def stop(self):
-        if self._processing_task is not None:
-            self._processing_task.cancel()
-            self._processing_task = None
-
     async def shutdown(self) -> None:
         """Stop processing and release all references to prevent memory leaks.
 
-        Unlike ``stop()`` (which only cancels the processing task), this method
-        also cancels pending handler tasks and clears handler registrations.
-        This breaks the closure reference chain that keeps the Agent object
-        graph (~1-5MB per session) alive after the session ends.
+        Cancels pending handler tasks and clears handler registrations. This
+        breaks the closure reference chain that keeps the Agent object graph
+        (~1-5MB per session) alive after the session ends.
+
+        After ``shutdown()``, calls to ``send()`` are dropped silently.
 
         Call this when the agent session is fully done and will not be reused.
         """
-        self.stop()
+        self._closed = True
         # Get the remaining handler tasks and cancel them
         handler_tasks = [t for t in self._handler_tasks if not t.done()]
         if handler_tasks:
@@ -580,4 +517,3 @@ class EventManager:
         # Clear the state
         self._handler_tasks.clear()
         self._handlers.clear()
-        self._queue.clear()
