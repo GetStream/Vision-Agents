@@ -21,7 +21,6 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.core.stt.events import STTErrorEvent, STTTranscriptEvent
 from vision_agents.plugins import getstream, openai, wizper
 
 logger = logging.getLogger(__name__)
@@ -38,25 +37,6 @@ async def create_agent(**kwargs) -> Agent:
         llm=openai.LLM(model="gpt-4o-mini"),
         stt=wizper.STT(target_language="fr"),  # Translate to French
     )
-
-    @agent.subscribe
-    async def handle_transcript(event: STTTranscriptEvent):
-        user_info = "unknown"
-        if event.participant:
-            user = event.participant
-            user_info = user.user_id if user.user_id else str(user)
-
-        logger.info(f"[{event.timestamp}] {user_info}: {event.text}")
-        if event.confidence:
-            logger.info(f"    confidence: {event.confidence:.2%}")
-        if event.processing_time_ms:
-            logger.info(f"    processing time: {event.processing_time_ms:.1f}ms")
-
-    @agent.subscribe
-    async def handle_stt_error(event: STTErrorEvent):
-        logger.error(f"STT Error: {event.error_message}")
-        if event.context:
-            logger.error(f"    context: {event.context}")
 
     return agent
 
