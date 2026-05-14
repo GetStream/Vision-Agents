@@ -150,7 +150,7 @@ class Realtime(realtime.Realtime):
         waits for the server's ``session.updated`` confirmation before
         returning so callers can trust the session is fully configured.
 
-        Emits ``RealtimeErrorEvent`` on failure before re-raising so subscribers
+        Emits ``LLMErrorEvent`` on failure before re-raising so subscribers
         are notified even if the caller does not catch.
         """
         self._session_updated.clear()
