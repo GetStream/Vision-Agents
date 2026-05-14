@@ -1,16 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from vision_agents.core.edge.call import Call
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.events import BaseEvent, PluginBaseEvent
-
-
-@dataclass
-class AgentInitEvent(BaseEvent):
-    """Event emitted when Agent class initialized."""
-
-    type: str = field(default="agent.init", init=False)
+from vision_agents.core.events import BaseEvent
 
 
 @dataclass
@@ -34,51 +27,6 @@ class AgentLeftCallEvent(BaseEvent):
 
     type: str = field(default="agent.left_call", init=False)
     call: Call = field(kw_only=True)
-
-
-@dataclass
-class AgentSayEvent(PluginBaseEvent):
-    """Event emitted when the agent wants to say something."""
-
-    type: str = field(default="agent.say", init=False)
-    text: str = ""
-    metadata: Optional[Dict[str, Any]] = None
-
-    def __post_init__(self):
-        if not self.text:
-            raise ValueError("Agent say text cannot be empty")
-
-
-@dataclass
-class AgentSayStartedEvent(PluginBaseEvent):
-    """Event emitted when agent speech synthesis starts."""
-
-    type: str = field(default="agent.say_started", init=False)
-    text: str = ""
-    synthesis_id: Optional[str] = None
-
-
-@dataclass
-class AgentSayCompletedEvent(PluginBaseEvent):
-    """Event emitted when agent speech synthesis completes."""
-
-    type: str = field(default="agent.say_completed", init=False)
-    text: str = ""
-    synthesis_id: Optional[str] = None
-    duration_ms: Optional[float] = None
-
-
-@dataclass
-class AgentSayErrorEvent(PluginBaseEvent):
-    """Event emitted when agent speech synthesis encounters an error."""
-
-    type: str = field(default="agent.say_error", init=False)
-    text: str = ""
-    error: Optional[Exception] = None
-
-    @property
-    def error_message(self) -> str:
-        return str(self.error) if self.error else "Unknown error"
 
 
 @dataclass
