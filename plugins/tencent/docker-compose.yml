@@ -1,14 +1,40 @@
 services:
   tencent-agent:
     build:
-      context: ../../..
-      dockerfile: vision-agents/plugins/tencent/Dockerfile
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - test-client
     volumes:
       - ../..:/app
-      - ../../../tencent_rtc_sdk:/tencent_rtc_sdk
+      # Mask the host's .venv and .uv-cache so the linux container doesn't
+      # overwrite macOS-arch binaries on the host bind mount.
+      - /app/.venv
+      - /app/.uv-cache
     env_file:
       - path: ../../.env
         required: false
     environment:
       - PYTHONUNBUFFERED=1
-    command: ["uv", "run", "python", "plugins/tencent/example/tencent_edge_example.py", "run"]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        uv sync --no-dev \
+          --package vision-agents-plugins-tencent \
+          --package vision-agents-plugins-gemini \
+          --package vision-agents-plugins-elevenlabs \
+          --package vision-agents-plugins-cartesia && \
+        uv run --no-sync --package vision-agents-plugins-tencent \
+          python plugins/tencent/example/tencent_edge_example.py run
+
+  # Serves the browser test client on http://localhost:8000/test_client.html.
+  # Start with `docker compose up test-client -d` alongside the agent.
+  test-client:
+    image: python:3.12-slim
+    working_dir: /srv
+    volumes:
+      - ./example:/srv:ro
+    ports:
+      - "8000:8000"
+    command: ["python", "-m", "http.server", "8000"]

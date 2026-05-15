@@ -42,6 +42,7 @@ members = [
     "vision-agents-plugins-roboflow",
     "vision-agents-plugins-sarvam",
     "vision-agents-plugins-smart-turn",
+    "vision-agents-plugins-tencent",
     "vision-agents-plugins-turbopuffer",
     "vision-agents-plugins-twilio",
     "vision-agents-plugins-ultralytics",
@@ -3099,6 +3100,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/cd/de45b239ea3bdf626f982a00c14bfcf2e12d261c510ba7db62c5969a27cd/librt-0.9.0-cp314-cp314t-win32.whl", hash = "sha256:a9c63e04d003bc0fb6a03b348018b9a3002f98268200e22cc80f146beac5dc40", size = 52453, upload-time = "2026-04-09T16:06:05.229Z" },
     { url = "https://files.pythonhosted.org/packages/7f/f9/bfb32ae428aa75c0c533915622176f0a17d6da7b72b5a3c6363685914f70/librt-0.9.0-cp314-cp314t-win_amd64.whl", hash = "sha256:f162af66a2ed3f7d1d161a82ca584efd15acd9c1cff190a373458c32f7d42118", size = 60044, upload-time = "2026-04-09T16:06:06.398Z" },
     { url = "https://files.pythonhosted.org/packages/aa/47/7d70414bcdbb3bc1f458a8d10558f00bbfdb24e5a11740fc8197e12c3255/librt-0.9.0-cp314-cp314t-win_arm64.whl", hash = "sha256:a4b25c6c25cac5d0d9d6d6da855195b254e0021e513e0249f0e3b444dc6e0e61", size = 50009, upload-time = "2026-04-09T16:06:07.995Z" },
+]
+
+[[package]]
+name = "liteav"
+version = "13.2.0.24212"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/75/71/1d8037a1b4d14db27d4b23b8e571b2572551ab1f9fb99c94e188a515cbdf/liteav-13.2.0.24212.tar.gz", hash = "sha256:9c0f3012792700f71ccfcb99fe315d72cfa3d85cb47d19081e8454bf694c4566", size = 12369221, upload-time = "2026-05-08T06:36:01.837Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/e7/b42db4aa5d2cee917fb098a3fcce41ad84b1fa0b7e64e29fc834d0f4205d/liteav-13.2.0.24212-cp312-cp312-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:66ab683e2fc9589c3a33fb5cdee70aaab32eaa80db241c0dd9635cec9af37b44", size = 8988936, upload-time = "2026-05-08T06:35:09.632Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/5f/fbc5c3416afd26024741c9a7ca9d18e928bf6c19e7502840ce1e8404c9ce/liteav-13.2.0.24212-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:cd3db802d79f3898d819fe16135ce13bda9164131d92463623ea84bd26b26ce7", size = 10782008, upload-time = "2026-05-08T06:35:13.912Z" },
+    { url = "https://files.pythonhosted.org/packages/37/83/ddb907ad33cc2b5237c9e6098ec6788b2c12f2dcbea248cdc51c85136530/liteav-13.2.0.24212-cp313-cp313-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:73ada9049f3e451df85a175ef9e5d81d18c26424075b5da2e257136b7f3b73b9", size = 8991056, upload-time = "2026-05-08T06:35:17.381Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/ba/7f7e69f34a841f8ffeb6d417700ef1e827e7d51d87a03fc40deb9b054c7e/liteav-13.2.0.24212-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4609ce1ad5b3b3925c1c2d4a15a4bf1e9cb20fe9e91877ae2a71fb02e20c734b", size = 10784507, upload-time = "2026-05-08T06:35:21.574Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/6e/a39977529aa87e7df907737213481d861f86357a49a306ad731fabcd8e83/liteav-13.2.0.24212-cp314-cp314-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:054d3ccd5f0c15b19dfeeba00c5ff59ef01fe98ee25b1b6ce44e37b3cd6f1b66", size = 8981041, upload-time = "2026-05-08T06:35:25.557Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/bf/4535011e0500a089e082c6e9bff05903c25914b1d5ad58a2e4fd31a20dde/liteav-13.2.0.24212-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:39460352f530a141ef33a001f84d9fe4673cf83d193918fcd4f92fd755c8749a", size = 10777815, upload-time = "2026-05-08T06:35:29.213Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/19/8d55528ea213f02167802f2abede09f7fdcb00581a3925dd5205a8f8802b/liteav-13.2.0.24212-cp314-cp314t-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ae82c673bf035a21616be2eb97708fadec3f883f296f023ada5956133ca4143b", size = 9013976, upload-time = "2026-05-08T06:35:33.373Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/92/5c155651c1b39502182cae68ab13e9766721e0f519f61797ba8319de6e62/liteav-13.2.0.24212-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c552a798907f0bfba6b166a5c6cb297ec4cf6e3e5879b1d200276db6753f30ca", size = 10807706, upload-time = "2026-05-08T06:35:37.554Z" },
 ]
 
 [[package]]
@@ -6662,6 +6679,12 @@ wheels = [
 ]
 
 [[package]]
+name = "tls-sig-api-v2"
+version = "1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/a1/18028516d9e31d50c11b96323586b57906b08dddf0ec4a3fc3e2293531ac/tls-sig-api-v2-1.1.tar.gz", hash = "sha256:5b153a4e739d2fd0c931daf371292c97472f59b4308f3220a85950c3c90f4377", size = 2328, upload-time = "2019-06-20T07:17:33.962Z" }
+
+[[package]]
 name = "tokenizers"
 version = "0.22.2"
 source = { registry = "https://pypi.org/simple" }
@@ -8290,6 +8313,34 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "onnxruntime", specifier = ">=1.24.3,<2" },
     { name = "transformers", specifier = ">=4.57.6,<5" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-tencent"
+source = { editable = "plugins/tencent" }
+dependencies = [
+    { name = "liteav", marker = "sys_platform == 'linux'" },
+    { name = "tls-sig-api-v2" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "liteav", marker = "sys_platform == 'linux'", specifier = ">=13.2" },
+    { name = "tls-sig-api-v2" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

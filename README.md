@@ -93,6 +93,8 @@ agent = Agent(
 
 **Turn Detection:** [Vogent](https://visionagents.ai/integrations/vogent) · [Smart Turn](https://visionagents.ai/integrations/smart-turn)
 
+**Edge / Transports:** [Stream](https://getstream.io/video/) · [Tencent TRTC](https://github.com/GetStream/Vision-Agents/tree/main/plugins/tencent) (Linux-only)
+
 **Other:** [Twilio](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) · [TurboPuffer](https://visionagents.ai/guides/rag)
 
 ## Documentation

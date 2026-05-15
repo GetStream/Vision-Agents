@@ -8,11 +8,14 @@ import threading
 import time
 from collections import deque
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 import av
 from getstream.video.rtc.track_util import PcmData
-from vision_agents.plugins.tencent.video_utils import av_frame_to_yuv420p, yuv420p_to_av_frame
+from vision_agents.plugins.tencent.video_utils import (
+    av_frame_to_yuv420p,
+    yuv420p_to_av_frame,
+)
 
 if TYPE_CHECKING:
     import aiortc
@@ -103,7 +106,7 @@ class TencentAudioTrack:
                 self._remainder.clear()
             offset = 0
             while offset + BYTES_PER_20MS <= len(data):
-                self._queue.append(data[offset:offset + BYTES_PER_20MS])
+                self._queue.append(data[offset : offset + BYTES_PER_20MS])
                 offset += BYTES_PER_20MS
             if offset < len(data):
                 self._remainder.extend(data[offset:])
@@ -129,9 +132,8 @@ class TencentAudioTrack:
                 self._remainder
                 and (time.monotonic() - self._last_write_at) > self._TAIL_FLUSH_S
             ):
-                padded = (
-                    bytes(self._remainder)
-                    + b"\x00" * (BYTES_PER_20MS - len(self._remainder))
+                padded = bytes(self._remainder) + b"\x00" * (
+                    BYTES_PER_20MS - len(self._remainder)
                 )
                 self._remainder.clear()
                 return padded
@@ -286,7 +288,7 @@ class TencentOutgoingVideoTrack:
         next_send = loop.time()
         while self._running and self._cloud is not None:
             try:
-                frame = await self._source.recv()
+                frame = cast(av.VideoFrame, await self._source.recv())
             except Exception:
                 logger.exception("Outgoing video recv failed")
                 break

@@ -97,6 +97,13 @@ Common issues. If you have local changes (or ran build before you had the tag) y
   Caused by: Upload failed with status code 400 Bad Request. Server says: 400 The use of local versions in <Version('0.0.16.dev0+gc7563254f.d20251008')> is not allowed. See https://packaging.python.org/specifications/core-metadata for more information.
 ```
 
+## Edge transports
+
+The agent's RTC connection is provided by an `EdgeTransport` plugin. Supported transports:
+
+- [`getstream`](plugins/getstream) — Stream's global edge network (default for all examples; cross-platform).
+- [`tencent`](plugins/tencent) — Tencent TRTC via the LiteAV SDK. **Linux-only** (manylinux wheels of `liteav`); on macOS use the bundled Docker setup.
+
 ## Architecture
 
 To see how the agent work open up agents.py
@@ -507,7 +514,7 @@ For example:
 In order to standardise how these resources are loaded and to make it performant, the framework provides a special ABC
 `vision_agents.core.warmup.Warmable`.
 
-To use it, simply subclass it and define the required methods.  
+To use it, simply subclass it and define the required methods.
 Note that `Warmable` supports generics to leverage type checking.
 
 **Example:**

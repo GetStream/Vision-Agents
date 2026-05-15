@@ -1,7 +1,8 @@
 """Tencent TRTC EdgeTransport implementation.
 
-Requires the liteav Python module from the Tencent RTC SDK to be built and
-installed (see SDK python/python_x86_64). LD_LIBRARY_PATH must point to libliteav.so.
+Requires the `liteav` Python package from PyPI, which only ships manylinux
+wheels (x86_64 / aarch64). On macOS/Windows the import will fail and
+``tencent.Edge()`` raises at construction time.
 """
 
 import asyncio
@@ -16,6 +17,7 @@ import TLSSigAPIv2
 from dotenv import load_dotenv
 from getstream.video.rtc import AudioStreamTrack
 from getstream.video.rtc.track_util import AudioFormat, PcmData
+from vision_agents.core.agents.conversation import Conversation, InMemoryConversation
 from vision_agents.core.edge import Call, EdgeTransport, events
 from vision_agents.core.edge.types import Connection, Participant, TrackType, User
 from vision_agents.plugins.tencent.tracks import (
@@ -51,7 +53,6 @@ try:
         TRTC_ROLE_ANCHOR,
         TRTC_SCENE_RECORD,
         VideoEncodeParams,
-        cdata,
     )
 except ImportError as e:
     _LITEAV_IMPORT_ERROR = e
@@ -71,9 +72,10 @@ except ImportError:
 def _require_liteav() -> None:
     if _LITEAV_IMPORT_ERROR is not None:
         raise RuntimeError(
-            "Tencent TRTC edge requires the liteav Python module from the Tencent RTC SDK. "
-            "Build it from the SDK's python/python_x86_64 directory (./build.sh) and set "
-            "LD_LIBRARY_PATH to the directory containing libliteav.so."
+            "Tencent TRTC edge requires the `liteav` package, which ships only "
+            "manylinux wheels and cannot be imported on this platform. Install "
+            "on Linux (x86_64 or aarch64) with `pip install liteav` or run the "
+            "agent inside a Linux container (see plugins/tencent/README.md)."
         ) from _LITEAV_IMPORT_ERROR
 
 
@@ -105,22 +107,9 @@ def _resolve_room_scene() -> tuple[int, str]:
 
 
 def _extract_pcm(frame: Any) -> bytes:
-    """Extract PCM bytes from a SWIG AudioFrame using the GIL-safe cdata path.
-
-    AudioFrame_getdata / PcmData call PyBytes_FromStringAndSize inside
-    a SWIG_PYTHON_THREAD_BEGIN_ALLOW block (without the GIL).  Under
-    multi-threading this corrupts CPython's allocator and segfaults.
-
-    cdata() avoids the issue: it copies the raw pointer into a C struct
-    without the GIL, then creates the Python bytes object *with* the GIL.
-    """
-    sz = frame.size()
-    if sz <= 0:
+    if frame.size <= 0:
         return b""
-    raw = cdata(frame.data(), sz)
-    if isinstance(raw, bytes):
-        return raw
-    return raw.encode("utf-8", "surrogateescape")
+    return frame.data
 
 
 class TencentCall(Call):
@@ -256,9 +245,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
         self._audio_track = None
         self._outgoing_video_track = None
         self._incoming_video_tracks.clear()
-        if self._delegate is not None:
-            self._delegate.__disown__()
-            self._delegate = None
+        self._delegate = None
         self._connection = None
         self._call = None
 
@@ -313,7 +300,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
             AUDIO_OBTAIN_METHOD_CALLBACK
         )
         room_param.audio_obtain_params.output_sample_rate = SAMPLE_RATE
-        room_param.audio_obtain_params.output_channles = CHANNELS
+        room_param.audio_obtain_params.output_channels = CHANNELS
         room_param.audio_obtain_params.output_frame_length_ms = FRAME_MS
         room_param.audio_obtain_params.output_audio_codec_type = AUDIO_CODEC_TYPE_PCM
 
@@ -336,8 +323,8 @@ class TencentEdge(EdgeTransport[TencentCall]):
 
     async def create_conversation(
         self, call: Call, user: User, instructions: str
-    ) -> None:
-        pass
+    ) -> Conversation:
+        return InMemoryConversation(messages=[], instructions=instructions)
 
     def add_track_subscriber(self, track_id: str) -> Optional[Any]:
         return self._incoming_video_tracks.get(track_id)
@@ -351,9 +338,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
     def _emit_audio_received(self, user_id: str, pcm_bytes: bytes) -> None:
         if not self._loop or not pcm_bytes:
             return
-        self._loop.call_soon_threadsafe(
-            self._process_audio_on_loop, user_id, pcm_bytes
-        )
+        self._loop.call_soon_threadsafe(self._process_audio_on_loop, user_id, pcm_bytes)
 
     def _process_audio_on_loop(self, user_id: str, pcm_bytes: bytes) -> None:
         pcm = PcmData.from_bytes(
@@ -574,18 +559,10 @@ if TRTCCloudDelegate is not None:
                     return
                 width = frame.width
                 height = frame.height
-                if width <= 0 or height <= 0:
+                if width <= 0 or height <= 0 or frame.size <= 0:
                     return
-                sz = frame.size()
-                if sz <= 0:
-                    return
-                raw = cdata(frame.data(), sz)
-                if isinstance(raw, bytes):
-                    yuv_bytes = raw
-                else:
-                    yuv_bytes = raw.encode("utf-8", "surrogateescape")
                 self._edge._push_video_frame(
-                    user_id, yuv_bytes, width, height, frame.pts
+                    user_id, frame.data, width, height, frame.pts
                 )
             except BaseException:
                 logger.exception("OnRemotePixelFrameReceived callback failed")
