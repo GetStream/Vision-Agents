@@ -79,6 +79,7 @@ local = ["vision-agents-plugins-local"]
 anam = ["vision-agents-plugins-anam"]
 sarvam = ["vision-agents-plugins-sarvam"]
 liveavatar = ["vision-agents-plugins-liveavatar"]
+tencent = ["vision-agents-plugins-tencent"]
 
 all-plugins = [
     "vision-agents-plugins-anthropic",
@@ -117,6 +118,7 @@ all-plugins = [
     "vision-agents-plugins-anam",
     "vision-agents-plugins-sarvam",
     "vision-agents-plugins-liveavatar",
+    "vision-agents-plugins-tencent",
 ]
 
 [tool.hatch.metadata]
