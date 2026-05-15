@@ -142,3 +142,12 @@ class TestAVSynchronizer:
         sync.video_track.stop()
         with pytest.raises(VideoTrackClosedError):
             await sync.video_track.recv()
+
+    @pytest.mark.parametrize("fps,expected_delta", [(60, 1500), (30, 3000), (15, 6000)])
+    async def test_next_timestamp_paces_at_configured_fps(
+        self, fps: int, expected_delta: int
+    ):
+        sync = AVSynchronizer(width=640, height=480, fps=fps, max_queue_size=10)
+        pts1, _ = await sync.video_track.next_timestamp()
+        pts2, _ = await sync.video_track.next_timestamp()
+        assert pts2 - pts1 == expected_delta

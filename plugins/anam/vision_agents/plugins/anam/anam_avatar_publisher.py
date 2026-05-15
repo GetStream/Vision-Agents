@@ -3,6 +3,8 @@ import contextlib
 import logging
 import os
 
+import av
+import numpy as np
 from anam import (
     AgentAudioInputConfig,
     AgentAudioInputStream,
@@ -37,6 +39,27 @@ def _task_done_callback(task: asyncio.Task[None]) -> None:
         )
 
 
+def _resize_frame(frame: av.VideoFrame, width: int, height: int) -> av.VideoFrame:
+    """Resize to width x height preserving aspect ratio, padding remainder with black.
+
+    Matched-aspect fast path stays in the source pixel format (yuv420p from WebRTC),
+    skipping color conversion. Letterbox path converts to RGB for numpy padding.
+    """
+    scale = min(width / frame.width, height / frame.height)
+    inner_w = max(2, int(frame.width * scale)) & ~1
+    inner_h = max(2, int(frame.height * scale)) & ~1
+
+    if inner_w == width and inner_h == height:
+        return frame.reformat(width=width, height=height)
+
+    rgb = frame.reformat(width=inner_w, height=inner_h, format="rgb24")
+    out = np.zeros((height, width, 3), dtype=np.uint8)
+    y0 = (height - inner_h) // 2
+    x0 = (width - inner_w) // 2
+    out[y0 : y0 + inner_h, x0 : x0 + inner_w] = rgb.to_ndarray()
+    return av.VideoFrame.from_ndarray(out, format="rgb24")
+
+
 class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
     """Anam avatar video and audio publisher.
 
@@ -57,8 +80,10 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         client_options: ClientOptions | None = None,
         connect_timeout: float | None = None,
         session_ready_timeout: float | None = None,
-        width: int = 1920,
-        height: int = 1080,
+        width: int = 720,
+        height: int = 480,
+        fps: int = 30,
+        buffer_seconds: float = 1.0,
     ):
         """Initialize the Anam avatar publisher.
 
@@ -72,6 +97,9 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
                 None means wait indefinitely.
             width: Output video width in pixels.
             height: Output video height in pixels.
+            fps: Output video frame rate. Must be > 0.
+            buffer_seconds: Max video buffer depth in seconds. Caps how many frames
+                can be queued ahead of audio playback. Must be > 0.
         """
         api_key = api_key or os.getenv("ANAM_API_KEY")
         if not api_key:
@@ -79,6 +107,10 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         avatar_id = avatar_id or os.getenv("ANAM_AVATAR_ID")
         if not avatar_id:
             raise ValueError("Anam avatar ID not provided")
+        if buffer_seconds <= 0:
+            raise ValueError("buffer_seconds must be > 0")
+        if fps <= 0:
+            raise ValueError("fps must be > 0")
 
         self._client = AnamClient(
             api_key=api_key,
@@ -95,8 +127,13 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
         self._client.on(AnamEvent.CONNECTION_CLOSED)(self._on_connection_closed)
         self._client.on(AnamEvent.SESSION_READY)(self._on_session_ready)
 
+        self._width = width
+        self._height = height
         self._sync = AVSynchronizer(
-            width=width, height=height, fps=30, max_queue_size=30 * 20
+            width=width,
+            height=height,
+            fps=fps,
+            max_queue_size=int(fps * buffer_seconds),
         )
 
         self._connect_timeout = connect_timeout
@@ -172,6 +209,10 @@ class AnamAvatarPublisher(AudioPublisher, VideoPublisher):
     async def _video_receiver(self) -> None:
         async for frame in self._session.video_frames():
             try:
+                if frame.width != self._width or frame.height != self._height:
+                    frame = await asyncio.to_thread(
+                        _resize_frame, frame, self._width, self._height
+                    )
                 await self._sync.write_video(frame)
             except Exception:
                 logger.warning("Failed to write video frame", exc_info=True)

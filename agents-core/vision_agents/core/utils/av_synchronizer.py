@@ -1,9 +1,12 @@
 import asyncio
 import collections
+import fractions
 import logging
+import time
 
 import av
 import av.frame
+from aiortc.mediastreams import MediaStreamError
 from getstream.video.rtc.audio_track import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.utils.video_track import (
@@ -15,6 +18,11 @@ from vision_agents.core.utils.video_utils import ensure_even_dimensions
 __all__ = ["AVSynchronizer"]
 
 logger = logging.getLogger(__name__)
+
+# aiortc hardcodes 30fps via its module-level VIDEO_PTIME; _SyncedVideoTrack
+# overrides next_timestamp() to honor its configured fps using these constants.
+_VIDEO_CLOCK_RATE = 90000
+_VIDEO_TIME_BASE = fractions.Fraction(1, _VIDEO_CLOCK_RATE)
 
 
 class _BufferTrackingAudioTrack(AudioStreamTrack):
@@ -83,6 +91,20 @@ class _SyncedVideoTrack(QueuedVideoTrack):
         """Discard all pending frames and flush buffered audio."""
         self._pending.clear()
         await self._audio_track.flush()
+
+    async def next_timestamp(self) -> tuple[int, fractions.Fraction]:
+        """Pace frames at ``self.fps`` instead of aiortc's hardcoded 30fps."""
+        if self.readyState != "live":
+            raise MediaStreamError
+        ptime = 1.0 / self.fps
+        if hasattr(self, "_timestamp"):
+            self._timestamp += int(ptime * _VIDEO_CLOCK_RATE)
+            wait = self._start + (self._timestamp / _VIDEO_CLOCK_RATE) - time.time()
+            await asyncio.sleep(wait)
+        else:
+            self._start = time.time()
+            self._timestamp = 0
+        return self._timestamp, _VIDEO_TIME_BASE
 
 
 class AVSynchronizer:
