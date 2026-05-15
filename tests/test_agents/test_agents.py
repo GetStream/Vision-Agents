@@ -2,26 +2,21 @@ import asyncio
 from typing import Any, Optional
 from uuid import uuid4
 
-import numpy as np
+import aiortc
 import pytest
 from getstream.video.rtc import AudioStreamTrack
-from getstream.video.rtc.track_util import AudioFormat, PcmData
+from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import Agent, User
-from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.agents.inference import AudioOutputStream
+from vision_agents.core.avatars import Avatar
 from vision_agents.core.edge import Call, EdgeTransport
-from vision_agents.core.edge.types import Participant
 from vision_agents.core.events import EventManager
-from vision_agents.core.llm.events import (
-    RealtimeAgentSpeechTranscriptionEvent,
-    RealtimeAudioOutputEvent,
-    RealtimeUserSpeechTranscriptionEvent,
-)
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.processors.base_processor import AudioPublisher
 from vision_agents.core.stt import STT as BaseSTT
 from vision_agents.core.tts import TTS
-from vision_agents.core.tts.events import TTSAudioEvent
 from vision_agents.core.turn_detection import TurnDetector
+from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.core.warmup import Warmable
 
 
@@ -150,6 +145,7 @@ class DummyAudioPublisher(AudioPublisher):
     name = "dummy_audio"
 
     def __init__(self):
+        super(DummyAudioPublisher, self).__init__()
         self.track = WriteRecordingTrack()
 
     def publish_audio_track(self) -> WriteRecordingTrack:
@@ -166,6 +162,23 @@ class RecordingEdge(DummyEdge):
 
     def create_audio_track(self, *args, **kwargs) -> WriteRecordingTrack:
         return self.recorded_audio_track
+
+
+class DummyAvatar(Avatar):
+    def __init__(self) -> None:
+        super().__init__()
+        self._video_track = QueuedVideoTrack(width=640, height=480, fps=30)
+        self._audio_output = AudioOutputStream()
+
+    def video_output(self) -> aiortc.VideoStreamTrack:
+        return self._video_track
+
+    def audio_output(self) -> AudioOutputStream:
+        return self._audio_output
+
+    async def start(self) -> None: ...
+
+    async def close(self) -> None: ...
 
 
 class TestAgent:
@@ -344,60 +357,6 @@ class TestAgent:
         )
         assert agent.audio_publishers == [publisher]
 
-    async def test_tts_audio_not_forwarded_with_publisher(self):
-        publisher = DummyAudioPublisher()
-        agent = Agent(
-            llm=DummyLLM(),
-            tts=DummyTTS(),
-            edge=DummyEdge(),
-            agent_user=User(name="test"),
-            processors=[publisher],
-        )
-        pcm = PcmData(
-            samples=np.zeros(160, dtype=np.int16),
-            sample_rate=16000,
-            format=AudioFormat.S16,
-        )
-        agent.events.send(TTSAudioEvent(data=pcm))
-        await agent.events.wait()
-        assert publisher.track.writes == []
-
-    async def test_tts_audio_forwarded_without_publisher(self):
-        edge = RecordingEdge()
-        agent = Agent(
-            llm=DummyLLM(),
-            tts=DummyTTS(),
-            edge=edge,
-            agent_user=User(name="test"),
-        )
-        pcm = PcmData(
-            samples=np.zeros(160, dtype=np.int16),
-            sample_rate=16000,
-            format=AudioFormat.S16,
-        )
-        agent.events.send(TTSAudioEvent(data=pcm))
-        await agent.events.wait()
-        assert len(edge.recorded_audio_track.writes) == 1
-        assert edge.recorded_audio_track.writes[0] is pcm
-
-    async def test_realtime_audio_not_forwarded_with_publisher(self):
-        publisher = DummyAudioPublisher()
-        agent = Agent(
-            llm=DummyLLM(),
-            tts=DummyTTS(),
-            edge=DummyEdge(),
-            agent_user=User(name="test"),
-            processors=[publisher],
-        )
-        pcm = PcmData(
-            samples=np.zeros(160, dtype=np.int16),
-            sample_rate=16000,
-            format=AudioFormat.S16,
-        )
-        agent.events.send(RealtimeAudioOutputEvent(data=pcm))
-        await agent.events.wait()
-        assert publisher.track.writes == []
-
     async def test_authenticate_calls_edge(self):
         edge = DummyEdge()
         agent = Agent(
@@ -469,292 +428,34 @@ class TestAgent:
         async with agent.join(call):
             assert edge.authenticate_call_count == 1
 
-    async def test_stale_tts_epoch_dropped(self):
-        edge = RecordingEdge()
-        tts = DummyTTS()
-        agent = Agent(
-            llm=DummyLLM(),
-            tts=tts,
-            edge=edge,
-            agent_user=User(name="test"),
-        )
-        pcm = PcmData(
-            samples=np.zeros(160, dtype=np.int16),
-            sample_rate=16000,
-            format=AudioFormat.S16,
-        )
-        await tts.interrupt()
-        agent.events.send(TTSAudioEvent(data=pcm, epoch=0))
-        await agent.events.wait()
-        assert edge.recorded_audio_track.writes == []
-
-    async def test_current_tts_epoch_forwarded(self):
-        edge = RecordingEdge()
-        tts = DummyTTS()
-        agent = Agent(
-            llm=DummyLLM(),
-            tts=tts,
-            edge=edge,
-            agent_user=User(name="test"),
-        )
-        pcm = PcmData(
-            samples=np.zeros(160, dtype=np.int16),
-            sample_rate=16000,
-            format=AudioFormat.S16,
-        )
-        await tts.interrupt()
-        agent.events.send(TTSAudioEvent(data=pcm, epoch=tts.epoch))
-        await agent.events.wait()
-        assert len(edge.recorded_audio_track.writes) == 1
-
-    async def test_stt_turn_detection_ignores_external_turn_detector(self):
-        """When STT provides turn detection, the external TurnDetector is ignored."""
+    async def test_avatar_wiring(self):
+        """Avatar metrics forward to agent metrics after merge, and the
+        avatar's video track becomes the agent's outbound video track."""
+        avatar = DummyAvatar()
         agent = Agent(
             llm=DummyLLM(),
             tts=DummyTTS(),
-            stt=DummySTTWithTurnDetection(),
-            turn_detection=DummyTurnDetector(),
             edge=DummyEdge(),
             agent_user=User(name="test"),
+            avatar=avatar,
         )
-        assert agent.turn_detection is None
-        assert agent.turn_detection_enabled is True
+        avatar.metrics.on_llm_response(input_tokens=7)
+        assert agent.metrics.llm_input_tokens__total.value() == 7
+        assert agent._video_track is avatar.video_output()
 
-    async def test_stt_without_turn_detection_keeps_external_turn_detector(self):
-        """When STT does not provide turn detection, the external TurnDetector is kept."""
-        detector = DummyTurnDetector()
-        agent = Agent(
+    async def test_publish_video_true_with_avatar_false_without(self):
+        agent_with = Agent(
             llm=DummyLLM(),
             tts=DummyTTS(),
-            stt=DummySTT(),
-            turn_detection=detector,
             edge=DummyEdge(),
             agent_user=User(name="test"),
+            avatar=DummyAvatar(),
         )
-        assert agent.turn_detection is detector
-        assert agent.turn_detection_enabled is True
-
-    async def test_stt_turn_detection_without_external_detector(self):
-        """STT with turn detection works without an external TurnDetector."""
-        agent = Agent(
+        agent_without = Agent(
             llm=DummyLLM(),
             tts=DummyTTS(),
-            stt=DummySTTWithTurnDetection(),
             edge=DummyEdge(),
             agent_user=User(name="test"),
         )
-        assert agent.turn_detection is None
-        assert agent.turn_detection_enabled is True
-
-
-@pytest.fixture
-def participant() -> Participant:
-    return Participant(id="participant-user-1", user_id="user-1", original=None)
-
-
-@pytest.fixture
-async def transcript_agent() -> Agent:
-    agent = Agent(
-        llm=DummyLLM(),
-        tts=DummyTTS(),
-        edge=DummyEdge(),
-        agent_user=User(id="agent-1", name="bot"),
-    )
-    agent.conversation = InMemoryConversation(instructions="", messages=[])
-    return agent
-
-
-async def _send(agent: Agent, event) -> None:
-    agent.events.send(event)
-    await agent.events.wait(1.0)
-
-
-class TestAgentTranscriptHandling:
-    """Tests for accumulating realtime transcript events into conversation messages."""
-
-    async def test_final_user_transcript_creates_single_message(
-        self, transcript_agent, participant
-    ):
-        await _send(
-            transcript_agent,
-            RealtimeUserSpeechTranscriptionEvent(
-                text="Hello world", mode="final", participant=participant
-            ),
-        )
-
-        assert len(transcript_agent.conversation.messages) == 1
-        assert transcript_agent.conversation.messages[0].content == "Hello world"
-
-    async def test_replacement_user_transcripts_reuse_message_id(
-        self, transcript_agent, participant
-    ):
-        for text in ["Hello", "Hello world", "Hello world how"]:
-            await _send(
-                transcript_agent,
-                RealtimeUserSpeechTranscriptionEvent(
-                    text=text, mode="replacement", participant=participant
-                ),
-            )
-
-        assert len(transcript_agent.conversation.messages) == 1
-        assert transcript_agent.conversation.messages[0].content == "Hello world how"
-
-    async def test_final_after_replacements_reuses_same_message(
-        self, transcript_agent, participant
-    ):
-        await _send(
-            transcript_agent,
-            RealtimeUserSpeechTranscriptionEvent(
-                text="Hi", mode="replacement", participant=participant
-            ),
-        )
-        await _send(
-            transcript_agent,
-            RealtimeUserSpeechTranscriptionEvent(
-                text="Hi there", mode="final", participant=participant
-            ),
-        )
-
-        assert len(transcript_agent.conversation.messages) == 1
-        assert transcript_agent.conversation.messages[0].content == "Hi there"
-
-    async def test_agent_delta_transcripts_reuse_message_id(self, transcript_agent):
-        for text in ["I'm ", "doing ", "well"]:
-            await _send(
-                transcript_agent,
-                RealtimeAgentSpeechTranscriptionEvent(text=text, mode="delta"),
-            )
-
-        assert len(transcript_agent.conversation.messages) == 1
-        assert transcript_agent.conversation.messages[0].content == "I'm doing well"
-
-    async def test_agent_final_transcript_reuses_delta_message(self, transcript_agent):
-        await _send(
-            transcript_agent,
-            RealtimeAgentSpeechTranscriptionEvent(text="Thinking", mode="delta"),
-        )
-        await _send(
-            transcript_agent,
-            RealtimeAgentSpeechTranscriptionEvent(text="", mode="final"),
-        )
-
-        assert len(transcript_agent.conversation.messages) == 1
-        assert transcript_agent.conversation.messages[0].content == "Thinking"
-
-    async def test_user_transcript_finalizes_pending_agent(
-        self, transcript_agent, participant
-    ):
-        """When user starts speaking, any pending agent transcript is finalized."""
-        await _send(
-            transcript_agent,
-            RealtimeAgentSpeechTranscriptionEvent(text="Agent response", mode="delta"),
-        )
-        await _send(
-            transcript_agent,
-            RealtimeUserSpeechTranscriptionEvent(
-                text="User reply", mode="delta", participant=participant
-            ),
-        )
-
-        assert len(transcript_agent.conversation.messages) == 2
-        assert transcript_agent.conversation.messages[0].role == "assistant"
-        assert transcript_agent.conversation.messages[1].role == "user"
-        assert transcript_agent.transcripts.flush_agent_transcript() is None
-
-    async def test_agent_transcript_finalizes_pending_user(
-        self, transcript_agent, participant
-    ):
-        """When agent starts speaking, any pending user transcript is finalized."""
-        await _send(
-            transcript_agent,
-            RealtimeUserSpeechTranscriptionEvent(
-                text="User speaking", mode="delta", participant=participant
-            ),
-        )
-        await _send(
-            transcript_agent,
-            RealtimeAgentSpeechTranscriptionEvent(text="Agent reply", mode="delta"),
-        )
-
-        assert len(transcript_agent.conversation.messages) == 2
-        assert transcript_agent.conversation.messages[0].role == "user"
-        assert transcript_agent.conversation.messages[1].role == "assistant"
-        assert not transcript_agent.transcripts.flush_users_transcripts()
-
-    async def test_multiple_turns_create_separate_messages(
-        self, transcript_agent, participant
-    ):
-        """Full conversation flow: user -> agent -> user."""
-        await _send(
-            transcript_agent,
-            RealtimeUserSpeechTranscriptionEvent(
-                text="Hi", mode="final", participant=participant
-            ),
-        )
-        await _send(
-            transcript_agent,
-            RealtimeAgentSpeechTranscriptionEvent(text="Hello!", mode="final"),
-        )
-        await _send(
-            transcript_agent,
-            RealtimeUserSpeechTranscriptionEvent(
-                text="How are you?", mode="final", participant=participant
-            ),
-        )
-
-        assert len(transcript_agent.conversation.messages) == 3
-        assert transcript_agent.conversation.messages[0].content == "Hi"
-        assert transcript_agent.conversation.messages[1].content == "Hello!"
-        assert transcript_agent.conversation.messages[2].content == "How are you?"
-
-    async def test_gemini_style_delta_transcripts(self, transcript_agent, participant):
-        """Gemini sends incremental delta chunks."""
-        for text in ["I ", "am ", "walking ", "to ", "the store"]:
-            await _send(
-                transcript_agent,
-                RealtimeUserSpeechTranscriptionEvent(
-                    text=text, mode="delta", participant=participant
-                ),
-            )
-
-        assert len(transcript_agent.conversation.messages) == 1
-        assert (
-            transcript_agent.conversation.messages[0].content
-            == "I am walking to the store"
-        )
-
-    async def test_openai_style_final_transcripts(self, transcript_agent, participant):
-        """OpenAI sends a single final transcript (no deltas)."""
-        await _send(
-            transcript_agent,
-            RealtimeUserSpeechTranscriptionEvent(
-                text="OK, everybody. Do.",
-                mode="final",
-                participant=participant,
-            ),
-        )
-
-        assert len(transcript_agent.conversation.messages) == 1
-        assert transcript_agent.conversation.messages[0].content == "OK, everybody. Do."
-
-    async def test_no_participant_skips_sync(self, transcript_agent):
-        """Events without a participant should not create messages."""
-        await _send(
-            transcript_agent,
-            RealtimeUserSpeechTranscriptionEvent(
-                text="orphan transcript", mode="final"
-            ),
-        )
-
-        assert len(transcript_agent.conversation.messages) == 0
-
-    async def test_empty_text_skips_sync(self, transcript_agent, participant):
-        """Events with empty text should not create messages."""
-        await _send(
-            transcript_agent,
-            RealtimeUserSpeechTranscriptionEvent(
-                text="", mode="final", participant=participant
-            ),
-        )
-
-        assert len(transcript_agent.conversation.messages) == 0
+        assert agent_with.publish_video is True
+        assert agent_without.publish_video is False

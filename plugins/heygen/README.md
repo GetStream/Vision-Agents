@@ -1,5 +1,10 @@
 # HeyGen Avatar Plugin for Vision Agents
 
+> [!WARNING]
+> **Deprecated.** This plugin is deprecated and will be removed in a future release.
+> Use the [`liveavatar`](../liveavatar/README.md) plugin instead — it targets LiveAvatar
+> (by HeyGen) via the supported LITE-mode integration path.
+
 Add realistic avatar video to your AI agents using HeyGen's streaming avatar API.
 
 ## Features

@@ -62,6 +62,10 @@ All session endpoints now include `call_id` as a path parameter:
 
 ## New Features
 
+### Inworld Realtime plugin (WebRTC)
+
+Adds `inworld.Realtime` for low-latency speech-to-speech over Inworld's Realtime API (WebRTC transport). Protocol-compatible with OpenAI Realtime — supports function calling, turn detection, and multiple upstream models via the `<provider>/<model>` ID format (e.g. `"openai/gpt-4o-mini"`, `"google-ai-studio/gemini-2.5-flash"`). (#502)
+
 ### Redis-backed Agent session registry for horizontal scaling
 
 Sessions are shared across nodes via Redis, enabling cross-node session queries and closure without sticky sessions. (#374)
@@ -90,8 +94,14 @@ Install with: `uv add "vision-agents[redis]"`
 
 `py.typed` markers added to `vision_agents.core` and `vision_agents.testing` for downstream type checking support. (#378)
 
+### Inworld TTS v2
+
+`inworld-tts-2` added to the model `Literal` and used as the default for `inworld.TTS()`. (#531)
+
 ## Bug Fixes
 
 - **EventManager**: fix crash when event handlers have return type annotations (#381)
 - **RedisSessionKVStore**: fix import error when `redis` package is not installed (#384)
 - **Agent metrics**: fix metrics storage and serialization in session registry (#387)
+- **Inworld TTS**: fix garbled / failed playback for replies that span multiple stream chunks by forcing `LINEAR16` audio encoding (#531)
+- **MCPServerRemote**: fix cancel-scope leak in which closing an MCP session left a half-cancelled anyio scope that pegged the event loop. The transport lifecycle now runs inside a dedicated supervisor task so `__aenter__` / `__aexit__` task-identity holds regardless of which caller drives `connect()` and `disconnect()`. (#529)

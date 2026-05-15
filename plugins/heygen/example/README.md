@@ -1,5 +1,10 @@
 # HeyGen Avatar Examples
 
+> [!WARNING]
+> **Deprecated.** The HeyGen plugin is deprecated and will be removed in a future release.
+> Use the [`liveavatar`](../../liveavatar/README.md) plugin instead — it targets LiveAvatar
+> (by HeyGen) via the supported LITE-mode integration path.
+
 This directory contains examples of how to use the HeyGen plugin to add realistic avatar video to your AI agent.
 
 ## Examples

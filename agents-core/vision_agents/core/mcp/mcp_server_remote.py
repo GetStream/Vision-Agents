@@ -1,13 +1,30 @@
 """Remote MCP server connection using HTTP Streamable transport."""
 
+import asyncio
+import contextlib
 from datetime import timedelta
 from typing import Optional, Dict, Callable
 from urllib.parse import urlparse
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from ..utils.utils import cancel_and_wait
 
 from .mcp_base import MCPBaseServer
+
+
+@contextlib.asynccontextmanager
+async def _open_mcp_session(url: str, headers: Dict[str, str], timeout_seconds: float):
+    """Open the streamable-HTTP transport plus a ``ClientSession`` on top of it
+    and yield the ready session together with its session-id callback."""
+    async with streamablehttp_client(
+        url,
+        headers=headers,
+        timeout=timedelta(seconds=timeout_seconds),
+    ) as (read, write, get_session_id_cb):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            yield session, get_session_id_cb
 
 
 class MCPServerRemote(MCPBaseServer):
@@ -32,8 +49,10 @@ class MCPServerRemote(MCPBaseServer):
         self.url = url
         self.headers = headers or {}
         self.timeout = timeout
-        self._client_context: Optional[object] = None  # AsyncGeneratorContextManager
-        self._session_context: Optional[object] = None  # ClientSession context manager
+
+        self._supervisor_task: Optional[asyncio.Task] = None
+        self._setup: Optional[asyncio.Future[None]] = None
+        self._stop_event: Optional[asyncio.Event] = None
         self._get_session_id_cb: Optional[Callable[[], Optional[str]]] = None
 
         # Validate URL
@@ -47,97 +66,93 @@ class MCPServerRemote(MCPBaseServer):
             self.logger.warning("Already connected to MCP server")
             return
 
+        self.logger.info(f"Connecting to remote MCP server at {self.url}")
+        self._setup = asyncio.get_running_loop().create_future()
+        self._stop_event = asyncio.Event()
+        self._supervisor_task = asyncio.create_task(
+            self._supervise_session(), name=f"mcp-supervisor:{self.url}"
+        )
         try:
-            self.logger.info(f"Connecting to remote MCP server at {self.url}")
-
-            # Create the HTTP client context
-            self._client_context = streamablehttp_client(  # type: ignore[assignment]
-                self.url, headers=self.headers, timeout=timedelta(seconds=self.timeout)
-            )
-
-            # Enter the context to get the read/write streams and session ID callback
-            (
-                read,
-                write,
-                self._get_session_id_cb,
-            ) = await self._client_context.__aenter__()  # type: ignore[attr-defined]
-
-            # Create the client session context manager
-            self._session_context = ClientSession(read, write)  # type: ignore[assignment]
-
-            # Enter the session context and get the actual session
-            self._session = await self._session_context.__aenter__()  # type: ignore[attr-defined]
-
-            # Initialize the connection
-            await self._session.initialize()
-
-            self._is_connected = True
-            await self._update_activity()
-            await self._start_timeout_monitor()
-
-            # Log session ID if available
-            if self._get_session_id_cb is not None:
-                try:
-                    session_id = self._get_session_id_cb()
-                    self.logger.info(
-                        f"Successfully connected to remote MCP server at {self.url} (session: {session_id})"
-                    )
-                except Exception as e:
-                    self.logger.info(
-                        f"Successfully connected to remote MCP server at {self.url} (session ID unavailable: {e})"
-                    )
-            else:
-                self.logger.info(
-                    f"Successfully connected to remote MCP server at {self.url}"
-                )
-
-        except Exception as e:
-            self.logger.error(f"Failed to connect to remote MCP server: {e}")
-            # Clean up any partial connection state
-            await self._cleanup_connection()
+            await self._setup
+        except (Exception, asyncio.CancelledError):
+            # Setup failed, or connect() itself was cancelled. Either way,
+            # tear the supervisor down and let its cleanup finish before
+            # propagating. Anything else (SystemExit, KeyboardInterrupt) is
+            # left to propagate immediately without our cleanup detour.
+            await self._teardown_supervisor()
             raise
 
     async def disconnect(self) -> None:
         """Disconnect from the remote MCP server."""
-        if not self._is_connected:
+        if self._supervisor_task is None:
             return
+        self.logger.info("Disconnecting from remote MCP server")
+        await self._teardown_supervisor()
+        self.logger.info("Disconnected from remote MCP server")
 
+    async def _teardown_supervisor(self) -> None:
+        """Signal the supervisor to stop and await its exit."""
         try:
-            self.logger.info("Disconnecting from remote MCP server")
+            if self._stop_event is not None:
+                self._stop_event.set()
+            if self._supervisor_task is not None:
+                await cancel_and_wait(self._supervisor_task)
+        finally:
+            self._supervisor_task = None
+            self._setup = None
+            self._stop_event = None
 
-            # Stop timeout monitoring
-            await self._stop_timeout_monitor()
+    async def _supervise_session(self) -> None:
+        """Hold the MCP session open until ``_stop_event`` is set."""
+        if self._setup is None or self._stop_event is None:
+            raise RuntimeError(
+                "_supervise_session must be started by connect(); "
+                "_setup or _stop_event is not initialized"
+            )
+        try:
+            async with _open_mcp_session(self.url, self.headers, self.timeout) as (
+                session,
+                get_session_id_cb,
+            ):
+                self._session = session
+                self._get_session_id_cb = get_session_id_cb
+                self._is_connected = True
+                await self._update_activity()
+                await self._start_timeout_monitor()
+                self._log_connection_success()
 
-            # Clean up the connection
-            await self._cleanup_connection()
-
-            self._is_connected = False
-            self.logger.info("Disconnected from remote MCP server")
-
+                self._setup.set_result(None)
+                await self._stop_event.wait()
         except Exception as e:
-            self.logger.error(f"Error disconnecting from remote MCP server: {e}")
+            if not self._setup.done():
+                self._setup.set_exception(e)
+                self.logger.exception("Failed to connect to remote MCP server")
+            else:
+                self.logger.warning(
+                    "MCP session supervisor exited with error", exc_info=True
+                )
+        finally:
+            # Make sure connect() never hangs even if we were cancelled mid-setup.
+            if not self._setup.done():
+                self._setup.cancel()
+            try:
+                await self._stop_timeout_monitor()
+            except Exception:
+                self.logger.warning("Error stopping timeout monitor", exc_info=True)
+            self._session = None
+            self._get_session_id_cb = None
             self._is_connected = False
 
-    async def _cleanup_connection(self) -> None:
-        """Clean up the MCP connection resources."""
-        # Close the session context
-        if self._session_context:
+    def _log_connection_success(self) -> None:
+        """Log a connection-success line, including the MCP session id if known."""
+        msg = f"Successfully connected to remote MCP server at {self.url}"
+        if self._get_session_id_cb is not None:
             try:
-                await self._session_context.__aexit__(None, None, None)  # type: ignore[attr-defined]
+                msg += f" (session: {self._get_session_id_cb()})"
             except Exception as e:
-                self.logger.warning(f"Error closing MCP session context: {e}")
-            self._session_context = None
-
-        # Close the client context
-        if self._client_context:
-            try:
-                await self._client_context.__aexit__(None, None, None)  # type: ignore[attr-defined]
-            except Exception as e:
-                self.logger.warning(f"Error closing MCP client context: {e}")
-            self._client_context = None
-
-        self._session = None
-        self._get_session_id_cb = None
+                msg += f" (session ID unavailable: {e})"
+                self.logger.debug("Session ID lookup failed", exc_info=True)
+        self.logger.info(msg)
 
     async def __aenter__(self):
         """Async context manager entry."""

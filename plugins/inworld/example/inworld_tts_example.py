@@ -21,7 +21,7 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import deepgram, gemini, getstream, inworld, smart_turn
+from vision_agents.plugins import deepgram, gemini, getstream, inworld
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +34,9 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),
         agent_user=User(name="Friendly AI", id="agent"),
         instructions="Read @inworld-audio-guide.md",
-        tts=inworld.TTS(voice_id="Ashley"),
+        tts=inworld.TTS(voice_id="Sarah"),
         stt=deepgram.STT(),
-        llm=gemini.LLM(),
-        turn_detection=smart_turn.TurnDetection(),
+        llm=gemini.LLM(model="gemini-3.1-flash-lite-preview"),
     )
     return agent
 
@@ -55,7 +54,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("LLM ready")
 
         await asyncio.sleep(5)
-        await agent.llm.simple_response(text="Tell me a story about a dragon.")
+        await agent.simple_response(text="Tell me a story about a dragon.")
 
         await agent.finish()  # Run till the call ends
 

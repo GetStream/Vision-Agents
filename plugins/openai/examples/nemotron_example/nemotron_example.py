@@ -25,18 +25,14 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from dotenv import load_dotenv
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.core.llm.llm import LLMResponseEvent
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem
 from vision_agents.plugins import deepgram, getstream, openai
 
@@ -61,7 +57,6 @@ def _log_tool_call(name: str, args: Dict[str, Any], result: Dict[str, Any]) -> N
 
 THINK_END_TAG = "</think>"
 TOOL_CALL_TAG = "<tool_call>"
-PLUGIN_NAME = "chat_completions_llm"
 MAX_RESPONSE_TOKENS = 4096
 _MARKDOWN_RE = re.compile(r"[\*_#`~]")
 _TOOL_CALL_RE = re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL)
@@ -151,9 +146,8 @@ class NemotronLLM(openai.ChatCompletionsLLM):
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
-        stream: bool = True,
         **kwargs: Any,
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Override to inject max_tokens for short responses."""
         tool_depth = kwargs.get("_tool_depth", 0)
         if tool_depth >= 5:
@@ -162,7 +156,7 @@ class NemotronLLM(openai.ChatCompletionsLLM):
         request_kwargs: Dict[str, Any] = {
             "messages": messages,
             "model": kwargs.get("model", self.model),
-            "stream": stream,
+            "stream": True,
             "max_tokens": MAX_RESPONSE_TOKENS,
         }
         if tools:
@@ -173,11 +167,13 @@ class NemotronLLM(openai.ChatCompletionsLLM):
             response = await self._client.chat.completions.create(**request_kwargs)
         except (APIConnectionError, APIStatusError):
             logger.exception("Failed to get a response from Nemotron")
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
-        return await self._process_streaming_response(
+        async for item in self._process_streaming_response(
             response, messages, tools, kwargs, request_start_time
-        )
+        ):
+            yield item
 
     async def _process_streaming_response(
         self,
@@ -186,7 +182,7 @@ class NemotronLLM(openai.ChatCompletionsLLM):
         tools: Optional[List[Dict[str, Any]]],
         kwargs: Dict[str, Any],
         request_start_time: float,
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Collect response, strip thinking, and handle XML tool calls."""
         full_text = ""
         last_chunk: Optional[ChatCompletionChunk] = None
@@ -214,9 +210,11 @@ class NemotronLLM(openai.ChatCompletionsLLM):
         tool_depth = kwargs.get("_tool_depth", 0)
         tool_calls = _parse_nemotron_tool_calls(full_text)
         if tool_calls and tool_depth < 5:
-            return await self._execute_xml_tool_calls(
+            async for item in self._execute_xml_tool_calls(
                 tool_calls, full_text, messages, tools, kwargs
-            )
+            ):
+                yield item
+            return
 
         # Strip tool call XML and markdown, then summarize for TTS
         full_text = _TOOL_CALL_RE.sub("", full_text)
@@ -225,7 +223,6 @@ class NemotronLLM(openai.ChatCompletionsLLM):
         if full_text and len(full_text.split()) > 40:
             full_text = await _summarize_for_speech(full_text)
 
-        # Normal text response — emit events for TTS
         latency_ms = (time.perf_counter() - request_start_time) * 1000
         ttft_ms = (
             (first_token_time - request_start_time) * 1000 if first_token_time else None
@@ -233,32 +230,24 @@ class NemotronLLM(openai.ChatCompletionsLLM):
         item_id = last_chunk.id if last_chunk else None
 
         if full_text:
-            self.events.send(
-                LLMResponseChunkEvent(
-                    plugin_name=PLUGIN_NAME,
-                    content_index=None,
-                    item_id=item_id,
-                    output_index=0,
-                    sequence_number=0,
-                    delta=full_text,
-                    is_first_chunk=True,
-                    time_to_first_token_ms=ttft_ms,
-                )
-            )
-
-        self.events.send(
-            LLMResponseCompletedEvent(
-                plugin_name=PLUGIN_NAME,
-                original=last_chunk,
-                text=full_text,
+            yield LLMResponseDelta(
+                content_index=None,
                 item_id=item_id,
-                latency_ms=latency_ms,
+                output_index=0,
+                sequence_number=0,
+                delta=full_text,
+                is_first_chunk=True,
                 time_to_first_token_ms=ttft_ms,
-                model=self.model,
             )
-        )
 
-        return LLMResponseEvent(original=last_chunk, text=full_text)
+        yield LLMResponseFinal(
+            original=last_chunk,
+            text=full_text,
+            item_id=item_id,
+            latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_ms,
+            model=self.model,
+        )
 
     async def _execute_xml_tool_calls(
         self,
@@ -267,13 +256,14 @@ class NemotronLLM(openai.ChatCompletionsLLM):
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
         kwargs: Dict[str, Any],
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Execute parsed XML tool calls and get a follow-up response."""
         triples, _ = await self._dedup_and_execute(
             tool_calls, max_concurrency=8, timeout_s=30
         )
         if not triples:
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         current_messages = list(messages)
         current_messages.append({"role": "assistant", "content": tool_call_text})
@@ -293,9 +283,10 @@ class NemotronLLM(openai.ChatCompletionsLLM):
         )
 
         follow_up_kwargs = {**kwargs, "_tool_depth": kwargs.get("_tool_depth", 0) + 1}
-        return await self._create_response_internal(
-            messages=current_messages, tools=tools, stream=True, **follow_up_kwargs
-        )
+        async for item in self._create_response_internal(
+            messages=current_messages, tools=tools, **follow_up_kwargs
+        ):
+            yield item
 
 
 def _parse_nemotron_tool_calls(text: str) -> list[NormalizedToolCallItem]:

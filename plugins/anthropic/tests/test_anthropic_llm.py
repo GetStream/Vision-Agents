@@ -1,8 +1,11 @@
+import os
+
 import pytest
 from dotenv import load_dotenv
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
-from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.plugins.anthropic.anthropic_llm import ClaudeLLM
+
+from vision_agents.testing import collect_simple_response
 
 load_dotenv()
 
@@ -16,8 +19,6 @@ async def llm():
 
 
 class TestClaudeLLM:
-    """Test suite for ClaudeLLM class with real API calls."""
-
     async def test_message(self, llm: ClaudeLLM):
         messages = ClaudeLLM._normalize_message("say hi")
         assert isinstance(messages[0], Message)
@@ -32,63 +33,6 @@ class TestClaudeLLM:
         }
         messages2 = ClaudeLLM._normalize_message(advanced)
         assert messages2[0].original is not None
-
-    @pytest.mark.integration
-    async def test_simple(self, llm: ClaudeLLM):
-        response = await llm.simple_response(
-            "Explain quantum computing in 1 paragraph",
-        )
-        assert response.text
-
-    @pytest.mark.integration
-    async def test_native_api(self, llm: ClaudeLLM):
-        response = await llm.create_message(
-            messages=[{"role": "user", "content": "say hi"}],
-            max_tokens=1000,
-        )
-
-        # Assertions
-        assert response.text
-
-    @pytest.mark.integration
-    async def test_stream(self, llm: ClaudeLLM):
-        streamingWorks = False
-
-        @llm.events.subscribe
-        async def passed(event: LLMResponseChunkEvent):
-            nonlocal streamingWorks
-            streamingWorks = True
-
-        await llm.simple_response("Explain magma to a 5 year old")
-        # Wait for all events in queue to be processed
-        await llm.events.wait()
-
-        assert streamingWorks
-
-    @pytest.mark.integration
-    async def test_memory(self, llm: ClaudeLLM):
-        await llm.simple_response(
-            text="There are 2 dogs in the room",
-        )
-        response = await llm.simple_response(
-            text="How many paws are there in the room?",
-        )
-
-        assert "8" in response.text or "eight" in response.text
-
-    @pytest.mark.integration
-    async def test_native_memory(self, llm: ClaudeLLM):
-        await llm.create_message(
-            messages=[{"role": "user", "content": "There are 2 dogs in the room"}],
-            max_tokens=1000,
-        )
-        response = await llm.create_message(
-            messages=[
-                {"role": "user", "content": "How many paws are there in the room?"}
-            ],
-            max_tokens=1000,
-        )
-        assert "8" in response.text or "eight" in response.text
 
     def test_merge_messages_alternating_roles_unchanged(self, llm: ClaudeLLM):
         messages = [
@@ -155,3 +99,46 @@ class TestClaudeLLM:
         assert messages[0].content == "hello world"
         assert isinstance(messages[0].content, str)
         assert messages[0].role == "assistant"
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set"
+)
+class TestClaudeLLMIntegration:
+    """Test suite for ClaudeLLM class with real API calls."""
+
+    async def test_stream(self, llm: ClaudeLLM):
+        deltas, final_response = await collect_simple_response(
+            llm.simple_response("Explain magma to a 5 year old")
+        )
+        assert deltas
+        assert final_response.text
+
+    async def test_memory(self, llm: ClaudeLLM):
+        await collect_simple_response(
+            llm.simple_response(text="There are 2 dogs in the room")
+        )
+        _, response = await collect_simple_response(
+            llm.simple_response("How many paws are there in the room?")
+        )
+
+        assert "8" in response.text or "eight" in response.text
+
+    async def test_tool_calling(self, llm: ClaudeLLM):
+        calls: list[str] = []
+
+        @llm.register_function(description="Return a deterministic probe marker.")
+        async def probe_tool() -> str:
+            calls.append("called")
+            return "anthropic_tool_call_probe_ok"
+
+        _, response = await collect_simple_response(
+            llm.simple_response(
+                "Call the tool named probe_tool now. After receiving the tool result, "
+                "reply with only the exact string returned by the tool."
+            )
+        )
+
+        assert calls == ["called"], "probe_tool was not invoked by Claude"
+        assert "anthropic_tool_call_probe_ok" in response.text

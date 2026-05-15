@@ -197,7 +197,7 @@ class TurboPufferRAG(RAG):
 
         ns = self._client.namespace(self._namespace_name)
         await ns.write(
-            upsert_rows=rows,
+            upsert_rows=rows,  # type: ignore[arg-type]
             distance_metric="cosine_distance",
             schema=HYBRID_SCHEMA,  # type: ignore[arg-type]
         )

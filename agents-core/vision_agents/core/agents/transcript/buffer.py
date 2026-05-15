@@ -1,6 +1,6 @@
 """Transcript buffer for accumulating incremental speech text."""
 
-from typing import Literal, List
+from typing import Literal
 
 TranscriptMode = Literal["delta", "replacement", "final"]
 
@@ -16,7 +16,7 @@ class TranscriptBuffer:
     ``"delta"``
         Each update appends text to the current working segment.
 
-    ``"final"``
+        ``"final"``
         Finalizes the current segment. If text is provided it replaces the
         segment first. An empty-text final just marks the segment as done.
 
@@ -35,8 +35,9 @@ class TranscriptBuffer:
     """
 
     def __init__(self):
-        self._segments: List[str] = []
+        self._segments: list[str] = []
         self._has_pending_partial: bool = False
+        self._final = False
 
     def update(self, text: str, *, mode: TranscriptMode) -> None:
         """Update the buffer with new transcript text.
@@ -56,6 +57,7 @@ class TranscriptBuffer:
             if not text:
                 if mode == "final":
                     self._has_pending_partial = False
+                    self._final = True
                 return
 
         if mode == "delta":
@@ -79,6 +81,7 @@ class TranscriptBuffer:
                 if not self._segments or self._segments[-1] != text:
                     self._segments.append(text)
             self._has_pending_partial = False
+            self._final = True
 
     def reset(self) -> None:
         """Clear all accumulated segments."""
@@ -91,7 +94,11 @@ class TranscriptBuffer:
         return self._has_pending_partial
 
     @property
-    def segments(self) -> List[str]:
+    def final(self) -> bool:
+        return self._final and not self._has_pending_partial
+
+    @property
+    def segments(self) -> list[str]:
         """Return a copy of the current segments."""
         return self._segments.copy()
 
@@ -105,3 +112,8 @@ class TranscriptBuffer:
 
     def __bool__(self) -> bool:
         return bool(self._segments)
+
+    def __repr__(self) -> str:
+        return (
+            f"<{self.__class__.__name__} segments={self.segments} final={self.final}>"
+        )

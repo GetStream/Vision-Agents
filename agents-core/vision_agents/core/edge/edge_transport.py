@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
 import aiortc
 from getstream.video.rtc import AudioStreamTrack
 from vision_agents.core.events.manager import EventManager
+from vision_agents.core.observability import MetricsCollector
 
 from .call import Call
 from .events import (
@@ -34,6 +35,7 @@ class EdgeTransport(abc.ABC, Generic[T_Call]):
 
     def __init__(self):
         super().__init__()
+        self.metrics = MetricsCollector()
         self.events = EventManager()
         # Register required events that all EdgeTransport implementations must emit
         self.events.register(

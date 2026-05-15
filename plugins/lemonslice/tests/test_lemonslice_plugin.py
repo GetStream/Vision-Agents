@@ -1,15 +1,10 @@
 import pytest
-from getstream.video.rtc import audio_track
-from vision_agents.core.events import EventManager
-from vision_agents.core.llm.events import RealtimeAudioOutputEvent
-from vision_agents.core.tts.events import TTSAudioEvent
+from vision_agents.core.agents.inference import AudioOutputStream
 from vision_agents.core.utils.video_track import QueuedVideoTrack
-from vision_agents.plugins.lemonslice.lemonslice_avatar_publisher import (
-    LemonSliceAvatarPublisher,
-)
+from vision_agents.plugins.lemonslice.lemonslice_avatar import LemonSliceAvatar
 
 
-def _make_publisher(**overrides) -> LemonSliceAvatarPublisher:
+def _make_avatar(**overrides) -> LemonSliceAvatar:
     default_kwargs = {
         "agent_id": "test-agent",
         "api_key": "ls-test-key",
@@ -17,67 +12,56 @@ def _make_publisher(**overrides) -> LemonSliceAvatarPublisher:
         "livekit_api_key": "devkey",
         "livekit_api_secret": "devsecret",
     }
-    return LemonSliceAvatarPublisher(**{**default_kwargs, **overrides})
+    return LemonSliceAvatar(**{**default_kwargs, **overrides})
 
 
-class DummyAgent:
-    def __init__(self):
-        self.events = EventManager()
-        self.events.register(TTSAudioEvent)
-        self.events.register(RealtimeAudioOutputEvent)
-
-
-class TestLemonSliceAvatarPublisher:
-    def test_init_with_all_args(self):
-        pub = _make_publisher()
-        assert pub._connected is False
-        assert pub.name == "lemonslice_avatar"
-
-    def test_init_with_agent_image_url_instead_of_id(self):
-        pub = _make_publisher(
+class TestLemonSliceAvatar:
+    async def test_init_with_agent_image_url_instead_of_id(self):
+        avatar = _make_avatar(
             agent_id=None, agent_image_url="https://example.com/img.png"
         )
-        assert pub._client._agent_image_url == "https://example.com/img.png"
+        assert avatar._client._agent_image_url == "https://example.com/img.png"
 
-    def test_init_missing_agent_identity_raises(self):
+    async def test_init_missing_agent_identity_raises(self, monkeypatch):
+        monkeypatch.delenv("LEMONSLICE_AGENT_ID", raising=False)
         with pytest.raises(ValueError, match="agent_id or agent_image_url"):
-            _make_publisher(agent_id=None)
+            _make_avatar(agent_id=None)
 
-    def test_init_missing_api_key_raises(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_init_missing_api_key_raises(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv("LEMONSLICE_API_KEY", raising=False)
         with pytest.raises(ValueError, match="API key required"):
-            _make_publisher(api_key=None)
+            _make_avatar(api_key=None)
 
-    def test_init_missing_livekit_url_raises(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_init_missing_livekit_url_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         monkeypatch.delenv("LIVEKIT_URL", raising=False)
         with pytest.raises(ValueError, match="LiveKit URL required"):
-            _make_publisher(livekit_url=None)
+            _make_avatar(livekit_url=None)
 
-    def test_init_missing_livekit_secret_raises(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_init_missing_livekit_secret_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         monkeypatch.delenv("LIVEKIT_API_KEY", raising=False)
         monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
         with pytest.raises(ValueError, match="LiveKit API key and secret required"):
-            _make_publisher(livekit_api_key=None, livekit_api_secret=None)
+            _make_avatar(livekit_api_key=None, livekit_api_secret=None)
 
-    def test_init_custom_resolution(self):
-        pub = _make_publisher(width=640, height=480)
-        track = pub.publish_video_track()
+    async def test_video_output(self):
+        avatar = _make_avatar(width=640, height=480)
+        track = avatar.video_output()
         assert isinstance(track, QueuedVideoTrack)
+        assert track.width == 640
+        assert track.height == 480
 
-    def test_publish_video_track(self):
-        pub = _make_publisher()
-        assert isinstance(pub.publish_video_track(), QueuedVideoTrack)
+    async def test_init_odd_width_raises(self):
+        with pytest.raises(ValueError, match="width must be a positive even integer"):
+            _make_avatar(width=641, height=480)
 
-    def test_publish_audio_track(self):
-        pub = _make_publisher()
-        assert isinstance(pub.publish_audio_track(), audio_track.AudioStreamTrack)
+    async def test_init_odd_height_raises(self):
+        with pytest.raises(ValueError, match="height must be a positive even integer"):
+            _make_avatar(width=640, height=481)
 
-    async def test_attach_agent_subscribes_to_tts_and_realtime(self):
-        pub = _make_publisher()
-        agent = DummyAgent()
-
-        pub.attach_agent(agent)
-
-        assert pub._agent is agent
-        assert agent.events.has_subscribers(TTSAudioEvent)
-        assert agent.events.has_subscribers(RealtimeAudioOutputEvent)
+    async def test_audio_output(self):
+        avatar = _make_avatar()
+        assert isinstance(avatar.audio_output(), AudioOutputStream)

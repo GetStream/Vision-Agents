@@ -41,7 +41,7 @@ async def create_agent(**kwargs) -> Agent:
         "Also make fun of yourself for not having vision yet. "
         "What sort of AI lab has excellent voice but no vision?!",
         llm=xai.Realtime(
-            voice="Ara",  # Options: Ara, Rex, Sal, Eve, Leo
+            voice="ara",  # Options: ara, rex, sal, eve, leo
         ),
     )
     return agent
@@ -57,7 +57,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("Joining call")
 
         await asyncio.sleep(3)
-        await agent.llm.simple_response(
+        await agent.simple_response(
             text="Say hi to the user, and let them know you're "
             "great at using vulgar language to roast people's tweets"
         )

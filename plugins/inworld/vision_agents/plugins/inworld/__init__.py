@@ -1,3 +1,4 @@
-from vision_agents.plugins.inworld.tts import TTS
+from .inworld_realtime import Realtime
+from .tts import InworldTTS as TTS
 
-__all__ = ["TTS"]
+__all__ = ["TTS", "Realtime"]

@@ -26,8 +26,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 
 from vision_agents.core import User, Agent
-from vision_agents.plugins import deepgram, elevenlabs, getstream, gemini
-from vision_agents.plugins.anam import AnamAvatarPublisher
+from vision_agents.plugins import anam, deepgram, elevenlabs, getstream, gemini
 
 load_dotenv()
 
@@ -42,7 +41,7 @@ async def start_avatar_agent():
         tts=elevenlabs.TTS(),
         stt=deepgram.STT(),
 
-        processors=[AnamAvatarPublisher()],
+        avatar=anam.Avatar(),
     )
 
     call = await agent.create_call("default", str(uuid4()))
@@ -65,10 +64,10 @@ ANAM_API_KEY=your_anam_api_key
 ANAM_AVATAR_ID=your_anam_avatar_id
 ```
 
-### AvatarPublisher Options
+### Avatar Options
 
 ```python
-AnamAvatarPublisher(
+anam.Avatar(
     avatar_id=None,  # Anam avatar ID (or set ANAM_AVATAR_ID env var)
     api_key=None,  # Anam API key (or set ANAM_API_KEY env var)
     client_options=None,  # Optional Anam ClientOptions for advanced configuration

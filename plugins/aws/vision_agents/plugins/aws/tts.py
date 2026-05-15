@@ -17,7 +17,10 @@ class TTS(BaseTTS):
     - TextType can be 'text' or 'ssml' (auto-detected unless overridden)
     - Optional Engine ('standard' or 'neural'), LanguageCode, LexiconNames
 
-    Credentials are resolved via standard AWS SDK chain (env vars, profiles, roles).
+    Credentials are resolved via the standard boto3 chain (env vars, profiles,
+    SSO, instance profile, etc.). Override with explicit access key + secret
+    (plus optional session token) or with a named profile, or inject a
+    pre-built boto3 Polly client via ``client=...``.
     """
 
     def __init__(
@@ -29,8 +32,17 @@ class TTS(BaseTTS):
         engine: Optional[str] = None,  # 'standard' | 'neural'
         language_code: Optional[str] = None,
         lexicon_names: Optional[List[str]] = None,
+        aws_access_key_id: Optional[str] = None,
+        aws_secret_access_key: Optional[str] = None,
+        aws_session_token: Optional[str] = None,
+        aws_profile: Optional[str] = None,
         client: Optional[Any] = None,
     ) -> None:
+        if bool(aws_access_key_id) != bool(aws_secret_access_key):
+            raise ValueError(
+                "aws_access_key_id and aws_secret_access_key must be provided together"
+            )
+
         super().__init__(provider_name="aws_polly")
         self.region_name = (
             region_name
@@ -49,13 +61,24 @@ class TTS(BaseTTS):
         self.engine = engine
         self.language_code = language_code
         self.lexicon_names = lexicon_names
+
+        session_kwargs: dict[str, Any] = {"region_name": self.region_name}
+        if aws_profile:
+            session_kwargs["profile_name"] = aws_profile
+        if aws_access_key_id:
+            session_kwargs["aws_access_key_id"] = aws_access_key_id
+        if aws_secret_access_key:
+            session_kwargs["aws_secret_access_key"] = aws_secret_access_key
+        if aws_session_token:
+            session_kwargs["aws_session_token"] = aws_session_token
+        self._session_kwargs = session_kwargs
         self._client = client
 
     @property
     async def client(self):
         if self._client is None:
             self._client = await asyncio.to_thread(
-                lambda: boto3.client("polly", region_name=self.region_name)
+                lambda: boto3.Session(**self._session_kwargs).client("polly")
             )
         return self._client
 

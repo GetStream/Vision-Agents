@@ -1,10 +1,7 @@
 from dataclasses import dataclass, field
-from typing import Any, Optional, TypedDict
+from typing import TypedDict
 
-from vision_agents.core.events import (
-    PluginBaseEvent,
-    VideoProcessorDetectionEvent,
-)
+from vision_agents.core.events import VideoProcessorDetectionEvent
 
 
 class DetectedObject(TypedDict):
@@ -16,24 +13,6 @@ class DetectedObject(TypedDict):
     y1: int
     x2: int
     y2: int
-
-
-@dataclass
-class HuggingFaceStreamEvent(PluginBaseEvent):
-    """Event emitted when HuggingFace provides a stream event."""
-
-    type: str = field(default="plugin.huggingface.stream", init=False)
-    event_type: Optional[str] = None
-    event_data: Optional[Any] = None
-
-
-@dataclass
-class LLMErrorEvent(PluginBaseEvent):
-    """Event emitted when an LLM encounters an error."""
-
-    type: str = field(default="plugin.llm.error", init=False)
-    error_message: Optional[str] = None
-    event_data: Optional[Any] = None
 
 
 @dataclass

@@ -3,8 +3,7 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner, User
 from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import deepgram, gemini, getstream
-from vision_agents.plugins.anam import AnamAvatarPublisher
+from vision_agents.plugins import anam, deepgram, gemini, getstream
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +29,11 @@ def setup_llm(model: str = "gemini-3.1-flash-lite-preview") -> gemini.LLM:
 async def create_agent(**kwargs) -> Agent:
     llm = setup_llm()
 
-    avatar = AnamAvatarPublisher()
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="My happy AI friend", id="agent"),
         instructions=INSTRUCTIONS,
-        processors=[avatar],
+        avatar=anam.Avatar(),
         llm=llm,
         tts=deepgram.TTS(),
         stt=deepgram.STT(eager_turn_detection=True),

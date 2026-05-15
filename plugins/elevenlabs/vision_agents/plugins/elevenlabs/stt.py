@@ -276,8 +276,8 @@ class STT(stt.STT):
             self._emit_turn_started_event(participant)
 
         # Emit partial transcript
-        self._emit_partial_transcript_event(
-            transcript_text, participant, response_metadata
+        self._emit_transcript_event(
+            transcript_text, participant, response_metadata, mode="replacement"
         )
 
     def _on_committed_transcript(self, transcription_data: dict[str, Any]):
@@ -334,7 +334,9 @@ class STT(stt.STT):
         )
 
         # Emit final transcript
-        self._emit_transcript_event(transcript_text, participant, response_metadata)
+        self._emit_transcript_event(
+            transcript_text, participant, response_metadata, mode="final"
+        )
 
         # Reset audio start time for next utterance
         self._audio_start_time = None

@@ -4,7 +4,7 @@ import logging
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional, cast
+from typing import AsyncIterator, Optional, cast
 
 import aiortc
 import av
@@ -13,7 +13,7 @@ from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import Realtime
 from vision_agents.core.llm.events import LLMResponseChunkEvent
-from vision_agents.core.llm.llm import LLMResponseEvent
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
 
@@ -27,9 +27,11 @@ logger = logging.getLogger(__name__)
 
 
 class Qwen3Realtime(Realtime):
+    provider_name = "qwen_realtime"
+
     def __init__(
         self,
-        model: str = "qwen3-omni-flash-realtime",
+        model: str = "qwen3.5-omni-plus-realtime",
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         voice: str = "Cherry",
@@ -119,11 +121,11 @@ class Qwen3Realtime(Realtime):
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent[Any]:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         logger.warning(
             f'Cannot reply to "{text}"; reason - Qwen3Realtime does not support text inputs'
         )
-        return LLMResponseEvent(text="", original=None)
+        yield LLMResponseFinal()
 
     async def close(self):
         self.connected = False
@@ -191,8 +193,9 @@ class Qwen3Realtime(Realtime):
 
         try:
             await self._client.send_frame(jpg_bytes)
-        except Exception:
+        except Exception as e:
             logger.exception("Failed to send a video frame to Qwen3 Realtime API")
+            self._emit_error_event(error=e, context="send_frame")
 
     async def stop_watching_video_track(self) -> None:
         if self._video_forwarder is not None:
@@ -228,8 +231,9 @@ class Qwen3Realtime(Realtime):
                 logger.error(
                     f"Error received from Qwen3Realtime API: {error}",
                 )
-                self.events.send(
-                    events.LLMErrorEvent(plugin_name=PLUGIN_NAME, error_message=error)
+                self._emit_error_event(
+                    error=Exception(str(error)),
+                    context="qwen_realtime_api",
                 )
                 continue
 
@@ -237,7 +241,6 @@ class Qwen3Realtime(Realtime):
                 logger.debug("Qwen3Realtime session initialized successfully")
 
             elif event_type == "response.created":
-                self._begin_response()
                 self._current_response_id = event.get("response", {}).get("id")
                 self._is_responding = True
             elif event_type == "response.output_item.added":
@@ -259,7 +262,7 @@ class Qwen3Realtime(Realtime):
             elif event_type == "response.audio.delta":
                 audio_bytes = base64.b64decode(event["delta"])
                 pcm = PcmData.from_bytes(audio_bytes, 24000)
-                self._emit_audio_output_event(audio_data=pcm)
+                self._emit_audio_output_event(pcm=pcm)
             elif event_type == "conversation.item.input_audio_transcription.completed":
                 transcript = event.get("transcript", "")
                 if transcript:

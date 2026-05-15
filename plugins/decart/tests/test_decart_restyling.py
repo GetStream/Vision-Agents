@@ -104,9 +104,13 @@ class TestRestylingProcessor:
             processor._realtime_client = mock_client
             processor._connected = True
 
-            await processor.update_prompt("new style", enrich=False)
+            await processor.update_prompt("new style", enhance=False)
 
-            mock_client.set_prompt.assert_called_once_with("new style", enrich=False)
+            mock_client.set.assert_called_once()
+            set_input = mock_client.set.call_args.args[0]
+            assert set_input.prompt == "new style"
+            assert set_input.image is None
+            assert set_input.enhance is False
             assert processor.initial_prompt == "new style"
             await processor.close()
 
@@ -127,47 +131,143 @@ class TestRestylingProcessor:
             await processor.close()
 
     @pytest.mark.asyncio
-    async def test_update_prompt_uses_default_enrich(self, mock_decart_client):
-        """Test update_prompt uses default enrich value when not specified."""
+    async def test_update_prompt_uses_default_enhance(self, mock_decart_client):
+        """Test update_prompt uses default enhance value when not specified."""
         with patch(
             "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
         ):
-            processor = RestylingProcessor(api_key="test_key", enrich=True)
+            processor = RestylingProcessor(api_key="test_key", enhance=True)
             mock_client = AsyncMock()
             processor._realtime_client = mock_client
 
             await processor.update_prompt("new style")
 
-            mock_client.set_prompt.assert_called_once_with("new style", enrich=True)
+            mock_client.set.assert_called_once()
+            set_input = mock_client.set.call_args.args[0]
+            assert set_input.prompt == "new style"
+            assert set_input.enhance is True
             await processor.close()
 
     @pytest.mark.asyncio
-    async def test_set_mirror_when_connected(self, mock_decart_client):
-        """Test set_mirror updates mirror mode when connected."""
+    async def test_init_accepts_initial_image(self, mock_decart_client):
+        """Constructor stores initial_image unchanged."""
         with patch(
             "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
         ):
-            processor = RestylingProcessor(api_key="test_key", mirror=True)
+            processor = RestylingProcessor(
+                api_key="test_key", initial_image=b"fakebytes"
+            )
+            assert processor.initial_image == b"fakebytes"
+            await processor.close()
+
+    @pytest.mark.asyncio
+    async def test_connect_passes_initial_image_to_model_state(
+        self, mock_video_track, mock_decart_client
+    ):
+        """initial_image is plumbed into ModelState on connect."""
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ) as mock_realtime:
+            mock_client_instance = AsyncMock()
+            mock_client_instance.connect = AsyncMock(return_value=mock_client_instance)
+            mock_realtime.connect = AsyncMock(return_value=mock_client_instance)
+
+            processor = RestylingProcessor(
+                api_key="test_key", initial_image=b"reference-bytes"
+            )
+            await processor._connect_to_decart(mock_video_track)
+
+            options = mock_realtime.connect.call_args.kwargs["options"]
+            assert options.initial_state.image == b"reference-bytes"
+            assert options.initial_state.prompt.text == "Cyberpunk city"
+            await processor.close()
+
+    @pytest.mark.asyncio
+    async def test_update_state_atomic_prompt_and_image(self, mock_decart_client):
+        """update_state sends a single atomic SetInput with prompt + image."""
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
+            processor = RestylingProcessor(api_key="test_key")
             mock_client = AsyncMock()
             processor._realtime_client = mock_client
 
-            await processor.set_mirror(False)
+            await processor.update_state(
+                prompt="superhero", image=b"ref", enhance=False
+            )
 
-            mock_client.set_mirror.assert_called_once_with(False)
-            assert processor.mirror is False
+            mock_client.set.assert_called_once()
+            set_input = mock_client.set.call_args.args[0]
+            assert set_input.prompt == "superhero"
+            assert set_input.image == b"ref"
+            assert set_input.enhance is False
+            assert processor.initial_prompt == "superhero"
+            assert processor.initial_image == b"ref"
             await processor.close()
 
     @pytest.mark.asyncio
-    async def test_set_mirror_noop_when_disconnected(self, mock_decart_client):
-        """Test set_mirror is no-op when disconnected."""
+    async def test_update_state_image_only(self, mock_decart_client):
+        """update_state with only image leaves initial_prompt untouched."""
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
+            processor = RestylingProcessor(
+                api_key="test_key", initial_prompt="original"
+            )
+            mock_client = AsyncMock()
+            processor._realtime_client = mock_client
+
+            await processor.update_state(image=b"ref")
+
+            set_input = mock_client.set.call_args.args[0]
+            assert set_input.prompt is None
+            assert set_input.image == b"ref"
+            assert processor.initial_prompt == "original"
+            assert processor.initial_image == b"ref"
+            await processor.close()
+
+    @pytest.mark.asyncio
+    async def test_update_state_requires_at_least_one(self, mock_decart_client):
+        """Passing neither prompt nor image raises ValueError."""
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
+            processor = RestylingProcessor(api_key="test_key")
+            processor._realtime_client = AsyncMock()
+
+            with pytest.raises(ValueError, match="At least one of"):
+                await processor.update_state()
+            await processor.close()
+
+    @pytest.mark.asyncio
+    async def test_update_state_noop_when_disconnected(self, mock_decart_client):
+        """update_state is a no-op when not connected."""
+        with patch(
+            "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
+        ):
+            processor = RestylingProcessor(
+                api_key="test_key", initial_prompt="original"
+            )
+            processor._realtime_client = None
+
+            await processor.update_state(prompt="new", image=b"ref")
+
+            assert processor.initial_prompt == "original"
+            assert processor.initial_image is None
+            await processor.close()
+
+    @pytest.mark.asyncio
+    async def test_set_mirror_updates_local_state(self, mock_decart_client):
+        """Test set_mirror updates local mirror state."""
         with patch(
             "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
         ):
             processor = RestylingProcessor(api_key="test_key", mirror=True)
-            processor._realtime_client = None
 
             await processor.set_mirror(False)
+            assert processor.mirror is False
 
+            await processor.set_mirror(True)
             assert processor.mirror is True
             await processor.close()
 
@@ -265,9 +365,6 @@ class TestConnectionManagement:
             "vision_agents.plugins.decart.decart_restyling_processor.RealtimeClient"
         ):
             processor = RestylingProcessor(api_key="test_key")
-
-            processor._on_connection_change("connecting")
-            assert processor._connected
 
             processor._on_connection_change("connected")
             assert processor._connected

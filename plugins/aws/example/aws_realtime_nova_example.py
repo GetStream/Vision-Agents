@@ -9,11 +9,9 @@ import asyncio
 import logging
 
 from dotenv import load_dotenv
-
-from vision_agents.core import Runner, User, Agent
+from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.plugins import aws, getstream
-
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +22,10 @@ async def create_agent(**kwargs) -> Agent:
     llm = aws.Realtime()
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="Story Teller AI", id="agent"),
-        instructions="Tell a story suitable for a 7 year old about a dragon and a princess",
+        agent_user=User(name="Voice AI Agent", id="agent"),
+        instructions="You are a voice agent powered by AWS Nova Sonic. "
+        "Be helpful. "
+        "Keep your replies short and dont use special characters.",
         llm=llm,
     )
 
@@ -38,9 +38,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     # Have the agent join the call/room
     async with agent.join(call):
         await asyncio.sleep(5)
-        await agent.llm.simple_response(
-            text="Tell me a short story about a dragon and a princess"
-        )
+        await agent.simple_response(text="Ask the user about their day.")
 
         await agent.finish()  # Run till the call ends
 

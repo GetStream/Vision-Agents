@@ -9,10 +9,7 @@ from faster_whisper import WhisperModel
 from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core.agents import Conversation
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.turn_detection import (
-    TurnDetector,
-    TurnStartedEvent,
-)
+from vision_agents.core.turn_detection import TurnDetector
 from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
 from vision_agents.core.warmup import Warmable
 from vogent_turn import TurnDetector as VogentDetector
@@ -178,16 +175,16 @@ class VogentTurnDetection(
 
     async def process_audio(
         self,
-        audio_data: PcmData,
+        data: PcmData,
         participant: Participant,
-        conversation: Optional[Conversation],
+        conversation: Conversation | None = None,
     ) -> None:
         """
         Fast, non-blocking audio packet enqueueing.
         Actual processing happens in background task.
         """
         # Just enqueue the audio packet - fast and non-blocking
-        await self._audio_queue.put((audio_data, participant, conversation))
+        await self._audio_queue.put((data, participant, conversation))
 
     async def _process_audio_loop(self):
         """
@@ -308,8 +305,8 @@ class VogentTurnDetection(
                     )
 
                     if is_complete:
-                        self._emit_end_turn_event(
-                            participant=participant,
+                        await self._emit_turn_ended_event(
+                            participant,
                             confidence=confidence,
                             trailing_silence_ms=trailing_silence_ms,
                             duration_ms=self._active_segment.duration_ms,
@@ -324,7 +321,10 @@ class VogentTurnDetection(
                         self._pre_speech_buffer = self._pre_speech_buffer.tail(8)
 
             elif is_speech and self._active_segment is None:
-                self._emit_start_turn_event(TurnStartedEvent(participant=participant))
+                await self._emit_turn_started_event(
+                    participant,
+                    confidence=speech_probability,
+                )
                 # Create a new segment
                 self._active_segment = PcmData(
                     sample_rate=RATE, channels=1, format=AudioFormat.F32

@@ -87,7 +87,7 @@ async def media_stream(websocket: WebSocket, call_sid: str, token: str):
         await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
 
         async with agent.join(stream_call, participant_wait_timeout=0):
-            await agent.llm.simple_response(
+            await agent.simple_response(
                 text="Ask to reserve and answer any follow up questions as needed"
             )
             await twilio_stream.run()

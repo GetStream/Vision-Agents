@@ -125,7 +125,7 @@ async def media_stream(websocket: WebSocket, call_id: str, token: str):
         await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
 
         async with agent.join(stream_call, participant_wait_timeout=0):
-            await agent.llm.simple_response(
+            await agent.simple_response(
                 text="Greet the caller warmly and ask what kind of app they're building. Use your knowledge base to provide relevant product recommendations."
             )
             await twilio_stream.run()

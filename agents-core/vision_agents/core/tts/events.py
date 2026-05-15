@@ -1,10 +1,9 @@
 import uuid
+from dataclasses import dataclass, field
+from typing import Optional
 
 from getstream.video.rtc import PcmData
-
-from vision_agents.core.events import PluginBaseEvent, ConnectionState
-from dataclasses import dataclass, field
-from typing import Optional, Any
+from vision_agents.core.events import PluginBaseEvent
 
 
 @dataclass
@@ -44,30 +43,3 @@ class TTSSynthesisCompleteEvent(PluginBaseEvent):
     audio_duration_ms: Optional[float] = None
     chunk_count: int = 1
     real_time_factor: Optional[float] = None
-
-
-@dataclass
-class TTSErrorEvent(PluginBaseEvent):
-    """Event emitted when a TTS error occurs."""
-
-    type: str = field(default="plugin.tts_synthesis_error", init=False)
-    error: Optional[Exception] = None
-    error_code: Optional[str] = None
-    context: Optional[str] = None
-    text_source: Optional[str] = None
-    synthesis_id: Optional[str] = None
-    is_recoverable: bool = True
-
-    @property
-    def error_message(self) -> str:
-        return str(self.error) if self.error else "Unknown error"
-
-
-@dataclass
-class TTSConnectionEvent(PluginBaseEvent):
-    """Event emitted for TTS connection state changes."""
-
-    type: str = field(default="plugin.tts_connection", init=False)
-    connection_state: Optional[ConnectionState] = None
-    provider: Optional[str] = None
-    details: Optional[dict[str, Any]] = None

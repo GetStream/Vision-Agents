@@ -48,6 +48,7 @@ class TranscriptStore:
         user_id: str,
         text: str,
         mode: TranscriptMode,
+        drop: bool = False,
     ) -> TranscriptUpdate | None:
         """Update a user transcript. Returns update info, or None if skipped."""
         if mode not in _VALID_MODES:
@@ -65,12 +66,10 @@ class TranscriptStore:
         if not buffer:
             return None
 
-        if mode == "final":
+        if drop:
             self._users.pop(participant_id, None)
-            return TranscriptUpdate(
-                message_id=msg_id, user_id=uid, text=buffer.text, mode=mode
-            )
-        elif mode == "replacement":
+
+        if mode in ("final", "replacement"):
             return TranscriptUpdate(
                 message_id=msg_id, user_id=uid, text=buffer.text, mode=mode
             )
@@ -99,7 +98,7 @@ class TranscriptStore:
         return buffer
 
     def update_agent_transcript(
-        self, *, text: str, mode: TranscriptMode
+        self, *, text: str, mode: TranscriptMode, drop: bool = False
     ) -> TranscriptUpdate | None:
         """Update the agent transcript. Returns update info, or None if skipped."""
         if mode not in _VALID_MODES:
@@ -117,15 +116,10 @@ class TranscriptStore:
         if not buffer:
             return None
 
-        if mode == "final":
+        if drop:
             self._agent = None
-            return TranscriptUpdate(
-                message_id=msg_id,
-                user_id=self._agent_user_id,
-                text=buffer.text,
-                mode=mode,
-            )
-        elif mode == "replacement":
+
+        if mode in ("final", "replacement"):
             return TranscriptUpdate(
                 message_id=msg_id,
                 user_id=self._agent_user_id,
