@@ -53,7 +53,7 @@ The Call ID is logged on join so you can connect from your preferred client.
 
 ## Testing the example end-to-end
 
-The bundled `example/tencent_edge_example.py` joins a fixed room (`12345` by default, override with `TENCENT_TEST_ROOM_ID`) and waits indefinitely for a participant. A minimal browser test client lives at `example/test_client.html` and is served by the `test-client` docker-compose service.
+The bundled `example/tencent_edge_example.py` joins a fixed room (`12345` by default, override with `TENCENT_TEST_ROOM_ID`) and waits indefinitely for a participant. Tencent hosts a public TRTC Web SDK quick demo that doubles as a test client.
 
 1. **Start the agent**:
 
@@ -62,22 +62,22 @@ The bundled `example/tencent_edge_example.py` joins a fixed room (`12345` by def
    docker compose run --rm tencent-agent
    ```
 
-   The `test-client` service starts automatically as a dependency and serves `example/` on `http://localhost:8000/`. It stays up between agent runs; stop it explicitly with `docker compose down` when done.
-
-   On join the agent logs a clickable URL like:
+   On join the agent prints a block like:
 
    ```
-   🔗 Open the test client and click Join:
-       http://localhost:8000/test_client.html?appid=<your-sdk-app-id>&user=test-user-1&room=12345&sig=...
+   🔗 Open the Tencent TRTC quick demo and paste these values, then click Enter Room:
+       URL:     https://web.sdk.qcloud.com/trtc/webrtc/v5/demo/quick-demo-js/index.html
+       AppID:   <your-sdk-app-id>
+       UserID:  test-user-1
+       RoomID:  12345
+       UserSig: <generated>
    ```
 
-   The URL has `sdk_app_id`, room, user, and a freshly generated `user_sig` baked in, so the HTML form auto-fills. Browsers require a user gesture for `getUserMedia`, so we can't auto-submit.
+   `UserSig` is freshly generated via `tls-sig-api-v2` from `TENCENT_SDKSecretKey`, so you never need to plug the secret into the browser.
 
-2. **Click the URL, then Join in the browser**. Do this before the agent finishes greeting — ElevenLabs (and most realtime STT providers) drop their websocket after ~15 s of silence, so the agent needs a participant on join to receive audio immediately. The example calls `agent.simple_response(...)` right after join, so you should hear the agent's greeting within a couple of seconds of clicking Join.
+2. **Open the URL, paste the four values, and click Enter Room** — do this before the agent finishes greeting. ElevenLabs (and most realtime STT providers) drop their websocket after ~15 s of silence, so the agent needs a participant on join to receive audio immediately. The example calls `agent.simple_response(...)` right after join, so you should hear the agent's greeting within a couple of seconds.
 
 3. **Speak**. The flow is `Tencent → STT → LLM → TTS → Tencent → browser`. Watch the agent log for `🎤 [Transcript Complete]: …` (STT), `🤖 [LLM response final]: …` (LLM), and absent `TencentAudioTrack` write errors (TTS → outgoing track).
-
-The HTML form also persists fields in `localStorage`, so reloading without URL params still keeps the last values.
 
 ### Known noise
 

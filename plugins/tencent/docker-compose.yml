@@ -3,8 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    depends_on:
-      - test-client
     volumes:
       - ../..:/app
       # Mask the host's .venv and .uv-cache so the linux container doesn't
@@ -27,14 +25,3 @@ services:
           --package vision-agents-plugins-cartesia && \
         uv run --no-sync --package vision-agents-plugins-tencent \
           python plugins/tencent/example/tencent_edge_example.py run
-
-  # Serves the browser test client on http://localhost:8000/test_client.html.
-  # Start with `docker compose up test-client -d` alongside the agent.
-  test-client:
-    image: python:3.12-slim
-    working_dir: /srv
-    volumes:
-      - ./example:/srv:ro
-    ports:
-      - "8000:8000"
-    command: ["python", "-m", "http.server", "8000"]

@@ -1,5 +1,4 @@
 import os
-from urllib.parse import urlencode
 
 import TLSSigAPIv2
 from dotenv import load_dotenv
@@ -10,8 +9,8 @@ from vision_agents.plugins import cartesia, elevenlabs, gemini, tencent
 load_dotenv()
 
 TEST_CLIENT_USER_ID = "test-user-1"
-TEST_CLIENT_BASE_URL = os.environ.get(
-    "TENCENT_TEST_CLIENT_URL", "http://localhost:8000/test_client.html"
+TENCENT_QUICK_DEMO_URL = (
+    "https://web.sdk.qcloud.com/trtc/webrtc/v5/demo/quick-demo-js/index.html"
 )
 
 
@@ -30,17 +29,19 @@ async def create_agent(**kwargs) -> Agent:
     return agent
 
 
-def _build_test_client_url(sdk_app_id: int, secret_key: str, room_id: str) -> str:
+def _print_test_client_instructions(
+    sdk_app_id: int, secret_key: str, room_id: str
+) -> None:
     sig = TLSSigAPIv2.TLSSigAPIv2(sdk_app_id, secret_key).gen_sig(TEST_CLIENT_USER_ID)
-    params = urlencode(
-        {
-            "appid": sdk_app_id,
-            "user": TEST_CLIENT_USER_ID,
-            "room": room_id,
-            "sig": sig,
-        }
+    print(
+        "\n🔗 Open the Tencent TRTC quick demo and paste these values, then click Enter Room:\n"
+        f"    URL:     {TENCENT_QUICK_DEMO_URL}\n"
+        f"    AppID:   {sdk_app_id}\n"
+        f"    UserID:  {TEST_CLIENT_USER_ID}\n"
+        f"    RoomID:  {room_id}\n"
+        f"    UserSig: {sig}\n",
+        flush=True,
     )
-    return f"{TEST_CLIENT_BASE_URL}?{params}"
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
@@ -51,8 +52,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     room_id = os.environ.get("TENCENT_TEST_ROOM_ID", "12345")
     sdk_app_id = int(os.environ["TENCENT_SDKAppID"])
     secret_key = os.environ["TENCENT_SDKSecretKey"]
-    test_url = _build_test_client_url(sdk_app_id, secret_key, room_id)
-    print(f"\n🔗 Open the test client and click Join:\n    {test_url}\n", flush=True)
+    _print_test_client_instructions(sdk_app_id, secret_key, room_id)
 
     call = await agent.create_call(call_type, room_id)
 
