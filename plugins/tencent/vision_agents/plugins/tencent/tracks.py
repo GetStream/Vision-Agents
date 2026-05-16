@@ -23,7 +23,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 try:
-    from liteav import (
+    # liteav's typed stubs don't re-export these module-level constants, so we
+    # silence attr-defined here; the names exist at runtime on Linux.
+    from liteav import (  # type: ignore[attr-defined]
         AUDIO_CODEC_TYPE_PCM,
         STREAM_TYPE_VIDEO_HIGH,
         VIDEO_PIXEL_FORMAT_YUV420p,

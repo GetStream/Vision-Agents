@@ -40,7 +40,10 @@ logger = logging.getLogger(__name__)
 
 _LITEAV_IMPORT_ERROR: Optional[ImportError] = None
 try:
-    from liteav import (
+    # liteav's typed stubs don't expose these top-level module constants and
+    # convenience constructors even though they exist at runtime, so we silence
+    # the attr-defined / call-arg complaints in this block.
+    from liteav import (  # type: ignore[attr-defined]
         AUDIO_CODEC_TYPE_PCM,
         AUDIO_OBTAIN_METHOD_CALLBACK,
         STREAM_TYPE_VIDEO_HIGH,
@@ -63,7 +66,7 @@ else:
     _LITEAV_IMPORT_ERROR = None
 
 try:
-    from liteav import TRTC_SCENE_CALL, TRTC_SCENE_VIDEOCALL
+    from liteav import TRTC_SCENE_CALL, TRTC_SCENE_VIDEOCALL  # type: ignore[attr-defined]
 except ImportError:
     TRTC_SCENE_VIDEOCALL = None  # type: ignore[assignment]
     TRTC_SCENE_CALL = None  # type: ignore[assignment]
@@ -287,13 +290,13 @@ class TencentEdge(EdgeTransport[TencentCall]):
         room_param = EnterRoomParams()
         room_param.room.sdk_app_id = self._sdk_app_id
         if call.str_room_id is not None:
-            room_param.room.str_room_id = TrtcString(call.str_room_id)
+            room_param.room.str_room_id = TrtcString(call.str_room_id)  # type: ignore[call-arg]
         else:
             room_param.room.room_id = call.room_id
-        room_param.room.user_id = TrtcString(self._agent_user_id or "")
-        room_param.room.user_sig = TrtcString(user_sig)
+        room_param.room.user_id = TrtcString(self._agent_user_id or "")  # type: ignore[call-arg]
+        room_param.room.user_sig = TrtcString(user_sig)  # type: ignore[call-arg]
         room_param.role = TRTC_ROLE_ANCHOR
-        room_param.scene = self._room_scene
+        room_param.scene = self._room_scene  # type: ignore[assignment]
         room_param.use_pixel_frame_input = True
         room_param.use_pixel_frame_output = True
         room_param.audio_obtain_params.audio_obtain_method = (
@@ -443,7 +446,7 @@ if TRTCCloudDelegate is not None:
             self._connection = connection
             self._agent_user_id = edge._agent_user_id or ""
 
-        def OnError(self, error: int) -> None:
+        def OnError(self, error: int) -> None:  # type: ignore[override]
             try:
                 logger.error("Tencent TRTC OnError: %s", error)
                 self._edge._emit_call_ended()
@@ -481,7 +484,7 @@ if TRTCCloudDelegate is not None:
             except BaseException:
                 logger.exception("OnLocalAudioChannelCreated callback failed")
 
-        def OnConnectionStateChanged(self, old_state: int, new_state: int) -> None:
+        def OnConnectionStateChanged(self, old_state: int, new_state: int) -> None:  # type: ignore[override]
             logger.debug(
                 "Tencent TRTC connection state: %s -> %s", old_state, new_state
             )
@@ -489,7 +492,7 @@ if TRTCCloudDelegate is not None:
         def OnLocalAudioChannelDestroyed(self) -> None:
             pass
 
-        def OnLocalVideoChannelCreated(self, stream_type: int) -> None:
+        def OnLocalVideoChannelCreated(self, stream_type: int) -> None:  # type: ignore[override]
             try:
                 logger.info(
                     "Tencent TRTC OnLocalVideoChannelCreated: stream_type=%s",
@@ -506,15 +509,15 @@ if TRTCCloudDelegate is not None:
             except BaseException:
                 logger.exception("OnLocalVideoChannelCreated callback failed")
 
-        def OnLocalVideoChannelDestroyed(self, stream_type: int) -> None:
+        def OnLocalVideoChannelDestroyed(self, stream_type: int) -> None:  # type: ignore[override]
             pass
 
-        def OnRequestChangeVideoEncodeBitrate(
+        def OnRequestChangeVideoEncodeBitrate(  # type: ignore[override]
             self, stream_type: int, bitrate_bps: int
         ) -> None:
             pass
 
-        def OnRequestKeyFrame(self, stream_type: int) -> None:
+        def OnRequestKeyFrame(self, stream_type: int) -> None:  # type: ignore[override]
             logger.debug("Tencent TRTC OnRequestKeyFrame: stream_type=%s", stream_type)
 
         def OnRemoteAudioAvailable(self, user_id: str, available: bool) -> None:
@@ -527,7 +530,7 @@ if TRTCCloudDelegate is not None:
             except BaseException:
                 logger.exception("OnRemoteAudioAvailable callback failed")
 
-        def OnRemoteVideoAvailable(
+        def OnRemoteVideoAvailable(  # type: ignore[override]
             self, user_id: str, available: bool, stream_type: int
         ) -> None:
             try:
@@ -546,12 +549,12 @@ if TRTCCloudDelegate is not None:
             except BaseException:
                 logger.exception("OnRemoteVideoAvailable callback failed")
 
-        def OnRemoteVideoFrameReceived(
+        def OnRemoteVideoFrameReceived(  # type: ignore[override]
             self, user_id: str, stream_type: int, frame: Any
         ) -> None:
             pass
 
-        def OnRemotePixelFrameReceived(
+        def OnRemotePixelFrameReceived(  # type: ignore[override]
             self, user_id: str, stream_type: int, frame: Any
         ) -> None:
             try:
@@ -567,7 +570,7 @@ if TRTCCloudDelegate is not None:
             except BaseException:
                 logger.exception("OnRemotePixelFrameReceived callback failed")
 
-        def OnSeiMessageReceived(
+        def OnSeiMessageReceived(  # type: ignore[override]
             self, user_id: str, stream_type: int, message_type: int, message: Any
         ) -> None:
             pass
