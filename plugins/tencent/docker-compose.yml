@@ -14,6 +14,9 @@ services:
         required: false
     environment:
       - PYTHONUNBUFFERED=1
+      # Forwarded from the host shell at `docker compose run` time:
+      # TENCENT_TEST_ROOM_ID=<roomId-from-tencent-quick-demo>
+      - TENCENT_TEST_ROOM_ID
     command:
       - /bin/sh
       - -c
