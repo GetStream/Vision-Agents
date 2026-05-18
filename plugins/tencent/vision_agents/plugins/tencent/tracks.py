@@ -11,6 +11,7 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 import av
+from aiortc.mediastreams import MediaStreamError
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.plugins.tencent.bindings import (
     AUDIO_CODEC_TYPE_PCM,
@@ -147,7 +148,7 @@ class TencentAudioTrack:
         try:
             self._cloud.SendAudioFrame(frame)
             return True
-        except Exception:
+        except RuntimeError:
             logger.exception("Tencent SendAudioFrame failed")
             return False
 
@@ -285,8 +286,8 @@ class TencentOutgoingVideoTrack:
         while self._running and self._cloud is not None:
             try:
                 frame = cast(av.VideoFrame, await self._source.recv())
-            except Exception:
-                logger.exception("Outgoing video recv failed")
+            except MediaStreamError:
+                logger.info("Outgoing video source closed")
                 break
 
             await loop.run_in_executor(self._video_executor, self._send_frame, frame)
