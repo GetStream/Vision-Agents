@@ -4,6 +4,7 @@ import logging
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import click
@@ -11,12 +12,15 @@ from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescap
 
 logger = logging.getLogger(__name__)
 
+_CONFIG_FILENAME = "vision-agents.toml"
+
 _TEMPLATE_FILES: dict[str, str] = {
     "agent.py.j2": "agent.py",
     "pyproject.toml.j2": "pyproject.toml",
     "env.example.j2": ".env.example",
     "gitignore.j2": ".gitignore",
     "README.md.j2": "README.md",
+    "vision-agents.toml.j2": _CONFIG_FILENAME,
 }
 
 
@@ -43,6 +47,37 @@ def _run_uv_sync(target: Path) -> bool:
         return False
     subprocess.run(["uv", "sync"], cwd=target, check=True)
     return True
+
+
+def _find_config(start: Path) -> Path:
+    for directory in (start, *start.parents):
+        candidate = directory / _CONFIG_FILENAME
+        if candidate.is_file():
+            return candidate
+    raise click.ClickException(
+        "Could not find vision-agents configuration; "
+        "you may not be in a Vision Agents project."
+    )
+
+
+def _load_app_config(config_path: Path) -> dict[str, object]:
+    try:
+        with config_path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except tomllib.TOMLDecodeError as err:
+        raise click.ClickException(f"failed to parse {config_path}: {err}") from err
+
+    app = data.get("app")
+    if not isinstance(app, dict):
+        raise click.ClickException(f"{config_path} is missing required [app] section")
+
+    entrypoint = app.get("entrypoint")
+    if not isinstance(entrypoint, str) or not entrypoint:
+        raise click.ClickException(
+            f"{config_path} requires app.entrypoint to be a non-empty string"
+        )
+
+    return {"entrypoint": entrypoint}
 
 
 @click.group(help="Vision Agents command-line interface.")
@@ -82,6 +117,28 @@ def init(name: str, no_install: bool) -> None:
     if not installed:
         click.echo("  uv sync")
     click.echo("  uv run python agent.py")
+
+
+@main.command(
+    help="Run the project's agent entrypoint (forwards args to its Runner CLI).",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def app(args: tuple[str, ...]) -> None:
+    config_path = _find_config(Path.cwd())
+    config = _load_app_config(config_path)
+    project_root = config_path.parent
+    entrypoint = (project_root / str(config["entrypoint"])).resolve()
+    if not entrypoint.is_file():
+        raise click.ClickException(f"entrypoint {entrypoint} not found")
+
+    if shutil.which("uv") is not None:
+        cmd = ["uv", "run", "python", str(entrypoint), *args]
+    else:
+        cmd = [sys.executable, str(entrypoint), *args]
+
+    result = subprocess.run(cmd, cwd=project_root)
+    sys.exit(result.returncode)
 
 
 if __name__ == "__main__":
