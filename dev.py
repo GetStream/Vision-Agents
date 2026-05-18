@@ -17,6 +17,7 @@ import click
 import setuptools
 import toml
 from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 CORE_EXTRAS_ALL_SECTION = "all-plugins"
 CORE_EXTRAS_DEV_SECTION = "dev"
@@ -120,18 +121,18 @@ def _cwd_is_root():
 def _get_plugin_package_name(plugin: str) -> str:
     with open(Path(PLUGINS_DIR) / Path(plugin) / "pyproject.toml", "r") as f:
         pyproject = toml.load(f)
-    return pyproject["project"]["name"]
+    return canonicalize_name(pyproject["project"]["name"])
 
 
 def _requirement_name(req: str) -> str:
-    """Bare package name from a PEP 508 requirement string.
+    """Canonical bare package name from a PEP 508 requirement string.
 
-    Strips version specifiers, extras, and environment markers so that
-    e.g. ``"vision-agents-plugins-tencent; sys_platform == 'linux'"``
-    compares equal to ``"vision-agents-plugins-tencent"`` when checking
-    that every plugin is wired into ``[project.optional-dependencies]``.
+    Strips version specifiers, extras, and environment markers, then
+    applies PEP 503 normalisation so ``Vision_Agents_Plugins_Tencent``
+    compares equal to ``vision-agents-plugins-tencent`` regardless of
+    case or `_` vs `-`.
     """
-    return Requirement(req).name
+    return canonicalize_name(Requirement(req).name)
 
 
 def _get_core_optional_dependencies() -> CoreDependencies:
