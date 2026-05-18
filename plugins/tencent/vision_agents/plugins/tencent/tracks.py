@@ -284,7 +284,11 @@ class TencentOutgoingVideoTrack:
         pf.pts = pts
         self._pts = pts
         pf.SetData(yuv_bytes)
-        self._cloud.SendPixelFrame(STREAM_TYPE_VIDEO_HIGH, pf)
+        try:
+            self._cloud.SendPixelFrame(STREAM_TYPE_VIDEO_HIGH, pf)
+        except RuntimeError:
+            # Transient SDK hiccup — log and let the next frame retry.
+            logger.exception("Tencent SendPixelFrame failed")
 
     async def _send_loop(self) -> None:
         loop = asyncio.get_running_loop()
