@@ -256,7 +256,10 @@ class TencentOutgoingVideoTrack:
         self._task: asyncio.Task[None] | None = None
         self._running = True
         self._pts = 10
-        self._pts_start_time: float | None = None
+        # Reset to wall-clock by set_cloud() before the send loop starts;
+        # initialised here so _send_frame can rely on a real float even
+        # when `python -O` strips asserts.
+        self._pts_start_time: float = time.monotonic()
 
     def set_cloud(self, cloud: Any, loop: asyncio.AbstractEventLoop) -> None:
         self._cloud = cloud
@@ -275,7 +278,6 @@ class TencentOutgoingVideoTrack:
         pf.height = height
         pf.format = VIDEO_PIXEL_FORMAT_YUV420p
         pf.rotation = VIDEO_ROTATION_0
-        assert self._pts_start_time is not None
         elapsed_ms = int((time.monotonic() - self._pts_start_time) * 1000)
         wall_clock_pts = 10 + elapsed_ms
         pts = max(self._pts + 1, wall_clock_pts)
@@ -286,8 +288,6 @@ class TencentOutgoingVideoTrack:
 
     async def _send_loop(self) -> None:
         loop = asyncio.get_running_loop()
-        if self._pts_start_time is None:
-            self._pts_start_time = time.monotonic()
         next_send = loop.time()
         while self._running and self._cloud is not None:
             try:
@@ -308,7 +308,6 @@ class TencentOutgoingVideoTrack:
 
     def stop(self) -> None:
         self._running = False
-        self._pts_start_time = None
         if self._task is not None:
             self._task.cancel()
             self._task = None
