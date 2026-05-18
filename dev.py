@@ -16,6 +16,7 @@ from typing import NamedTuple, Optional
 import click
 import setuptools
 import toml
+from packaging.requirements import Requirement
 
 CORE_EXTRAS_ALL_SECTION = "all-plugins"
 CORE_EXTRAS_DEV_SECTION = "dev"
@@ -122,6 +123,17 @@ def _get_plugin_package_name(plugin: str) -> str:
     return pyproject["project"]["name"]
 
 
+def _requirement_name(req: str) -> str:
+    """Bare package name from a PEP 508 requirement string.
+
+    Strips version specifiers, extras, and environment markers so that
+    e.g. ``"vision-agents-plugins-tencent; sys_platform == 'linux'"``
+    compares equal to ``"vision-agents-plugins-tencent"`` when checking
+    that every plugin is wired into ``[project.optional-dependencies]``.
+    """
+    return Requirement(req).name
+
+
 def _get_core_optional_dependencies() -> CoreDependencies:
     with open(Path(CORE_PACKAGE_NAME) / "pyproject.toml", "r") as f:
         pyproject = toml.load(f)
@@ -129,9 +141,11 @@ def _get_core_optional_dependencies() -> CoreDependencies:
     optionals: dict[str, list[str]] = pyproject.get("project", {}).get(
         "optional-dependencies", {}
     )
-    optionals_all = optionals.get(CORE_EXTRAS_ALL_SECTION, [])
+    optionals_all = [
+        _requirement_name(r) for r in optionals.get(CORE_EXTRAS_ALL_SECTION, [])
+    ]
     optionals_plugins = {
-        k: v
+        k: [_requirement_name(r) for r in v]
         for k, v in optionals.items()
         if k not in (CORE_EXTRAS_ALL_SECTION, CORE_EXTRAS_DEV_SECTION)
     }
