@@ -5,10 +5,6 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ../..:/app
-      # Mask the host's .venv and .uv-cache so the linux container doesn't
-      # overwrite macOS-arch binaries on the host bind mount.
-      - /app/.venv
-      - /app/.uv-cache
     env_file:
       - path: ../../.env
         required: false
@@ -19,7 +15,7 @@ services:
       - TENCENT_TEST_ROOM_ID
       # Set TENCENT_LITEAV_DEBUG=1 to surface the C++ SDK's `[I][...]`
       # console logs (jitter buffer, watchdog, signal resolves). Off by
-      # default; file logs at /root/.cache/python3/liteav/log are kept.
+      # default.
       - TENCENT_LITEAV_DEBUG
     command:
       - /bin/sh
