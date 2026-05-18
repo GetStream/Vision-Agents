@@ -136,7 +136,7 @@ class TencentAudioTrack:
                 return padded
             return _SILENCE_FRAME
 
-    def _send_one(self, frame_bytes: bytes) -> bool:
+    def _send_one(self, frame_bytes: bytes) -> None:
         frame = AudioFrame()
         frame.sample_rate = SAMPLE_RATE
         frame.channels = CHANNELS
@@ -147,10 +147,12 @@ class TencentAudioTrack:
         frame.SetData(frame_bytes)
         try:
             self._cloud.SendAudioFrame(frame)
-            return True
         except RuntimeError:
+            # Transient SDK hiccup. Keep the loop alive so silence frames
+            # continue at the 20 ms cadence — otherwise the remote
+            # receiver's jitter buffer desyncs and the start of the next
+            # speech segment gets clipped.
             logger.exception("Tencent SendAudioFrame failed")
-            return False
 
     def _send_loop(self) -> None:
         next_frame_at = time.monotonic()
@@ -161,8 +163,7 @@ class TencentAudioTrack:
             if now < next_frame_at:
                 time.sleep(next_frame_at - now)
 
-            if not self._send_one(self._pop_one()):
-                return
+            self._send_one(self._pop_one())
 
             next_frame_at += self._FRAME_INTERVAL_S
             # If we fell behind (GIL contention, etc.), skip to now instead
