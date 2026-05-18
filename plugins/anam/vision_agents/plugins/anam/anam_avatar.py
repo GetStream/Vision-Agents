@@ -53,8 +53,10 @@ class AnamAvatar(Avatar):
         client_options: ClientOptions | None = None,
         connect_timeout: float | None = None,
         session_ready_timeout: float | None = None,
-        width: int = 1920,
-        height: int = 1080,
+        width: int = 720,
+        height: int = 480,
+        fps: int = 30,
+        buffer_seconds: float = 1.0,
     ):
         """Initialize the Anam avatar publisher.
 
@@ -68,6 +70,9 @@ class AnamAvatar(Avatar):
                 None means wait indefinitely.
             width: Output video width in pixels.
             height: Output video height in pixels.
+            fps: Output video frame rate. Must be > 0.
+            buffer_seconds: Max video buffer depth in seconds. Caps how many frames
+                can be queued ahead of audio playback. Must be > 0.
         """
         super().__init__()
         api_key = api_key or os.getenv("ANAM_API_KEY")
@@ -76,6 +81,10 @@ class AnamAvatar(Avatar):
         avatar_id = avatar_id or os.getenv("ANAM_AVATAR_ID")
         if not avatar_id:
             raise ValueError("Anam avatar ID not provided")
+        if buffer_seconds <= 0:
+            raise ValueError("buffer_seconds must be > 0")
+        if fps <= 0:
+            raise ValueError("fps must be > 0")
 
         self._client = AnamClient(
             api_key=api_key,
@@ -93,7 +102,10 @@ class AnamAvatar(Avatar):
         self._client.on(AnamEvent.SESSION_READY)(self._on_session_ready)
 
         self._sync = AVSynchronizer(
-            width=width, height=height, fps=30, max_queue_size=30 * 20
+            width=width,
+            height=height,
+            fps=fps,
+            max_queue_size=int(fps * buffer_seconds),
         )
 
         self._connect_timeout = connect_timeout

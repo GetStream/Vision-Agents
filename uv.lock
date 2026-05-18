@@ -1983,7 +1983,7 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "3.3.2"
+version = "3.3.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
@@ -1998,9 +1998,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "twirp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/04/8b/ac4dfb7840b0821baf0509e2ddfcfc32b64ae7967def05df05271ef04788/getstream-3.3.2.tar.gz", hash = "sha256:b8df0ddf976452caa063a8ed4d617220bdb39483e0ea3b0a6eb6faaeff609db7", size = 527378, upload-time = "2026-05-12T15:45:01.397Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/d0/5398f3e712004aba1d629ef7362a6c941967ef052e066fe5f0354014bd12/getstream-3.3.4.tar.gz", hash = "sha256:091226d96e8e7f51b8feaaaa09d33eae37df8e799039a3c96032e54594501e98", size = 528252, upload-time = "2026-05-15T12:03:03.61Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/49/e90aa9e4880308c842a3d4f463f3f150ab48abe056b857ebce055e540f32/getstream-3.3.2-py3-none-any.whl", hash = "sha256:2d312f601254ee07b5e82e40bef8c25e81c4d3db744a8faed1e49e97b4df739a", size = 335271, upload-time = "2026-05-12T15:45:02.823Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/e6/4c5452cee3aa9af1fa873b93bdc944611af27abbfa4b92cab0e31e680e94/getstream-3.3.4-py3-none-any.whl", hash = "sha256:9ba009256fb1a99015acb5cf681ca7df52604f3a0214bea4c1831155156e45d1", size = 336140, upload-time = "2026-05-15T12:03:01.961Z" },
 ]
 
 [package.optional-dependencies]
@@ -7369,7 +7369,7 @@ requires-dist = [
     { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.3.2,<4" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.3.4,<4" },
     { name = "mcp", specifier = ">=1.23.3,<2" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },
@@ -7781,7 +7781,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.3.2,<4" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.3.4,<4" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

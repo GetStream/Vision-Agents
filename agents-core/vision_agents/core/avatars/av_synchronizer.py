@@ -1,20 +1,28 @@
 import asyncio
 import collections
+import fractions
 import logging
+import time
 
 import av
 import av.frame
+from aiortc.mediastreams import MediaStreamError
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.agents.inference import AudioOutputChunk, AudioOutputStream
 from vision_agents.core.utils.video_track import (
     QueuedVideoTrack,
     VideoTrackClosedError,
 )
-from vision_agents.core.utils.video_utils import ensure_even_dimensions
+from vision_agents.core.utils.video_utils import ensure_even_dimensions, resize_frame
 
 __all__ = ["AVSynchronizer"]
 
 logger = logging.getLogger(__name__)
+
+# aiortc hardcodes 30fps via its module-level VIDEO_PTIME; _SyncedVideoTrack
+# overrides next_timestamp() to honor its configured fps using these constants.
+_VIDEO_CLOCK_RATE = 90000
+_VIDEO_TIME_BASE = fractions.Fraction(1, _VIDEO_CLOCK_RATE)
 
 
 class AVSynchronizer:
@@ -37,7 +45,7 @@ class AVSynchronizer:
             width=width,
             height=height,
             fps=fps,
-            max_queue_size=max_queue_size,
+            max_queue_size=max(1, max_queue_size),
         )
 
     @property
@@ -87,7 +95,12 @@ class _SyncedVideoTrack(QueuedVideoTrack):
         """Queue a frame, delayed by the current audio buffer depth."""
         if self._stopped:
             return
-        frame = ensure_even_dimensions(frame)
+        if frame.width != self.width or frame.height != self.height:
+            frame = await asyncio.to_thread(
+                resize_frame, frame, self.width, self.height
+            )
+        else:
+            frame = ensure_even_dimensions(frame)
         release_at = (
             asyncio.get_running_loop().time() + self._audio_output_stream.buffered
         )
@@ -118,3 +131,17 @@ class _SyncedVideoTrack(QueuedVideoTrack):
         """Discard all pending frames and flush buffered audio."""
         self._pending.clear()
         await self._audio_output_stream.flush()
+
+    async def next_timestamp(self) -> tuple[int, fractions.Fraction]:
+        """Pace frames at ``self.fps`` instead of aiortc's hardcoded 30fps."""
+        if self.readyState != "live":
+            raise MediaStreamError
+        ptime = 1.0 / self.fps
+        if hasattr(self, "_timestamp"):
+            self._timestamp += int(ptime * _VIDEO_CLOCK_RATE)
+            wait = self._start + (self._timestamp / _VIDEO_CLOCK_RATE) - time.time()
+            await asyncio.sleep(wait)
+        else:
+            self._start = time.time()
+            self._timestamp = 0
+        return self._timestamp, _VIDEO_TIME_BASE
