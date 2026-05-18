@@ -29,10 +29,17 @@ def init_cmd(name: str, no_install: bool) -> None:
     # Scaffold into a staging dir on the same filesystem, then rename
     # atomically so partial output is never observable at `target` and
     # we never delete a path we didn't create.
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(
-        prefix=f".{target.name}-init-", dir=target.parent
-    ) as tmp:
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp_ctx = tempfile.TemporaryDirectory(
+            prefix=f".{target.name}-init-", dir=target.parent
+        )
+    except OSError as err:
+        raise click.ClickException(
+            f"failed to prepare scaffold target {target}: {err}"
+        ) from err
+
+    with tmp_ctx as tmp:
         staging = Path(tmp) / target.name
         try:
             scaffold(target.name, staging)

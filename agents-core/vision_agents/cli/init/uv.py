@@ -14,5 +14,8 @@ def run_uv_sync(target: Path) -> bool:
     """
     if shutil.which("uv") is None:
         return False
-    subprocess.run(["uv", "sync"], cwd=target, check=True)
+    try:
+        subprocess.run(["uv", "sync"], cwd=target, check=True)
+    except FileNotFoundError:
+        return False
     return True
