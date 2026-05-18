@@ -111,6 +111,13 @@ class TencentAudioTrack:
 
     def stop(self) -> None:
         self._running = False
+        # Wait for the sender thread to notice _running=False so callers
+        # (TencentEdge.close → DestroyTRTCCloud) don't free the cloud
+        # while a SendAudioFrame is mid-flight. One frame interval is
+        # 20 ms; 100 ms is a comfortable bound.
+        if self._sender_thread is not None:
+            self._sender_thread.join(timeout=0.1)
+            self._sender_thread = None
 
     async def flush(self) -> None:
         loop = asyncio.get_running_loop()
