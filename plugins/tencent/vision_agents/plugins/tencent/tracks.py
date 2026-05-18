@@ -62,10 +62,6 @@ class TencentAudioTrack:
     _FRAME_INTERVAL_S = FRAME_MS / 1000.0
     _TAIL_FLUSH_S = _FRAME_INTERVAL_S * 2
 
-    _write_executor = concurrent.futures.ThreadPoolExecutor(
-        max_workers=1, thread_name_prefix="trtc-audio-write"
-    )
-
     def __init__(self) -> None:
         self._queue: deque[bytes] = deque()
         self._remainder = bytearray()
@@ -75,6 +71,12 @@ class TencentAudioTrack:
         self._sender_thread: Optional[threading.Thread] = None
         self._pts = 10
         self._last_write_at = 0.0
+        # Per-instance executor so concurrent calls each get their own
+        # worker thread; a class-level singleton would serialise every
+        # track in the process through one thread.
+        self._write_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="trtc-audio-write"
+        )
 
     def set_cloud(self, cloud: Any) -> None:
         self._cloud = cloud
@@ -118,6 +120,8 @@ class TencentAudioTrack:
         if self._sender_thread is not None:
             self._sender_thread.join(timeout=0.1)
             self._sender_thread = None
+        # Drain any pending _write_sync calls, then release the thread.
+        self._write_executor.shutdown(wait=True)
 
     async def flush(self) -> None:
         loop = asyncio.get_running_loop()
@@ -247,10 +251,6 @@ class TencentOutgoingVideoTrack:
     to avoid blocking the event loop.
     """
 
-    _video_executor = concurrent.futures.ThreadPoolExecutor(
-        max_workers=1, thread_name_prefix="trtc-video-send"
-    )
-
     def __init__(
         self, source: "aiortc.MediaStreamTrack", fps: int = _DEFAULT_VIDEO_FPS
     ):
@@ -266,6 +266,11 @@ class TencentOutgoingVideoTrack:
         # initialised here so _send_frame can rely on a real float even
         # when `python -O` strips asserts.
         self._pts_start_time: float = time.monotonic()
+        # Per-instance executor: a class-level singleton would serialise
+        # every video track in the process through one worker.
+        self._video_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="trtc-video-send"
+        )
 
     def set_cloud(self, cloud: Any, loop: asyncio.AbstractEventLoop) -> None:
         self._cloud = cloud
@@ -321,3 +326,7 @@ class TencentOutgoingVideoTrack:
         if self._task is not None:
             self._task.cancel()
             self._task = None
+        # Don't wait on pending _send_frame submissions; the cancelled
+        # send loop won't push new ones, and an in-flight SendPixelFrame
+        # is short enough not to block shutdown.
+        self._video_executor.shutdown(wait=False)
