@@ -214,7 +214,11 @@ class TencentEdge(EdgeTransport[TencentCall]):
             edge=self,
         )
 
-        assert TencentDelegate is not None  # require_liteav() above guarantees this
+        if TencentDelegate is None:
+            # require_liteav() above should have raised, so this is
+            # defensive only — keeps the type checker honest and
+            # survives `python -O` (which strips asserts).
+            raise RuntimeError("liteav delegate is not available")
         delegate = TencentDelegate(
             edge=self,
             connection=self._connection,
@@ -243,7 +247,10 @@ class TencentEdge(EdgeTransport[TencentCall]):
         room_param.audio_obtain_params.output_frame_length_ms = FRAME_MS
         room_param.audio_obtain_params.output_audio_codec_type = AUDIO_CODEC_TYPE_PCM
 
-        assert self._cloud is not None
+        if self._cloud is None:
+            # CreateTRTCCloud was just called above; this would only
+            # trip if the SDK returned a null pointer.
+            raise RuntimeError("CreateTRTCCloud returned no cloud handle")
         logger.info("Tencent TRTC scene selected: %s", self._room_scene_name)
         self._cloud.EnterRoom(room_param)
         return self._connection
