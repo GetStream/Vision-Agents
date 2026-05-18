@@ -33,7 +33,7 @@ def init_cmd(name: str, no_install: bool) -> None:
         raise click.ClickException(f"{target} already exists")
 
     try:
-        scaffold(name, target)
+        scaffold(target.name, target)
     except (OSError, TemplateError) as err:
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)

@@ -7,6 +7,7 @@ from vision_agents.cli.init import init_cmd
 
 
 @click.group(help="Vision Agents command-line interface.")
+@click.version_option(package_name="vision-agents")
 def main() -> None:
     """Top-level command group."""
 

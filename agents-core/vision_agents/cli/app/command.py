@@ -27,10 +27,12 @@ def app_cmd(args: tuple[str, ...]) -> None:
     if not entrypoint.is_file():
         raise click.ClickException(f"entrypoint {entrypoint} not found")
 
-    if shutil.which("uv") is not None:
-        cmd = ["uv", "run", "python", str(entrypoint), *args]
-    else:
-        cmd = [sys.executable, str(entrypoint), *args]
+    if shutil.which("uv") is None:
+        raise click.ClickException(
+            "`uv` is required to run `vision-agents app`. "
+            "Install it from https://docs.astral.sh/uv/."
+        )
 
+    cmd = ["uv", "run", "python", str(entrypoint), *args]
     result = subprocess.run(cmd, cwd=project_root)
     sys.exit(result.returncode)
