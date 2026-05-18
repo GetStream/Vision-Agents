@@ -4,7 +4,7 @@ Tencent TRTC (Real-Time Communication) edge transport for Vision Agents. Lets an
 
 ## Quickstart
 
-Talk to an agent in 5 minutes. You'll need Docker, an `.env` with `TENCENT_SDK_APP_ID`, `TENCENT_SDK_SECRET_KEY`, `GOOGLE_API_KEY`, `CARTESIA_API_KEY`, and `ELEVEN_API_KEY` at the repo root, and a working microphone in a Chromium-based browser.
+Talk to an agent in 5 minutes. You'll need Docker, an `.env` with `TENCENT_SDK_APP_ID`, `TENCENT_SDK_SECRET_KEY`, `OPENAI_API_KEY`, and `ELEVEN_API_KEY` at the repo root, and a working microphone in a Chromium-based browser. The example pairs Tencent TRTC with OpenAI (LLM) and ElevenLabs (STT + TTS) — chosen because Gemini and Cartesia aren't reachable from mainland China, which is the natural deployment target for this edge.
 
 1. **Open Tencent's hosted TRTC Web SDK quick demo:**
    <https://web.sdk.qcloud.com/trtc/webrtc/v5/demo/quick-demo-js/index.html>
@@ -23,7 +23,7 @@ Talk to an agent in 5 minutes. You'll need Docker, an `.env` with `TENCENT_SDK_A
 
    On first run this builds the image and resolves the workspace; subsequent runs are fast. When the agent joins you'll see `Tencent TRTC OnRemoteUserEnterRoom: <userId>` matching the **UserID** shown in the demo.
 
-3. **Talk.** The flow is `browser → Tencent → STT (ElevenLabs) → LLM (Gemini) → TTS (Cartesia) → Tencent → browser`. Confirm each leg in the agent log:
+3. **Talk.** The flow is `browser → Tencent → STT (ElevenLabs) → LLM (OpenAI) → TTS (ElevenLabs) → Tencent → browser`. Confirm each leg in the agent log:
    - `🎤 [Transcript Complete]: …` — STT got your speech.
    - `🤖 [LLM response final]: …` — LLM produced a reply.
    - Reply plays back in the browser.

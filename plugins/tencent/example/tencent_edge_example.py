@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import cartesia, elevenlabs, gemini, tencent
+from vision_agents.plugins import elevenlabs, openai, tencent
 
 load_dotenv()
 
@@ -16,8 +16,8 @@ async def create_agent(**kwargs) -> Agent:
         edge=tencent.Edge(sdk_app_id=sdk_app_id, key=secret_key),
         agent_user=User(name="Tencent Voice Agent", id="tencent-voice-agent"),
         instructions="You are a helpful voice assistant. Respond concisely.",
-        llm=gemini.LLM(model="gemini-3.1-flash-lite-preview"),
-        tts=cartesia.TTS(),
+        llm=openai.LLM(),
+        tts=elevenlabs.TTS(),
         stt=elevenlabs.STT(),
     )
     return agent

@@ -23,9 +23,8 @@ services:
       - |
         uv sync --no-dev \
           --package vision-agents-plugins-tencent \
-          --package vision-agents-plugins-gemini \
-          --package vision-agents-plugins-elevenlabs \
-          --package vision-agents-plugins-cartesia && \
+          --package vision-agents-plugins-openai \
+          --package vision-agents-plugins-elevenlabs && \
         uv run --no-sync --package vision-agents-plugins-tencent \
           python plugins/tencent/example/tencent_edge_example.py run \
           --call-id "${TENCENT_TEST_ROOM_ID}"
