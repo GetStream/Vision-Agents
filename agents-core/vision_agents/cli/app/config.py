@@ -33,6 +33,8 @@ def load_app_config(config_path: Path) -> dict[str, object]:
     try:
         with config_path.open("rb") as handle:
             data = tomllib.load(handle)
+    except OSError as err:
+        raise click.ClickException(f"failed to read {config_path}: {err}") from err
     except tomllib.TOMLDecodeError as err:
         raise click.ClickException(f"failed to parse {config_path}: {err}") from err
 

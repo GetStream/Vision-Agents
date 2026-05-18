@@ -7264,7 +7264,6 @@ deepgram = [
     { name = "vision-agents-plugins-deepgram" },
 ]
 dev = [
-    { name = "click" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-json-report" },
@@ -7369,7 +7368,6 @@ requires-dist = [
     { name = "aiortc", specifier = ">=1.14.0,<1.15.0" },
     { name = "av", specifier = ">=14.2.0,<17" },
     { name = "click", specifier = ">=8.1" },
-    { name = "click", marker = "extra == 'dev'" },
     { name = "colorlog", specifier = ">=6.10.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
     { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.3.2,<4" },

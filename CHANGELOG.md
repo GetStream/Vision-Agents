@@ -62,9 +62,9 @@ All session endpoints now include `call_id` as a path parameter:
 
 ## New Features
 
-### `vision-agents` CLI with `init` command
+### `vision-agents` CLI with `init` and `app` commands
 
-Adds a console script so `uvx vision-agents init <name>` scaffolds a new agent project (`pyproject.toml`, `agent.py`, `.env.example`, `.gitignore`, `README.md`) and runs `uv sync` to provision a venv. Use `--no-install` to skip the install step. Templates are rendered with Jinja2.
+Adds a console script with two subcommands. `uvx vision-agents init <name>` scaffolds a new agent project (`pyproject.toml`, `agent.py`, `vision-agents.toml`, `.env.example`, `.gitignore`, `README.md`) and runs `uv sync` to provision a venv (skip with `--no-install`). `vision-agents app run|serve` reads `vision-agents.toml` from the project root and forwards args to the project's `Runner.cli()`, so users have a stable entry point even if the agent file is renamed. Templates are rendered with Jinja2. (#533)
 
 ### Inworld Realtime plugin (WebRTC)
 

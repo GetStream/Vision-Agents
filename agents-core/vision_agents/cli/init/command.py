@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 import click
+from jinja2 import TemplateError
 
 from vision_agents.cli.init.scaffold import scaffold
 
@@ -31,7 +32,12 @@ def init_cmd(name: str, no_install: bool) -> None:
     if target.exists():
         raise click.ClickException(f"{target} already exists")
 
-    scaffold(name, target)
+    try:
+        scaffold(name, target)
+    except (OSError, TemplateError) as err:
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        raise click.ClickException(f"failed to scaffold {target}: {err}") from err
     click.echo(f"Created {target}")
 
     installed = False
