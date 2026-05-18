@@ -3,6 +3,7 @@
 import logging
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import click
@@ -32,12 +33,22 @@ def init_cmd(name: str, no_install: bool) -> None:
     if target.exists():
         raise click.ClickException(f"{target} already exists")
 
-    try:
-        scaffold(target.name, target)
-    except (OSError, TemplateError) as err:
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
-        raise click.ClickException(f"failed to scaffold {target}: {err}") from err
+    # Scaffold into a staging dir on the same filesystem, then rename
+    # atomically so partial output is never observable at `target` and
+    # we never delete a path we didn't create.
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{target.name}-init-", dir=target.parent
+    ) as tmp:
+        staging = Path(tmp) / target.name
+        try:
+            scaffold(target.name, staging)
+        except (OSError, TemplateError) as err:
+            raise click.ClickException(f"failed to scaffold {target}: {err}") from err
+        try:
+            staging.rename(target)
+        except OSError as err:
+            raise click.ClickException(f"failed to finalize {target}: {err}") from err
     click.echo(f"Created {target}")
 
     installed = False
@@ -53,7 +64,7 @@ def init_cmd(name: str, no_install: bool) -> None:
 
     click.echo("\nNext steps:")
     click.echo(f"  cd {name}")
-    click.echo("  cp .env.example .env  # then fill in keys")
+    click.echo("  Copy .env.example to .env and fill in keys")
     if not installed:
         click.echo("  uv sync")
     click.echo("  vision-agents app run")
