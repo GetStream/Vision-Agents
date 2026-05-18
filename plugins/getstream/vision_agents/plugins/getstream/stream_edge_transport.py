@@ -393,7 +393,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         return standardize_connection
 
     def create_audio_track(
-        self, sample_rate: int = 48000, stereo: bool = True
+        self, sample_rate: int = 48000, stereo: bool = False
     ) -> AudioStreamTrack:
         return AudioStreamTrack(
             audio_buffer_size_ms=300_000,
