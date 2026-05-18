@@ -97,13 +97,6 @@ Common issues. If you have local changes (or ran build before you had the tag) y
   Caused by: Upload failed with status code 400 Bad Request. Server says: 400 The use of local versions in <Version('0.0.16.dev0+gc7563254f.d20251008')> is not allowed. See https://packaging.python.org/specifications/core-metadata for more information.
 ```
 
-## Edge transports
-
-The agent's RTC connection is provided by an `EdgeTransport` plugin. Supported transports:
-
-- [`getstream`](plugins/getstream) — Stream's global edge network (default for all examples; cross-platform).
-- [`tencent`](plugins/tencent) — Tencent TRTC via the LiteAV SDK. **Linux-only** (manylinux wheels of `liteav`); on macOS use the bundled Docker setup.
-
 ## Architecture
 
 To see how the agent work open up agents.py
