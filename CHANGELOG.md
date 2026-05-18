@@ -168,6 +168,173 @@ Required env vars: `TENCENT_SDK_APP_ID`, `TENCENT_SDK_SECRET_KEY`. Optional: `TE
 - **ElevenLabs STT**: fix duplicated `TurnEnded` event. (#559)
 - **ElevenLabs STT**: fix websocket keep-alive — the connection used to close after a few seconds of silence; now sends 2s of silence every 5s to keep it open. (#559)
 
+# v0.5.9
+
+## Bug Fixes
+
+- **Anam**: fix avatar publisher settings. (#556)
+
+# v0.5.8
+
+## Breaking Changes
+
+- **OpenAI Realtime**: default model bumped to `gpt-realtime-2`. (#537)
+
+## Bug Fixes
+
+- **Inworld TTS**: stop poisoning the receive stream with stale-context errors after >60s of inactivity. (#539)
+
+# v0.5.7
+
+## New Features
+
+- **AWS**: new `aws.STT` (Amazon Transcribe streaming) plugin. (#528)
+- **Inworld TTS**: switch from AV/HTTP to bidirectional WebSocket streaming (replaces the `av` dependency with `websockets`). (#532)
+
+# v0.5.6
+
+## Bug Fixes
+
+- **Inworld TTS**: force `LINEAR16` audio encoding — MP3 default broke replies that span multiple stream chunks; also makes `inworld-tts-2` the default model. (#531)
+- **MCP**: own MCP transport lifecycle in a single supervisor task to fix event-loop peg on `_deliver_cancellation`. (#529)
+
+# v0.5.5
+
+## New Features
+
+- **Inworld**: new `inworld.Realtime` (WebRTC) plugin — low-latency speech-to-speech with function calling, turn detection, and multi-provider upstream models via `<provider>/<model>` IDs. (#502)
+- **xAI**: new `xai.TTS` (Grok TTS) with `Voice` and `VOICE_DESCRIPTIONS` exports. (#433)
+- **LLM**: max tool-calling rounds is now configurable across LLM plugins. (#500)
+
+## Bug Fixes
+
+- **xAI Realtime**: default model updated to `grok-voice-think-fast-1.0`; model now passed as `?model=` query param; voice IDs lowercased to match docs. (#515)
+- **Gemini**: route MCP tool schemas through `parameters_json_schema` so `$schema` and `additionalProperties` round-trip correctly. (#513)
+
+# v0.5.4
+
+## Bug Fixes
+
+- **Gemini Realtime**: fix infinite error loop on network disconnection. (#490)
+
+# v0.5.3
+
+## New Features
+
+- **Sarvam**: new `sarvam.LLM`, `sarvam.STT`, `sarvam.TTS` plugin. (#488)
+
+## Bug Fixes
+
+- **Sarvam STT**: fix transcript ordering; support new WebSocket URL structures for translation/regular endpoints; speaker compatibility checks in TTS. (#489)
+
+# v0.5.2
+
+## New Features
+
+- **Decart**: update to SDK 0.0.29 with default model Lucy 2. `RestylingProcessor` now accepts an initial reference image and supports atomic `update_state` of prompt + image for virtual try-on. (#446)
+
+## Bug Fixes
+
+- **Agent**: fix "dict changed size during iteration" in `_poll_audio_queues`. (#487)
+- **AWS Realtime**: fix reconnect. (#486)
+- **StreamEdge**: fix track identification when multiple anonymous candidates exist. (#446)
+
+# v0.5.1
+
+## New Features
+
+- **OpenAI LLM**: `model` parameter is now optional and defaults to `gpt-5.4`. (#470)
+- **Core**: new `AVSynchronizer` to sync audio/video playback for avatars (used by `anam` and `lemonslice`). (#466)
+- **HuggingFace**: refactor tool calling — enforce max function-calling rounds, fix silently skipped tool calls with missing IDs, respect non-streaming mode. (#455)
+
+## Bug Fixes
+
+- **Agent**: fix `Task exception was never retrieved` in `_poll_audio_queues` on close. (#473)
+- **Agent**: prevent OOM from unconsumed video frames in voice-only agents. (#458)
+- **Gemini / OpenAI Realtime**: fix turn detection, support interruptions, add `interrupted` field to `RealtimeAudioOutputDoneEvent`. (#470)
+
+# v0.5.0
+
+## New Features
+
+- **Anam**: new `anam.Avatar` plugin. (#445)
+
+## Bug Fixes
+
+- **Resources**: close `AsyncStream`, ElevenLabs TTS httpx client, and Deepgram STT httpx client on session end to fix per-session TCP connection leaks. (#457)
+
+# v0.4.7
+
+## Bug Fixes
+
+- **Deepgram**: pin `deepgram-sdk` to `<6.1.0`. (#456)
+
+# v0.4.6
+
+## Bug Fixes
+
+- **Deepgram STT**: reduce latency. (#451)
+
+# v0.4.5
+
+## New Features
+
+- **AWS**: `aws_profile` parameter on `BedrockLLM` and `aws.Realtime` for profile / SSO / instance-profile auth. (#415)
+- **CLI**: splash screen with current core version; hidden in non-interactive terminals or via `--no-splash`. (#447, #449)
+
+## Bug Fixes
+
+- **Agent**: fix memory leak from stringifying numpy arrays in event logging. (#444)
+- **Gemini Realtime**: non-blocking tool execution. (#437)
+- **AWS Realtime**: track background tool tasks. (#438)
+- **OpenAI / xAI Realtime**: non-blocking tool execution. (#439)
+- **OpenRouter**: fix function calling. (#442)
+
+# v0.4.4
+
+## New Features
+
+- **Local**: new `local.LocalEdge`, `local.LocalCall`, and device classes for running agents against local audio/video devices. (#347)
+
+## Bug Fixes
+
+- **AWS Realtime**: emit transcription events and handle barge-in for Nova Sonic. (#408)
+- **EventManager**: fix `shutdown()` hanging forever. (#421)
+- **Gemini Realtime**: refactor event handling — fix skipping parts in multipart replies, add VAD config to reduce latency. (#436)
+- **ElevenLabs STT**: switch to VAD mode instead of manual commits. (#435)
+- **TTS**: use epoch tracking to skip stale TTS events on turn change. (#430)
+- **Inworld TTS**: add `X-User-Agent` and `X-Request-Id` headers. (#428)
+
+# v0.4.3
+
+## New Features
+
+- **Fish Audio**: update to S2-Pro model. (#405)
+
+## Bug Fixes
+
+- **StreamEdge**: fix connection race condition. (#412)
+- **Agent**: fix memory leak by cleaning up handler tasks and closures on close. (#407)
+
+# v0.4.2
+
+## New Features
+
+- **AssemblyAI**: add diarisation support for `assemblyai.STT`. (#394)
+- **HuggingFace**: new Transformers-based detection processor; LLM/VLM refactor. (#377)
+
+## Bug Fixes
+
+- **Agent**: buffer realtime transcripts into single chat messages. (#383)
+- **Agent**: fix eager turn detection updating transcripts out of order. (#401)
+- **LLMJudge**: set instructions once at init. (#399)
+
+# v0.4.1
+
+## New Features
+
+- **AssemblyAI**: add support for streaming STT. (#389)
+
 # v0.4.0
 
 ## Breaking Changes
@@ -232,12 +399,6 @@ All session endpoints now include `call_id` as a path parameter:
 
 ## New Features
 
-### Inworld Realtime plugin (WebRTC)
-
-Adds
-`inworld.Realtime` for low-latency speech-to-speech over Inworld's Realtime API (WebRTC transport). Protocol-compatible with OpenAI Realtime — supports function calling, turn detection, and multiple upstream models via the
-`<provider>/<model>` ID format (e.g. `"openai/gpt-4o-mini"`, `"google-ai-studio/gemini-2.5-flash"`). (#502)
-
 ### Redis-backed Agent session registry for horizontal scaling
 
 Sessions are shared across nodes via Redis, enabling cross-node session queries and closure without sticky sessions. (#374)
@@ -266,16 +427,8 @@ Install with: `uv add "vision-agents[redis]"`
 
 `py.typed` markers added to `vision_agents.core` and `vision_agents.testing` for downstream type checking support. (#378)
 
-### Inworld TTS v2
-
-`inworld-tts-2` added to the model `Literal` and used as the default for `inworld.TTS()`. (#531)
-
 ## Bug Fixes
 
 - **EventManager**: fix crash when event handlers have return type annotations (#381)
 - **RedisSessionKVStore**: fix import error when `redis` package is not installed (#384)
 - **Agent metrics**: fix metrics storage and serialization in session registry (#387)
-- **Inworld TTS**: fix garbled / failed playback for replies that span multiple stream chunks by forcing `LINEAR16` audio encoding (#531)
-- **MCPServerRemote
-  **: fix cancel-scope leak in which closing an MCP session left a half-cancelled anyio scope that pegged the event loop. The transport lifecycle now runs inside a dedicated supervisor task so
-  `__aenter__` / `__aexit__` task-identity holds regardless of which caller drives `connect()` and `disconnect()`. (#529)
