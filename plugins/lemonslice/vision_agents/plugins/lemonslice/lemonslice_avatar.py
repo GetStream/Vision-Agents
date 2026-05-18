@@ -52,8 +52,10 @@ class LemonSliceAvatar(Avatar):
         livekit_url: str | None = None,
         livekit_api_key: str | None = None,
         livekit_api_secret: str | None = None,
-        width: int = 1920,
-        height: int = 1080,
+        width: int = 1280,
+        height: int = 720,
+        fps: int = 30,
+        buffer_seconds: float = 1.0,
     ):
         """Initialize the LemonSlice avatar publisher.
 
@@ -69,8 +71,15 @@ class LemonSliceAvatar(Avatar):
             livekit_api_secret: LiveKit API secret. Uses LIVEKIT_API_SECRET env var if not provided.
             width: Output video width in pixels.
             height: Output video height in pixels.
+            fps: Output video frame rate. Must be > 0.
+            buffer_seconds: Max video buffer depth in seconds. Caps how many frames
+                can be queued ahead of audio playback. Must be > 0.
         """
         super().__init__()
+        if buffer_seconds <= 0:
+            raise ValueError("buffer_seconds must be > 0")
+        if fps <= 0:
+            raise ValueError("fps must be > 0")
         agent_id = agent_id or os.getenv("LEMONSLICE_AGENT_ID")
         agent_image_url = agent_image_url or os.getenv("LEMONSLICE_AGENT_IMAGE_URL")
 
@@ -93,7 +102,12 @@ class LemonSliceAvatar(Avatar):
             livekit_api_key=livekit_api_key,
             livekit_api_secret=livekit_api_secret,
         )
-        self._sync = AVSynchronizer(width=width, height=height)
+        self._sync = AVSynchronizer(
+            width=width,
+            height=height,
+            fps=fps,
+            max_queue_size=int(fps * buffer_seconds),
+        )
 
         self._connected = False
         self._audio_input_task: asyncio.Task[None] | None = None

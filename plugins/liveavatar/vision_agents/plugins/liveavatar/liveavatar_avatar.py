@@ -52,8 +52,10 @@ class LiveAvatar(Avatar):
         max_session_duration: int | None = None,
         video_quality: str = "high",
         video_encoding: str = "H264",
-        width: int = 1920,
-        height: int = 1080,
+        width: int = 1280,
+        height: int = 720,
+        fps: int = 30,
+        buffer_seconds: float = 1.0,
     ) -> None:
         """Initialize the LiveAvatar plugin.
 
@@ -68,8 +70,15 @@ class LiveAvatar(Avatar):
             video_encoding: One of "H264", "VP8".
             width: Output video width in pixels.
             height: Output video height in pixels.
+            fps: Output video frame rate. Must be > 0.
+            buffer_seconds: Max video buffer depth in seconds. Caps how many frames
+                can be queued ahead of audio playback. Must be > 0.
         """
         super().__init__()
+        if buffer_seconds <= 0:
+            raise ValueError("buffer_seconds must be > 0")
+        if fps <= 0:
+            raise ValueError("fps must be > 0")
 
         api_key = api_key or os.getenv("LIVEAVATAR_API_KEY")
         if not api_key:
@@ -88,7 +97,12 @@ class LiveAvatar(Avatar):
             on_audio=self._on_audio_frame,
             on_disconnect=self._on_disconnect,
         )
-        self._sync = AVSynchronizer(width=width, height=height)
+        self._sync = AVSynchronizer(
+            width=width,
+            height=height,
+            fps=fps,
+            max_queue_size=int(fps * buffer_seconds),
+        )
 
         self._avatar_id = avatar_id
         self._is_sandbox = is_sandbox

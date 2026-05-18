@@ -152,3 +152,22 @@ class TestAVSynchronizer:
         sync.video_output.stop()
         with pytest.raises(VideoTrackClosedError):
             await sync.video_output.recv()
+
+    async def test_mismatched_frame_is_resized_to_track_dims(
+        self, sync: AVSynchronizer
+    ):
+        """Frames not matching the track's dims should be resized on the way in."""
+        await sync.write_video(_make_frame(1280, 720, "red"))
+
+        received = await sync.video_output.recv()
+        assert received.width == 640
+        assert received.height == 480
+
+    @pytest.mark.parametrize("fps,expected_delta", [(60, 1500), (30, 3000), (15, 6000)])
+    async def test_next_timestamp_paces_at_configured_fps(
+        self, fps: int, expected_delta: int
+    ):
+        sync = AVSynchronizer(width=640, height=480, fps=fps, max_queue_size=10)
+        pts1, _ = await sync.video_output.next_timestamp()
+        pts2, _ = await sync.video_output.next_timestamp()
+        assert pts2 - pts1 == expected_delta

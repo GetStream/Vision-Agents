@@ -41,3 +41,20 @@ class TestAnamAvatar:
     async def test_audio_output(self):
         avatar = _make_avatar()
         assert isinstance(avatar.audio_output(), AudioOutputStream)
+
+    async def test_init_buffer_seconds_sets_queue_size(self):
+        avatar = _make_avatar(buffer_seconds=2.5)
+        assert avatar._sync._video_output._pending.maxlen == 75
+
+    async def test_init_zero_buffer_seconds_raises(self):
+        with pytest.raises(ValueError, match="buffer_seconds must be > 0"):
+            _make_avatar(buffer_seconds=0)
+
+    async def test_init_custom_fps(self):
+        avatar = _make_avatar(fps=60, buffer_seconds=2.0)
+        assert avatar._sync._video_output.fps == 60
+        assert avatar._sync._video_output._pending.maxlen == 120
+
+    async def test_init_zero_fps_raises(self):
+        with pytest.raises(ValueError, match="fps must be > 0"):
+            _make_avatar(fps=0)
