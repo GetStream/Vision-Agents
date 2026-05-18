@@ -65,6 +65,7 @@ class LocalDetectionProcessor(VideoProcessorPublisher, Warmable):
         model_name: str = "moondream/moondream3-preview",
         options: Optional[AgentOptions] = None,
     ):
+        super().__init__()
         if options is None:
             self.options = default_agent_options()
         else:

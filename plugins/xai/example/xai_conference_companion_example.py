@@ -263,7 +263,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("Joining call")
 
         await asyncio.sleep(3)
-        await agent.llm.simple_response(
+        await agent.simple_response(
             text=(
                 "Greet the user briefly. Tell them you're their conference companion "
                 "and you can brief them on attendees, save notes, and check their schedule."

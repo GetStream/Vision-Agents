@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Any, Dict, Optional, Union
+from typing import Any, AsyncIterator, Dict, Optional, Union
 
 import aiortc
 from dotenv import load_dotenv
@@ -28,6 +28,7 @@ from openai.types.realtime.realtime_transcription_session_audio_input_turn_detec
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm import realtime
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from .rtc_manager import RTCManager
@@ -37,12 +38,8 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-"""
-TODO: Future improvements
-- Reconnection is currently not easy to do with OpenAI realtime.
-"""
 
-
+# TODO: - Reconnection is currently not easy to do with OpenAI realtime.
 class Realtime(realtime.Realtime):
     """
     OpenAI Realtime API implementation for real-time AI audio and video communication over WebRTC.
@@ -67,9 +64,11 @@ class Realtime(realtime.Realtime):
 
     """
 
+    provider_name = "openai_realtime"
+
     def __init__(
         self,
-        model: str = "gpt-realtime-1.5",
+        model: str = "gpt-realtime-2",
         api_key: Optional[str] = None,
         voice: str = "marin",
         client: Optional[AsyncOpenAI] = None,
@@ -160,7 +159,7 @@ class Realtime(realtime.Realtime):
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ):
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Send a simple text input to the OpenAI Realtime session.
 
         This is a convenience wrapper that forwards a text prompt upstream via
@@ -173,10 +172,9 @@ class Realtime(realtime.Realtime):
             participant: Optional participant metadata (ignored here).
         """
         await self.rtc.send_text(text)
+        yield LLMResponseFinal()
 
-    async def simple_audio_response(
-        self, audio: PcmData, participant: Optional[Participant] = None
-    ):
+    async def simple_audio_response(self, pcm: PcmData, participant: Participant):
         """Send a single PCM audio frame to the OpenAI Realtime session.
 
         The audio should be raw PCM matching the realtime session's expected
@@ -188,8 +186,7 @@ class Realtime(realtime.Realtime):
             participant: Optional participant information for the audio source.
         """
         # Track current participant for user speech transcription events
-        self._current_participant = participant
-        await self.rtc.send_audio_pcm(audio)
+        await self.rtc.send_audio_pcm(pcm)
 
     async def close(self):
         await self._await_pending_tools()
@@ -229,7 +226,7 @@ class Realtime(realtime.Realtime):
                 ResponseAudioTranscriptDoneEvent.model_validate(event_copy)
             )
             self._emit_agent_speech_transcription(
-                text=transcript_event.transcript, mode="final", original=event
+                text=transcript_event.transcript, mode="final"
             )
             self._emit_response_event(
                 text=transcript_event.transcript,
@@ -255,15 +252,11 @@ class Realtime(realtime.Realtime):
             # _current_participant is kept up-to-date in simple_audio_response
             # so it will be used by _emit_user_speech_transcription
             self._emit_user_speech_transcription(
-                text=user_transcript_event.transcript, mode="final", original=event
+                text=user_transcript_event.transcript, mode="final"
             )
         elif et == "input_audio_buffer.speech_started":
             InputAudioBufferSpeechStartedEvent.model_validate(event)
             await self.interrupt()
-            # TODO: According to https://developers.openai.com/api/docs/guides/realtime-conversations#interruption-and-truncation
-            #  we must send conversation.item.truncate event to remove
-            #  the unplayed portion of the model’s last response from the conversation.
-            #  However, we don't have this data available yet.
             self._emit_audio_output_done_event(interrupted=True)
 
         elif et == "response.output_item.added":
@@ -297,8 +290,6 @@ class Realtime(realtime.Realtime):
             item_id = item.get("id")
             if item_id and item_id in self._pending_tool_calls:
                 self._run_tool_in_background(self._execute_pending_tool_call(item_id))
-        elif et == "response.created":
-            self._begin_response()
         elif et == "session.created":
             session_event = SessionCreatedEvent(**event)
             self.current_session = session_event.session
@@ -309,11 +300,22 @@ class Realtime(realtime.Realtime):
             response_done_event = ResponseDoneEvent.model_validate(event)
 
             if response_done_event.response.status == "failed":
-                raise Exception(
-                    "OpenAI realtime failure %s", response_done_event.response
+                err = Exception(
+                    f"OpenAI realtime failure {response_done_event.response}"
                 )
+                self._emit_error_event(error=err, context="response.done")
+                raise err
             elif response_done_event.response.status == "cancelled":
                 logger.debug("Response cancelled (user interrupted)")
+        elif et == "error":
+            error_info = event.get("error", {}) if isinstance(event, dict) else {}
+            error_msg = error_info.get("message", "OpenAI realtime error")
+            error_type = error_info.get("type", "unknown")
+            logger.error("OpenAI realtime error: %s", error_msg)
+            self._emit_error_event(
+                error=Exception(error_msg),
+                context=f"openai error: {error_type}",
+            )
         elif et == "session.updated":
             # Update session with new data
             session_updated_event = SessionUpdatedEvent(**event)
@@ -334,12 +336,9 @@ class Realtime(realtime.Realtime):
         elif et == "output_audio_buffer.stopped":
             # Output audio buffer stopped - acknowledgment of audio playback end
             pass
-        elif et == "response.audio.done":
-            # Audio generation complete for this response item
-            self._emit_audio_output_done_event()
-        elif et == "response.output_audio.done":
-            # Output audio generation complete for this response item
-            pass
+        elif et in ("response.output_audio.done", "response.audio.done"):
+            # Audio generation complete for this response item.
+            self._emit_audio_output_done_event(response_id=event.get("response_id"))
         elif et == "response.content_part.done":
             # Content part complete - contains full transcript
             pass
@@ -351,11 +350,7 @@ class Realtime(realtime.Realtime):
 
         Forwards audio data to the output track for playback and emits audio output event.
         """
-
-        # Emit audio output event
-        self._emit_audio_output_event(
-            audio_data=pcm,
-        )
+        self._emit_audio_output_event(pcm=pcm)
 
     async def watch_video_track(
         self,
@@ -408,6 +403,12 @@ class Realtime(realtime.Realtime):
         if error:
             response_data = {"error": str(error)}
             logger.error(f"Tool call {name} failed: {error}")
+            self._emit_error_event(
+                error=error
+                if isinstance(error, BaseException)
+                else Exception(str(error)),
+                context=f"tool_call:{name}",
+            )
         else:
             response_data = (
                 {"result": result} if not isinstance(result, dict) else result

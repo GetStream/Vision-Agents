@@ -43,17 +43,16 @@ class TranscribeSTT(stt.STT):
     """
     AWS Transcribe streaming Speech-to-Text implementation.
 
-    Uses the smithy-based ``aws-sdk-transcribe-streaming`` client. Each
-    "natural speech segment" detected by AWS is mapped to a turn:
-    partials carry ``is_partial=True`` and the finalised segment arrives
-    with ``is_partial=False``.
+    Uses the smithy-based ``aws-sdk-transcribe-streaming`` client.
+    Partial results carry ``is_partial=True`` and the finalised segment
+    arrives with ``is_partial=False``.
 
     Docs:
     - https://docs.aws.amazon.com/transcribe/latest/dg/streaming.html
     - https://docs.aws.amazon.com/transcribe/latest/dg/streaming-partial-results.html
     """
 
-    turn_detection: bool = True
+    turn_detection: bool = False
 
     def __init__(
         self,
@@ -123,7 +122,6 @@ class TranscribeSTT(stt.STT):
         self._supervisor_task: Optional[asyncio.Task[None]] = None
         self._reconnect_event = asyncio.Event()
         self._current_participant: Optional[Participant] = None
-        self._turn_in_progress = False
         self._audio_start_time: Optional[float] = None
         # Media-time watermarks, in seconds. Total audio fed into the stream
         # so far, and the cutoff snapshotted by clear(). Results whose
@@ -160,7 +158,6 @@ class TranscribeSTT(stt.STT):
         async with self._watermark_lock:
             self._start_time_watermark = self._audio_sent_seconds
         self._audio_start_time = None
-        self._turn_in_progress = False
         self._current_participant = None
 
     async def close(self):
@@ -183,15 +180,19 @@ class TranscribeSTT(stt.STT):
         if self._audio_start_time is None:
             self._audio_start_time = time.perf_counter()
 
+        # AWS Transcribe rejects events whose payload exceeds its per-frame
+        # cap ("Your stream is too big"). Send 100ms frames (1600 samples
+        # at 16kHz mono) which stay well under the limit.
         async with self._watermark_lock:
             if self.closed or self._input_stream is None:
                 return
-            await self._input_stream.send(
-                AudioStreamAudioEvent(
-                    value=AudioEvent(audio_chunk=resampled.samples.tobytes())
+            for chunk in resampled.chunks(self._sample_rate // 10):
+                await self._input_stream.send(
+                    AudioStreamAudioEvent(
+                        value=AudioEvent(audio_chunk=chunk.samples.tobytes())
+                    )
                 )
-            )
-            self._audio_sent_seconds += resampled.duration
+                self._audio_sent_seconds += chunk.duration
 
     async def _open_stream(self, timeout: float = 10.0):
         client = TranscribeStreamingClient(config=await self._build_config())
@@ -282,7 +283,6 @@ class TranscribeSTT(stt.STT):
                     logger.error("Permanent AWS Transcribe error: %r", event)
                     self._emit_error_event(
                         RuntimeError(f"AWS Transcribe error: {event!r}"),
-                        participant=self._current_participant,
                         context="aws_transcribe",
                     )
                     # Stop accepting audio; supervisor stays idle (no reconnect).
@@ -324,15 +324,12 @@ class TranscribeSTT(stt.STT):
             response = self._result_to_response(result)
 
             if result.is_partial:
-                if not self._turn_in_progress:
-                    self._turn_in_progress = True
-                    self._emit_turn_started_event(participant)
-                self._emit_partial_transcript_event(text, participant, response)
+                self._emit_transcript_event(
+                    text, participant, response, mode="replacement"
+                )
             else:
                 self._emit_transcript_event(text, participant, response)
                 self._audio_start_time = None
-                self._turn_in_progress = False
-                self._emit_turn_ended_event(participant)
 
     def _result_to_response(self, result: Result) -> TranscriptResponse:
         items: list[Item] = []
@@ -397,9 +394,6 @@ class TranscribeSTT(stt.STT):
             )
             await asyncio.sleep(backoff)
             try:
-                if self._turn_in_progress and self._current_participant is not None:
-                    self._emit_turn_ended_event(self._current_participant)
-                self._turn_in_progress = False
                 self._audio_start_time = None
                 # Slow close+open runs outside the lock so concurrent
                 # process_audio calls observe _input_stream is None and

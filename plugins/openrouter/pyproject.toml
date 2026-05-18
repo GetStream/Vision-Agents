@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "vision-agents-plugins-openai",
+    "openai>=2.26.0,<3",
 ]
 
 [project.urls]
@@ -28,7 +28,6 @@ packages = ["."]
 
 [tool.uv.sources]
 vision-agents = { workspace = true }
-vision-agents-plugins-openai = { workspace = true }
 
 [dependency-groups]
 dev = [

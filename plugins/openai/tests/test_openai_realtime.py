@@ -1,131 +1,43 @@
 import asyncio
+from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import AudioFormat, PcmData
+from scipy import signal
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import (
-    RealtimeAgentSpeechTranscriptionEvent,
-    RealtimeAudioOutputEvent,
-    RealtimeUserSpeechTranscriptionEvent,
+from vision_agents.core.llm.realtime import (
+    RealtimeAgentTranscript,
+    RealtimeAudioOutput,
+    RealtimeAudioOutputDone,
+    RealtimeUserTranscript,
 )
 from vision_agents.plugins.openai import Realtime
 
-# Load environment variables
 load_dotenv()
 
 
 class TestOpenAIRealtime:
-    """Integration tests for OpenAI Realtime API"""
+    """Unit tests for OpenAI Realtime event handling."""
 
     @pytest.fixture
     async def realtime(self):
-        """Create and manage Realtime connection lifecycle"""
-        realtime = Realtime(
-            model="gpt-realtime",
-            voice="alloy",
-        )
-        realtime.set_instructions("be friendly")
+        # AsyncMock client avoids constructing AsyncOpenAI (which trips on SOCKS-proxy
+        # envs missing the optional httpx[socks] extra) and lets unit tests drive
+        # _handle_openai_event without a network roundtrip.
+        rt = Realtime(model="gpt-realtime", voice="alloy", client=AsyncMock())
+        rt.set_instructions("be friendly")
         try:
-            yield realtime
+            yield rt
         finally:
-            await realtime.close()
-
-    @pytest.mark.integration
-    async def test_simple_response_flow(self, realtime):
-        """Test sending a simple text message and receiving response"""
-        # Send a simple message
-        events = []
-
-        @realtime.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-
-        await asyncio.sleep(0.01)
-        await realtime.connect()
-        await realtime.simple_response("Hello, can you hear me?")
-
-        # Wait for response
-        await asyncio.sleep(3.0)
-        assert len(events) > 0
-
-    @pytest.mark.integration
-    async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
-        """Test sending real audio data and verify connection remains stable"""
-        events = []
-
-        @realtime.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-
-        await asyncio.sleep(0.01)
-        await realtime.connect()
-
-        # Wait for connection to be fully established
-        await asyncio.sleep(2.0)
-
-        # Convert 16kHz audio to 48kHz for OpenAI realtime
-        # OpenAI expects 48kHz PCM audio
-        import numpy as np
-        from getstream.video.rtc.track_util import AudioFormat, PcmData
-        from scipy import signal
-
-        # Resample from 16kHz to 48kHz
-        samples_16k = mia_audio_16khz.samples
-        num_samples_48k = int(len(samples_16k) * 48000 / 16000)
-        samples_48k = signal.resample(samples_16k, num_samples_48k).astype(np.int16)
-
-        # Create new PcmData with 48kHz
-        audio_48khz = PcmData(
-            samples=samples_48k, sample_rate=48000, format=AudioFormat.S16
-        )
-
-        await realtime.simple_response(
-            "Listen to the following audio and tell me what you hear"
-        )
-        await asyncio.sleep(5.0)
-
-        # Send the resampled audio
-        await realtime.simple_audio_response(audio_48khz)
-
-        # Wait for response
-        await asyncio.sleep(10.0)
-        assert len(events) > 0
-
-    @pytest.mark.integration
-    async def test_video_sending_flow(self, realtime, bunny_video_track):
-        """Test sending real video data and verify connection remains stable"""
-        events = []
-
-        @realtime.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-
-        await asyncio.sleep(0.01)
-        await realtime.connect()
-        await realtime.simple_response("Describe what you see in this video please")
-        await asyncio.sleep(10.0)
-        # Start video sender with low FPS to avoid overwhelming the connection
-        await realtime.watch_video_track(bunny_video_track)
-
-        # Let it run for a few seconds
-        await asyncio.sleep(10.0)
-
-        # Stop video sender
-        await realtime.stop_watching_video_track()
-        assert len(events) > 0
+            await rt.close()
 
     async def test_user_speech_transcription_event(self, realtime):
-        """Test that user speech transcription event is emitted when conversation.item.input_audio_transcription.completed is received"""
-        user_transcripts = []
+        """conversation.item.input_audio_transcription.completed → RealtimeUserTranscript"""
+        realtime._current_participant = Participant(original=None, user_id="u", id="u")
 
-        # Subscribe using decorator pattern like agents.py does
-        @realtime.events.subscribe
-        async def on_user_transcript(event: RealtimeUserSpeechTranscriptionEvent):
-            user_transcripts.append(event)
-
-        # Real OpenAI event payload for user speech transcription (actual payload from OpenAI)
+        # Real OpenAI event payload for user speech transcription
         openai_event = {
             "content_index": 0,
             "event_id": "event_CSLB0tmlLaCQtfefQZW03",
@@ -135,27 +47,16 @@ class TestOpenAIRealtime:
             "usage": {"seconds": 2, "type": "duration"},
         }
 
-        # Simulate receiving the event from OpenAI
         await realtime._handle_openai_event(openai_event)
 
-        # Wait for async event processing
-        await asyncio.sleep(0.1)
-
-        # Verify the event was emitted
+        user_transcripts = [
+            i for i in realtime.output.peek() if isinstance(i, RealtimeUserTranscript)
+        ]
         assert len(user_transcripts) == 1
         assert user_transcripts[0].text == "OK, everybody. Do."
-        assert user_transcripts[0].original == openai_event
 
     async def test_agent_speech_transcription_event(self, realtime):
-        """Test that agent speech transcription event is emitted when response.audio_transcript.done is received"""
-        agent_transcripts = []
-
-        # Subscribe using decorator pattern like agents.py does
-        @realtime.events.subscribe
-        async def on_agent_transcript(event: RealtimeAgentSpeechTranscriptionEvent):
-            agent_transcripts.append(event)
-
-        # Real OpenAI event payload for agent speech transcription
+        """response.output_audio_transcript.done → RealtimeAgentTranscript"""
         openai_event = {
             "type": "response.output_audio_transcript.done",
             "event_id": "event_789",
@@ -166,32 +67,18 @@ class TestOpenAIRealtime:
             "transcript": "I'm doing well, thank you for asking!",
         }
 
-        # Simulate receiving the event from OpenAI
         await realtime._handle_openai_event(openai_event)
 
-        # Wait a moment for async event handling
-        await asyncio.sleep(0.1)
-
-        # Verify the event was emitted
+        agent_transcripts = [
+            i for i in realtime.output.peek() if isinstance(i, RealtimeAgentTranscript)
+        ]
         assert len(agent_transcripts) == 1
         assert agent_transcripts[0].text == "I'm doing well, thank you for asking!"
-        assert agent_transcripts[0].original == openai_event
 
     async def test_both_transcription_events(self, realtime):
-        """Test that both user and agent transcription events are emitted correctly"""
-        user_transcripts = []
-        agent_transcripts = []
+        """Both user and agent transcripts are emitted on the output stream."""
+        realtime._current_participant = Participant(original=None, user_id="u", id="u")
 
-        # Subscribe using decorator pattern like agents.py does
-        @realtime.events.subscribe
-        async def on_user_transcript(event: RealtimeUserSpeechTranscriptionEvent):
-            user_transcripts.append(event)
-
-        @realtime.events.subscribe
-        async def on_agent_transcript(event: RealtimeAgentSpeechTranscriptionEvent):
-            agent_transcripts.append(event)
-
-        # Real user speech event
         user_event = {
             "content_index": 0,
             "event_id": "event_user_123",
@@ -200,8 +87,6 @@ class TestOpenAIRealtime:
             "type": "conversation.item.input_audio_transcription.completed",
             "usage": {"seconds": 1, "type": "duration"},
         }
-
-        # Real agent speech event
         agent_event = {
             "type": "response.output_audio_transcript.done",
             "event_id": "event_agent_789",
@@ -212,62 +97,85 @@ class TestOpenAIRealtime:
             "transcript": "I'm doing great, thanks!",
         }
 
-        # Simulate receiving both events
         await realtime._handle_openai_event(user_event)
         await realtime._handle_openai_event(agent_event)
 
-        # Wait for async event processing
-        await asyncio.sleep(0.1)
-
-        # Verify both events were emitted
+        items = realtime.output.peek()
+        user_transcripts = [i for i in items if isinstance(i, RealtimeUserTranscript)]
+        agent_transcripts = [i for i in items if isinstance(i, RealtimeAgentTranscript)]
         assert len(user_transcripts) == 1
         assert user_transcripts[0].text == "Hello, how are you?"
-        assert user_transcripts[0].original == user_event
-
         assert len(agent_transcripts) == 1
         assert agent_transcripts[0].text == "I'm doing great, thanks!"
-        assert agent_transcripts[0].original == agent_event
 
-    async def test_user_speech_transcription_tracks_participant(self, realtime):
-        """Test that user speech transcription correctly tracks participant/user_id"""
-        user_transcripts = []
 
-        # Subscribe to events
-        @realtime.events.subscribe
-        async def on_user_transcript(event: RealtimeUserSpeechTranscriptionEvent):
-            user_transcripts.append(event)
+@pytest.mark.integration
+class TestOpenAIRealtimeIntegration:
+    """End-to-end tests against the live OpenAI Realtime API."""
 
-        test_participant = Participant(
-            original=None, user_id="test_user_123", id="test_user_123"
+    @pytest.fixture
+    async def realtime(self):
+        rt = Realtime(model="gpt-realtime", voice="alloy")
+        rt.set_instructions("be friendly")
+        try:
+            await rt.connect()
+            yield rt
+        finally:
+            await rt.close()
+
+    async def test_simple_response_flow(self, realtime):
+        async for _ in realtime.simple_response("Hello, can you hear me?"):
+            pass
+
+        await asyncio.sleep(3.0)
+        items = realtime.output.peek()
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        done = [i for i in items if isinstance(i, RealtimeAudioOutputDone)]
+        assert len(audio) > 0
+        assert len(done) >= 1
+        assert any(not d.interrupted for d in done)
+
+    async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
+        # Wait for connection to be fully established
+        await asyncio.sleep(2.0)
+
+        # OpenAI realtime expects 48 kHz PCM; resample from 16 kHz.
+        samples_16k = mia_audio_16khz.samples
+        num_samples_48k = int(len(samples_16k) * 48000 / 16000)
+        samples_48k = signal.resample(samples_16k, num_samples_48k).astype(np.int16)
+
+        audio_48khz = PcmData(
+            samples=samples_48k, sample_rate=48000, format=AudioFormat.S16
         )
 
-        pcm = PcmData(
-            samples=np.zeros(100, dtype=np.int16),
-            sample_rate=48000,
-            format=AudioFormat.S16,
+        async for _ in realtime.simple_response(
+            "Listen to the following audio and tell me what you hear"
+        ):
+            pass
+        await asyncio.sleep(5.0)
+
+        await realtime.simple_audio_response(
+            audio_48khz, Participant(original=None, user_id="u", id="u")
         )
-        await realtime.simple_audio_response(pcm, test_participant)
 
-        # Now simulate receiving the transcription event from OpenAI
-        openai_event = {
-            "content_index": 0,
-            "event_id": "event_test_123",
-            "item_id": "item_test_456",
-            "transcript": "Test transcription with user ID",
-            "type": "conversation.item.input_audio_transcription.completed",
-            "usage": {"seconds": 1, "type": "duration"},
-        }
+        await asyncio.sleep(10.0)
+        audio = [
+            i for i in realtime.output.peek() if isinstance(i, RealtimeAudioOutput)
+        ]
+        assert len(audio) > 0
 
-        await realtime._handle_openai_event(openai_event)
-        await asyncio.sleep(0.1)
+    async def test_video_sending_flow(self, realtime, bunny_video_track):
+        async for _ in realtime.simple_response(
+            "Describe what you see in this video please"
+        ):
+            pass
+        await asyncio.sleep(10.0)
+        await realtime.watch_video_track(bunny_video_track)
 
-        # Verify the event was emitted with correct participant info
-        assert len(user_transcripts) == 1
-        assert user_transcripts[0].text == "Test transcription with user ID"
+        await asyncio.sleep(10.0)
 
-        # Verify the participant/user_id is correctly tracked
-        assert user_transcripts[0].participant is not None
-        assert user_transcripts[0].participant.user_id == "test_user_123"
-
-        # Verify the user_id() helper method works
-        assert user_transcripts[0].user_id() == "test_user_123"
+        await realtime.stop_watching_video_track()
+        audio = [
+            i for i in realtime.output.peek() if isinstance(i, RealtimeAudioOutput)
+        ]
+        assert len(audio) > 0

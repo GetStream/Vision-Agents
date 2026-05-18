@@ -14,6 +14,7 @@ from typing import Iterator
 import av
 import pytest
 from PIL import Image
+from vision_agents.core.llm.llm import LLMResponseFinal
 from vision_agents.plugins.moondream import LocalVLM
 
 
@@ -64,42 +65,29 @@ async def local_vlm_caption() -> LocalVLM:
 @pytest.mark.integration
 @pytest.mark.skip
 @pytest.mark.skipif(not os.getenv("HF_TOKEN"), reason="HF_TOKEN not set")
-class TestMoondreamLocalVLM:
+class TestMoondreamLocalVLMIntegration:
     async def test_local_vqa_mode(
         self, golf_frame: av.VideoFrame, local_vlm_vqa: LocalVLM
     ):
         """Test LocalVLM VQA mode with a question about the image."""
-
-        await local_vlm_vqa.warmup()
-        assert local_vlm_vqa.model is not None, "Model must be loaded before test"
-
         local_vlm_vqa._latest_frame = golf_frame
 
         question = "What sport is being played in this image?"
-        response = await local_vlm_vqa.simple_response(question)
+        items = [item async for item in local_vlm_vqa.simple_response(question)]
+        final = items[-1]
 
-        assert response is not None
-        assert response.text is not None
-        assert len(response.text) > 0
-        assert response.exception is None
-
-        assert "golf" in response.text.lower()
+        assert isinstance(final, LLMResponseFinal)
+        assert len(final.text) > 0
+        assert "golf" in final.text.lower()
 
     async def test_local_caption_mode(
         self, golf_frame: av.VideoFrame, local_vlm_caption: LocalVLM
     ):
         """Test LocalVLM caption mode to generate a description of the image."""
-
-        await local_vlm_caption.warmup()
-        assert local_vlm_caption.model is not None, "Model must be loaded before test"
-
         local_vlm_caption._latest_frame = golf_frame
 
-        response = await local_vlm_caption.simple_response("")
+        items = [item async for item in local_vlm_caption.simple_response("")]
+        final = items[-1]
 
-        assert response is not None
-        assert response.text is not None
-        assert len(response.text) > 0
-        assert response.exception is None
-
-        assert len(response.text.strip()) > 0
+        assert isinstance(final, LLMResponseFinal)
+        assert len(final.text.strip()) > 0

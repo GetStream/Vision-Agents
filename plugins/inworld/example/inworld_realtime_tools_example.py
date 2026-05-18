@@ -76,7 +76,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     async with agent.join(call):
         logger.info("Agent joined call %s/%s", call_type, call_id)
         await asyncio.sleep(2)
-        await agent.llm.simple_response(
+        await agent.simple_response(
             text="Greet the user in one short sentence and invite them to ask about the time or weather."
         )
         await agent.finish()

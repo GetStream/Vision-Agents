@@ -16,6 +16,8 @@ from typing import NamedTuple, Optional
 import click
 import setuptools
 import toml
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 CORE_EXTRAS_ALL_SECTION = "all-plugins"
 CORE_EXTRAS_DEV_SECTION = "dev"
@@ -119,7 +121,18 @@ def _cwd_is_root():
 def _get_plugin_package_name(plugin: str) -> str:
     with open(Path(PLUGINS_DIR) / Path(plugin) / "pyproject.toml", "r") as f:
         pyproject = toml.load(f)
-    return pyproject["project"]["name"]
+    return canonicalize_name(pyproject["project"]["name"])
+
+
+def _requirement_name(req: str) -> str:
+    """Canonical bare package name from a PEP 508 requirement string.
+
+    Strips version specifiers, extras, and environment markers, then
+    applies PEP 503 normalisation so ``Vision_Agents_Plugins_Tencent``
+    compares equal to ``vision-agents-plugins-tencent`` regardless of
+    case or `_` vs `-`.
+    """
+    return canonicalize_name(Requirement(req).name)
 
 
 def _get_core_optional_dependencies() -> CoreDependencies:
@@ -129,9 +142,11 @@ def _get_core_optional_dependencies() -> CoreDependencies:
     optionals: dict[str, list[str]] = pyproject.get("project", {}).get(
         "optional-dependencies", {}
     )
-    optionals_all = optionals.get(CORE_EXTRAS_ALL_SECTION, [])
+    optionals_all = [
+        _requirement_name(r) for r in optionals.get(CORE_EXTRAS_ALL_SECTION, [])
+    ]
     optionals_plugins = {
-        k: v
+        k: [_requirement_name(r) for r in v]
         for k, v in optionals.items()
         if k not in (CORE_EXTRAS_ALL_SECTION, CORE_EXTRAS_DEV_SECTION)
     }

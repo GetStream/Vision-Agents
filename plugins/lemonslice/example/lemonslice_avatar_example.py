@@ -1,11 +1,11 @@
 """LemonSlice Avatar example.
 
 Adds a real-time avatar to an AI agent. LemonSlice generates synchronized
-lip-synced video from the TTS audio stream.
+lip-synced video and audio from the TTS audio stream.
 
 Required environment variables:
     LEMONSLICE_API_KEY
-    LEMONSLICE_AGENT_ID
+    LEMONSLICE_AGENT_ID  (or LEMONSLICE_AGENT_IMAGE_URL)
     LIVEKIT_URL
     LIVEKIT_API_KEY
     LIVEKIT_API_SECRET
@@ -14,35 +14,34 @@ Required environment variables:
 """
 
 import logging
-import os
 
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner, User
-from vision_agents.plugins import cartesia, deepgram, gemini, getstream, lemonslice
+from vision_agents.plugins import deepgram, gemini, getstream, lemonslice
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 
+INSTRUCTIONS = (
+    "You're a voice AI assistant. Keep responses short and conversational. "
+    "Don't use special characters or formatting. Be friendly and helpful."
+)
+
+
 async def create_agent(**kwargs) -> Agent:
-    agent_id = os.getenv("LEMONSLICE_AGENT_ID")
-    if not agent_id:
-        raise ValueError("Environment variable LEMONSLICE_AGENT_ID must be set.")
-    return Agent(
+    agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Avatar Agent", id="agent"),
-        instructions=(
-            "You're a friendly AI assistant with a visual avatar. "
-            "Keep responses short and conversational."
-        ),
-        llm=gemini.LLM("gemini-3-flash-preview"),
-        tts=cartesia.TTS(),
+        instructions=INSTRUCTIONS,
+        avatar=lemonslice.Avatar(),
+        llm=gemini.LLM("gemini-3.1-flash-lite-preview"),
+        tts=deepgram.TTS(),
         stt=deepgram.STT(eager_turn_detection=True),
-        processors=[
-            lemonslice.LemonSliceAvatarPublisher(agent_id=agent_id),
-        ],
     )
+
+    return agent
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:

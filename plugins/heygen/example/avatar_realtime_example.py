@@ -53,7 +53,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("LLM ready")
 
         # Start the conversation
-        await agent.llm.simple_response(
+        await agent.simple_response(
             text="Hello! I'm your AI assistant. How can I help you today?"
         )
         logger.info("Greeted the user")

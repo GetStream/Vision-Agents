@@ -21,8 +21,9 @@ classifiers = [
 
 requires-python = ">=3.10"
 dependencies = [
-    "getstream[webrtc,telemetry]>=3.3.0,<4",
+    "getstream[webrtc,telemetry]>=3.3.2,<4",
     "aiortc>=1.14.0,<1.15.0",
+    "av>=14.2.0, <17",
     "python-dotenv>=1.1.1",
     "pillow>=10.4.0",
     "numpy>=1.24.0", # capped at <2.0 via workspace override in root pyproject.toml
@@ -82,6 +83,8 @@ redis = ["redis[hiredis]>=5.0.0"]
 local = ["vision-agents-plugins-local"]
 anam = ["vision-agents-plugins-anam"]
 sarvam = ["vision-agents-plugins-sarvam"]
+liveavatar = ["vision-agents-plugins-liveavatar"]
+tencent = ["vision-agents-plugins-tencent; sys_platform == 'linux'"]
 
 all-plugins = [
     "vision-agents-plugins-anthropic",
@@ -119,6 +122,8 @@ all-plugins = [
     "vision-agents-plugins-local",
     "vision-agents-plugins-anam",
     "vision-agents-plugins-sarvam",
+    "vision-agents-plugins-liveavatar",
+    "vision-agents-plugins-tencent; sys_platform == 'linux'",
 ]
 
 [tool.hatch.metadata]

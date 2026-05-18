@@ -7,7 +7,6 @@ from typing import Optional
 from urllib.parse import urlencode
 
 import aiohttp
-
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
@@ -223,11 +222,6 @@ class STT(stt.STT):
             logger.exception("Error in AssemblyAI receive loop")
 
         if not self.closed:
-            self._emit_error_event(
-                ConnectionError("AssemblyAI WebSocket closed unexpectedly"),
-                self._current_participant,
-                "assemblyai_ws_closed",
-            )
             reconnected = await self._reconnect()
             if not reconnected:
                 self.closed = True
@@ -271,11 +265,6 @@ class STT(stt.STT):
         elif "error" in data:
             error_msg = data.get("error", "Unknown error")
             logger.error("AssemblyAI streaming error: %s", error_msg)
-            self._emit_error_event(
-                Exception(error_msg),
-                self._current_participant,
-                "assemblyai_streaming",
-            )
 
         else:
             logger.debug("Unhandled AssemblyAI event: %s", msg_type)
@@ -324,11 +313,13 @@ class STT(stt.STT):
         )
 
         if data.get("end_of_turn"):
-            self._emit_transcript_event(transcript, participant, response)
+            self._emit_transcript_event(transcript, participant, response, mode="final")
             self._audio_start_time = None
             self._emit_turn_ended_event(participant)
         else:
-            self._emit_partial_transcript_event(transcript, participant, response)
+            self._emit_transcript_event(
+                transcript, participant, response, mode="replacement"
+            )
 
     async def process_audio(
         self,

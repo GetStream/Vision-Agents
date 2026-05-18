@@ -1,34 +1,77 @@
 import abc
 import logging
 import uuid
+from dataclasses import dataclass, field
 from typing import Optional
 
 from getstream.video.rtc.track_util import PcmData
+from vision_agents.core.agents.transcript import TranscriptMode
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
-
-from ..edge.types import Participant
-from ..turn_detection import TurnEndedEvent, TurnStartedEvent
-from . import events
-from .events import TranscriptResponse
+from vision_agents.core.observability import MetricsCollector
+from vision_agents.core.turn_detection import TurnEnded, TurnStarted
+from vision_agents.core.utils.stream import Stream
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TranscriptResponse:
+    confidence: float | None = None
+    language: str | None = None
+    processing_time_ms: float | None = None
+    audio_duration_ms: float | None = None
+    model_name: str | None = None
+    other: dict | None = None
+
+
+@dataclass
+class Transcript:
+    """Event emitted when a complete transcript is available."""
+
+    participant: Participant
+    mode: TranscriptMode
+    text: str
+    response: TranscriptResponse = field(default_factory=TranscriptResponse)
+
+    def __post_init__(self):
+        if not self.text:
+            raise ValueError("Transcript text cannot be empty")
+
+    @property
+    def final(self) -> bool:
+        return self.mode == "final"
+
+    @property
+    def confidence(self) -> float | None:
+        return self.response.confidence
+
+    @property
+    def language(self) -> str | None:
+        return self.response.language
+
+    @property
+    def processing_time_ms(self) -> float | None:
+        return self.response.processing_time_ms
+
+    @property
+    def audio_duration_ms(self) -> float | None:
+        return self.response.audio_duration_ms
+
+    @property
+    def model_name(self) -> str | None:
+        return self.response.model_name
 
 
 class STT(abc.ABC):
     """
     Abstract base class for Speech-to-Text implementations.
-
-    Subclasses implement this and have to call
-    - _emit_partial_transcript_event
-    - _emit_transcript_event
-    - _emit_error_event for temporary errors
-
-    process_audio is currently called every 20ms. The integration with turn keeping could be improved
     """
 
     closed: bool = False
     started: bool = False
     turn_detection: bool = False  # if the STT supports turn detection
+    eager_turn_detection: bool = False  # if the STT supports turn detection
 
     def __init__(
         self,
@@ -38,112 +81,14 @@ class STT(abc.ABC):
         self.provider_name = provider_name or self.__class__.__name__
 
         self.events = EventManager()
-        self.events.register(TurnEndedEvent)
-        self.events.register(TurnStartedEvent)
-        self.events.register_events_from_module(events, ignore_not_compatible=True)
+        self.metrics = MetricsCollector()
 
-    def _emit_transcript_event(
-        self,
-        text: str,
-        participant: Participant,
-        response: TranscriptResponse,
-    ):
-        """
-        Emit a final transcript event with structured data.
+        self._output: Stream[Transcript | TurnEnded | TurnStarted] = Stream()
 
-        Args:
-            text: The transcribed text.
-            participant: Participant metadata.
-            response: Transcription response metadata.
-        """
-        self.events.send(
-            events.STTTranscriptEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                text=text,
-                participant=participant,
-                response=response,
-            )
-        )
-
-    def _emit_turn_ended_event(
-        self,
-        participant: Participant,
-        eager_end_of_turn: bool = False,
-        confidence: Optional[float] = None,
-    ):
-        if confidence is None:
-            confidence = 0.5
-        self.events.send(
-            TurnEndedEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                participant=participant,
-                eager_end_of_turn=eager_end_of_turn,
-                confidence=confidence,
-            )
-        )
-
-    def _emit_turn_started_event(
-        self,
-        participant: Participant,
-        confidence: Optional[float] = None,
-    ):
-        if confidence is None:
-            confidence = 0.5
-        event = TurnStartedEvent(
-            session_id=self.session_id,
-            plugin_name=self.provider_name,
-            participant=participant,
-            confidence=confidence,
-        )
-        self.events.send(event)
-
-    def _emit_partial_transcript_event(
-        self,
-        text: str,
-        participant: Participant,
-        response: TranscriptResponse,
-    ):
-        """
-        Emit a partial transcript event with structured data.
-
-        Args:
-            text: The partial transcribed text.
-            participant: Participant metadata.
-            response: Transcription response metadata.
-        """
-        self.events.send(
-            events.STTPartialTranscriptEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                text=text,
-                participant=participant,
-                response=response,
-            )
-        )
-
-    def _emit_error_event(
-        self,
-        error: Exception,
-        participant: Optional[Participant] = None,
-        context: str = "",
-    ):
-        """
-        Emit an error event. Note this should only be emitted for temporary errors.
-        Permanent errors due to config etc should be directly raised
-        """
-        self.events.send(
-            events.STTErrorEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                error=error,
-                context=context,
-                participant=participant,
-                error_code=getattr(error, "error_code", None),
-                is_recoverable=not isinstance(error, (SystemExit, KeyboardInterrupt)),
-            )
-        )
+    @property
+    def output(self) -> Stream[Transcript | TurnEnded | TurnStarted]:
+        """Pipeline output stream: consumers iterate, subclasses push via send_nowait."""
+        return self._output
 
     @abc.abstractmethod
     async def process_audio(
@@ -160,7 +105,76 @@ class STT(abc.ABC):
 
     async def clear(self):
         """Clear any pending audio or state. Override in subclasses if needed."""
-        pass
+        self._output.clear()
 
     async def close(self):
         self.closed = True
+        self._output.close()
+
+    def _emit_transcript_event(
+        self,
+        text: str,
+        participant: Participant,
+        response: TranscriptResponse,
+        *,
+        mode: TranscriptMode = "final",
+    ) -> None:
+        """Push a Transcript to the output stream and record metrics on final."""
+        transcript = Transcript(
+            participant=participant,
+            mode=mode,
+            text=text,
+            response=response,
+        )
+        self._output.send_nowait(transcript)
+        if transcript.final:
+            self.metrics.on_stt_transcript(
+                provider=self.provider_name,
+                model=transcript.model_name,
+                language=transcript.language,
+                processing_time_ms=transcript.processing_time_ms,
+                audio_duration_ms=transcript.audio_duration_ms,
+            )
+
+    def _emit_turn_ended_event(
+        self,
+        participant: Participant,
+        *,
+        confidence: float = 0.5,
+        eager: bool = False,
+        duration_ms: Optional[float] = None,
+        trailing_silence_ms: Optional[float] = None,
+    ) -> None:
+        """Push a TurnEnded to the output stream and record the turn metric."""
+        self._output.send_nowait(
+            TurnEnded(
+                participant=participant,
+                confidence=confidence,
+                eager=eager,
+                duration_ms=duration_ms,
+                trailing_silence_ms=trailing_silence_ms,
+            )
+        )
+        self.metrics.on_turn_ended(
+            provider=self.provider_name,
+            duration_ms=duration_ms,
+            trailing_silence_ms=trailing_silence_ms,
+        )
+
+    def _emit_turn_started_event(
+        self,
+        participant: Participant,
+        *,
+        confidence: float = 0.5,
+    ) -> None:
+        """Push a TurnStarted to the output stream."""
+        self._output.send_nowait(
+            TurnStarted(participant=participant, confidence=confidence)
+        )
+
+    def _emit_error_event(self, error: Exception, *, context: str = "") -> None:
+        """Record an STT error metric. Caller may also re-raise."""
+        self.metrics.on_stt_error(
+            provider=self.provider_name,
+            error_type=type(error).__name__,
+        )

@@ -39,6 +39,8 @@ vision-agents-plugins-assemblyai = { workspace = true }
 vision-agents-plugins-local = { workspace = true }
 vision-agents-plugins-anam = { workspace = true }
 vision-agents-plugins-sarvam = { workspace = true }
+vision-agents-plugins-liveavatar = { workspace = true }
+vision-agents-plugins-tencent = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -85,6 +87,8 @@ members = [
     "plugins/local",
     "plugins/anam",
     "plugins/sarvam",
+    "plugins/liveavatar",
+    "plugins/tencent",
 ]
 exclude = [
     "**/__pycache__",
@@ -122,6 +126,7 @@ dev = [
     "asgi-lifespan>=2.1.0",
     "testcontainers[redis]>=4.0.0",
     "redis[hiredis]>=5.0.0",
+    "pytest-cov>=7.1.0",
 ]
 
 [tool.mypy]

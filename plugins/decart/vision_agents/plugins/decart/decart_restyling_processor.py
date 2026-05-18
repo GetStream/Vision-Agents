@@ -94,7 +94,7 @@ class RestylingProcessor(VideoProcessorPublisher):
             height: Output video height (default: 720).
             **kwargs: Additional arguments passed to parent class.
         """
-
+        super().__init__()
         self.api_key = api_key or os.getenv("DECART_API_KEY")
         if not self.api_key:
             raise ValueError(

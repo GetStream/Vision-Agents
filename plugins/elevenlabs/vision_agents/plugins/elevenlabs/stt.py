@@ -23,7 +23,10 @@ from vision_agents.core.utils.utils import cancel_and_wait
 logger = logging.getLogger(__name__)
 
 
-class STT(stt.STT):
+SAMPLE_RATE = 16000
+
+
+class ElevenlabsSTT(stt.STT):
     """
     ElevenLabs Scribe v2 Realtime Speech-to-Text implementation.
 
@@ -50,6 +53,7 @@ class STT(stt.STT):
         min_speech_duration_ms: int = 100,
         min_silence_duration_ms: int = 100,
         audio_chunk_duration_ms: int = 100,
+        keepalive_interval_ms: int = 5000,
         client: Optional[AsyncElevenLabs] = None,
     ):
         """
@@ -64,6 +68,8 @@ class STT(stt.STT):
             min_speech_duration_ms: Minimum speech duration in milliseconds.
             min_silence_duration_ms: Minimum silence duration in milliseconds.
             audio_chunk_duration_ms: Duration of audio chunks to send (100-1000ms recommended).
+            keepalive_interval_ms: Send a silence frame after this many ms of idle
+                so the server doesn't close the WS (e.g. while the user is muted).
             client: Optional pre-configured AsyncElevenLabs instance.
         """
         super().__init__(provider_name="elevenlabs")
@@ -80,6 +86,11 @@ class STT(stt.STT):
         self.min_speech_duration_ms = min_speech_duration_ms
         self.min_silence_duration_ms = min_silence_duration_ms
         self.audio_chunk_duration_ms = audio_chunk_duration_ms
+        self.keepalive_interval_ms = keepalive_interval_ms
+
+        # Pre-generated 1s of 16-bit PCM silence for keep-alive purposes.
+        silence_bytes = b"\x00" * (SAMPLE_RATE * 2)
+        self._silence_1s_b64 = base64.b64encode(silence_bytes).decode("utf-8")
 
         self._current_participant: Optional[Participant] = None
         self._connection_ready = asyncio.Event()
@@ -140,7 +151,7 @@ class STT(stt.STT):
             logger.warning("ElevenLabs connection already started")
             return
 
-        # Initialize audio queue with 5 second buffer limit
+        # Initialize audio queue with 10 second buffer limit
         self._audio_queue = AudioQueue(buffer_limit_ms=10000)
 
         # Configure realtime audio options (TypedDict)
@@ -148,7 +159,7 @@ class STT(stt.STT):
             "model_id": self.model_id,
             "language_code": self.language_code,
             "audio_format": AudioFormat.PCM_16000,
-            "sample_rate": 16000,
+            "sample_rate": SAMPLE_RATE,
             "commit_strategy": CommitStrategy.VAD,
             "vad_silence_threshold_secs": self.vad_silence_threshold_secs,
             "vad_threshold": self.vad_threshold,
@@ -183,44 +194,42 @@ class STT(stt.STT):
         self._connection_ready.set()
 
     async def _send_audio_loop(self):
-        """
-        Continuously send audio chunks from the queue to the WebSocket connection.
-        Batches audio into chunks of the configured duration.
-        """
-        try:
-            while not self.closed and self.connection is not None:
-                try:
-                    # Get audio chunk of configured duration from queue
-                    if self._audio_queue is not None:
-                        pcm_chunk = await self._audio_queue.get_duration(
-                            self.audio_chunk_duration_ms
-                        )
+        """Send audio chunks from the queue, falling back to silence on idle."""
+        keepalive_s = self.keepalive_interval_ms / 1000
+        last_send_at = time.monotonic()
 
-                        # Convert int16 samples to bytes
-                        audio_bytes = pcm_chunk.samples.tobytes()
+        while (
+            not self.closed
+            and self.connection is not None
+            and self._audio_queue is not None
+        ):
+            try:
+                pcm_chunk = await asyncio.wait_for(
+                    self._audio_queue.get_duration(self.audio_chunk_duration_ms),
+                    timeout=keepalive_s,
+                )
+                audio_bytes = pcm_chunk.samples.tobytes()
+                audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+            except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                # get_samples raises QueueEmpty after its own 100ms timeout,
+                # which bypasses wait_for — so gate the silence send on
+                # wall-clock time since the last actual send.
+                if time.monotonic() - last_send_at < keepalive_s:
+                    continue
+                audio_base64 = self._silence_1s_b64
 
-                        # Encode to base64
-                        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
-
-                        # Send to ElevenLabs
-                        await self.connection.send(
-                            {
-                                "audio_base_64": audio_base64,
-                                "sample_rate": 16000,
-                            }
-                        )
-
-                except asyncio.QueueEmpty:
-                    # No audio available, wait a bit
-                    await asyncio.sleep(0.01)
-                except Exception as e:
-                    if not self.closed:
-                        logger.error(f"Error sending audio to ElevenLabs: {e}")
-                    break
-
-        except asyncio.CancelledError:
-            logger.debug("Audio send loop cancelled")
-            raise
+            try:
+                await self.connection.send(
+                    {
+                        "audio_base_64": audio_base64,
+                        "sample_rate": SAMPLE_RATE,
+                    }
+                )
+                last_send_at = time.monotonic()
+            except Exception:
+                if not self.closed:
+                    logger.exception("Error sending audio to ElevenLabs")
+                break
 
     def _on_partial_transcript(self, transcription_data: dict[str, Any]):
         """
@@ -276,72 +285,60 @@ class STT(stt.STT):
             self._emit_turn_started_event(participant)
 
         # Emit partial transcript
-        self._emit_partial_transcript_event(
-            transcript_text, participant, response_metadata
+        self._emit_transcript_event(
+            transcript_text, participant, response_metadata, mode="replacement"
         )
 
     def _on_committed_transcript(self, transcription_data: dict[str, Any]):
-        """
-        Event handler for final (committed) transcription results from ElevenLabs.
+        """Event handler for final (committed) transcription results from ElevenLabs."""
+        if not isinstance(transcription_data, dict):
+            raise TypeError(
+                f"Unexpected type for transcription data; "
+                f"expected dict, got {type(transcription_data)}"
+            )
 
-        Args:
-            transcription_data: The committed transcription result from ElevenLabs (dict)
-        """
+        # Empty text can come from the server committing our keep-alive silence
+        # (no turn in progress), or from a real end-of-segment where VAD closed
+        # the segment with no transcribable audio.
+        transcript_text = transcription_data.get("text", "").strip()
+        if not transcript_text and not self._turn_in_progress:
+            return
 
-        # Use the participant from the most recent process_audio call
         participant = self._current_participant
-
         if participant is None:
             raise ValueError(
                 "No participant set - audio must be processed with a participant"
             )
 
-        # Extract transcript text from dict
-        if isinstance(transcription_data, dict):
-            transcript_text = transcription_data.get("text", "").strip()
-            confidence = transcription_data.get("confidence", 0.0)
-            words = transcription_data.get("words")
-        else:
-            raise Exception(
-                "unexpected type for transcription data. expected dict got {}".format(
-                    type(transcription_data)
-                )
-            )
-
         if not transcript_text:
-            if self._turn_in_progress:
-                self._turn_in_progress = False
-                self._audio_start_time = None
-                self._emit_turn_ended_event(participant)
+            # _turn_in_progress is True (we returned earlier otherwise).
+            self._turn_in_progress = False
+            self._audio_start_time = None
+            self._emit_turn_ended_event(participant)
             return
 
-        # Build response metadata with word timestamps if available
-        other: Optional[dict[str, Any]] = None
-        if words:
-            other = {"words": words}
-
-        # Calculate processing time (time from first audio to transcript)
         processing_time_ms: Optional[float] = None
         if self._audio_start_time is not None:
             processing_time_ms = (time.perf_counter() - self._audio_start_time) * 1000
 
+        words = transcription_data.get("words")
         response_metadata = TranscriptResponse(
-            confidence=confidence,
+            confidence=transcription_data.get("confidence", 0.0),
             language=self.language_code,
             model_name=self.model_id,
-            other=other,
+            other={"words": words} if words else None,
             processing_time_ms=processing_time_ms,
         )
 
-        # Emit final transcript
-        self._emit_transcript_event(transcript_text, participant, response_metadata)
-
-        # Reset audio start time for next utterance
+        self._emit_transcript_event(
+            transcript_text, participant, response_metadata, mode="final"
+        )
         self._audio_start_time = None
 
-        # Signal turn ended (VAD committed the transcript)
-        self._turn_in_progress = False
-        self._emit_turn_ended_event(participant)
+        # Gated so a second commit for the same utterance does not double-fire.
+        if self._turn_in_progress:
+            self._turn_in_progress = False
+            self._emit_turn_ended_event(participant)
 
     def _on_error(self, error: Any):
         """
