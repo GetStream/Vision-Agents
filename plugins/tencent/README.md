@@ -73,7 +73,7 @@ Environment variables:
 
 - `TENCENT_SDK_APP_ID`, `TENCENT_SDK_SECRET_KEY` — credentials.
 - `TENCENT_TRTC_SCENE` — one of `auto` (default), `videocall`, `call`, `record`.
-- `TENCENT_TEST_ROOM_ID` — used only by `example/tencent_edge_example.py`.
+- `TENCENT_TEST_ROOM_ID` — interpolated by `docker-compose.yml` into the example runner's `--call-id` flag.
 
 ## Platform support
 

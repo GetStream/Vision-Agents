@@ -25,11 +25,11 @@ async def create_agent(**kwargs) -> Agent:
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     await agent.authenticate()
-    # Room ID must match the one shown in the Tencent TRTC quick demo form
-    # (see plugins/tencent/README.md). The browser needs to be in the room
-    # before the agent connects so the STT websocket stays warm.
-    room_id = os.environ["TENCENT_TEST_ROOM_ID"]
-    call = await agent.create_call(call_type, room_id)
+    # `call_id` is passed via `--call-id` (see docker-compose.yml). It
+    # must match the RoomID(String) shown in the Tencent TRTC quick demo
+    # form so the browser-side participant is in the same room before
+    # the agent connects — otherwise STT idles out (see README).
+    call = await agent.create_call(call_type, call_id)
 
     async with agent.join(call, participant_wait_timeout=None):
         await agent.say("Hi! How can I help you today?")

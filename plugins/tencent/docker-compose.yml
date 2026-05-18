@@ -10,13 +10,13 @@ services:
         required: false
     environment:
       - PYTHONUNBUFFERED=1
-      # Forwarded from the host shell at `docker compose run` time:
-      # TENCENT_TEST_ROOM_ID=<roomId-from-tencent-quick-demo>
-      - TENCENT_TEST_ROOM_ID
       # Set TENCENT_LITEAV_DEBUG=1 to surface the C++ SDK's `[I][...]`
       # console logs (jitter buffer, watchdog, signal resolves). Off by
       # default.
       - TENCENT_LITEAV_DEBUG
+    # `${TENCENT_TEST_ROOM_ID}` is interpolated by docker-compose from
+    # the host shell at run time and lands as `--call-id <roomId>` for
+    # the runner, which forwards it into `join_call(call_id=...)`.
     command:
       - /bin/sh
       - -c
@@ -27,4 +27,5 @@ services:
           --package vision-agents-plugins-elevenlabs \
           --package vision-agents-plugins-cartesia && \
         uv run --no-sync --package vision-agents-plugins-tencent \
-          python plugins/tencent/example/tencent_edge_example.py run
+          python plugins/tencent/example/tencent_edge_example.py run \
+          --call-id "${TENCENT_TEST_ROOM_ID}"
