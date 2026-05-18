@@ -7232,7 +7232,7 @@ all-plugins = [
     { name = "vision-agents-plugins-roboflow" },
     { name = "vision-agents-plugins-sarvam" },
     { name = "vision-agents-plugins-smart-turn" },
-    { name = "vision-agents-plugins-tencent" },
+    { name = "vision-agents-plugins-tencent", marker = "sys_platform == 'linux'" },
     { name = "vision-agents-plugins-turbopuffer" },
     { name = "vision-agents-plugins-twilio" },
     { name = "vision-agents-plugins-ultralytics" },
@@ -7341,7 +7341,7 @@ smart-turn = [
     { name = "vision-agents-plugins-smart-turn" },
 ]
 tencent = [
-    { name = "vision-agents-plugins-tencent" },
+    { name = "vision-agents-plugins-tencent", marker = "sys_platform == 'linux'" },
 ]
 turbopuffer = [
     { name = "vision-agents-plugins-turbopuffer" },
@@ -7442,8 +7442,8 @@ requires-dist = [
     { name = "vision-agents-plugins-sarvam", marker = "extra == 'sarvam'", editable = "plugins/sarvam" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'all-plugins'", editable = "plugins/smart_turn" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "plugins/smart_turn" },
-    { name = "vision-agents-plugins-tencent", marker = "extra == 'all-plugins'", editable = "plugins/tencent" },
-    { name = "vision-agents-plugins-tencent", marker = "extra == 'tencent'", editable = "plugins/tencent" },
+    { name = "vision-agents-plugins-tencent", marker = "sys_platform == 'linux' and extra == 'all-plugins'", editable = "plugins/tencent" },
+    { name = "vision-agents-plugins-tencent", marker = "sys_platform == 'linux' and extra == 'tencent'", editable = "plugins/tencent" },
     { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'all-plugins'", editable = "plugins/turbopuffer" },
     { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'turbopuffer'", editable = "plugins/turbopuffer" },
     { name = "vision-agents-plugins-twilio", marker = "extra == 'all-plugins'", editable = "plugins/twilio" },

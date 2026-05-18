@@ -10,6 +10,7 @@ readme = "README.md"
 keywords = ["tencent", "trtc", "rtc", "edge", "vision agents", "voice agents"]
 requires-python = ">=3.10"
 license = "MIT"
+classifiers = ["Operating System :: POSIX :: Linux"]
 dependencies = [
     "vision-agents",
     "liteav>=13.2; sys_platform == 'linux'",
