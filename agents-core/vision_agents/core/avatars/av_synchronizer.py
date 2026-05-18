@@ -45,7 +45,7 @@ class AVSynchronizer:
             width=width,
             height=height,
             fps=fps,
-            max_queue_size=max_queue_size,
+            max_queue_size=max(1, max_queue_size),
         )
 
     @property
