@@ -507,7 +507,7 @@ For example:
 In order to standardise how these resources are loaded and to make it performant, the framework provides a special ABC
 `vision_agents.core.warmup.Warmable`.
 
-To use it, simply subclass it and define the required methods.  
+To use it, simply subclass it and define the required methods.
 Note that `Warmable` supports generics to leverage type checking.
 
 **Example:**
