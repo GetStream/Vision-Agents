@@ -823,21 +823,19 @@ class Agent:
         self._video_track_override_path = path
 
     async def _poll_audio_queues(self) -> AsyncIterator[tuple[Participant, PcmData]]:
-        """Poll all participant audio queues sequentially.
-
-        Yields (Participant, PcmData) tuples for each queue that has data ready.
-        Queues that time out are silently skipped.
-        """
+        """Yield 20 ms chunks, draining the whole backlog per queue so the
+        consumer can catch up after a stall."""
         # Make a copy before iterating because the track maybe get unpublished
         queues = self._participant_queues.copy()
         for participant, queue in queues.values():
-            try:
-                pcm = await asyncio.wait_for(
-                    queue.get_duration(duration_ms=20), timeout=0.001
-                )
-                yield participant, pcm
-            except (TimeoutError, asyncio.QueueEmpty):
-                continue
+            while not queue.empty():
+                try:
+                    pcm = await asyncio.wait_for(
+                        queue.get_duration(duration_ms=20), timeout=0.001
+                    )
+                    yield participant, pcm
+                except (TimeoutError, asyncio.QueueEmpty):
+                    break
 
     async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from per-participant queues."""
