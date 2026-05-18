@@ -48,7 +48,9 @@ class DecartVideoTrack(VideoStreamTrack):
         if not isinstance(frame, av.VideoFrame):
             return
         if frame.width != self.width or frame.height != self.height:
-            frame = await asyncio.to_thread(resize_frame, frame, self.width, self.height)
+            frame = await asyncio.to_thread(
+                resize_frame, frame, self.width, self.height
+            )
         self.frame_queue.put_latest_nowait(frame)
 
     async def recv(self) -> av.VideoFrame:
