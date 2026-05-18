@@ -194,14 +194,19 @@ class TencentIncomingVideoTrack:
 
     async def recv(self) -> av.VideoFrame:
         loop = asyncio.get_running_loop()
-        try:
-            frame = await loop.run_in_executor(None, self._recv_sync)
-            self._last_frame = frame
-            return frame
-        except queue.Empty:
-            if self._last_frame is not None:
-                return self._last_frame
-            return av.VideoFrame(width=640, height=480, format="yuv420p")
+        while self._state == "live":
+            try:
+                frame = await loop.run_in_executor(None, self._recv_sync)
+                self._last_frame = frame
+                return frame
+            except queue.Empty:
+                if self._last_frame is not None:
+                    # Repeat the previous frame so downstream consumers
+                    # keep their cadence; pts/time_base are inherited.
+                    return self._last_frame
+                # No frames have arrived yet — keep waiting rather than
+                # handing out a fake VideoFrame with pts=None.
+        raise MediaStreamError("incoming video track ended")
 
     def _recv_sync(self) -> av.VideoFrame:
         yuv_bytes, width, height, pts = self._queue.get(True, 1.0)
