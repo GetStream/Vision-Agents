@@ -20,6 +20,19 @@ from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core.agents.conversation import Conversation, InMemoryConversation
 from vision_agents.core.edge import Call, EdgeTransport, events
 from vision_agents.core.edge.types import Connection, Participant, TrackType, User
+from vision_agents.plugins.tencent.bindings import (
+    AUDIO_CODEC_TYPE_PCM,
+    AUDIO_OBTAIN_METHOD_CALLBACK,
+    STREAM_TYPE_VIDEO_HIGH,
+    TRTC_ROLE_ANCHOR,
+    CreateTRTCCloud,
+    DestroyTRTCCloud,
+    EnterRoomParams,
+    TrtcString,
+    require_liteav,
+)
+from vision_agents.plugins.tencent.delegate import TencentDelegate
+from vision_agents.plugins.tencent.scene import resolve_room_scene
 from vision_agents.plugins.tencent.tracks import (
     CHANNELS,
     FRAME_MS,
@@ -37,82 +50,6 @@ faulthandler.enable()
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-
-_LITEAV_IMPORT_ERROR: Optional[ImportError] = None
-try:
-    # liteav's typed stubs don't expose these top-level module constants and
-    # convenience constructors even though they exist at runtime, so we silence
-    # the attr-defined / call-arg complaints in this block.
-    from liteav import (  # type: ignore[attr-defined]
-        AUDIO_CODEC_TYPE_PCM,
-        AUDIO_OBTAIN_METHOD_CALLBACK,
-        STREAM_TYPE_VIDEO_HIGH,
-        AudioEncodeParams,
-        CreateTRTCCloud,
-        DestroyTRTCCloud,
-        EnterRoomParams,
-        TrtcString,
-        TRTCCloudDelegate,
-        TRTC_ROLE_ANCHOR,
-        TRTC_SCENE_RECORD,
-        VideoEncodeParams,
-    )
-except ImportError as e:
-    _LITEAV_IMPORT_ERROR = e
-    CreateTRTCCloud = None
-    DestroyTRTCCloud = None
-    TRTCCloudDelegate = None  # type: ignore[misc, assignment]
-else:
-    _LITEAV_IMPORT_ERROR = None
-
-try:
-    from liteav import TRTC_SCENE_CALL, TRTC_SCENE_VIDEOCALL  # type: ignore[attr-defined]
-except ImportError:
-    TRTC_SCENE_VIDEOCALL = None  # type: ignore[assignment]
-    TRTC_SCENE_CALL = None  # type: ignore[assignment]
-
-
-def _require_liteav() -> None:
-    if _LITEAV_IMPORT_ERROR is not None:
-        raise RuntimeError(
-            "Tencent TRTC edge requires the `liteav` package, which ships only "
-            "manylinux wheels and cannot be imported on this platform. Install "
-            "on Linux (x86_64 or aarch64) with `pip install liteav` or run the "
-            "agent inside a Linux container (see plugins/tencent/README.md)."
-        ) from _LITEAV_IMPORT_ERROR
-
-
-def _resolve_room_scene() -> tuple[int, str]:
-    configured_scene = os.getenv("TENCENT_TRTC_SCENE", "auto").strip().lower()
-    scene_map = {
-        "record": TRTC_SCENE_RECORD,
-        "videocall": TRTC_SCENE_VIDEOCALL,
-        "call": TRTC_SCENE_CALL,
-    }
-    if configured_scene == "auto":
-        for candidate in ("videocall", "call"):
-            scene = scene_map[candidate]
-            if scene is not None:
-                return scene, candidate
-        return TRTC_SCENE_RECORD, "record"
-
-    if configured_scene in scene_map:
-        scene = scene_map[configured_scene]
-        if scene is None:
-            raise ValueError(
-                f"TENCENT_TRTC_SCENE={configured_scene} is not supported by this liteav binding."
-            )
-        return scene, configured_scene
-
-    raise ValueError(
-        "TENCENT_TRTC_SCENE must be one of: auto, videocall, call, record."
-    )
-
-
-def _extract_pcm(frame: Any) -> bytes:
-    if frame.size <= 0:
-        return b""
-    return frame.data
 
 
 class TencentCall(Call):
@@ -183,19 +120,19 @@ class TencentEdge(EdgeTransport[TencentCall]):
         key: str | None = None,
         video_fps: int = _DEFAULT_VIDEO_FPS,
     ):
-        _require_liteav()
+        require_liteav()
         super().__init__()
 
         if sdk_app_id is None:
-            raw = os.environ.get("TENCENT_SDKAppID")
+            raw = os.environ.get("TENCENT_SDK_APP_ID")
             if raw is None:
                 raise ValueError(
-                    "sdk_app_id must be provided or set TENCENT_SDKAppID env var"
+                    "sdk_app_id must be provided or set TENCENT_SDK_APP_ID env var"
                 )
             sdk_app_id = int(raw)
 
         if not key:
-            key = os.environ.get("TENCENT_SDKSecretKey")
+            key = os.environ.get("TENCENT_SDK_SECRET_KEY")
 
         self._sdk_app_id = sdk_app_id
         self._user_sig = user_sig
@@ -210,7 +147,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
         self._outgoing_video_track: Optional[TencentOutgoingVideoTrack] = None
         self._incoming_video_tracks: dict[str, TencentIncomingVideoTrack] = {}
         self._delegate = None
-        self._room_scene, self._room_scene_name = _resolve_room_scene()
+        self._room_scene, self._room_scene_name = resolve_room_scene()
 
     async def authenticate(self, user: User) -> None:
         self._agent_user_id = user.id
@@ -258,7 +195,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
     async def join(
         self, agent: "Agent", call: TencentCall, **kwargs: Any
     ) -> Connection:
-        _require_liteav()
+        require_liteav()
         user_sig = self._user_sig
         if not user_sig and self._key and self._agent_user_id:
             api = TLSSigAPIv2.TLSSigAPIv2(self._sdk_app_id, self._key)
@@ -276,10 +213,8 @@ class TencentEdge(EdgeTransport[TencentCall]):
             edge=self,
         )
 
-        if _TencentDelegate is None:
-            _require_liteav()
-        assert _TencentDelegate is not None
-        delegate = _TencentDelegate(
+        assert TencentDelegate is not None  # require_liteav() above guarantees this
+        delegate = TencentDelegate(
             edge=self,
             connection=self._connection,
             loop=self._loop,
@@ -422,206 +357,3 @@ class TencentEdge(EdgeTransport[TencentCall]):
         if track is None:
             return
         track.push_frame(yuv_bytes, width, height, pts)
-
-
-_TencentDelegate: Any = None
-if TRTCCloudDelegate is not None:
-
-    class _TencentDelegateCls(TRTCCloudDelegate):
-        """TRTCCloudDelegate that forwards callbacks to the edge and connection.
-
-        All callbacks are wrapped in try/except because any unhandled Python
-        exception in a SWIG director callback triggers Swig::DirectorMethodException
-        on the C++ side, which calls std::terminate and kills the process.
-        """
-
-        def __init__(
-            self,
-            edge: TencentEdge,
-            connection: TencentConnection,
-            loop: asyncio.AbstractEventLoop,
-        ):
-            TRTCCloudDelegate.__init__(self)
-            self._edge = edge
-            self._connection = connection
-            self._agent_user_id = edge._agent_user_id or ""
-
-        def OnError(self, error: int) -> None:  # type: ignore[override]
-            try:
-                logger.error("Tencent TRTC OnError: %s", error)
-                self._edge._emit_call_ended()
-            except BaseException:
-                logger.exception("OnError callback failed")
-
-        def OnEnterRoom(self) -> None:
-            try:
-                logger.info("Tencent TRTC OnEnterRoom")
-                cloud = self._edge._cloud
-                if cloud is None:
-                    return
-                param = AudioEncodeParams()
-                param.sample_rate = SAMPLE_RATE
-                param.channels = CHANNELS
-                param.bitrate_bps = 54000
-                cloud.CreateLocalAudioChannel(param)
-
-                if self._edge._outgoing_video_track is not None:
-                    cloud.CreateLocalVideoChannel(STREAM_TYPE_VIDEO_HIGH)
-            except BaseException:
-                logger.exception("OnEnterRoom callback failed")
-
-        def OnExitRoom(self) -> None:
-            try:
-                logger.info("Tencent TRTC OnExitRoom")
-                self._edge._emit_call_ended()
-            except BaseException:
-                logger.exception("OnExitRoom callback failed")
-
-        def OnLocalAudioChannelCreated(self) -> None:
-            try:
-                if self._edge._audio_track and self._edge._cloud:
-                    self._edge._audio_track.set_cloud(self._edge._cloud)
-            except BaseException:
-                logger.exception("OnLocalAudioChannelCreated callback failed")
-
-        def OnConnectionStateChanged(self, old_state: int, new_state: int) -> None:  # type: ignore[override]
-            logger.debug(
-                "Tencent TRTC connection state: %s -> %s", old_state, new_state
-            )
-
-        def OnLocalAudioChannelDestroyed(self) -> None:
-            pass
-
-        def OnLocalVideoChannelCreated(self, stream_type: int) -> None:  # type: ignore[override]
-            try:
-                logger.info(
-                    "Tencent TRTC OnLocalVideoChannelCreated: stream_type=%s",
-                    stream_type,
-                )
-                edge = self._edge
-                if edge._outgoing_video_track and edge._cloud and edge._loop:
-                    vp = VideoEncodeParams()
-                    vp.frame_rate = edge._video_fps
-                    vp.bitrate_bps = 1_000_000
-                    vp.gop_in_seconds = 3
-                    edge._cloud.SetVideoEncodeParam(STREAM_TYPE_VIDEO_HIGH, vp)
-                    edge._outgoing_video_track.set_cloud(edge._cloud, edge._loop)
-            except BaseException:
-                logger.exception("OnLocalVideoChannelCreated callback failed")
-
-        def OnLocalVideoChannelDestroyed(self, stream_type: int) -> None:  # type: ignore[override]
-            pass
-
-        def OnRequestChangeVideoEncodeBitrate(  # type: ignore[override]
-            self, stream_type: int, bitrate_bps: int
-        ) -> None:
-            pass
-
-        def OnRequestKeyFrame(self, stream_type: int) -> None:  # type: ignore[override]
-            logger.debug("Tencent TRTC OnRequestKeyFrame: stream_type=%s", stream_type)
-
-        def OnRemoteAudioAvailable(self, user_id: str, available: bool) -> None:
-            try:
-                if user_id and user_id != self._agent_user_id:
-                    if available:
-                        self._edge._emit_track_added(user_id)
-                    else:
-                        self._edge._emit_track_removed(user_id)
-            except BaseException:
-                logger.exception("OnRemoteAudioAvailable callback failed")
-
-        def OnRemoteVideoAvailable(  # type: ignore[override]
-            self, user_id: str, available: bool, stream_type: int
-        ) -> None:
-            try:
-                if not user_id or user_id == self._agent_user_id:
-                    return
-                if available:
-                    logger.info(
-                        "Tencent TRTC video available from %s (stream_type=%s)",
-                        user_id,
-                        stream_type,
-                    )
-                    self._edge._emit_video_track_added(user_id)
-                else:
-                    logger.info("Tencent TRTC video unavailable from %s", user_id)
-                    self._edge._emit_video_track_removed(user_id)
-            except BaseException:
-                logger.exception("OnRemoteVideoAvailable callback failed")
-
-        def OnRemoteVideoFrameReceived(  # type: ignore[override]
-            self, user_id: str, stream_type: int, frame: Any
-        ) -> None:
-            pass
-
-        def OnRemotePixelFrameReceived(  # type: ignore[override]
-            self, user_id: str, stream_type: int, frame: Any
-        ) -> None:
-            try:
-                if not user_id or user_id == self._agent_user_id:
-                    return
-                width = frame.width
-                height = frame.height
-                if width <= 0 or height <= 0 or frame.size <= 0:
-                    return
-                self._edge._push_video_frame(
-                    user_id, frame.data, width, height, frame.pts
-                )
-            except BaseException:
-                logger.exception("OnRemotePixelFrameReceived callback failed")
-
-        def OnSeiMessageReceived(  # type: ignore[override]
-            self, user_id: str, stream_type: int, message_type: int, message: Any
-        ) -> None:
-            pass
-
-        def OnReceiveCustomCmdMsg(
-            self, user_id: str, cmd_id: int, seq: int, message: Any
-        ) -> None:
-            pass
-
-        def OnMissCustomCmdMsg(
-            self, user_id: str, cmd_id: int, error_code: int, missed: int
-        ) -> None:
-            pass
-
-        def OnNetworkQuality(self, local_quality: Any, remote_qualities: Any) -> None:
-            pass
-
-        def OnRemoteUserEnterRoom(self, info: Any) -> None:
-            try:
-                user_id = info.user_id.GetValue() if info and info.user_id else ""
-                if user_id and user_id != self._agent_user_id:
-                    self._connection._on_remote_entered()
-                logger.info("Tencent TRTC OnRemoteUserEnterRoom: %s", user_id)
-            except BaseException:
-                logger.exception("OnRemoteUserEnterRoom callback failed")
-
-        def OnRemoteUserExitRoom(self, info: Any, reason: int) -> None:
-            try:
-                user_id = info.user_id.GetValue() if info and info.user_id else ""
-                if user_id and user_id != self._agent_user_id:
-                    self._connection._on_remote_left()
-                logger.info(
-                    "Tencent TRTC OnRemoteUserExitRoom: %s reason=%s", user_id, reason
-                )
-            except BaseException:
-                logger.exception("OnRemoteUserExitRoom callback failed")
-
-        def OnRemoteAudioReceived(self, user_id: str, frame: Any) -> None:
-            try:
-                if not user_id or user_id == self._agent_user_id:
-                    return
-                data = _extract_pcm(frame)
-                if data:
-                    self._edge._emit_audio_received(user_id, data)
-            except BaseException:
-                logger.exception("OnRemoteAudioReceived failed")
-
-        def OnRemoteMixedAudioReceived(self, frame: Any) -> None:
-            # Skip mixed audio — per-user callbacks already deliver individual
-            # streams and processing both doubles GIL / buffer pressure with
-            # no benefit for single-speaker scenarios.
-            pass
-
-    _TencentDelegate = _TencentDelegateCls

@@ -4,12 +4,12 @@ Tencent TRTC (Real-Time Communication) edge transport for Vision Agents. Lets an
 
 ## Quickstart
 
-Talk to an agent in 5 minutes. You'll need Docker, an `.env` with `TENCENT_SDKAppID`, `TENCENT_SDKSecretKey`, `GOOGLE_API_KEY`, `CARTESIA_API_KEY`, and `ELEVEN_API_KEY` at the repo root, and a working microphone in a Chromium-based browser.
+Talk to an agent in 5 minutes. You'll need Docker, an `.env` with `TENCENT_SDK_APP_ID`, `TENCENT_SDK_SECRET_KEY`, `GOOGLE_API_KEY`, `CARTESIA_API_KEY`, and `ELEVEN_API_KEY` at the repo root, and a working microphone in a Chromium-based browser.
 
 1. **Open Tencent's hosted TRTC Web SDK quick demo:**
    <https://web.sdk.qcloud.com/trtc/webrtc/v5/demo/quick-demo-js/index.html>
 
-   - Paste your `TENCENT_SDKAppID` into **SDKAppID** and `TENCENT_SDKSecretKey` into **SDKSecretKey** — the page generates `UserSig` client-side.
+   - Paste your `TENCENT_SDK_APP_ID` into **SDKAppID** and `TENCENT_SDK_SECRET_KEY` into **SDKSecretKey** — the page generates `UserSig` client-side.
    - Leave the auto-generated **UserID** and **RoomID(String)** as is.
    - Click **Enter Room** → demo log should print `🟩 [user_***] enterRoom.`
    - Click **Start Local Video** — this also publishes the mic.
@@ -64,14 +64,14 @@ On Linux this pulls `liteav` from PyPI. On macOS the `liteav` dependency is skip
 
 `tencent.Edge(...)` parameters:
 
-- **sdk_app_id** (int): Tencent TRTC SDK App ID. Falls back to `TENCENT_SDKAppID` env var.
+- **sdk_app_id** (int): Tencent TRTC SDK App ID. Falls back to `TENCENT_SDK_APP_ID` env var.
 - **user_sig** (str): User signature for the agent user.
-- **key** (str): Optional. If set and `user_sig` is not, the plugin generates `user_sig` via TLSSigAPIv2. Falls back to `TENCENT_SDKSecretKey` env var.
+- **key** (str): Optional. If set and `user_sig` is not, the plugin generates `user_sig` via TLSSigAPIv2. Falls back to `TENCENT_SDK_SECRET_KEY` env var.
 - **video_fps** (int): Outgoing video frame rate.
 
 Environment variables:
 
-- `TENCENT_SDKAppID`, `TENCENT_SDKSecretKey` — credentials.
+- `TENCENT_SDK_APP_ID`, `TENCENT_SDK_SECRET_KEY` — credentials.
 - `TENCENT_TRTC_SCENE` — one of `auto` (default), `videocall`, `call`, `record`.
 - `TENCENT_TEST_ROOM_ID` — used only by `example/tencent_edge_example.py`.
 

@@ -9,8 +9,8 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    sdk_app_id = int(os.environ["TENCENT_SDKAppID"])
-    secret_key = os.environ["TENCENT_SDKSecretKey"]
+    sdk_app_id = int(os.environ["TENCENT_SDK_APP_ID"])
+    secret_key = os.environ["TENCENT_SDK_SECRET_KEY"]
 
     agent = Agent(
         edge=tencent.Edge(sdk_app_id=sdk_app_id, key=secret_key),
@@ -32,6 +32,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     call = await agent.create_call(call_type, room_id)
 
     async with agent.join(call, participant_wait_timeout=None):
+        await agent.say("Hi! How can I help you today?")
         await agent.finish()
 
 

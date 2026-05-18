@@ -12,6 +12,14 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 
 import av
 from getstream.video.rtc.track_util import PcmData
+from vision_agents.plugins.tencent.bindings import (
+    AUDIO_CODEC_TYPE_PCM,
+    STREAM_TYPE_VIDEO_HIGH,
+    VIDEO_PIXEL_FORMAT_YUV420p,
+    VIDEO_ROTATION_0,
+    AudioFrame,
+    PixelFrame,
+)
 from vision_agents.plugins.tencent.video_utils import (
     av_frame_to_yuv420p,
     yuv420p_to_av_frame,
@@ -21,20 +29,6 @@ if TYPE_CHECKING:
     import aiortc
 
 logger = logging.getLogger(__name__)
-
-try:
-    # liteav's typed stubs don't re-export these module-level constants, so we
-    # silence attr-defined here; the names exist at runtime on Linux.
-    from liteav import (  # type: ignore[attr-defined]
-        AUDIO_CODEC_TYPE_PCM,
-        STREAM_TYPE_VIDEO_HIGH,
-        VIDEO_PIXEL_FORMAT_YUV420p,
-        VIDEO_ROTATION_0,
-        AudioFrame,
-        PixelFrame,
-    )
-except ImportError:
-    pass
 
 FRAME_MS = 20
 SAMPLE_RATE = 16000

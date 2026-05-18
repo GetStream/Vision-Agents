@@ -17,6 +17,10 @@ services:
       # Forwarded from the host shell at `docker compose run` time:
       # TENCENT_TEST_ROOM_ID=<roomId-from-tencent-quick-demo>
       - TENCENT_TEST_ROOM_ID
+      # Set TENCENT_LITEAV_DEBUG=1 to surface the C++ SDK's `[I][...]`
+      # console logs (jitter buffer, watchdog, signal resolves). Off by
+      # default; file logs at /root/.cache/python3/liteav/log are kept.
+      - TENCENT_LITEAV_DEBUG
     command:
       - /bin/sh
       - -c
