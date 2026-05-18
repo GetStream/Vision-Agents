@@ -324,7 +324,7 @@ class TencentEdge(EdgeTransport[TencentCall]):
         if not self._loop:
             return
         track_id = f"{user_id}-video"
-        track = TencentIncomingVideoTrack(loop=self._loop)
+        track = TencentIncomingVideoTrack()
         self._incoming_video_tracks[track_id] = track
         event = events.TrackAddedEvent(
             plugin_name="tencent",

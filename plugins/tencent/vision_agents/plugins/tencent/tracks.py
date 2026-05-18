@@ -182,8 +182,7 @@ class TencentIncomingVideoTrack:
     to avoid holding the GIL on the callback thread.
     """
 
-    def __init__(self, loop: asyncio.AbstractEventLoop):
-        self._loop = loop
+    def __init__(self) -> None:
         self._queue: queue.Queue[tuple[bytes, int, int, int]] = queue.Queue(maxsize=4)
         self._last_frame: av.VideoFrame | None = None
         self._state = "live"
