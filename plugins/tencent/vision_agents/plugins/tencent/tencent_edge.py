@@ -7,6 +7,7 @@ wheels (x86_64 / aarch64). On macOS/Windows the import will fail and
 
 import asyncio
 import faulthandler
+import json
 import logging
 import os
 import threading
@@ -270,7 +271,9 @@ class TencentEdge(EdgeTransport[TencentCall]):
     async def send_custom_event(self, data: dict[str, Any]) -> None:
         if self._cloud is None:
             return
-        raw = str(data).encode("utf-8")[: 5 * 1024]
+        # TRTC peers across other SDKs (JS, mobile) expect JSON, not the
+        # Python `repr` of a dict. Truncate to the SDK's 5 KiB cap.
+        raw = json.dumps(data).encode("utf-8")[: 5 * 1024]
         self._cloud.SendCustomCmdMsg(1, bytearray(raw), True, True)
 
     def _emit_audio_received(self, user_id: str, pcm_bytes: bytes) -> None:
