@@ -226,9 +226,9 @@ class ElevenlabsSTT(stt.STT):
                     }
                 )
                 last_send_at = time.monotonic()
-            except Exception as e:
+            except Exception:
                 if not self.closed:
-                    logger.error(f"Error sending audio to ElevenLabs: {e}")
+                    logger.exception("Error sending audio to ElevenLabs")
                 break
 
     def _on_partial_transcript(self, transcription_data: dict[str, Any]):
