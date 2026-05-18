@@ -1,0 +1,15 @@
+"""Top-level ``vision-agents`` command group."""
+
+import click
+
+from vision_agents.cli.app import app_cmd
+from vision_agents.cli.init import init_cmd
+
+
+@click.group(help="Vision Agents command-line interface.")
+def main() -> None:
+    """Top-level command group."""
+
+
+main.add_command(init_cmd)
+main.add_command(app_cmd)

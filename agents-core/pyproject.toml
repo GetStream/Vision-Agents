@@ -43,7 +43,7 @@ Website = "https://visionagents.ai/"
 Source = "https://github.com/GetStream/Vision-Agents"
 
 [project.scripts]
-vision-agents = "vision_agents.cli.__main__:main"
+vision-agents = "vision_agents.cli.main:main"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-json-report", "mypy", "ruff", "click"]
@@ -137,7 +137,7 @@ raw-options = { root = "..", search_parent_directories = true, fallback_version 
 packages = ["vision_agents"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"vision_agents/cli/templates" = "vision_agents/cli/templates"
+"vision_agents/cli/init/templates" = "vision_agents/cli/init/templates"
 
 [tool.hatch.build.targets.sdist]
 include = ["vision_agents"]
