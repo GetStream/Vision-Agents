@@ -88,9 +88,9 @@ class ElevenlabsSTT(stt.STT):
         self.audio_chunk_duration_ms = audio_chunk_duration_ms
         self.keepalive_interval_ms = keepalive_interval_ms
 
-        # Pre-generated 2s of silence for keep-alive purposes.
-        silence_bytes = b"\x00" * (SAMPLE_RATE * audio_chunk_duration_ms // 1000 * 2)
-        self._silence_2s_b64 = base64.b64encode(silence_bytes).decode("utf-8")
+        # Pre-generated 1s of 16-bit PCM silence for keep-alive purposes.
+        silence_bytes = b"\x00" * (SAMPLE_RATE * 2)
+        self._silence_1s_b64 = base64.b64encode(silence_bytes).decode("utf-8")
 
         self._current_participant: Optional[Participant] = None
         self._connection_ready = asyncio.Event()
@@ -216,7 +216,7 @@ class ElevenlabsSTT(stt.STT):
                 # wall-clock time since the last actual send.
                 if time.monotonic() - last_send_at < keepalive_s:
                     continue
-                audio_base64 = self._silence_2s_b64
+                audio_base64 = self._silence_1s_b64
 
             try:
                 await self.connection.send(
