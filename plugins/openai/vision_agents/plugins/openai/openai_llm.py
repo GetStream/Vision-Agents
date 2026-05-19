@@ -130,6 +130,7 @@ class OpenAILLM(LLM):
                             error_code,
                         )
                         self.on_llm_error(
+                            error=RuntimeError(error_message),
                             error_type="response.failed",
                             error_code=error_code,
                         )
