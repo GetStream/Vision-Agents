@@ -1,7 +1,7 @@
 # HeyGen Avatar Plugin for Vision Agents
 
 > **Deprecated.** This plugin is deprecated and will be removed in a future release.
-> Use the [Vision Agents Liveavatar plugin](https://pypi.org/project/vision-agents-plugins-liveavatar/) instead — it targets LiveAvatar
+> Use the [Vision Agents LiveAvatar plugin](https://pypi.org/project/vision-agents-plugins-liveavatar/) instead — it targets LiveAvatar
 > (by HeyGen) via the supported LITE-mode integration path.
 
 Add realistic avatar video to your AI agents using HeyGen's streaming avatar API.
