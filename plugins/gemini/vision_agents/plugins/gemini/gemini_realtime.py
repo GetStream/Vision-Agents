@@ -431,14 +431,14 @@ class GeminiRealtime(realtime.Realtime):
 
             # VAD signals at the message level: explicit user speech start/end.
             vad_signal = server_message.voice_activity_detection_signal
+            voice_activity = server_message.voice_activity
             if vad_signal and vad_signal.vad_signal_type:
                 if vad_signal.vad_signal_type == VadSignalType.VAD_SIGNAL_TYPE_SOS:
                     self._emit_user_speech_started()
                 elif vad_signal.vad_signal_type == VadSignalType.VAD_SIGNAL_TYPE_EOS:
                     self._emit_user_speech_ended()
                 handled = True
-            voice_activity = server_message.voice_activity
-            if voice_activity and voice_activity.voice_activity_type:
+            elif voice_activity and voice_activity.voice_activity_type:
                 if (
                     voice_activity.voice_activity_type
                     == VoiceActivityType.ACTIVITY_START
