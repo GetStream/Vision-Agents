@@ -1,3 +1,9 @@
+# Unreleased
+
+## Bug Fixes
+
+- **Optional `redis` extra**: importing `vision_agents.core` no longer emits a `UserWarning` when the `redis` package is absent. The warning was noise for the majority of users who don't use `RedisSessionKVStore`; instead, attempting to import `vision_agents.core.agents.session_registry.redis_store` directly raises a `ModuleNotFoundError` with an actionable install hint ("`pip install 'vision-agents[redis]'`"), matching the FastAPI optional-extra pattern. (#562)
+
 # v0.6.0
 
 ## Breaking Changes
