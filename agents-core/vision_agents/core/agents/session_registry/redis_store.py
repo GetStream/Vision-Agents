@@ -4,11 +4,13 @@ import logging
 try:
     import redis.asyncio as redis
 except ImportError as err:
-    raise ModuleNotFoundError(
-        "Redis support requires the `redis` extra. "
-        "Install it with: pip install 'vision-agents[redis]'",
-        name="redis",
-    ) from err
+    if err.name and err.name.startswith("redis"):
+        raise ModuleNotFoundError(
+            "Redis support requires the `redis` extra. "
+            "Install it with: pip install 'vision-agents[redis]'",
+            name="redis",
+        ) from err
+    raise
 
 from .store import SessionKVStore
 
