@@ -6,6 +6,10 @@
 
 Adds a console script with two subcommands. `uvx vision-agents init <name>` scaffolds a new agent project (`pyproject.toml`, `agent.py`, `.env.example`, `.gitignore`, `README.md`) and runs `uv sync` to provision a venv (skip with `--no-install`). `vision-agents agent run|serve` reads `[tool.vision-agents.agent].entrypoint` (gunicorn-style `module:attribute`, e.g. `"agent:runner"`) from the project's `pyproject.toml`, imports it in-process and dispatches to its `Runner.cli()`. No subprocess, no uv dependency at runtime — just install the CLI in the same env as the project (typically via `uv run` or an activated venv). Templates are rendered with Jinja2.
 
+## Bug Fixes
+
+- **Optional `redis` extra**: importing `vision_agents.core` no longer emits a `UserWarning` when the `redis` package is absent. The warning was noise for the majority of users who don't use `RedisSessionKVStore`; instead, attempting to import `vision_agents.core.agents.session_registry.redis_store` directly raises a `ModuleNotFoundError` with an actionable install hint ("`pip install 'vision-agents[redis]'`"), matching the FastAPI optional-extra pattern. (#562)
+
 # v0.6.0
 
 ## Breaking Changes
