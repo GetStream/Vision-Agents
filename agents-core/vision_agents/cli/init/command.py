@@ -1,6 +1,5 @@
 """``vision-agents init`` — scaffold a new agent project."""
 
-import logging
 import tempfile
 from pathlib import Path
 
@@ -10,8 +9,6 @@ from jinja2 import TemplateError
 from vision_agents.cli.errors import CliError
 from vision_agents.cli.init.scaffold import scaffold
 from vision_agents.cli.init.uv import install_dependencies
-
-logger = logging.getLogger(__name__)
 
 
 @click.command("init", help="Scaffold a new agent project from a template.")

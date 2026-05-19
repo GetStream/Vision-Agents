@@ -10,11 +10,6 @@ CONFIG_FILENAME = "pyproject.toml"
 CONFIG_KEY = "tool.vision-agents.agent.entrypoint"
 
 
-def config_hint(config_path: Path, spec: str) -> str:
-    """User-facing hint pointing at the config key that owns ``spec``."""
-    return f'Check {CONFIG_KEY} = "{spec}" in {config_path}.'
-
-
 def parse_entrypoint(spec: object) -> tuple[str, str]:
     """Parse a gunicorn-style ``module:attribute`` spec.
 
@@ -55,11 +50,11 @@ def find_config(start: Path) -> Path:
     )
 
 
-def load_agent_config(config_path: Path) -> dict[str, object]:
+def load_agent_config(config_path: Path) -> tuple[str, str]:
     """Parse ``[tool.vision-agents.agent]`` from ``pyproject.toml``.
 
-    Strict on required fields and types; unknown keys are ignored for
-    forward compatibility.
+    Returns ``(module, attribute)``. Strict on required fields and types;
+    unknown keys are ignored for forward compatibility.
     """
     try:
         with config_path.open("rb") as handle:
@@ -78,11 +73,9 @@ def load_agent_config(config_path: Path) -> dict[str, object]:
         )
 
     try:
-        module, attribute = parse_entrypoint(section.get("entrypoint"))
+        return parse_entrypoint(section.get("entrypoint"))
     except ValueError as err:
         raise CliError(f"{config_path}: {err}") from err
-
-    return {"module": module, "attribute": attribute}
 
 
 def resolve_entrypoint(cwd: Path, override: str | None) -> ResolvedEntrypoint:
@@ -99,16 +92,14 @@ def resolve_entrypoint(cwd: Path, override: str | None) -> ResolvedEntrypoint:
             project_root=cwd.resolve(),
             module=module,
             attribute=attribute,
-            hint=f"Check --entrypoint={override!r}.",
+            config_path=None,
         )
 
     config_path = find_config(cwd)
-    config = load_agent_config(config_path)
-    module = str(config["module"])
-    attribute = str(config["attribute"])
+    module, attribute = load_agent_config(config_path)
     return ResolvedEntrypoint(
         project_root=config_path.parent.resolve(),
         module=module,
         attribute=attribute,
-        hint=config_hint(config_path, f"{module}:{attribute}"),
+        config_path=config_path,
     )

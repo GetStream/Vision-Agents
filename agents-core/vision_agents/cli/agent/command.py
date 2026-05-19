@@ -1,14 +1,11 @@
 """``vision-agents agent`` — resolve the entrypoint, then dispatch in-process."""
 
-import logging
 from pathlib import Path
 
 import click
 
 from vision_agents.cli.agent.config import resolve_entrypoint
 from vision_agents.cli.agent.dispatch import dispatch_target
-
-logger = logging.getLogger(__name__)
 
 
 @click.command(

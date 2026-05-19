@@ -10,4 +10,6 @@ class ResolvedEntrypoint(NamedTuple):
     project_root: Path
     module: str
     attribute: str
-    hint: str  # user-facing hint pointing at the source of this resolution
+    config_path: (
+        Path | None
+    )  # set when resolved from pyproject.toml; None for --entrypoint
