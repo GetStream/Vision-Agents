@@ -72,3 +72,23 @@ class TestAgentCommand:
         result = runner.invoke(agent_cmd, [])
         assert result.exit_code != 0
         assert "not found" in result.output
+
+    def test_errors_when_vision_agents_section_is_not_a_table(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        (tmp_path / "pyproject.toml").write_text('[tool]\nvision-agents = "oops"\n')
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(agent_cmd, [])
+        assert result.exit_code != 0
+        assert "[tool.vision-agents.agent]" in result.output
+
+    def test_errors_when_entrypoint_escapes_project_root(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.vision-agents.agent]\nentrypoint = "../outside.py"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(agent_cmd, [])
+        assert result.exit_code != 0
+        assert "inside the project root" in result.output

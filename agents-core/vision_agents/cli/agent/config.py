@@ -38,9 +38,8 @@ def load_agent_config(config_path: Path) -> dict[str, object]:
         raise click.ClickException(f"failed to parse {config_path}: {err}") from err
 
     tool = data.get("tool")
-    section = (
-        tool.get("vision-agents", {}).get("agent") if isinstance(tool, dict) else None
-    )
+    va = tool.get("vision-agents") if isinstance(tool, dict) else None
+    section = va.get("agent") if isinstance(va, dict) else None
     if not isinstance(section, dict):
         raise click.ClickException(
             f"{config_path} is missing required [tool.vision-agents.agent] section"

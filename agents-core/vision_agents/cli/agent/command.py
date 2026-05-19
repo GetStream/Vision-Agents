@@ -23,8 +23,14 @@ logger = logging.getLogger(__name__)
 def agent_cmd(args: tuple[str, ...]) -> None:
     config_path = find_config(Path.cwd())
     config = load_agent_config(config_path)
-    project_root = config_path.parent
+    project_root = config_path.parent.resolve()
     entrypoint = (project_root / str(config["entrypoint"])).resolve()
+    try:
+        entrypoint.relative_to(project_root)
+    except ValueError as err:
+        raise click.ClickException(
+            f"entrypoint must be inside the project root ({project_root})"
+        ) from err
     if not entrypoint.is_file():
         raise click.ClickException(f"entrypoint {entrypoint} not found")
 
