@@ -324,10 +324,10 @@ class TencentEdge(EdgeTransport[TencentCall]):
             self._loop.call_soon_threadsafe(self.events.send, event)
 
     def _emit_call_ended(self) -> None:
-        if self._loop:
+        if self._loop and self._call is not None:
             self._loop.call_soon_threadsafe(
                 self.events.send,
-                events.CallEndedEvent(plugin_name="tencent"),
+                events.CallEndedEvent(plugin_name="tencent", call=self._call),
             )
 
     def _emit_video_track_added(self, user_id: str) -> None:
