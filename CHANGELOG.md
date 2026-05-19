@@ -47,6 +47,16 @@ New lifecycle events on the agent's own bus, suitable for application code (vers
 Also adds plugin-side `STTConnectedEvent` / `STTDisconnectedEvent`, `TTSConnectedEvent` / `TTSDisconnectedEvent` / `TTSErrorEvent`, and
 `LLMResponseFinalEvent` to replace the connection-state and realtime-response events removed above.
 
+# v0.6.1
+
+## Breaking Changes
+
+### `heygen` plugin removed
+
+The `heygen` plugin, deprecated in v0.6.0 (#553), is now removed. Use `vision_agents.plugins.liveavatar.Avatar` instead — it targets the same product via the supported LITE-mode integration path.
+
+Three internal events used only by the `heygen` plugin (`LLMResponseChunkEvent`, `LLMResponseCompletedEvent`, `RealtimeAgentSpeechTranscriptionEvent`) were also removed from `vision_agents.core.llm.events`.
+
 ## Bug Fixes
 
 - **Optional `redis` extra**: importing `vision_agents.core` no longer emits a `UserWarning` when the
