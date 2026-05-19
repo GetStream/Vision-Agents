@@ -99,7 +99,7 @@ class Qwen3Realtime(Realtime):
             config=session_config,
         )
         await self._real_client.connect()
-        self.connected = True
+        self._on_connected(session_config=session_config)
         logger.debug(f"Started Qwen3Realtime session at {self._base_url}")
 
         # Start the loop task
