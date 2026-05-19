@@ -26,14 +26,9 @@ try:
     from vision_agents.core.agents.session_registry import RedisSessionKVStore
 
     __all__ += ["RedisSessionKVStore"]
-except ImportError as e:
-    import warnings
-
-    if e.name and e.name.startswith("redis") or "RedisSessionKVStore" in str(e):
-        warnings.warn(
-            "Optional dependency 'redis' is not installed. "
-            "Install the [redis] extra to enable RedisSessionKVStore.",
-            stacklevel=2,
-        )
-    else:
+except ImportError as exc:
+    redis_missing = (
+        exc.name and exc.name.startswith("redis")
+    ) or "RedisSessionKVStore" in str(exc)
+    if not redis_missing:
         raise
