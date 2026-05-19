@@ -26,17 +26,6 @@ def project_on_sys_path(project_root: Path) -> Iterator[None]:
             pass
 
 
-@contextmanager
-def patched_argv(argv: list[str]) -> Iterator[None]:
-    """Replace ``sys.argv`` for the duration (e.g. so Click reads forwarded args)."""
-    original = sys.argv
-    sys.argv = argv
-    try:
-        yield
-    finally:
-        sys.argv = original
-
-
 def dispatch_target(target: ResolvedEntrypoint, args: tuple[str, ...]) -> None:
     """Import ``target.module``, resolve ``target.attribute``, invoke its ``.cli()``.
 
@@ -73,5 +62,4 @@ def dispatch_target(target: ResolvedEntrypoint, args: tuple[str, ...]) -> None:
             )
 
         runner: Runner = attr
-        with patched_argv(["vision-agents agent", *args]):
-            runner.cli()
+        runner.cli(args=list(args))

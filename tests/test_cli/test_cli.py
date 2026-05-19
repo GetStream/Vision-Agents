@@ -145,7 +145,7 @@ class TestAgentCommand:
             "from vision_agents.core import Runner\n"
             "class _Runner(Runner):\n"
             "    def __init__(self): pass\n"
-            "    def cli(self):\n"
+            "    def cli(self, args=None):\n"
             f"        open({str(log_file)!r}, 'w').write('ok')\n"
             "runner = _Runner()\n"
         )
@@ -162,18 +162,17 @@ class TestAgentCommand:
             '[tool.vision-agents.agent]\nentrypoint = "stub_runner:runner"\n'
         )
         (tmp_path / "stub_runner.py").write_text(
-            "import sys\n"
             "from vision_agents.core import Runner\n"
             "class _Runner(Runner):\n"
             "    def __init__(self): pass\n"
-            "    def cli(self):\n"
-            f"        open({str(log_file)!r}, 'w').write(' '.join(sys.argv))\n"
+            "    def cli(self, args=None):\n"
+            f"        open({str(log_file)!r}, 'w').write(' '.join(args or []))\n"
             "runner = _Runner()\n"
         )
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(agent_cmd, ["run", "--debug"])
         assert result.exit_code == 0, result.output
-        assert log_file.read_text() == "vision-agents agent run --debug"
+        assert log_file.read_text() == "run --debug"
 
     def test_errors_when_target_is_not_a_runner_instance(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -202,7 +201,7 @@ class TestAgentCommand:
             "from vision_agents.core import Runner\n"
             "class _Runner(Runner):\n"
             "    def __init__(self): pass\n"
-            "    def cli(self):\n"
+            "    def cli(self, args=None):\n"
             f"        open({str(log_file)!r}, 'w').write('called')\n"
             "alt = _Runner()\n"
         )
@@ -219,7 +218,7 @@ class TestAgentCommand:
             "from vision_agents.core import Runner\n"
             "class _Runner(Runner):\n"
             "    def __init__(self): pass\n"
-            "    def cli(self):\n"
+            "    def cli(self, args=None):\n"
             f"        open({str(log_file)!r}, 'w').write('ok')\n"
             "runner = _Runner()\n"
         )
