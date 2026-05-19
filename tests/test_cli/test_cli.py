@@ -73,6 +73,18 @@ class TestAgentCommand:
         assert result.exit_code != 0
         assert "module:attribute" in result.output
 
+    def test_errors_when_entrypoint_has_py_suffix(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.vision-agents.agent]\nentrypoint = "agent.py:runner"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(agent_cmd, [])
+        assert result.exit_code != 0
+        assert "looks like a file path" in result.output
+        assert "agent:runner" in result.output
+
     def test_errors_when_module_not_importable(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
@@ -118,6 +130,29 @@ class TestAgentCommand:
         result = runner.invoke(agent_cmd, [])
         assert result.exit_code != 0
         assert "[tool.vision-agents.agent]" in result.output
+
+    def test_dispatches_to_dotted_module_entrypoint(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        log_file = tmp_path / "called.txt"
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.vision-agents.agent]\nentrypoint = "pkg.api:runner"\n'
+        )
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        (pkg / "api.py").write_text(
+            "from vision_agents.core import Runner\n"
+            "class _Runner(Runner):\n"
+            "    def __init__(self): pass\n"
+            "    def cli(self):\n"
+            f"        open({str(log_file)!r}, 'w').write('ok')\n"
+            "runner = _Runner()\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(agent_cmd, [])
+        assert result.exit_code == 0, result.output
+        assert log_file.read_text() == "ok"
 
     def test_dispatches_to_runner_cli_with_forwarded_args(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

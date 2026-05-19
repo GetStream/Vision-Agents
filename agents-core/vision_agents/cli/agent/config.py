@@ -23,12 +23,19 @@ def parse_entrypoint(spec: object) -> tuple[str, str]:
     """
     if not isinstance(spec, str) or ":" not in spec:
         raise ValueError(
-            f"entrypoint {spec!r} must be in 'module:attribute' form (e.g. 'agent:runner')"
+            f"entrypoint {spec!r} must be in 'module:attribute' form "
+            "(e.g. 'agent:runner')"
         )
     module, _, attribute = spec.partition(":")
     if not module or not attribute:
         raise ValueError(
             f"entrypoint {spec!r} is malformed; expected 'module:attribute'"
+        )
+    if module.endswith(".py"):
+        raise ValueError(
+            f"entrypoint {spec!r} looks like a file path; entrypoint is a "
+            f"Python import name, not a filename — try {module[:-3]!r}:{attribute!r} "
+            f"(i.e. '{module[:-3]}:{attribute}')"
         )
     return module, attribute
 
@@ -73,10 +80,7 @@ def load_agent_config(config_path: Path) -> dict[str, object]:
     try:
         module, attribute = parse_entrypoint(section.get("entrypoint"))
     except ValueError as err:
-        raise CliError(
-            f"{config_path} requires tool.vision-agents.agent.entrypoint "
-            "in 'module:attribute' form (e.g. 'agent:runner')"
-        ) from err
+        raise CliError(f"{config_path}: {err}") from err
 
     return {"module": module, "attribute": attribute}
 
@@ -90,9 +94,7 @@ def resolve_entrypoint(cwd: Path, override: str | None) -> ResolvedEntrypoint:
         try:
             module, attribute = parse_entrypoint(override)
         except ValueError as err:
-            raise CliError(
-                f"--entrypoint must be in 'module:attribute' form (got {override!r})"
-            ) from err
+            raise CliError(f"--entrypoint: {err}") from err
         return ResolvedEntrypoint(
             project_root=cwd.resolve(),
             module=module,
