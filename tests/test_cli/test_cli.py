@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from vision_agents.cli.app import app_cmd
+from vision_agents.cli.agent import agent_cmd
 from vision_agents.cli.init import init_cmd
 
 
@@ -41,7 +41,7 @@ class TestInitCommand:
         assert "already exists" in result.output
 
 
-class TestAppCommand:
+class TestAgentCommand:
     @pytest.fixture
     def runner(self) -> CliRunner:
         return CliRunner()
@@ -50,26 +50,26 @@ class TestAppCommand:
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         monkeypatch.chdir(tmp_path)
-        result = runner.invoke(app_cmd, [])
+        result = runner.invoke(agent_cmd, [])
         assert result.exit_code != 0
         assert "Could not find vision-agents configuration" in result.output
 
-    def test_errors_when_app_section_missing(
+    def test_errors_when_agent_section_missing(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         (tmp_path / "vision-agents.toml").write_text('[project]\nname = "x"\n')
         monkeypatch.chdir(tmp_path)
-        result = runner.invoke(app_cmd, [])
+        result = runner.invoke(agent_cmd, [])
         assert result.exit_code != 0
-        assert "[app]" in result.output
+        assert "[agent]" in result.output
 
     def test_errors_when_entrypoint_missing(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         (tmp_path / "vision-agents.toml").write_text(
-            '[app]\nentrypoint = "missing.py"\n'
+            '[agent]\nentrypoint = "missing.py"\n'
         )
         monkeypatch.chdir(tmp_path)
-        result = runner.invoke(app_cmd, [])
+        result = runner.invoke(agent_cmd, [])
         assert result.exit_code != 0
         assert "not found" in result.output

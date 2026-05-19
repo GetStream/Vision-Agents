@@ -24,8 +24,8 @@ def find_config(start: Path) -> Path:
     )
 
 
-def load_app_config(config_path: Path) -> dict[str, object]:
-    """Parse the ``[app]`` section of ``vision-agents.toml``.
+def load_agent_config(config_path: Path) -> dict[str, object]:
+    """Parse the ``[agent]`` section of ``vision-agents.toml``.
 
     Strict on required fields and types; unknown keys are ignored for
     forward compatibility.
@@ -38,14 +38,14 @@ def load_app_config(config_path: Path) -> dict[str, object]:
     except tomllib.TOMLDecodeError as err:
         raise click.ClickException(f"failed to parse {config_path}: {err}") from err
 
-    app = data.get("app")
-    if not isinstance(app, dict):
-        raise click.ClickException(f"{config_path} is missing required [app] section")
+    agent = data.get("agent")
+    if not isinstance(agent, dict):
+        raise click.ClickException(f"{config_path} is missing required [agent] section")
 
-    entrypoint = app.get("entrypoint")
+    entrypoint = agent.get("entrypoint")
     if not isinstance(entrypoint, str) or not entrypoint:
         raise click.ClickException(
-            f"{config_path} requires app.entrypoint to be a non-empty string"
+            f"{config_path} requires agent.entrypoint to be a non-empty string"
         )
 
     return {"entrypoint": entrypoint}

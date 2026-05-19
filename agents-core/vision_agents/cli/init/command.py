@@ -59,4 +59,4 @@ def init_cmd(name: str, no_install: bool) -> None:
     click.echo("  Copy .env.example to .env and fill in keys")
     if not install:
         click.echo("  uv sync")
-    click.echo("  uv run vision-agents app run")
+    click.echo("  uv run vision-agents agent run")

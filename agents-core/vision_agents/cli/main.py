@@ -2,7 +2,7 @@
 
 import click
 
-from vision_agents.cli.app import app_cmd
+from vision_agents.cli.agent import agent_cmd
 from vision_agents.cli.init import init_cmd
 
 
@@ -13,4 +13,4 @@ def main() -> None:
 
 
 main.add_command(init_cmd)
-main.add_command(app_cmd)
+main.add_command(agent_cmd)
