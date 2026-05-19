@@ -1,0 +1,21 @@
+# {{project_name}}
+
+Generated with `uvx vision-agents init`.
+
+## Setup
+
+1. Copy `.env.example` to `.env` and fill in the keys.
+2. Install dependencies:
+
+   ```bash
+   uv sync
+   ```
+
+3. Run the agent:
+
+   ```bash
+   uv run vision-agents agent run     # single-call console
+   uv run vision-agents agent serve   # HTTP server
+   ```
+
+   The CLI imports `agent:runner` (configured in `pyproject.toml`) and dispatches to its `Runner.cli()` in-process.

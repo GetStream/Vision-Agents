@@ -33,6 +33,8 @@ dependencies = [
     "uvicorn>=0.38.0",
     "urllib3>=2.6.3",
     "onnxruntime>=1.16.1,<2",
+    "click>=8.1",
+    "jinja2>=3.1",
 ]
 
 [project.urls]
@@ -40,8 +42,11 @@ Documentation = "https://visionagents.ai/"
 Website = "https://visionagents.ai/"
 Source = "https://github.com/GetStream/Vision-Agents"
 
+[project.scripts]
+vision-agents = "vision_agents.cli.main:main"
+
 [project.optional-dependencies]
-dev = ["pytest", "pytest-json-report", "mypy", "ruff", "click"]
+dev = ["pytest", "pytest-json-report", "mypy", "ruff"]
 anthropic = ["vision-agents-plugins-anthropic"]
 cartesia = ["vision-agents-plugins-cartesia"]
 deepgram = ["vision-agents-plugins-deepgram"]
@@ -130,6 +135,9 @@ raw-options = { root = "..", search_parent_directories = true, fallback_version 
 
 [tool.hatch.build.targets.wheel]
 packages = ["vision_agents"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"vision_agents/cli/init/templates" = "vision_agents/cli/init/templates"
 
 [tool.hatch.build.targets.sdist]
 include = ["vision_agents"]

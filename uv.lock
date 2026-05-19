@@ -7188,9 +7188,11 @@ source = { editable = "agents-core" }
 dependencies = [
     { name = "aiortc" },
     { name = "av" },
+    { name = "click" },
     { name = "colorlog" },
     { name = "fastapi" },
     { name = "getstream", extra = ["telemetry", "webrtc"] },
+    { name = "jinja2" },
     { name = "mcp" },
     { name = "numpy" },
     { name = "onnxruntime" },
@@ -7262,7 +7264,6 @@ deepgram = [
     { name = "vision-agents-plugins-deepgram" },
 ]
 dev = [
-    { name = "click" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-json-report" },
@@ -7366,10 +7367,11 @@ xai = [
 requires-dist = [
     { name = "aiortc", specifier = ">=1.14.0,<1.15.0" },
     { name = "av", specifier = ">=14.2.0,<17" },
-    { name = "click", marker = "extra == 'dev'" },
+    { name = "click", specifier = ">=8.1" },
     { name = "colorlog", specifier = ">=6.10.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
     { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.3.4,<4" },
+    { name = "jinja2", specifier = ">=3.1" },
     { name = "mcp", specifier = ">=1.23.3,<2" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "numpy", specifier = ">=1.24.0" },

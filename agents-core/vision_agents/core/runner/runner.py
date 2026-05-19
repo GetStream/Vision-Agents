@@ -253,9 +253,14 @@ class Runner:
         )
         return app
 
-    def cli(self) -> None:
+    def cli(self, args: Optional[list[str]] = None) -> None:
         """
         Run the command-line interface with `run` and `serve` subcommands.
+
+        Args:
+            args: Optional explicit argument list. When ``None``, Click reads
+                ``sys.argv``. Pass a list (e.g. ``["run", "--debug"]``) to
+                invoke the CLI programmatically without mutating ``sys.argv``.
         """
 
         @click.group()
@@ -394,4 +399,4 @@ class Runner:
                 debug=debug,
             )
 
-        cli_()
+        cli_(args=args)
