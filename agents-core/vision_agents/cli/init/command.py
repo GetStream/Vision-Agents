@@ -1,7 +1,6 @@
 """``vision-agents init`` — scaffold a new agent project."""
 
 import logging
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -9,7 +8,7 @@ import click
 from jinja2 import TemplateError
 
 from vision_agents.cli.init.scaffold import scaffold
-from vision_agents.cli.init.uv import run_uv_sync
+from vision_agents.cli.uv import install_dependencies
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +21,7 @@ logger = logging.getLogger(__name__)
     help="Do not run 'uv sync' after generating the project.",
 )
 def init_cmd(name: str, no_install: bool) -> None:
+    install = not no_install
     target = Path(name).resolve()
     if target.exists():
         raise click.ClickException(f"{target} already exists")
@@ -51,20 +51,12 @@ def init_cmd(name: str, no_install: bool) -> None:
             raise click.ClickException(f"failed to finalize {target}: {err}") from err
     click.echo(f"Created {target}")
 
-    installed = False
-    if not no_install:
-        try:
-            installed = run_uv_sync(target)
-        except subprocess.CalledProcessError as err:
-            raise click.ClickException(
-                f"'uv sync' failed with exit code {err.returncode}"
-            ) from err
-        if not installed:
-            click.echo("warning: 'uv' not found in PATH; skipping venv setup", err=True)
+    if install:
+        install_dependencies(target)
 
     click.echo("\nNext steps:")
     click.echo(f"  cd {name}")
     click.echo("  Copy .env.example to .env and fill in keys")
-    if not installed:
+    if not install:
         click.echo("  uv sync")
     click.echo("  uv run vision-agents app run")
