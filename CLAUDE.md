@@ -42,7 +42,7 @@ uv run --no-sync mypy
 ## Python rules
 
 - Never use `from __future__ import annotations`.
-- Never write `except Exception as e`. Catch specific exceptions.
+- Prefer specific exceptions if they are known. If the exception type is not clear, it is ok to use `except Exception as e`.
 - Avoid `getattr`, `hasattr`, `delattr`, `setattr`; prefer normal attribute access.
 - Docstrings: Google style, keep them short.
 - Do not use section comments like `# -- some section --`
