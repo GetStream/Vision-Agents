@@ -10,6 +10,8 @@ from .call import Call
 from .events import (
     AudioReceivedEvent,
     CallEndedEvent,
+    ParticipantJoinedEvent,
+    ParticipantLeftEvent,
     TrackAddedEvent,
     TrackRemovedEvent,
 )
@@ -29,6 +31,8 @@ class EdgeTransport(abc.ABC, Generic[T_Call]):
         - TrackAddedEvent: When a media track is added to the call
         - TrackRemovedEvent: When a media track is removed from the call
         - CallEndedEvent: When the call ends
+        - ParticipantJoinedEvent: When a participant joins the call
+        - ParticipantLeftEvent: When a participant leaves the call
     """
 
     events: EventManager
@@ -43,6 +47,8 @@ class EdgeTransport(abc.ABC, Generic[T_Call]):
             TrackAddedEvent,
             TrackRemovedEvent,
             CallEndedEvent,
+            ParticipantJoinedEvent,
+            ParticipantLeftEvent,
         )
 
     @abc.abstractmethod
