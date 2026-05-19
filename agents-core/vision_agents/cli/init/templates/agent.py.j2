@@ -25,5 +25,8 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         await agent.finish()
 
 
+runner = Runner(AgentLauncher(create_agent=create_agent, join_call=join_call))
+
+
 if __name__ == "__main__":
-    Runner(AgentLauncher(create_agent=create_agent, join_call=join_call)).cli()
+    runner.cli()

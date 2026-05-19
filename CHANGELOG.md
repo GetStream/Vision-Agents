@@ -4,7 +4,7 @@
 
 ### `vision-agents` CLI with `init` and `agent` commands (#533)
 
-Adds a console script with two subcommands. `uvx vision-agents init <name>` scaffolds a new agent project (`pyproject.toml`, `agent.py`, `.env.example`, `.gitignore`, `README.md`) and runs `uv sync` to provision a venv (skip with `--no-install`). `vision-agents agent run|serve` reads `[tool.vision-agents.agent]` from the project's `pyproject.toml` and forwards args to the project's `Runner.cli()`, so users have a stable entry point even if the agent file is renamed. Templates are rendered with Jinja2.
+Adds a console script with two subcommands. `uvx vision-agents init <name>` scaffolds a new agent project (`pyproject.toml`, `agent.py`, `.env.example`, `.gitignore`, `README.md`) and runs `uv sync` to provision a venv (skip with `--no-install`). `vision-agents agent run|serve` reads `[tool.vision-agents.agent].entrypoint` (gunicorn-style `module:attribute`, e.g. `"agent:runner"`) from the project's `pyproject.toml`, imports it in-process and dispatches to its `Runner.cli()`. No subprocess, no uv dependency at runtime — just install the CLI in the same env as the project (typically via `uv run` or an activated venv). Templates are rendered with Jinja2.
 
 # v0.6.0
 

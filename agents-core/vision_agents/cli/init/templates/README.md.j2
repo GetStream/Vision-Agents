@@ -18,4 +18,4 @@ Generated with `uvx vision-agents init`.
    uv run vision-agents agent serve   # HTTP server
    ```
 
-   Tip: `uv tool install vision-agents` puts the CLI on `PATH` globally, so you can drop the `uv run ` prefix.
+   The CLI imports `agent:runner` (configured in `pyproject.toml`) and dispatches to its `Runner.cli()` in-process.

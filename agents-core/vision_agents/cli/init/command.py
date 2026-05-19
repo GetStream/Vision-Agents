@@ -7,8 +7,9 @@ from pathlib import Path
 import click
 from jinja2 import TemplateError
 
+from vision_agents.cli.errors import CliError
 from vision_agents.cli.init.scaffold import scaffold
-from vision_agents.cli.uv import install_dependencies
+from vision_agents.cli.init.uv import install_dependencies
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ def init_cmd(name: str, no_install: bool) -> None:
     install = not no_install
     target = Path(name).resolve()
     if target.exists():
-        raise click.ClickException(f"{target} already exists")
+        raise CliError(f"{target} already exists")
 
     # Scaffold into a staging dir on the same filesystem, then rename
     # atomically so partial output is never observable at `target` and
@@ -35,28 +36,31 @@ def init_cmd(name: str, no_install: bool) -> None:
             prefix=f".{target.name}-init-", dir=target.parent
         )
     except OSError as err:
-        raise click.ClickException(
-            f"failed to prepare scaffold target {target}: {err}"
-        ) from err
+        raise CliError(f"failed to prepare scaffold target {target}: {err}") from err
 
     with tmp_ctx as tmp:
         staging = Path(tmp) / target.name
         try:
             scaffold(target.name, staging)
         except (OSError, TemplateError) as err:
-            raise click.ClickException(f"failed to scaffold {target}: {err}") from err
+            raise CliError(f"failed to scaffold {target}: {err}") from err
         try:
             staging.rename(target)
         except OSError as err:
-            raise click.ClickException(f"failed to finalize {target}: {err}") from err
-    click.echo(f"Created {target}")
+            raise CliError(f"failed to finalize {target}: {err}") from err
+    click.echo(f"{click.style('Created', fg='green', bold=True)} {target}")
 
     if install:
+        click.echo(click.style("Installing dependencies (uv sync)...", dim=True))
         install_dependencies(target)
 
-    click.echo("\nNext steps:")
-    click.echo(f"  cd {name}")
-    click.echo("  Copy .env.example to .env and fill in keys")
+    click.echo()
+    click.secho("Next steps:", bold=True)
+    click.echo(click.style(f"  cd {name}", fg="cyan"))
+    click.echo(
+        f"  Copy {click.style('.env.example', fg='cyan')} "
+        f"to {click.style('.env', fg='cyan')} and fill in keys"
+    )
     if not install:
-        click.echo("  uv sync")
-    click.echo("  uv run vision-agents agent run")
+        click.echo(click.style("  uv sync", fg="cyan"))
+    click.echo(click.style("  uv run vision-agents agent run", fg="cyan"))
