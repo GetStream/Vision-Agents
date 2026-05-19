@@ -6,6 +6,12 @@ import pytest
 from getstream.video.rtc import PcmData
 from getstream.video.rtc.track_util import AudioFormat
 from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.agents.events import (
+    AgentTurnEndedEvent,
+    AgentTurnStartedEvent,
+    UserTurnEndedEvent,
+    UserTurnStartedEvent,
+)
 from vision_agents.core.agents.inference.audio import (
     AudioInputChunk,
     AudioInputStream,
@@ -18,11 +24,16 @@ from vision_agents.core.agents.inference.realtime_flow import (
 )
 from vision_agents.core.agents.transcript import TranscriptStore
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.events import EventManager
 from vision_agents.core.llm.realtime import (
     Realtime,
+    RealtimeAgentSpeechEnded,
+    RealtimeAgentSpeechStarted,
     RealtimeAgentTranscript,
     RealtimeAudioOutput,
     RealtimeAudioOutputDone,
+    RealtimeUserSpeechEnded,
+    RealtimeUserSpeechStarted,
     RealtimeUserTranscript,
 )
 from vision_agents.core.utils.stream import Stream
@@ -54,7 +65,12 @@ def conversation() -> InMemoryConversation:
 
 
 @pytest.fixture
-def flow_factory(transcripts, conversation):
+async def events() -> EventManager:
+    return EventManager()
+
+
+@pytest.fixture
+def flow_factory(transcripts, conversation, events):
     def _build(
         *,
         llm: Realtime | None = None,
@@ -68,6 +84,7 @@ def flow_factory(transcripts, conversation):
             transcripts=transcripts,
             agent_user_id="agent-1",
             conversation=conversation,
+            events=events,
         )
 
     return _build
@@ -351,6 +368,93 @@ class TestProcessLLMOutput:
         contents = [m.content for m in conversation.messages]
         assert roles == ["user", "assistant"]
         assert contents == ["hel", "hi"]
+
+    async def test_user_speech_started_emits_user_turn_started(
+        self, flow_factory, participant
+    ) -> None:
+        llm = RealtimeStub()
+        flow = flow_factory(llm=llm)
+        seen: list[UserTurnStartedEvent] = []
+
+        @flow.events.subscribe
+        async def _on(event: UserTurnStartedEvent):
+            seen.append(event)
+
+        task = asyncio.create_task(
+            flow.process_llm_output(llm.output, AudioOutputStream())
+        )
+        llm.output.send_nowait(RealtimeUserSpeechStarted(participant=participant))
+        llm.output.close()
+        await task
+        await flow.events.wait()
+
+        assert len(seen) == 1
+        assert seen[0].participant is participant
+
+    async def test_user_speech_ended_emits_user_turn_ended(
+        self, flow_factory, participant
+    ) -> None:
+        llm = RealtimeStub()
+        flow = flow_factory(llm=llm)
+        seen: list[UserTurnEndedEvent] = []
+
+        @flow.events.subscribe
+        async def _on(event: UserTurnEndedEvent):
+            seen.append(event)
+
+        task = asyncio.create_task(
+            flow.process_llm_output(llm.output, AudioOutputStream())
+        )
+        llm.output.send_nowait(RealtimeUserSpeechEnded(participant=participant))
+        llm.output.close()
+        await task
+        await flow.events.wait()
+
+        assert len(seen) == 1
+        assert seen[0].participant is participant
+
+    async def test_agent_speech_started_emits_agent_turn_started(
+        self, flow_factory
+    ) -> None:
+        llm = RealtimeStub()
+        flow = flow_factory(llm=llm)
+        seen: list[AgentTurnStartedEvent] = []
+
+        @flow.events.subscribe
+        async def _on(event: AgentTurnStartedEvent):
+            seen.append(event)
+
+        task = asyncio.create_task(
+            flow.process_llm_output(llm.output, AudioOutputStream())
+        )
+        llm.output.send_nowait(RealtimeAgentSpeechStarted())
+        llm.output.close()
+        await task
+        await flow.events.wait()
+
+        assert len(seen) == 1
+
+    async def test_agent_speech_ended_emits_agent_turn_ended_with_interrupted(
+        self, flow_factory
+    ) -> None:
+        llm = RealtimeStub()
+        flow = flow_factory(llm=llm)
+        seen: list[AgentTurnEndedEvent] = []
+
+        @flow.events.subscribe
+        async def _on(event: AgentTurnEndedEvent):
+            seen.append(event)
+
+        task = asyncio.create_task(
+            flow.process_llm_output(llm.output, AudioOutputStream())
+        )
+        llm.output.send_nowait(RealtimeAgentSpeechEnded(interrupted=True))
+        llm.output.close()
+        await task
+        await flow.events.wait()
+
+        assert len(seen) == 1
+        assert seen[0].interrupted is True
 
 
 class TestInterrupt:

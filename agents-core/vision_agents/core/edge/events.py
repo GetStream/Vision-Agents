@@ -4,7 +4,8 @@ from typing import Optional
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.events import PluginBaseEvent
 
-from .types import TrackType
+from .call import Call
+from .types import Participant, TrackType
 
 
 @dataclass
@@ -38,5 +39,22 @@ class CallEndedEvent(PluginBaseEvent):
     """Event emitted when a call ends."""
 
     type: str = field(default="plugin.edge.call_ended", init=False)
-    args: Optional[tuple] = None
-    kwargs: Optional[dict] = None
+    call: Call = field(kw_only=True)
+
+
+@dataclass
+class ParticipantJoinedEvent(PluginBaseEvent):
+    """Event emitted when a participant (other than the agent) joins the call."""
+
+    type: str = field(default="plugin.edge.participant_joined", init=False)
+    participant: Participant = field(kw_only=True)
+    call: Call = field(kw_only=True)
+
+
+@dataclass
+class ParticipantLeftEvent(PluginBaseEvent):
+    """Event emitted when a participant (other than the agent) leaves the call."""
+
+    type: str = field(default="plugin.edge.participant_left", init=False)
+    participant: Participant = field(kw_only=True)
+    call: Call = field(kw_only=True)

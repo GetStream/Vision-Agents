@@ -18,11 +18,14 @@ from google.genai.types import (
     Transcription,
 )
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.core.llm.realtime import (
+    RealtimeAgentSpeechEnded,
+    RealtimeAgentSpeechStarted,
     RealtimeAgentTranscript,
     RealtimeAudioOutput,
     RealtimeAudioOutputDone,
+    RealtimeUserSpeechEnded,
+    RealtimeUserSpeechStarted,
     RealtimeUserTranscript,
 )
 from vision_agents.plugins.gemini import Realtime
@@ -86,26 +89,6 @@ class TestGeminiRealtimeProcessEvents:
         assert isinstance(items[0], RealtimeAgentTranscript)
         assert items[0].text == "world"
 
-    async def test_model_turn_text(self):
-        rt = _make_realtime()
-        msg = LiveServerMessage(
-            server_content=LiveServerContent(
-                model_turn=Content(
-                    parts=[Part(text="response text")],
-                ),
-            ),
-        )
-        rt._real_session = _make_session([msg])
-
-        emitted: list[object] = []
-        rt.events.send = lambda e: emitted.append(e)
-
-        await rt._process_events()
-
-        assert len(emitted) == 1
-        assert isinstance(emitted[0], LLMResponseChunkEvent)
-        assert emitted[0].delta == "response text"
-
     async def test_model_turn_audio(self):
         rt = _make_realtime()
         audio_bytes = b"\x00" * 100
@@ -121,8 +104,8 @@ class TestGeminiRealtimeProcessEvents:
         await rt._process_events()
 
         items = rt.output.peek()
-        assert len(items) == 1
-        assert isinstance(items[0], RealtimeAudioOutput)
+        assert any(isinstance(i, RealtimeAgentSpeechStarted) for i in items)
+        assert any(isinstance(i, RealtimeAudioOutput) for i in items)
 
     async def test_model_turn_function_call(self):
         rt = _make_realtime()
@@ -197,7 +180,6 @@ class TestGeminiRealtimeProcessEvents:
 
         await rt._process_events()
 
-        assert any(isinstance(e, LLMResponseChunkEvent) for e in emitted)
         assert any(isinstance(i, RealtimeAudioOutputDone) for i in rt.output.peek())
 
     async def test_part_with_text_and_audio(self):
@@ -218,7 +200,6 @@ class TestGeminiRealtimeProcessEvents:
 
         await rt._process_events()
 
-        assert any(isinstance(e, LLMResponseChunkEvent) for e in emitted)
         assert any(isinstance(i, RealtimeAudioOutput) for i in rt.output.peek())
 
     async def test_transcription_with_audio_same_message(self):
@@ -611,10 +592,14 @@ class TestGeminiRealtimeIntegration:
             pass
 
         await asyncio.sleep(3.0)
-        audio = [
-            i for i in realtime.output.peek() if isinstance(i, RealtimeAudioOutput)
-        ]
+        items = realtime.output.peek()
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        agent_started = [i for i in items if isinstance(i, RealtimeAgentSpeechStarted)]
+        agent_ended = [i for i in items if isinstance(i, RealtimeAgentSpeechEnded)]
         assert len(audio) > 0
+        assert len(agent_started) >= 1
+        assert len(agent_ended) >= 1
+        assert any(not e.interrupted for e in agent_ended)
 
     async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
         async for _ in realtime.simple_response(
@@ -625,10 +610,13 @@ class TestGeminiRealtimeIntegration:
         await realtime.simple_audio_response(mia_audio_16khz)
 
         await asyncio.sleep(10.0)
-        audio = [
-            i for i in realtime.output.peek() if isinstance(i, RealtimeAudioOutput)
-        ]
+        items = realtime.output.peek()
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        user_started = [i for i in items if isinstance(i, RealtimeUserSpeechStarted)]
+        user_ended = [i for i in items if isinstance(i, RealtimeUserSpeechEnded)]
         assert len(audio) > 0
+        assert len(user_started) >= 1
+        assert len(user_ended) >= 1
 
     async def test_video_sending_flow(self, realtime, bunny_video_track):
         async for _ in realtime.simple_response(

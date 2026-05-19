@@ -1,13 +1,10 @@
-import asyncio
-import datetime
 import tempfile
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Optional
 
 import aiortc.mediastreams
 
 from ..edge.types import Participant
-from ..llm.events import LLMResponseCompletedEvent
 from ..utils.video_forwarder import VideoForwarder
 
 
@@ -42,15 +39,3 @@ class TrackInfo:
     participant: Optional[Participant]
     track: aiortc.mediastreams.VideoStreamTrack
     forwarder: VideoForwarder
-
-
-@dataclass
-class LLMTurn:
-    input: str
-    participant: Optional[Participant]
-    started_at: datetime.datetime
-    finished_at: Optional[datetime.datetime] = None
-    canceled_at: Optional[datetime.datetime] = None
-    response: Optional[LLMResponseCompletedEvent] = None
-    task: Optional[asyncio.Task] = None
-    turn_finished: bool = False

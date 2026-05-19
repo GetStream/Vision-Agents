@@ -56,7 +56,7 @@ from ..utils.utils import await_or_run, cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
 from . import events
-from .agent_types import AgentOptions, LLMTurn, TrackInfo, default_agent_options
+from .agent_types import AgentOptions, TrackInfo, default_agent_options
 from .conversation import Conversation, InMemoryConversation
 from .inference import (
     AudioInputChunk,
@@ -177,7 +177,6 @@ class Agent:
             self.agent_user.id = self._agent_user_id
 
         self._id = str(uuid4())
-        self._pending_turn: Optional[LLMTurn] = None
         self.call: Optional[Call] = None
 
         self._active_processed_track_id: Optional[str] = None
@@ -433,6 +432,7 @@ class Agent:
                 ),
                 transcripts=self.transcripts,
                 agent_user_id=self._agent_user_id,
+                events=self.events,
             )
         else:
             return TranscribingInferenceFlow(
@@ -448,6 +448,7 @@ class Agent:
                 ),
                 transcripts=self.transcripts,
                 agent_user_id=self._agent_user_id,
+                events=self.events,
             )
 
     def subscribe(self, function):
@@ -510,6 +511,7 @@ class Agent:
             with self.span("edge.join"):
                 self._connection = await self.edge.join(self, call)
             self.logger.info(f"🤖 Agent joined call: {call.id}")
+            self.events.send(events.AgentJoinedCallEvent(call=call))
 
             # Set up audio and video tracks together to avoid SDP issues
             audio_track = self._audio_track if self.publish_audio else None
@@ -722,6 +724,8 @@ class Agent:
     async def _close(self):
         # Set call_ended event again in case the agent is closed externally
         self.logger.info("🤖 Stopping the agent")
+        if self.call is not None:
+            self.events.send(events.AgentLeftCallEvent(call=self.call))
         if self._call_ended_event is not None:
             self._call_ended_event.set()
 

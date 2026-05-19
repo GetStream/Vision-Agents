@@ -262,10 +262,7 @@ class BedrockLLM(LLM):
                         output_tokens = usage.get("outputTokens")
         except ClientError as e:
             logger.exception(f'Failed to get a response from the LLM "{self.model}"')
-            self.metrics.on_llm_error(
-                provider=self.provider_name,
-                error_type=type(e).__name__,
-            )
+            self.on_llm_error(error=e)
             yield LLMResponseFinal(original=None, text="")
             return
 
@@ -456,10 +453,7 @@ class BedrockLLM(LLM):
                             output_tokens = usage.get("outputTokens")
             except ClientError as e:
                 logger.exception("Failed to get follow-up response")
-                self.metrics.on_llm_error(
-                    provider=self.provider_name,
-                    error_type=type(e).__name__,
-                )
+                self.on_llm_error(error=e)
                 break
 
             total_text = "".join(text_chunks)

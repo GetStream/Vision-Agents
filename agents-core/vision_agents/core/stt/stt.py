@@ -9,6 +9,11 @@ from vision_agents.core.agents.transcript import TranscriptMode
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.observability import MetricsCollector
+from vision_agents.core.stt.events import (
+    STTConnectedEvent,
+    STTDisconnectedEvent,
+    STTErrorEvent,
+)
 from vision_agents.core.turn_detection import TurnEnded, TurnStarted
 from vision_agents.core.utils.stream import Stream
 
@@ -173,8 +178,29 @@ class STT(abc.ABC):
         )
 
     def _emit_error_event(self, error: Exception, *, context: str = "") -> None:
-        """Record an STT error metric. Caller may also re-raise."""
+        """Record metric and emit STTErrorEvent. Caller may also re-raise."""
         self.metrics.on_stt_error(
             provider=self.provider_name,
             error_type=type(error).__name__,
+        )
+        self.events.send(
+            STTErrorEvent(
+                plugin_name=self.provider_name,
+                error=error,
+                context=context,
+            )
+        )
+
+    def _on_connected(self) -> None:
+        """Emit STTConnectedEvent."""
+        self.events.send(STTConnectedEvent(plugin_name=self.provider_name))
+
+    def _on_disconnected(
+        self, reason: Optional[str] = None, clean: bool = True
+    ) -> None:
+        """Emit STTDisconnectedEvent."""
+        self.events.send(
+            STTDisconnectedEvent(
+                plugin_name=self.provider_name, reason=reason, clean=clean
+            )
         )

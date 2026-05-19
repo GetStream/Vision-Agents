@@ -29,6 +29,7 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm import realtime
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.llm.realtime import RealtimeUserSpeechStarted
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from .rtc_manager import RTCManager
@@ -150,7 +151,7 @@ class Realtime(realtime.Realtime):
         await self.rtc.connect()
 
         # Emit connected/ready
-        self._emit_connected_event(
+        self._on_connected(
             session_config={"model": self.model, "voice": self.voice},
             capabilities=["text", "audio", "function_calling"],
         )
@@ -191,6 +192,7 @@ class Realtime(realtime.Realtime):
     async def close(self):
         await self._await_pending_tools()
         await self.rtc.close()
+        self._on_disconnected()
 
     async def _handle_openai_event(self, event: dict) -> None:
         """Process events received from the OpenAI Realtime API.
@@ -256,8 +258,16 @@ class Realtime(realtime.Realtime):
             )
         elif et == "input_audio_buffer.speech_started":
             InputAudioBufferSpeechStartedEvent.model_validate(event)
+            # interrupt() clears _current_participant, so capture it first.
+            participant = self._current_participant
             await self.interrupt()
+            if participant is not None:
+                self._output.send_nowait(
+                    RealtimeUserSpeechStarted(participant=participant)
+                )
             self._emit_audio_output_done_event(interrupted=True)
+        elif et == "input_audio_buffer.speech_stopped":
+            self._emit_user_speech_ended()
 
         elif et == "response.output_item.added":
             # Start tracking a function call (arguments will stream in)
@@ -298,15 +308,20 @@ class Realtime(realtime.Realtime):
             self.current_rate_limits = RateLimitsUpdatedEvent(**event)
         elif et == "response.done":
             response_done_event = ResponseDoneEvent.model_validate(event)
+            response_id = response_done_event.response.id
 
             if response_done_event.response.status == "failed":
                 err = Exception(
                     f"OpenAI realtime failure {response_done_event.response}"
                 )
+                self._emit_agent_speech_ended(response_id=response_id, interrupted=True)
                 self._emit_error_event(error=err, context="response.done")
                 raise err
             elif response_done_event.response.status == "cancelled":
                 logger.debug("Response cancelled (user interrupted)")
+                self._emit_agent_speech_ended(response_id=response_id, interrupted=True)
+            else:
+                self._emit_agent_speech_ended(response_id=response_id)
         elif et == "error":
             error_info = event.get("error", {}) if isinstance(event, dict) else {}
             error_msg = error_info.get("message", "OpenAI realtime error")
@@ -331,10 +346,10 @@ class Realtime(realtime.Realtime):
             # Streaming output audio transcript delta - logged at debug level to avoid clutter
             pass
         elif et == "output_audio_buffer.started":
-            # Output audio buffer started - acknowledgment of audio playback start
-            pass
+            self._emit_agent_speech_started(response_id=event.get("response_id"))
         elif et == "output_audio_buffer.stopped":
-            # Output audio buffer stopped - acknowledgment of audio playback end
+            # Agent-speech-ended is emitted from response.done where status
+            # distinguishes "completed" vs "cancelled" (barge-in).
             pass
         elif et in ("response.output_audio.done", "response.audio.done"):
             # Audio generation complete for this response item.

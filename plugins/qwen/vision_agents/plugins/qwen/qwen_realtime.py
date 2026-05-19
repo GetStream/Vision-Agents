@@ -12,12 +12,10 @@ from aiortc import VideoStreamTrack
 from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import Realtime
-from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_utils import frame_to_jpeg_bytes
 
-from . import events
 from .client import Qwen3RealtimeClient
 
 DEFAULT_BASE_URL = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"
@@ -48,7 +46,6 @@ class Qwen3Realtime(Realtime):
         self.model = model
         self.voice = voice
         self.session_id = str(uuid.uuid4())
-        self.events.register_events_from_module(events)
 
         self._base_url = base_url or DEFAULT_BASE_URL
 
@@ -102,7 +99,7 @@ class Qwen3Realtime(Realtime):
             config=session_config,
         )
         await self._real_client.connect()
-        self.connected = True
+        self._on_connected(session_config=session_config)
         logger.debug(f"Started Qwen3Realtime session at {self._base_url}")
 
         # Start the loop task
@@ -128,7 +125,7 @@ class Qwen3Realtime(Realtime):
         yield LLMResponseFinal()
 
     async def close(self):
-        self.connected = False
+        self._on_disconnected()
         await self.stop_watching_video_track()
         if self._processing_task is not None:
             self._processing_task.cancel()
@@ -253,12 +250,6 @@ class Qwen3Realtime(Realtime):
             elif event_type == "input_audio_buffer.speech_started":
                 if self._is_responding:
                     await self._on_interruption()
-            elif event_type == "response.text.delta":
-                self.events.send(
-                    LLMResponseChunkEvent(
-                        plugin_name=PLUGIN_NAME, delta=str(event["delta"])
-                    )
-                )
             elif event_type == "response.audio.delta":
                 audio_bytes = base64.b64decode(event["delta"])
                 pcm = PcmData.from_bytes(audio_bytes, 24000)

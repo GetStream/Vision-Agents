@@ -33,13 +33,12 @@ from google.genai.types import (
     SpeechConfigDict,
     StartSensitivity,
     TurnCoverage,
+    VadSignalType,
+    VoiceActivityType,
     VoiceConfigDict,
 )
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-)
 from vision_agents.core.llm.llm import (
     LLMResponseDelta,
     LLMResponseFinal,
@@ -97,7 +96,7 @@ RETRY = "retry"
 
 
 def _classify_loop_error(exc: Exception) -> tuple[str, str, bool]:
-    """Classify a processing-loop exception into (action, reason, was_clean)."""
+    """Classify a processing-loop exception into (action, reason, clean)."""
     match exc:
         case websockets.ConnectionClosedOK():
             return STOP, "WebSocket closed cleanly", True
@@ -198,6 +197,8 @@ class GeminiRealtime(realtime.Realtime):
         self._processing_task: Optional[asyncio.Task] = None
         self._exit_stack = contextlib.AsyncExitStack()
         self._executor = ThreadPoolExecutor(max_workers=1)
+        # Gemini Live has no agent-speech-started wire event; fire once per turn.
+        self._agent_audio_started: bool = False
 
     @property
     def _session(self):
@@ -340,7 +341,10 @@ class GeminiRealtime(realtime.Realtime):
                 model=self.model, config=self.get_config()
             )
         )
-        self.connected = True
+        self._on_connected(
+            session_config={"model": self.model},
+            capabilities=["text", "audio", "function_calling"],
+        )
         logger.info("Gemini live connected to session %s", self._session)
 
     async def close(self):
@@ -349,7 +353,7 @@ class GeminiRealtime(realtime.Realtime):
         Returns:
 
         """
-        self.connected = False
+        self._on_disconnected()
 
         await self.stop_watching_video_track()
 
@@ -425,6 +429,27 @@ class GeminiRealtime(realtime.Realtime):
 
             handled = False
 
+            # VAD signals at the message level: explicit user speech start/end.
+            vad_signal = server_message.voice_activity_detection_signal
+            voice_activity = server_message.voice_activity
+            if vad_signal and vad_signal.vad_signal_type:
+                if vad_signal.vad_signal_type == VadSignalType.VAD_SIGNAL_TYPE_SOS:
+                    self._emit_user_speech_started()
+                elif vad_signal.vad_signal_type == VadSignalType.VAD_SIGNAL_TYPE_EOS:
+                    self._emit_user_speech_ended()
+                handled = True
+            elif voice_activity and voice_activity.voice_activity_type:
+                if (
+                    voice_activity.voice_activity_type
+                    == VoiceActivityType.ACTIVITY_START
+                ):
+                    self._emit_user_speech_started()
+                elif (
+                    voice_activity.voice_activity_type == VoiceActivityType.ACTIVITY_END
+                ):
+                    self._emit_user_speech_ended()
+                handled = True
+
             if server_content and server_content.input_transcription:
                 text = server_content.input_transcription.text
                 if text:
@@ -447,11 +472,11 @@ class GeminiRealtime(realtime.Realtime):
 
                 parts = server_content.model_turn.parts or []
                 for part in parts:
-                    if part.text and not part.thought:
-                        event = LLMResponseChunkEvent(delta=part.text)
-                        self.events.send(event)
                     if part.inline_data:
                         pcm = PcmData.from_bytes(part.inline_data.data, 24000)
+                        if not self._agent_audio_started:
+                            self._agent_audio_started = True
+                            self._emit_agent_speech_started()
                         self._emit_audio_output_event(pcm=pcm)
                     if part.function_call:
                         self._run_tool_in_background(
@@ -460,9 +485,15 @@ class GeminiRealtime(realtime.Realtime):
 
             if server_content and server_content.interrupted:
                 await self.interrupt()
+                if self._agent_audio_started:
+                    self._agent_audio_started = False
+                    self._emit_agent_speech_ended(interrupted=True)
                 self._emit_audio_output_done_event(interrupted=True)
                 handled = True
             elif server_content and server_content.turn_complete:
+                if self._agent_audio_started:
+                    self._agent_audio_started = False
+                    self._emit_agent_speech_ended()
                 self._emit_audio_output_done_event()
                 handled = True
 
@@ -490,7 +521,7 @@ class GeminiRealtime(realtime.Realtime):
                     await self._process_events()
                     consecutive_errors = 0
                 except Exception as exc:
-                    action, reason, was_clean = _classify_loop_error(exc)
+                    action, reason, clean = _classify_loop_error(exc)
 
                     if action == RECONNECT:
                         logger.info("Gemini connection lost (%s), reconnecting", reason)
@@ -500,9 +531,7 @@ class GeminiRealtime(realtime.Realtime):
 
                     if action == STOP:
                         logger.info("Gemini connection closed: %s", reason)
-                        self._emit_disconnected_event(
-                            reason=reason, was_clean=was_clean
-                        )
+                        self._on_disconnected(reason=reason, clean=clean)
                         return
 
                     consecutive_errors += 1
@@ -516,8 +545,8 @@ class GeminiRealtime(realtime.Realtime):
                         logger.error(
                             "Too many consecutive errors, stopping processing loop"
                         )
-                        self._emit_disconnected_event(
-                            reason="Too many consecutive errors", was_clean=False
+                        self._on_disconnected(
+                            reason="Too many consecutive errors", clean=False
                         )
                         return
 

@@ -121,6 +121,7 @@ class InworldTTS(tts.TTS):
 
     async def close(self) -> None:
         await self._reset_connection()
+        self._on_disconnected()
         await super().close()
 
     async def _send_text_and_flush(self, text: str, context_id: str) -> None:
@@ -295,6 +296,7 @@ class InworldTTS(tts.TTS):
                 "X-Request-Id": request_id,
             },
         )
+        self._on_connected()
         if self._keepalive_task is None:
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
         return self._websocket

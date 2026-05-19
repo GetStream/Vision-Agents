@@ -82,7 +82,7 @@ class LocalVLM(llm.VideoLLM, Warmable):
         self._video_forwarder: Optional[VideoForwarder] = None
         self._processing_lock = asyncio.Lock()
 
-        self.model = None
+        self._md_client = None
 
         logger.info("🌙 Moondream Local VLM initialized")
         logger.info(f"🔧 Device: {self.device}")
@@ -102,7 +102,7 @@ class LocalVLM(llm.VideoLLM, Warmable):
         return model
 
     def on_warmed_up(self, model) -> None:
-        self.model = model
+        self._md_client = model
 
     def _load_model_sync(self):
         """Synchronous model loading function run in thread pool."""
@@ -177,7 +177,7 @@ class LocalVLM(llm.VideoLLM, Warmable):
             logger.warning("Video forwarder already running, stopping previous one")
             await self.stop_watching_video_track()
 
-        if self.model is None:
+        if self._md_client is None:
             raise ValueError("The model is not loaded yet")
 
         if shared_forwarder is not None:
@@ -222,7 +222,7 @@ class LocalVLM(llm.VideoLLM, Warmable):
         request_start_time = time.perf_counter()
         inference_id = str(uuid.uuid4())
 
-        if self.model is None:
+        if self._md_client is None:
             logger.warning("Model not loaded, skipping Moondream processing")
             yield LLMResponseFinal(original=None, text="")
             return
@@ -261,7 +261,7 @@ class LocalVLM(llm.VideoLLM, Warmable):
 
                 if self.mode == "vqa":
                     result = await asyncio.to_thread(
-                        self.model.query, image, text, stream=True
+                        self._md_client.query, image, text, stream=True
                     )
                     stream = (
                         result["answer"]
@@ -270,7 +270,7 @@ class LocalVLM(llm.VideoLLM, Warmable):
                     )
                 else:
                     result = await asyncio.to_thread(
-                        self.model.caption, image, length="normal", stream=True
+                        self._md_client.caption, image, length="normal", stream=True
                     )
                     stream = (
                         result["caption"]
@@ -351,7 +351,7 @@ class LocalVLM(llm.VideoLLM, Warmable):
 
     def close(self):
         """Clean up resources."""
-        if self.model is not None:
-            del self.model
-            self.model = None
+        if self._md_client is not None:
+            del self._md_client
+            self._md_client = None
         logger.info("🛑 Moondream Local VLM closed")

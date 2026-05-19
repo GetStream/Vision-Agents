@@ -79,12 +79,8 @@ class RealtimeConnection:
         return await self.stream.await_output()
 
     async def close(self):
-        """Close the stream connection."""
-        if self.stream:
-            try:
-                await self.stream.input_stream.close()
-            finally:
-                self.stream = None
+        """Nothing to close here — AWS closes the connection after sessionEnd."""
+        self.stream = None
 
 
 class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
@@ -280,7 +276,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
             )
         await self.content_input(self._instructions, "SYSTEM")
 
-        self.connected = True
+        self._on_connected(session_config={"model": self.model})
 
         # Start reconnection check task
         self._reconnection_check_task = asyncio.create_task(
@@ -376,7 +372,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                         logger.exception(
                             "Error closing provisional new connection during reconnect cleanup"
                         )
-                self.connected = False
+                self._on_disconnected(reason="reconnect_failed", clean=False)
 
     def _should_reconnect(self) -> bool:
         """Check if connection should be reconnected based on runtime.
@@ -855,18 +851,18 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
             session_end: Dict[str, Any] = {"event": {"sessionEnd": {}}}
             await self.connection.send_event(session_end)
 
-            await self.connection.close()
-
-        # The stream is already closed above, so receive() should raise
-        # StopAsyncIteration and the listener exits naturally. Fall back to
-        # cancel if it hasn't exited within the timeout. asyncio.wait (not
-        # wait_for) so we don't re-raise any exception the handler raised
-        # during its own teardown.
+        # After sessionEnd, AWS closes the connection, listener's receive()
+        # raises StopAsyncIteration, task completes. Use asyncio.wait — not
+        # wait_for — because wait_for cancels on timeout, which races with
+        # awscrt's body delivery and hangs the process.
         if self._handle_event_task:
-            await asyncio.wait([self._handle_event_task], timeout=2.0)
-            await cancel_and_wait(self._handle_event_task)
+            done, _ = await asyncio.wait({self._handle_event_task}, timeout=10.0)
+            if not done:
+                logger.warning(
+                    "AWS Bedrock listener did not drain within 10s; leaking task"
+                )
 
-        self.connected = False
+        self._on_disconnected()
 
     async def _handle_events(self, connection: RealtimeConnection):
         """Process incoming responses from AWS Bedrock.
@@ -903,6 +899,17 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 )
                                 # set role
                                 self.role = content_start["role"]
+                                content_start_type = content_start.get("type", "")
+                                # User content arrives as TEXT (transcription).
+                                # Filter agent on AUDIO to avoid firing twice
+                                # (once for TEXT, once for AUDIO blocks).
+                                if self.role == "USER":
+                                    self._emit_user_speech_started()
+                                elif (
+                                    self.role == "ASSISTANT"
+                                    and content_start_type == "AUDIO"
+                                ):
+                                    self._emit_agent_speech_started()
                                 # Reset per-turn text tracking
                                 self._emitted_text_in_turn = False
                                 # Check for speculative content
@@ -965,10 +972,10 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                         )
                                 else:
                                     logger.info(
-                                        "Barge-in detected — emitting audio "
-                                        "output done to flush playback buffer"
+                                        "Barge-in detected — interrupting agent"
                                     )
-                                    self._emit_audio_output_done_event()
+                                    await self.interrupt()
+                                    self._emit_audio_output_done_event(interrupted=True)
 
                             elif "completionStart" in json_data["event"]:
                                 logger.debug(
@@ -1015,6 +1022,15 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 logger.debug(
                                     f"Content end event: type={content_type}, stopReason={stop_reason}"
                                 )
+
+                                if stop_reason == "INTERRUPTED":
+                                    self._emit_agent_speech_ended(interrupted=True)
+                                elif self.role == "USER":
+                                    self._emit_user_speech_ended()
+                                elif (
+                                    self.role == "ASSISTANT" and content_type == "AUDIO"
+                                ):
+                                    self._emit_agent_speech_ended()
 
                                 # Process tool calls on contentEnd with type == 'TOOL' (matching reference implementation)
                                 if content_type == "TOOL":
@@ -1064,3 +1080,9 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                 # Stream has ended normally
                 logger.debug("Stream ended normally")
                 break
+            except RuntimeError:
+                # close() set connection.stream to None while we were here.
+                if connection.stream is None:
+                    logger.debug("Connection closed during await_output")
+                    break
+                raise

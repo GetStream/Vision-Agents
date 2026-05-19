@@ -18,7 +18,13 @@ from vision_agents.core.events.manager import EventManager
 from vision_agents.core.observability import MetricsCollector
 
 from . import events
-from .events import TTSSynthesisCompleteEvent, TTSSynthesisStartEvent
+from .events import (
+    TTSConnectedEvent,
+    TTSDisconnectedEvent,
+    TTSErrorEvent,
+    TTSSynthesisCompleteEvent,
+    TTSSynthesisStartEvent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +49,13 @@ class TTSOutputChunk:
     final: bool = False
     text: str = ""
     synthesis_id: str | None = None
+
+
+@dataclass
+class TTSOutputEnd:
+    """Sentinel marking end of TTS output; ``interrupted`` set on barge-in."""
+
+    interrupted: bool = False
 
 
 class TTS(abc.ABC):
@@ -95,6 +108,34 @@ class TTS(abc.ABC):
         """Increment epoch and stop audio. Stale events will be discarded."""
         self._epoch += 1
         await self.stop_audio()
+
+    def _on_connected(self) -> None:
+        """Emit TTSConnectedEvent."""
+        self.events.send(TTSConnectedEvent(plugin_name=self.provider_name))
+
+    def _on_disconnected(
+        self, reason: Optional[str] = None, clean: bool = True
+    ) -> None:
+        """Emit TTSDisconnectedEvent."""
+        self.events.send(
+            TTSDisconnectedEvent(
+                plugin_name=self.provider_name, reason=reason, clean=clean
+            )
+        )
+
+    def _emit_error_event(self, error: Exception, *, context: str = "") -> None:
+        """Record metric and emit TTSErrorEvent. Caller may also re-raise."""
+        self.metrics.on_tts_error(
+            provider=self.provider_name,
+            error_type=type(error).__name__,
+        )
+        self.events.send(
+            TTSErrorEvent(
+                plugin_name=self.provider_name,
+                error=error,
+                context=context,
+            )
+        )
 
     async def _iter_pcm(self, resp: Any) -> AsyncGenerator[PcmData, None]:
         """Yield PcmData chunks from a provider response of various shapes."""
@@ -282,10 +323,7 @@ class TTS(abc.ABC):
                 character_count=len(text),
             )
         except Exception as e:
-            self.metrics.on_tts_error(
-                provider=self.provider_name,
-                error_type=e.__class__.__name__,
-            )
+            self._emit_error_event(e, context="synthesis")
             raise
 
     async def close(self):

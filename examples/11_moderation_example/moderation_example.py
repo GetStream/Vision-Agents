@@ -35,7 +35,7 @@ from inference import get_model
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
 from vision_agents.core.tts.events import TTSSynthesisCompleteEvent
-from vision_agents.core.turn_detection.events import TurnStartedEvent
+from vision_agents.core.agents.events import UserTurnStartedEvent
 from vision_agents.core.warmup import Warmable
 import vision_agents.plugins.deepgram as deepgram
 import vision_agents.plugins.gemini as gemini
@@ -308,7 +308,7 @@ async def create_agent(**kwargs: object) -> Agent:
     participant_user_id: Optional[str] = None
 
     @agent.events.subscribe
-    async def _track_participant(event: TurnStartedEvent) -> None:
+    async def _track_participant(event: UserTurnStartedEvent) -> None:
         nonlocal participant_user_id
         if event.participant and event.participant.user_id != agent.agent_user.id:
             participant_user_id = event.participant.user_id

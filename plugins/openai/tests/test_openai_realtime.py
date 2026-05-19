@@ -8,9 +8,13 @@ from getstream.video.rtc.track_util import AudioFormat, PcmData
 from scipy import signal
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.realtime import (
+    RealtimeAgentSpeechEnded,
+    RealtimeAgentSpeechStarted,
     RealtimeAgentTranscript,
     RealtimeAudioOutput,
     RealtimeAudioOutputDone,
+    RealtimeUserSpeechEnded,
+    RealtimeUserSpeechStarted,
     RealtimeUserTranscript,
 )
 from vision_agents.plugins.openai import Realtime
@@ -131,9 +135,14 @@ class TestOpenAIRealtimeIntegration:
         items = realtime.output.peek()
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
         done = [i for i in items if isinstance(i, RealtimeAudioOutputDone)]
+        agent_started = [i for i in items if isinstance(i, RealtimeAgentSpeechStarted)]
+        agent_ended = [i for i in items if isinstance(i, RealtimeAgentSpeechEnded)]
         assert len(audio) > 0
         assert len(done) >= 1
         assert any(not d.interrupted for d in done)
+        assert len(agent_started) >= 1
+        assert len(agent_ended) >= 1
+        assert any(not e.interrupted for e in agent_ended)
 
     async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
         # Wait for connection to be fully established
@@ -159,10 +168,13 @@ class TestOpenAIRealtimeIntegration:
         )
 
         await asyncio.sleep(10.0)
-        audio = [
-            i for i in realtime.output.peek() if isinstance(i, RealtimeAudioOutput)
-        ]
+        items = realtime.output.peek()
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        user_started = [i for i in items if isinstance(i, RealtimeUserSpeechStarted)]
+        user_ended = [i for i in items if isinstance(i, RealtimeUserSpeechEnded)]
         assert len(audio) > 0
+        assert len(user_started) >= 1
+        assert len(user_ended) >= 1
 
     async def test_video_sending_flow(self, realtime, bunny_video_track):
         async for _ in realtime.simple_response(

@@ -3,8 +3,15 @@ import asyncio
 import pytest
 from dotenv import load_dotenv
 from vision_agents.core.agents.agent_types import AgentOptions
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.instructions import Instructions
-from vision_agents.core.llm.realtime import RealtimeAudioOutput
+from vision_agents.core.llm.realtime import (
+    RealtimeAgentSpeechEnded,
+    RealtimeAgentSpeechStarted,
+    RealtimeAudioOutput,
+    RealtimeUserSpeechEnded,
+    RealtimeUserSpeechStarted,
+)
 from vision_agents.plugins.aws import Realtime
 
 load_dotenv()
@@ -12,7 +19,6 @@ load_dotenv()
 
 @pytest.mark.integration
 @pytest.mark.skip_blockbuster
-@pytest.mark.skip
 class TestAWSRealtimeIntegration:
     """End-to-end tests against AWS Bedrock Realtime."""
 
@@ -82,14 +88,21 @@ class TestAWSRealtimeIntegration:
         ):
             pass
         await asyncio.sleep(10.0)
-        await realtime.simple_audio_response(mia_audio_16khz)
+        await realtime.simple_audio_response(
+            mia_audio_16khz, Participant(original=None, user_id="u", id="u")
+        )
 
-        audio = [
-            i
-            for i in await realtime.output.collect(10)
-            if isinstance(i, RealtimeAudioOutput)
-        ]
+        items = await realtime.output.collect(10)
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        user_started = [i for i in items if isinstance(i, RealtimeUserSpeechStarted)]
+        user_ended = [i for i in items if isinstance(i, RealtimeUserSpeechEnded)]
+        agent_started = [i for i in items if isinstance(i, RealtimeAgentSpeechStarted)]
+        agent_ended = [i for i in items if isinstance(i, RealtimeAgentSpeechEnded)]
         assert len(audio) > 0
+        assert len(user_started) >= 1
+        assert len(user_ended) >= 1
+        assert len(agent_started) >= 1
+        assert len(agent_ended) >= 1
 
     async def test_connection_lifecycle(self, realtime):
         """Connection established by fixture; verify simple_response and clean close."""
@@ -102,17 +115,23 @@ class TestAWSRealtimeIntegration:
         await realtime.close()
         assert realtime.connected is False
 
-    async def test_function_calling(self, realtime_with_tools):
+    async def test_function_calling(self, realtime_with_tools, mia_audio_16khz):
         """Function calling produces audio output after the model invokes the tool."""
+        # AWS Nova requires at least one audio content block in the prompt;
+        # send a short clip before the text instruction.
+        await realtime_with_tools.simple_audio_response(
+            mia_audio_16khz, Participant(original=None, user_id="u", id="u")
+        )
         async for _ in realtime_with_tools.simple_response(
             "Please use the get_test_data function to get data for the weather key and tell me what you find."
         ):
             pass
         await asyncio.sleep(15.0)
 
-        audio = [
-            i
-            for i in realtime_with_tools.output.peek()
-            if isinstance(i, RealtimeAudioOutput)
-        ]
+        items = realtime_with_tools.output.peek()
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        agent_started = [i for i in items if isinstance(i, RealtimeAgentSpeechStarted)]
+        agent_ended = [i for i in items if isinstance(i, RealtimeAgentSpeechEnded)]
         assert len(audio) > 0
+        assert len(agent_started) >= 1
+        assert len(agent_ended) >= 1

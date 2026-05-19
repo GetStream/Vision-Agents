@@ -9,7 +9,6 @@ from vision_agents.core.observability import MetricsCollector
 
 from ..edge.types import Participant
 from ..utils.stream import Stream
-from . import events
 
 if TYPE_CHECKING:
     from vision_agents.core.agents.conversation import Conversation
@@ -45,7 +44,6 @@ class TurnDetector(ABC):
         self.session_id = str(uuid.uuid4())
         self.provider_name = provider_name or self.__class__.__name__
         self.events = EventManager()
-        self.events.register_events_from_module(events, ignore_not_compatible=True)
         self.metrics = MetricsCollector()
         self._output: Stream[TurnEnded | TurnStarted] = Stream()
 
