@@ -82,7 +82,7 @@ class LocalVLM(llm.VideoLLM, Warmable):
         self._video_forwarder: Optional[VideoForwarder] = None
         self._processing_lock = asyncio.Lock()
 
-        self._md_client: AutoModelForCausalLM | None = None
+        self._md_client = None
 
         logger.info("🌙 Moondream Local VLM initialized")
         logger.info(f"🔧 Device: {self.device}")
