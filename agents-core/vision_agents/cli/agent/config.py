@@ -21,6 +21,11 @@ def parse_entrypoint(spec: object) -> tuple[str, str]:
             f"entrypoint {spec!r} must be in 'module:attribute' form "
             "(e.g. 'agent:runner')"
         )
+    if spec.count(":") != 1:
+        raise ValueError(
+            f"entrypoint {spec!r} is malformed; expected exactly one ':' "
+            "separator in 'module:attribute'"
+        )
     module, _, attribute = spec.partition(":")
     if not module or not attribute:
         raise ValueError(

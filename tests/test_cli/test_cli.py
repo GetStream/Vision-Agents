@@ -73,6 +73,17 @@ class TestAgentCommand:
         assert result.exit_code != 0
         assert "module:attribute" in result.output
 
+    def test_errors_when_entrypoint_has_multiple_colons(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.vision-agents.agent]\nentrypoint = "agent:runner:extra"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(agent_cmd, [])
+        assert result.exit_code != 0
+        assert "exactly one ':'" in result.output
+
     def test_errors_when_entrypoint_has_py_suffix(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
