@@ -1,31 +1,30 @@
-"""Shared helpers for locating and parsing ``vision-agents.toml``."""
+"""Locate and parse the project's ``pyproject.toml`` agent config."""
 
 import tomllib
 from pathlib import Path
 
 import click
 
-CONFIG_FILENAME = "vision-agents.toml"
+CONFIG_FILENAME = "pyproject.toml"
 
 
 def find_config(start: Path) -> Path:
-    """Walk up from ``start`` looking for ``vision-agents.toml``.
+    """Walk up from ``start`` looking for ``pyproject.toml``.
 
     Raises:
-        click.ClickException: if no config file is found.
+        click.ClickException: if no ``pyproject.toml`` is found.
     """
     for directory in (start, *start.parents):
         candidate = directory / CONFIG_FILENAME
         if candidate.is_file():
             return candidate
     raise click.ClickException(
-        "Could not find vision-agents configuration; "
-        "you may not be in a Vision Agents project."
+        "Could not find pyproject.toml; you may not be in a Vision Agents project."
     )
 
 
 def load_agent_config(config_path: Path) -> dict[str, object]:
-    """Parse the ``[agent]`` section of ``vision-agents.toml``.
+    """Parse ``[tool.vision-agents.agent]`` from ``pyproject.toml``.
 
     Strict on required fields and types; unknown keys are ignored for
     forward compatibility.
@@ -38,14 +37,20 @@ def load_agent_config(config_path: Path) -> dict[str, object]:
     except tomllib.TOMLDecodeError as err:
         raise click.ClickException(f"failed to parse {config_path}: {err}") from err
 
-    agent = data.get("agent")
-    if not isinstance(agent, dict):
-        raise click.ClickException(f"{config_path} is missing required [agent] section")
+    tool = data.get("tool")
+    section = (
+        tool.get("vision-agents", {}).get("agent") if isinstance(tool, dict) else None
+    )
+    if not isinstance(section, dict):
+        raise click.ClickException(
+            f"{config_path} is missing required [tool.vision-agents.agent] section"
+        )
 
-    entrypoint = agent.get("entrypoint")
+    entrypoint = section.get("entrypoint")
     if not isinstance(entrypoint, str) or not entrypoint:
         raise click.ClickException(
-            f"{config_path} requires agent.entrypoint to be a non-empty string"
+            f"{config_path} requires tool.vision-agents.agent.entrypoint "
+            "to be a non-empty string"
         )
 
     return {"entrypoint": entrypoint}

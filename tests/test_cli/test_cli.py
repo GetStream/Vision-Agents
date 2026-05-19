@@ -19,7 +19,6 @@ class TestInitCommand:
         for name in (
             "agent.py",
             "pyproject.toml",
-            "vision-agents.toml",
             ".env.example",
             ".gitignore",
             "README.md",
@@ -52,22 +51,22 @@ class TestAgentCommand:
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(agent_cmd, [])
         assert result.exit_code != 0
-        assert "Could not find vision-agents configuration" in result.output
+        assert "Could not find pyproject.toml" in result.output
 
     def test_errors_when_agent_section_missing(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        (tmp_path / "vision-agents.toml").write_text('[project]\nname = "x"\n')
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n')
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(agent_cmd, [])
         assert result.exit_code != 0
-        assert "[agent]" in result.output
+        assert "[tool.vision-agents.agent]" in result.output
 
     def test_errors_when_entrypoint_missing(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        (tmp_path / "vision-agents.toml").write_text(
-            '[agent]\nentrypoint = "missing.py"\n'
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.vision-agents.agent]\nentrypoint = "missing.py"\n'
         )
         monkeypatch.chdir(tmp_path)
         result = runner.invoke(agent_cmd, [])

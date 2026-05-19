@@ -10,7 +10,6 @@ TEMPLATE_FILES: dict[str, str] = {
     "env.example.j2": ".env.example",
     "gitignore.j2": ".gitignore",
     "README.md.j2": "README.md",
-    "vision-agents.toml.j2": "vision-agents.toml",
 }
 
 
