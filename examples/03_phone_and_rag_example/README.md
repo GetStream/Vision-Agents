@@ -1,9 +1,9 @@
 # Phone & RAG example with Twilio, Stream and Turbopuffer
 
-This example shows you how easy it is to build both inbound and outbound calling agents. 
-It uses Twilio for calling, Stream for video edge, and either Gemini or Turbopuffer for RAG. 
+This example shows you how easy it is to build both inbound and outbound calling agents.
+It uses Twilio for calling, Stream for video edge, and either Gemini, Turbopuffer or Qdrant for RAG.
 
-Note that for optimal latency you'll want to deploy this sample in US-east. Local development will incur some additional latency due to roundtrips. 
+Note that for optimal latency you'll want to deploy this sample in US-east. Local development will incur some additional latency due to roundtrips.
 
 ## Step 1 - Setup up your .env
 
@@ -28,9 +28,9 @@ TURBO_PUFFER_KEY=
 
 ### Step 2 - Outbound Call example
 
-The outbound example showcases how you can call a restaurant and use AI to make a reservation. 
+The outbound example showcases how you can call a restaurant and use AI to make a reservation.
 
-A. Start NGROK 
+A. Start NGROK
 
 First we'll start [NGROK](https://ngrok.com/) to ensure we have a public address for our local server.
 Copy the NGROK url from this tab.
@@ -79,7 +79,7 @@ RAG_BACKEND=gemini NGROK_URL=replaceme.ngrok-free.app uv run inbound_phone_and_r
 
 B. Call the number
 
-Call the number you've setup in Twilio and you'll end up talking to the agent. 
+Call the number you've setup in Twilio and you'll end up talking to the agent.
 The agent will gladly tell you all about Stream's APIs for chat, video and voice.
 
 Note that there is some added latency during development if you're not running in US-east.
@@ -90,7 +90,7 @@ For optimal latency run the example in US-east.
 
 ### TWIML
 
-Twilio uses a [Twiml](https://www.twilio.com/docs/voice/twiml) syntax to control phone calls. 
+Twilio uses a [Twiml](https://www.twilio.com/docs/voice/twiml) syntax to control phone calls.
 We use the [Twilio Stream](https://www.twilio.com/docs/voice/twiml/stream) command to pipe the call to a websocket URL.
 
 ### Websocket handling
@@ -110,7 +110,4 @@ await twilio.attach_phone_to_call(stream_call, twilio_stream, phone_user.id)
 
 ### RAG
 
-RAG can be quite complicated. Have a look at the [RAG docs](https://visionagents.ai/guides/rag) to understand what's possible. 
-
-
-
+RAG can be quite complicated. Have a look at the [RAG docs](https://visionagents.ai/guides/rag) to understand what's possible.

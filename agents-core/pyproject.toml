@@ -77,6 +77,7 @@ fast-whisper = ["vision-agents-plugins-fast-whisper"]
 decart = ["vision-agents-plugins-decart"]
 twilio = ["vision-agents-plugins-twilio"]
 turbopuffer = ["vision-agents-plugins-turbopuffer"]
+qdrant = ["vision-agents-plugins-qdrant"]
 mistral = ["vision-agents-plugins-mistral"]
 assemblyai = ["vision-agents-plugins-assemblyai"]
 redis = ["redis[hiredis]>=5.0.0"]
@@ -117,6 +118,7 @@ all-plugins = [
     "vision-agents-plugins-qwen",
     "vision-agents-plugins-twilio",
     "vision-agents-plugins-turbopuffer",
+    "vision-agents-plugins-qdrant",
     "vision-agents-plugins-mistral",
     "vision-agents-plugins-assemblyai",
     "vision-agents-plugins-local",

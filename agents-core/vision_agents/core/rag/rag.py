@@ -17,7 +17,7 @@ class RAG(abc.ABC):
     Abstract base class for RAG (Retrieval Augmented Generation) implementations.
 
     The full complexities of RAG are beyond the scope of this project.
-    We ship with examples including TurboPuffer RAG with hybrid search.
+    We ship with examples including TurboPuffer/Qdrant RAG with hybrid search.
 
     The documentation explains in greater detail how to build RAG.
     """
