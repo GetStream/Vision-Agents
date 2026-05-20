@@ -183,10 +183,11 @@ class Realtime(realtime.Realtime):
         call this repeatedly with consecutive frames.
 
         Args:
-            audio: PCM audio frame to forward upstream.
+            pcm: PCM audio frame to forward upstream.
             participant: Optional participant information for the audio source.
         """
         # Track current participant for user speech transcription events
+        self._current_participant = participant
         await self.rtc.send_audio_pcm(pcm)
 
     async def close(self):
@@ -262,11 +263,16 @@ class Realtime(realtime.Realtime):
             participant = self._current_participant
             await self.interrupt()
             if participant is not None:
+                # Restore so the matching speech_stopped can emit RealtimeUserSpeechEnded.
+                self._current_participant = participant
                 self._output.send_nowait(
                     RealtimeUserSpeechStarted(participant=participant)
                 )
             self._emit_audio_output_done_event(interrupted=True)
-        elif et == "input_audio_buffer.speech_stopped":
+        elif et == "input_audio_buffer.committed":
+            # Fires in both server_vad and semantic_vad modes when the user's
+            # audio buffer is finalized — i.e. the user's turn ended.
+            # speech_stopped is server_vad-only, so it isn't reliable here.
             self._emit_user_speech_ended()
 
         elif et == "response.output_item.added":

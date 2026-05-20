@@ -131,8 +131,7 @@ class TestOpenAIRealtimeIntegration:
         async for _ in realtime.simple_response("Hello, can you hear me?"):
             pass
 
-        await asyncio.sleep(3.0)
-        items = realtime.output.peek()
+        items = await realtime.output.collect(10.0)
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
         done = [i for i in items if isinstance(i, RealtimeAudioOutputDone)]
         agent_started = [i for i in items if isinstance(i, RealtimeAgentSpeechStarted)]
@@ -163,12 +162,21 @@ class TestOpenAIRealtimeIntegration:
             pass
         await asyncio.sleep(5.0)
 
-        await realtime.simple_audio_response(
-            audio_48khz, Participant(original=None, user_id="u", id="u")
-        )
+        participant = Participant(original=None, user_id="u", id="u")
+        await realtime.simple_audio_response(audio_48khz, participant)
 
-        await asyncio.sleep(10.0)
-        items = realtime.output.peek()
+        # Emulate a real pause in utterance so semantic_vad commits the turn:
+        # 1s silence × 3 with 1s sleeps between.
+        silence_1s_48khz = PcmData(
+            samples=np.zeros(48000, dtype=np.int16),
+            sample_rate=48000,
+            format=AudioFormat.S16,
+        )
+        for _ in range(3):
+            await realtime.simple_audio_response(silence_1s_48khz, participant)
+            await asyncio.sleep(1.0)
+
+        items = await realtime.output.collect(10.0)
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
         user_started = [i for i in items if isinstance(i, RealtimeUserSpeechStarted)]
         user_ended = [i for i in items if isinstance(i, RealtimeUserSpeechEnded)]
