@@ -33,8 +33,6 @@ from google.genai.types import (
     SpeechConfigDict,
     StartSensitivity,
     TurnCoverage,
-    VadSignalType,
-    VoiceActivityType,
     VoiceConfigDict,
 )
 from vision_agents.core.edge.types import Participant
@@ -199,6 +197,9 @@ class GeminiRealtime(realtime.Realtime):
         self._executor = ThreadPoolExecutor(max_workers=1)
         # Gemini Live has no agent-speech-started wire event; fire once per turn.
         self._agent_audio_started: bool = False
+        # Gemini Live's user VAD signals are allowlisted-only; derive user-speech
+        # boundaries from input_transcription + model_turn instead.
+        self._user_audio_started: bool = False
 
     @property
     def _session(self):
@@ -335,6 +336,9 @@ class GeminiRealtime(realtime.Realtime):
 
     async def _establish_session(self):
         """Create a new Gemini WebSocket session without managing the processing task."""
+        # Reset per-turn flags so a reconnect mid-utterance doesn't inherit stale state.
+        self._agent_audio_started = False
+        self._user_audio_started = False
         logger.debug("Connecting to Gemini live, config set to %s", self._base_config)
         self._real_session = await self._exit_stack.enter_async_context(
             self._client.aio.live.connect(  # type: ignore[arg-type]
@@ -419,6 +423,12 @@ class GeminiRealtime(realtime.Realtime):
             self._processing_task.cancel()
             await self._processing_task
 
+    def _end_user_speech_if_started(self) -> None:
+        """Emit user_speech_ended once per user turn and clear the flag."""
+        if self._user_audio_started:
+            self._user_audio_started = False
+            self._emit_user_speech_ended()
+
     async def _process_events(self) -> bool:
         """
         Process events from Gemini Live API.
@@ -429,30 +439,12 @@ class GeminiRealtime(realtime.Realtime):
 
             handled = False
 
-            # VAD signals at the message level: explicit user speech start/end.
-            vad_signal = server_message.voice_activity_detection_signal
-            voice_activity = server_message.voice_activity
-            if vad_signal and vad_signal.vad_signal_type:
-                if vad_signal.vad_signal_type == VadSignalType.VAD_SIGNAL_TYPE_SOS:
-                    self._emit_user_speech_started()
-                elif vad_signal.vad_signal_type == VadSignalType.VAD_SIGNAL_TYPE_EOS:
-                    self._emit_user_speech_ended()
-                handled = True
-            elif voice_activity and voice_activity.voice_activity_type:
-                if (
-                    voice_activity.voice_activity_type
-                    == VoiceActivityType.ACTIVITY_START
-                ):
-                    self._emit_user_speech_started()
-                elif (
-                    voice_activity.voice_activity_type == VoiceActivityType.ACTIVITY_END
-                ):
-                    self._emit_user_speech_ended()
-                handled = True
-
             if server_content and server_content.input_transcription:
                 text = server_content.input_transcription.text
                 if text:
+                    if not self._user_audio_started:
+                        self._user_audio_started = True
+                        self._emit_user_speech_started()
                     self._emit_user_speech_transcription(text=text, mode="delta")
                     handled = True
 
@@ -464,6 +456,8 @@ class GeminiRealtime(realtime.Realtime):
 
             if server_content and server_content.model_turn:
                 handled = True
+                # Model is responding → user has finished speaking.
+                self._end_user_speech_if_started()
                 # Store the resumption id so we can resume a broken connection
                 if server_message.session_resumption_update:
                     update = server_message.session_resumption_update
@@ -498,6 +492,10 @@ class GeminiRealtime(realtime.Realtime):
                 handled = True
 
             if server_message.tool_call:
+                # tool_call is an independent turn terminator per the Live API
+                # handleTurn example (https://ai.google.dev/gemini-api/docs/live-tools),
+                # so it can arrive without a preceding model_turn.
+                self._end_user_speech_if_started()
                 self._run_tool_in_background(
                     self._handle_tool_calls(server_message.tool_call)
                 )

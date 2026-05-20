@@ -1,14 +1,68 @@
-# Unreleased
+# v0.6.1
+
+## Breaking Changes
+
+### Event types cleanup (#552)
+
+Follow-up to the v0.6.0 inference-pipeline rewrite (#501).  
+The events that used to carry audio / transcript / turn payloads are gone — that data now flows through
+`Stream[T]` outputs on STT, TTS, LLM, and Realtime. Only lifecycle / notification events remain on the event bus.
+
+Removed event classes:
+
+- `vision_agents.core.agents.events`: `AgentInitEvent`, `AgentSayEvent`, `AgentSayStartedEvent`, `AgentSayCompletedEvent`, `AgentSayErrorEvent`.
+- `vision_agents.core.stt.events`: `STTTranscriptEvent`, `STTPartialTranscriptEvent`, `STTConnectionEvent`, `TranscriptResponse`.
+- `vision_agents.core.tts.events`: `TTSAudioEvent`.
+- `vision_agents.core.turn_detection.events`: `TurnStartedEvent`, `TurnEndedEvent` (the module itself was deleted — turn boundaries are now `TurnStarted` /
+  `TurnEnded` items on the STT / `TurnDetector` output stream, plus the new `UserTurnStartedEvent` / `UserTurnEndedEvent` below).
+- `vision_agents.core.llm.events`: `RealtimeAudioInputEvent`, `RealtimeAudioOutputEvent`, `RealtimeAudioOutputDoneEvent`, `RealtimeResponseEvent`, `RealtimeConversationItemEvent`,
+  `RealtimeErrorEvent`, `LLMRequestStartedEvent`, `RealtimeUserSpeechTranscriptionEvent`, `VLMInferenceStartEvent`, `VLMInferenceCompletedEvent`, `VLMErrorEvent`.
+- `vision_agents.core.events`: `ConnectionState` enum.
+
+Field changes:
+
+- `RealtimeDisconnectedEvent.was_clean` → `clean`.
+- `provider` field removed from `RealtimeConnectedEvent` and `RealtimeDisconnectedEvent` (`plugin_name` already identifies the source).
+- `retry_count` and `is_recoverable` removed from `STTErrorEvent`.
 
 ## New Features
 
-### `vision-agents` CLI with `init` and `agent` commands (#533)
+### `vision-agents` CLI with `init` and `agent` commands (#533, #567, #568)
 
-Adds a console script with two subcommands. `uvx vision-agents init <name>` scaffolds a new agent project (`pyproject.toml`, `agent.py`, `.env.example`, `.gitignore`, `README.md`) and runs `uv sync` to provision a venv (skip with `--no-install`). `vision-agents agent run|serve` reads `[tool.vision-agents.agent].entrypoint` (gunicorn-style `module:attribute`, e.g. `"agent:runner"`) from the project's `pyproject.toml`, imports it in-process and dispatches to its `Runner.cli()`. No subprocess, no uv dependency at runtime — just install the CLI in the same env as the project (typically via `uv run` or an activated venv). Templates are rendered with Jinja2.
+Adds a console script with two subcommands. `uvx vision-agents init <name>` scaffolds a new agent project (`pyproject.toml`, `agent.py`, `.env.example`, `.gitignore`,
+`README.md`) and runs `uv sync` to provision a venv (skip with `--no-install`). `vision-agents agent run|serve` reads `[tool.vision-agents.agent].entrypoint` (gunicorn-style
+`module:attribute`, e.g. `"agent:runner"`) from the project's `pyproject.toml`, imports it in-process and dispatches to its
+`Runner.cli()`. No subprocess, no uv dependency at runtime — just install the CLI in the same env as the project (typically via
+`uv run` or an activated venv). Templates are rendered with Jinja2 and default to a `gemini.Realtime` agent driven through `agent.simple_response(...)` to match the quickstart.
+
+### New high-level agent events (#552)
+
+New lifecycle events on the agent's own bus, suitable for application code (versus the plugin-level events that come and go with internals):
+
+- `AgentJoinedCallEvent`, `AgentLeftCallEvent` — agent call membership.
+- `UserTurnStartedEvent`, `UserTurnEndedEvent` — user speech turn boundaries.
+- `UserTranscriptEvent` — final user transcript that triggers an LLM turn.
+- `AgentTurnStartedEvent`, `AgentTurnEndedEvent` — agent speech turn boundaries (`interrupted` flag on the end event for barge-in).
+
+Also adds plugin-side `STTConnectedEvent` / `STTDisconnectedEvent`, `TTSConnectedEvent` / `TTSDisconnectedEvent` / `TTSErrorEvent`, and
+`LLMResponseFinalEvent` to replace the connection-state and realtime-response events removed above.
 
 ## Bug Fixes
 
-- **Optional `redis` extra**: importing `vision_agents.core` no longer emits a `UserWarning` when the `redis` package is absent. The warning was noise for the majority of users who don't use `RedisSessionKVStore`; instead, attempting to import `vision_agents.core.agents.session_registry.redis_store` directly raises a `ModuleNotFoundError` with an actionable install hint ("`pip install 'vision-agents[redis]'`"), matching the FastAPI optional-extra pattern. (#562)
+- **Optional `redis` extra**: importing `vision_agents.core` no longer emits a `UserWarning` when the
+  `redis` package is absent. The warning was noise for the majority of users who don't use `RedisSessionKVStore`; instead, attempting to import
+  `vision_agents.core.agents.session_registry.redis_store` directly raises a `ModuleNotFoundError` with an actionable install hint ("
+  `pip install 'vision-agents[redis]'`"), matching the FastAPI optional-extra pattern. (#562)
+- **AWS Realtime**: stop hanging on disconnect — the receive loop now exits cleanly when the upstream event stream returns
+  `None` instead of crashing on the next field access. (#569)
+- **Gemini Realtime**: fix missing user-speech start/end signals. The previous implementation listened on Gemini Live's `voice_activity_detection_signal` /
+  `voice_activity` channels, which are allowlist-only and silent for most accounts, so `RealtimeUserSpeechStarted` /
+  `RealtimeUserSpeechEnded` never fired. Boundaries are now derived from `input_transcription` (start) and `model_turn` /
+  `tool_call` (end), and the per-turn flags reset on session re-establishment so a mid-utterance reconnect doesn't inherit stale state. (#569)
+- **OpenAI Realtime**: fix `RealtimeUserSpeechStarted` / `RealtimeUserSpeechEnded` not being emitted when audio is pushed via
+  `simple_audio_response()` — the current participant is now stored on that path. Also switches the user-turn-end signal from
+  `input_audio_buffer.speech_stopped` (server_vad-only) to `input_audio_buffer.committed`, so semantic-VAD sessions also see the end-of-turn event. (#569)
+- **LiveAvatar**: include the plugin README in the PyPI package; fix casing in the heygen plugin README and link to the LiveAvatar PyPI page. (#564)
 
 # v0.6.0
 
@@ -75,8 +129,10 @@ Turn-detection events on the bus are replaced by `TurnStarted` / `TurnEnded` ite
 - `TTSErrorEvent` and `TTSConnectionEvent` removed; TTS errors are surfaced through metrics (`MetricsCollector.on_tts_error`).
 - `MetricsCollector` no longer subscribes to plugin events — plugins call `metrics.on_*()` directly. Custom metric consumers that listened for
   `LLMResponseCompletedEvent` etc. must read from `agent.metrics` or merge into the collector tree.
-- Plugin author API: `TTS.send()` removed, replaced by `TTS.send_iter(stream)` which consumes a `Stream[TTSInput | TTSInputEnd]` and produces a `Stream[TTSOutputChunk]`. `set_output_format()` is also gone — output format is fixed by the inference flow.
-- Plugin-specific event types removed from `aws`, `gemini`, `huggingface`, `nvidia`, `openai`, and `xai`. Data that used to ride on those events now flows through the standard `LLMResponseDelta` / `LLMResponseFinal` stream items.
+- Plugin author API: `TTS.send()` removed, replaced by `TTS.send_iter(stream)` which consumes a `Stream[TTSInput | TTSInputEnd]` and produces a `Stream[TTSOutputChunk]`.
+  `set_output_format()` is also gone — output format is fixed by the inference flow.
+- Plugin-specific event types removed from `aws`, `gemini`, `huggingface`, `nvidia`, `openai`, and `xai`. Data that used to ride on those events now flows through the standard
+  `LLMResponseDelta` / `LLMResponseFinal` stream items.
 
 ### Avatar plugin API (#534)
 
@@ -86,7 +142,8 @@ Avatars are now a first-class plugin type with their own kwarg on `Agent(...)` r
 - `anam.AnamAvatarPublisher` removed. Use `anam.Avatar`.
 - `lemonslice.LemonSliceAvatarPublisher` removed. Use `lemonslice.Avatar`.
 - `liveavatar.Avatar` is new in this release and uses the new API (see New Features below).
-- `heygen.AvatarPublisher` is unchanged — the `heygen` plugin keeps the legacy `processors=[...]` wiring for this release and is scheduled for removal (#553). New code should use `liveavatar.Avatar` instead.
+- `heygen.AvatarPublisher` is unchanged — the `heygen` plugin keeps the legacy `processors=[...]` wiring for this release and is scheduled for removal (#553). New code should use
+  `liveavatar.Avatar` instead.
 - `vision_agents.core.utils.av_synchronizer` moved to `vision_agents.core.avatars.av_synchronizer` (also re-exported from `vision_agents.core.avatars`).
 
 Migration:
@@ -138,7 +195,8 @@ The internal class `STT` was renamed to `ElevenlabsSTT` to make it searchable. T
 
 ### LLM interruption API (#501)
 
-`await llm.interrupt()` is now part of the public `LLM` contract. The active inference flow calls it to preempt an in-flight response (e.g. on a barge-in); plugin authors must implement it.
+`await llm.interrupt()` is now part of the public
+`LLM` contract. The active inference flow calls it to preempt an in-flight response (e.g. on a barge-in); plugin authors must implement it.
 
 ### Dedicated Avatar plugin type (#534)
 
@@ -214,7 +272,8 @@ Required env vars: `TENCENT_SDK_APP_ID`, `TENCENT_SDK_SECRET_KEY`. Optional: `TE
 
 ## New Features
 
-- **Inworld**: new `inworld.Realtime` (WebRTC) plugin — low-latency speech-to-speech with function calling, turn detection, and multi-provider upstream models via `<provider>/<model>` IDs. (#502)
+- **Inworld**: new `inworld.Realtime` (WebRTC) plugin — low-latency speech-to-speech with function calling, turn detection, and multi-provider upstream models via
+  `<provider>/<model>` IDs. (#502)
 - **xAI**: new `xai.TTS` (Grok TTS) with `Voice` and `VOICE_DESCRIPTIONS` exports. (#433)
 - **LLM**: max tool-calling rounds is now configurable across LLM plugins. (#500)
 
@@ -243,7 +302,8 @@ Required env vars: `TENCENT_SDK_APP_ID`, `TENCENT_SDK_SECRET_KEY`. Optional: `TE
 
 ## New Features
 
-- **Decart**: update to SDK 0.0.29 with default model Lucy 2. `RestylingProcessor` now accepts an initial reference image and supports atomic `update_state` of prompt + image for virtual try-on. (#446)
+- **Decart**: update to SDK 0.0.29 with default model Lucy 2. `RestylingProcessor` now accepts an initial reference image and supports atomic
+  `update_state` of prompt + image for virtual try-on. (#446)
 
 ## Bug Fixes
 

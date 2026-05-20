@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import getstream, openai
+from vision_agents.plugins import getstream, gemini
 
 load_dotenv()
 
@@ -14,14 +14,14 @@ async def create_agent(**kwargs) -> Agent:
             "You're a helpful voice AI assistant. "
             "Keep responses short and conversational."
         ),
-        llm=openai.Realtime(),
+        llm=gemini.Realtime(),
     )
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     call = await agent.create_call(call_type, call_id)
     async with agent.join(call):
-        await agent.llm.simple_response(text="Say hi and introduce yourself.")
+        await agent.simple_response(text="Say hi and introduce yourself.")
         await agent.finish()
 
 
