@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import getstream, openai
+from vision_agents.plugins import getstream, gemini
 
 load_dotenv()
 
@@ -14,7 +14,7 @@ async def create_agent(**kwargs) -> Agent:
             "You're a helpful voice AI assistant. "
             "Keep responses short and conversational."
         ),
-        llm=openai.Realtime(),
+        llm=gemini.Realtime(),
     )
 
 
