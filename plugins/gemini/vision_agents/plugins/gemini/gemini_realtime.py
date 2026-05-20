@@ -336,6 +336,9 @@ class GeminiRealtime(realtime.Realtime):
 
     async def _establish_session(self):
         """Create a new Gemini WebSocket session without managing the processing task."""
+        # Reset per-turn flags so a reconnect mid-utterance doesn't inherit stale state.
+        self._agent_audio_started = False
+        self._user_audio_started = False
         logger.debug("Connecting to Gemini live, config set to %s", self._base_config)
         self._real_session = await self._exit_stack.enter_async_context(
             self._client.aio.live.connect(  # type: ignore[arg-type]
@@ -420,6 +423,12 @@ class GeminiRealtime(realtime.Realtime):
             self._processing_task.cancel()
             await self._processing_task
 
+    def _end_user_speech_if_started(self) -> None:
+        """Emit user_speech_ended once per user turn and clear the flag."""
+        if self._user_audio_started:
+            self._user_audio_started = False
+            self._emit_user_speech_ended()
+
     async def _process_events(self) -> bool:
         """
         Process events from Gemini Live API.
@@ -448,9 +457,7 @@ class GeminiRealtime(realtime.Realtime):
             if server_content and server_content.model_turn:
                 handled = True
                 # Model is responding → user has finished speaking.
-                if self._user_audio_started:
-                    self._user_audio_started = False
-                    self._emit_user_speech_ended()
+                self._end_user_speech_if_started()
                 # Store the resumption id so we can resume a broken connection
                 if server_message.session_resumption_update:
                     update = server_message.session_resumption_update
@@ -485,6 +492,10 @@ class GeminiRealtime(realtime.Realtime):
                 handled = True
 
             if server_message.tool_call:
+                # tool_call is an independent turn terminator per the Live API
+                # handleTurn example (https://ai.google.dev/gemini-api/docs/live-tools),
+                # so it can arrive without a preceding model_turn.
+                self._end_user_speech_if_started()
                 self._run_tool_in_background(
                     self._handle_tool_calls(server_message.tool_call)
                 )

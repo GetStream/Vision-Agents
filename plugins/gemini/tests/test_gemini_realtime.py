@@ -604,11 +604,6 @@ class TestGeminiRealtimeIntegration:
     async def test_audio_sending_flow(
         self, realtime, mia_audio_16khz, silence_1s_16khz
     ):
-        async for _ in realtime.simple_response(
-            "Listen to the following story, what is Mia looking for?"
-        ):
-            pass
-        await asyncio.sleep(10.0)
         participant = Participant(original=None, user_id="u", id="u")
         await realtime.simple_audio_response(mia_audio_16khz, participant)
 
@@ -618,7 +613,7 @@ class TestGeminiRealtimeIntegration:
             await realtime.simple_audio_response(silence_1s_16khz, participant)
             await asyncio.sleep(1.0)
 
-        items = await realtime.output.collect(15.0)
+        items = await realtime.output.collect(timeout=15.0)
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
         user_started = [i for i in items if isinstance(i, RealtimeUserSpeechStarted)]
         user_ended = [i for i in items if isinstance(i, RealtimeUserSpeechEnded)]
