@@ -69,9 +69,10 @@ class TestGeminiRealtimeProcessEvents:
         await rt._process_events()
 
         items = rt.output.peek()
-        assert len(items) == 1
-        assert isinstance(items[0], RealtimeUserTranscript)
-        assert items[0].text == "hello"
+        assert any(isinstance(i, RealtimeUserSpeechStarted) for i in items)
+        transcripts = [i for i in items if isinstance(i, RealtimeUserTranscript)]
+        assert len(transcripts) == 1
+        assert transcripts[0].text == "hello"
 
     async def test_output_transcription(self):
         rt = _make_realtime()
@@ -591,8 +592,7 @@ class TestGeminiRealtimeIntegration:
         async for _ in realtime.simple_response("Hello, can you hear me?"):
             pass
 
-        await asyncio.sleep(3.0)
-        items = realtime.output.peek()
+        items = await realtime.output.collect(timeout=10.0)
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
         agent_started = [i for i in items if isinstance(i, RealtimeAgentSpeechStarted)]
         agent_ended = [i for i in items if isinstance(i, RealtimeAgentSpeechEnded)]
@@ -601,16 +601,22 @@ class TestGeminiRealtimeIntegration:
         assert len(agent_ended) >= 1
         assert any(not e.interrupted for e in agent_ended)
 
-    async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
+    async def test_audio_sending_flow(self, realtime, mia_audio_16khz, silence_1s_16khz):
         async for _ in realtime.simple_response(
             "Listen to the following story, what is Mia looking for?"
         ):
             pass
         await asyncio.sleep(10.0)
-        await realtime.simple_audio_response(mia_audio_16khz)
+        participant = Participant(original=None, user_id="u", id="u")
+        await realtime.simple_audio_response(mia_audio_16khz, participant)
 
-        await asyncio.sleep(10.0)
-        items = realtime.output.peek()
+        # Emulate a real pause in utterance so Gemini commits the turn and the
+        # model starts responding (which is what triggers user_speech_ended).
+        for _ in range(3):
+            await realtime.simple_audio_response(silence_1s_16khz, participant)
+            await asyncio.sleep(1.0)
+
+        items = await realtime.output.collect(15.0)
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
         user_started = [i for i in items if isinstance(i, RealtimeUserSpeechStarted)]
         user_ended = [i for i in items if isinstance(i, RealtimeUserSpeechEnded)]
