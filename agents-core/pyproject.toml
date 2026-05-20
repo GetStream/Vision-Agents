@@ -136,9 +136,6 @@ raw-options = { root = "..", search_parent_directories = true, fallback_version 
 [tool.hatch.build.targets.wheel]
 packages = ["vision_agents"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"vision_agents/cli/init/templates" = "vision_agents/cli/init/templates"
-
 [tool.hatch.build.targets.sdist]
 include = ["vision_agents"]
 
