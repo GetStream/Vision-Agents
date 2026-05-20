@@ -601,7 +601,9 @@ class TestGeminiRealtimeIntegration:
         assert len(agent_ended) >= 1
         assert any(not e.interrupted for e in agent_ended)
 
-    async def test_audio_sending_flow(self, realtime, mia_audio_16khz, silence_1s_16khz):
+    async def test_audio_sending_flow(
+        self, realtime, mia_audio_16khz, silence_1s_16khz
+    ):
         async for _ in realtime.simple_response(
             "Listen to the following story, what is Mia looking for?"
         ):
