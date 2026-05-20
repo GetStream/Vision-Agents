@@ -878,6 +878,9 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
             try:
                 output = await connection.await_output()
                 result = await output[1].receive()
+                if result is None:
+                    logger.debug("Stream ended (receive returned None)")
+                    break
                 if result.value and result.value.bytes_:
                     try:
                         response_data = result.value.bytes_.decode("utf-8")
