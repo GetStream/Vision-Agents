@@ -1,8 +1,8 @@
-# v0.6.1
+# v0.6.2
 
 ## Breaking Changes
 
-### `heygen` plugin removed
+### `heygen` plugin removed (#563)
 
 The `heygen` plugin, deprecated in v0.6.0 (#553), is now removed. Use
 `vision_agents.plugins.liveavatar.Avatar` instead — it targets the same product via the supported LITE-mode integration path.
@@ -10,13 +10,21 @@ The `heygen` plugin, deprecated in v0.6.0 (#553), is now removed. Use
 Three internal events used only by the `heygen` plugin (`LLMResponseChunkEvent`, `LLMResponseCompletedEvent`, `RealtimeAgentSpeechTranscriptionEvent`) were also removed from
 `vision_agents.core.llm.events`.
 
+### Python 3.14 not supported (#573)
+
+The workspace and the `vision-agents init` scaffold now cap `requires-python` at `<3.14`. Python 3.14 has no `scipy 1.15.3` wheels for macOS arm64, so installs fell through to a source build that needs gfortran and failed. Use Python 3.10–3.13.
+
+## Bug Fixes
+
+- **Packaging**: stop double-packing CLI templates into the wheel — `hatchling` already includes the `.j2` files via the `packages` entry, so the extra `force-include` wrote each template twice and triggered `UserWarning: Duplicate name` during builds. (#571)
+
 # v0.6.1
 
 ## Breaking Changes
 
 ### Event types cleanup (#552)
 
-Follow-up to the v0.6.0 inference-pipeline rewrite (#501).  
+Follow-up to the v0.6.0 inference-pipeline rewrite (#501).
 The events that used to carry audio / transcript / turn payloads are gone — that data now flows through
 `Stream[T]` outputs on STT, TTS, LLM, and Realtime. Only lifecycle / notification events remain on the event bus.
 
