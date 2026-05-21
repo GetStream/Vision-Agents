@@ -149,10 +149,12 @@ class Agent:
             turn_detection: Turn detector for managing conversational turns.
                 Not needed when using a realtime LLM.
             processors: Processors that run alongside the agent (e.g. video analysis,
-                data fetching). Their state is passed to the LLM. The list order
-                does not determine execution order: ``close`` (and ``start`` /
-                ``stop`` if a processor defines them) is invoked concurrently,
-                so processors must not depend on one another's lifecycle.
+                data fetching). Their state is passed to the LLM. Audio and video
+                frames are dispatched to processors in list order. Lifecycle
+                hooks, however, are concurrent: ``close`` (and ``start`` /
+                ``stop`` if a processor defines them) is invoked via
+                ``asyncio.gather``, so processors must not depend on one
+                another's startup or shutdown.
             avatar: Optional avatar plugin. When set, the avatar owns the
                 agent's outbound video/audio tracks and the agent's
                 audio output is routed through the avatar for lip-sync.
@@ -660,9 +662,8 @@ class Agent:
         # Activate the root context globally so all subsequent spans are nested under it
         self._context_token = otel_context.attach(self._root_ctx)
 
-    @property
-    def _components(self) -> tuple[object, ...]:
-        return (
+    async def _apply(self, function_name: str, *args, **kwargs) -> None:
+        components = (
             self.llm,
             self.stt,
             self.tts,
@@ -671,12 +672,10 @@ class Agent:
             self.avatar,
             *self.processors,
         )
-
-    async def _apply(self, function_name: str, *args, **kwargs) -> None:
         await asyncio.gather(
             *(
                 self._safe_invoke(component, function_name, *args, **kwargs)
-                for component in self._components
+                for component in components
                 if component is not None
             )
         )
