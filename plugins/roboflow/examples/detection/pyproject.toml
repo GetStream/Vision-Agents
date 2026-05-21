@@ -1,7 +1,7 @@
 [project]
 name = "roboflow-example"
 version = "0.0.0"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 
 dependencies = [
   "python-dotenv>=1.0",
@@ -16,4 +16,3 @@ dependencies = [
 "vision-agents-plugins-getstream" = {path = "../../../getstream", editable=true}
 "vision-agents-plugins-openai" = {path = "../../../openai", editable=true}
 "vision-agents" = {path = "../../../../agents-core", editable=true}
-

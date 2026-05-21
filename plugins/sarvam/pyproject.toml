@@ -19,7 +19,7 @@ keywords = [
     "voice agents",
     "agents",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "MIT"
 dependencies = [
     "vision-agents",

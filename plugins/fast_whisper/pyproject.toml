@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Fast Whisper STT integration for Vision Agents"
 readme = "README.md"
 keywords = ["faster-whisper", "STT", "speech-to-text", "AI", "voice agents", "agents", "whisper"]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "MIT"
 dependencies = [
     "vision-agents",
