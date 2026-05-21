@@ -2,6 +2,18 @@
 
 ## Breaking Changes
 
+### `heygen` plugin removed
+
+The `heygen` plugin, deprecated in v0.6.0 (#553), is now removed. Use
+`vision_agents.plugins.liveavatar.Avatar` instead — it targets the same product via the supported LITE-mode integration path.
+
+Three internal events used only by the `heygen` plugin (`LLMResponseChunkEvent`, `LLMResponseCompletedEvent`, `RealtimeAgentSpeechTranscriptionEvent`) were also removed from
+`vision_agents.core.llm.events`.
+
+# v0.6.1
+
+## Breaking Changes
+
 ### Event types cleanup (#552)
 
 Follow-up to the v0.6.0 inference-pipeline rewrite (#501).  

@@ -23,7 +23,6 @@ members = [
     "vision-agents-plugins-fish",
     "vision-agents-plugins-gemini",
     "vision-agents-plugins-getstream",
-    "vision-agents-plugins-heygen",
     "vision-agents-plugins-huggingface",
     "vision-agents-plugins-inworld",
     "vision-agents-plugins-kokoro",
@@ -6309,7 +6308,6 @@ all-plugins = [
     { name = "vision-agents-plugins-fish" },
     { name = "vision-agents-plugins-gemini" },
     { name = "vision-agents-plugins-getstream" },
-    { name = "vision-agents-plugins-heygen" },
     { name = "vision-agents-plugins-huggingface" },
     { name = "vision-agents-plugins-inworld" },
     { name = "vision-agents-plugins-kokoro" },
@@ -6376,9 +6374,6 @@ gemini = [
 ]
 getstream = [
     { name = "vision-agents-plugins-getstream" },
-]
-heygen = [
-    { name = "vision-agents-plugins-heygen" },
 ]
 huggingface = [
     { name = "vision-agents-plugins-huggingface" },
@@ -6501,8 +6496,6 @@ requires-dist = [
     { name = "vision-agents-plugins-gemini", marker = "extra == 'gemini'", editable = "plugins/gemini" },
     { name = "vision-agents-plugins-getstream", marker = "extra == 'all-plugins'", editable = "plugins/getstream" },
     { name = "vision-agents-plugins-getstream", marker = "extra == 'getstream'", editable = "plugins/getstream" },
-    { name = "vision-agents-plugins-heygen", marker = "extra == 'all-plugins'", editable = "plugins/heygen" },
-    { name = "vision-agents-plugins-heygen", marker = "extra == 'heygen'", editable = "plugins/heygen" },
     { name = "vision-agents-plugins-huggingface", marker = "extra == 'all-plugins'", editable = "plugins/huggingface" },
     { name = "vision-agents-plugins-huggingface", marker = "extra == 'huggingface'", editable = "plugins/huggingface" },
     { name = "vision-agents-plugins-inworld", marker = "extra == 'all-plugins'", editable = "plugins/inworld" },
@@ -6552,7 +6545,7 @@ requires-dist = [
     { name = "vision-agents-plugins-xai", marker = "extra == 'all-plugins'", editable = "plugins/xai" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["all-plugins", "anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "heygen", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "tencent", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["all-plugins", "anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "tencent", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -6865,34 +6858,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.3.4,<4" },
-    { name = "vision-agents", editable = "agents-core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "vision-agents-plugins-heygen"
-source = { editable = "plugins/heygen" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "aiortc" },
-    { name = "vision-agents" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.13.3" },
-    { name = "aiortc", specifier = ">=1.14.0" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
