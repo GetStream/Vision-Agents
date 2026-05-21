@@ -1,4 +1,4 @@
-# Unreleased
+# v0.6.1
 
 ## Breaking Changes
 
@@ -58,6 +58,23 @@ New lifecycle events on the agent's own bus, suitable for application code (vers
 
 Also adds plugin-side `STTConnectedEvent` / `STTDisconnectedEvent`, `TTSConnectedEvent` / `TTSDisconnectedEvent` / `TTSErrorEvent`, and
 `LLMResponseFinalEvent` to replace the connection-state and realtime-response events removed above.
+
+## Bug Fixes
+
+- **Optional `redis` extra**: importing `vision_agents.core` no longer emits a `UserWarning` when the
+  `redis` package is absent. The warning was noise for the majority of users who don't use `RedisSessionKVStore`; instead, attempting to import
+  `vision_agents.core.agents.session_registry.redis_store` directly raises a `ModuleNotFoundError` with an actionable install hint ("
+  `pip install 'vision-agents[redis]'`"), matching the FastAPI optional-extra pattern. (#562)
+- **AWS Realtime**: stop hanging on disconnect — the receive loop now exits cleanly when the upstream event stream returns
+  `None` instead of crashing on the next field access. (#569)
+- **Gemini Realtime**: fix missing user-speech start/end signals. The previous implementation listened on Gemini Live's `voice_activity_detection_signal` /
+  `voice_activity` channels, which are allowlist-only and silent for most accounts, so `RealtimeUserSpeechStarted` /
+  `RealtimeUserSpeechEnded` never fired. Boundaries are now derived from `input_transcription` (start) and `model_turn` /
+  `tool_call` (end), and the per-turn flags reset on session re-establishment so a mid-utterance reconnect doesn't inherit stale state. (#569)
+- **OpenAI Realtime**: fix `RealtimeUserSpeechStarted` / `RealtimeUserSpeechEnded` not being emitted when audio is pushed via
+  `simple_audio_response()` — the current participant is now stored on that path. Also switches the user-turn-end signal from
+  `input_audio_buffer.speech_stopped` (server_vad-only) to `input_audio_buffer.committed`, so semantic-VAD sessions also see the end-of-turn event. (#569)
+- **LiveAvatar**: include the plugin README in the PyPI package; fix casing in the heygen plugin README and link to the LiveAvatar PyPI page. (#564)
 
 # v0.6.0
 
