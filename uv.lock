@@ -6568,9 +6568,6 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
-    { name = "scipy" },
-    { name = "soundfile" },
-    { name = "torchvision" },
 ]
 
 [package.metadata]
@@ -6583,9 +6580,6 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "scipy", specifier = ">=1.15.3,<1.16" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torchvision", specifier = ">=0.20.0" },
 ]
 
 [[package]]
@@ -6684,9 +6678,6 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
-    { name = "scipy" },
-    { name = "soundfile" },
-    { name = "torchvision" },
 ]
 
 [package.metadata]
@@ -6699,9 +6690,6 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
-    { name = "scipy", specifier = ">=1.15.3,<1.16" },
-    { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "torchvision", specifier = ">=0.20.0" },
 ]
 
 [[package]]
