@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "TurboPuffer RAG integration for Vision Agents with hybrid search"
 readme = "README.md"
 keywords = ["turbopuffer", "RAG", "vector-search", "hybrid-search", "AI", "voice agents", "agents"]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "MIT"
 dependencies = [
     "vision-agents",

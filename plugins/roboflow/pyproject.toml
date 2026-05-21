@@ -7,7 +7,7 @@ name = "vision-agents-plugins-roboflow"
 dynamic = ["version"]
 description = "Roboflow object detection plugin for Vision Agents"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "MIT"
 dependencies = [
     "vision-agents",

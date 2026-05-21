@@ -7,7 +7,7 @@ name = "vision-agents-plugins-openrouter"
 dynamic = ["version"]
 description = "OpenRouter plugin for vision agents"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "MIT"
 dependencies = [
     "vision-agents",
@@ -34,4 +34,3 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
 ]
-

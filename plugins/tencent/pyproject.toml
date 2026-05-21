@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Tencent TRTC edge transport for Vision Agents"
 readme = "README.md"
 keywords = ["tencent", "trtc", "rtc", "edge", "vision agents", "voice agents"]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "MIT"
 classifiers = ["Operating System :: POSIX :: Linux"]
 dependencies = [

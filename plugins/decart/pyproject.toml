@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Decart plugin for Vision Agents"
 readme = "README.md"
 keywords = ["decart", "AI", "voice agents", "agents"]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "MIT"
 dependencies = [
     "vision-agents",
@@ -38,4 +38,3 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
 ]
-

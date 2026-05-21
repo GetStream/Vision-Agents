@@ -1,7 +1,7 @@
 [project]
 name = "my-example"
 version = "0.0.0"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 
 # put only what this example needs
 dependencies = [

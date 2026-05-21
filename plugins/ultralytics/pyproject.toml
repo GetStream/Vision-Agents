@@ -7,7 +7,7 @@ name = "vision-agents-plugins-ultralytics"
 dynamic = ["version"]
 description = "Ultralytics YOLO plugin for GetStream"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "MIT"
 dependencies = [
     "vision-agents",

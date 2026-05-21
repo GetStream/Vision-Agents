@@ -7,7 +7,7 @@ name = "vision-agents-plugins-xai"
 dynamic = ["version"]
 description = "XAI for stream agents"
 readme = "README.md"
-requires-python = ">=3.10.0"
+requires-python = ">=3.10.0,<3.14"
 license = "Apache-2.0"
 dependencies = [
     "vision-agents",
