@@ -150,9 +150,9 @@ class Agent:
                 Not needed when using a realtime LLM.
             processors: Processors that run alongside the agent (e.g. video analysis,
                 data fetching). Their state is passed to the LLM. The list order
-                does not determine execution order: ``close`` is invoked
-                concurrently, so processors must not depend on one another's
-                lifecycle.
+                does not determine execution order: ``close`` (and ``start`` /
+                ``stop`` if a processor defines them) is invoked concurrently,
+                so processors must not depend on one another's lifecycle.
             avatar: Optional avatar plugin. When set, the avatar owns the
                 agent's outbound video/audio tracks and the agent's
                 audio output is routed through the avatar for lip-sync.
