@@ -52,6 +52,7 @@ from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
 )
+from ..utils.exceptions import log_exceptions
 from ..utils.utils import await_or_run, cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
@@ -148,7 +149,10 @@ class Agent:
             turn_detection: Turn detector for managing conversational turns.
                 Not needed when using a realtime LLM.
             processors: Processors that run alongside the agent (e.g. video analysis,
-                data fetching). Their state is passed to the LLM.
+                data fetching). Their state is passed to the LLM. The list order
+                does not determine execution order: ``close`` is invoked
+                concurrently, so processors must not depend on one another's
+                lifecycle.
             avatar: Optional avatar plugin. When set, the avatar owns the
                 agent's outbound video/audio tracks and the agent's
                 audio output is routed through the avatar for lip-sync.
@@ -656,8 +660,9 @@ class Agent:
         # Activate the root context globally so all subsequent spans are nested under it
         self._context_token = otel_context.attach(self._root_ctx)
 
-    async def _apply(self, function_name: str, *args, **kwargs):
-        subclasses = [
+    @property
+    def _components(self) -> tuple[object, ...]:
+        return (
             self.llm,
             self.stt,
             self.tts,
@@ -665,20 +670,28 @@ class Agent:
             self.edge,
             self.avatar,
             *self.processors,
-        ]
-        for subclass in subclasses:
-            if (
-                subclass is not None
-                and getattr(subclass, function_name, None) is not None
-            ):
-                func = getattr(subclass, function_name)
-                if func is not None:
-                    try:
-                        await await_or_run(func, *args, **kwargs)
-                    except Exception as e:
-                        self.logger.exception(
-                            f"Error calling {function_name} on {subclass.__class__.__name__}: {e}"
-                        )
+        )
+
+    async def _apply(self, function_name: str, *args, **kwargs) -> None:
+        await asyncio.gather(
+            *(
+                self._safe_invoke(component, function_name, *args, **kwargs)
+                for component in self._components
+                if component is not None
+            )
+        )
+
+    async def _safe_invoke(
+        self, component: object, function_name: str, *args, **kwargs
+    ) -> None:
+        """Call ``function_name`` on ``component`` if it exists, logging any error."""
+        if (func := getattr(component, function_name, None)) is None:
+            return
+        with log_exceptions(
+            self.logger,
+            f"Error calling {function_name} on {type(component).__name__}",
+        ):
+            await await_or_run(func, *args, **kwargs)
 
     def _end_tracing(self):
         if self._root_span is not None:
