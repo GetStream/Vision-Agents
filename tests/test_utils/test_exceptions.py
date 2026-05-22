@@ -46,17 +46,21 @@ class TestLogExceptions:
                 raise KeyError("inner")
         assert any("caught it" in r.message for r in caplog.records)
 
-    def test_base_exception_subclasses_propagate_by_default(self):
+    def test_base_exception_subclasses_propagate_by_default(self, caplog):
         """Default filter is ``Exception``; ``BaseException`` subclasses must pass through.
 
         This is load-bearing for callers that rely on ``CancelledError`` /
         ``KeyboardInterrupt`` reaching outer scopes during cancellation.
         """
-        with pytest.raises(KeyboardInterrupt):
-            with log_exceptions(logger, "should not log"):
-                raise KeyboardInterrupt
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(KeyboardInterrupt):
+                with log_exceptions(logger, "should not log"):
+                    raise KeyboardInterrupt
+        assert not any("should not log" in r.message for r in caplog.records)
 
-    def test_cancelled_error_propagates_by_default(self):
-        with pytest.raises(asyncio.CancelledError):
-            with log_exceptions(logger, "should not log"):
-                raise asyncio.CancelledError()
+    def test_cancelled_error_propagates_by_default(self, caplog):
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(asyncio.CancelledError):
+                with log_exceptions(logger, "should not log"):
+                    raise asyncio.CancelledError()
+        assert not any("should not log" in r.message for r in caplog.records)
