@@ -5,11 +5,12 @@ import aiortc
 from vision_agents.core.agents.inference import AudioOutputStream
 from vision_agents.core.events import EventManager
 from vision_agents.core.observability import MetricsCollector
+from vision_agents.core.utils.lifecycle import Lifecycle
 
 logger = logging.getLogger(__name__)
 
 
-class Avatar(abc.ABC):
+class Avatar(Lifecycle):
     """Base class for avatar plugins (passthrough mode).
 
     Avatars consume the agent's audio output and produce a synced video
@@ -82,7 +83,3 @@ class Avatar(abc.ABC):
         """
         Start consuming the input stream.
         """
-
-    @abc.abstractmethod
-    async def close(self) -> None:
-        """Tear down the provider connection and cancel any consumer tasks."""
