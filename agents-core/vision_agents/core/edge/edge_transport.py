@@ -5,7 +5,7 @@ import aiortc
 from getstream.video.rtc import AudioStreamTrack
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.observability import MetricsCollector
-from vision_agents.core.utils.lifecycle import Lifecycle
+from vision_agents.core.base import Component
 
 from .call import Call
 from .events import (
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 T_Call = TypeVar("T_Call", bound=Call)
 
 
-class EdgeTransport(Lifecycle, Generic[T_Call]):
+class EdgeTransport(Component, Generic[T_Call]):
     """Abstract base class for edge transports.
 
     Required Events (implementations must emit these):

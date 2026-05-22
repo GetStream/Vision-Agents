@@ -8,7 +8,7 @@ from vision_agents.core.events.manager import EventManager
 from vision_agents.core.observability import MetricsCollector
 
 from ..edge.types import Participant
-from ..utils.lifecycle import Lifecycle
+from ..base import Component
 from ..utils.stream import Stream
 
 if TYPE_CHECKING:
@@ -34,7 +34,7 @@ class TurnEnded:
     duration_ms: Optional[float] = None
 
 
-class TurnDetector(Lifecycle):
+class TurnDetector(Component):
     """Base implementation for turn detection with common functionality."""
 
     def __init__(

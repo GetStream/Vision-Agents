@@ -52,8 +52,8 @@ from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
 )
+from ..base import Component
 from ..utils.exceptions import log_exceptions
-from ..utils.lifecycle import Lifecycle
 from ..utils.utils import cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
@@ -660,7 +660,7 @@ class Agent:
         # Activate the root context globally so all subsequent spans are nested under it
         self._context_token = otel_context.attach(self._root_ctx)
 
-    def _lifecycle_components(self) -> tuple[Lifecycle, ...]:
+    def _get_components(self) -> tuple[Component, ...]:
         """All agent-owned components that implement the Lifecycle protocol."""
         return tuple(
             c
@@ -682,7 +682,7 @@ class Agent:
         On failure, in-flight siblings are cancelled and awaited so we don't
         leak orphan network connects.
         """
-        tasks = [asyncio.create_task(c.start()) for c in self._lifecycle_components()]
+        tasks = [asyncio.create_task(c.start()) for c in self._get_components()]
         try:
             await asyncio.gather(*tasks)
         except BaseException:
@@ -695,14 +695,14 @@ class Agent:
     async def _stop_components(self) -> None:
         """Close all components concurrently. Errors are logged but swallowed."""
 
-        async def _safe_close(component: Lifecycle) -> None:
+        async def _safe_close(component: Component) -> None:
             with log_exceptions(
                 self.logger,
                 f"Error closing {type(component).__name__}",
             ):
                 await component.close()
 
-        await asyncio.gather(*(_safe_close(c) for c in self._lifecycle_components()))
+        await asyncio.gather(*(_safe_close(c) for c in self._get_components()))
 
     def _end_tracing(self):
         if self._root_span is not None:

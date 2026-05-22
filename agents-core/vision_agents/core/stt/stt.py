@@ -15,7 +15,7 @@ from vision_agents.core.stt.events import (
     STTErrorEvent,
 )
 from vision_agents.core.turn_detection import TurnEnded, TurnStarted
-from vision_agents.core.utils.lifecycle import Lifecycle
+from vision_agents.core.base import Component
 from vision_agents.core.utils.stream import Stream
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ class Transcript:
         return self.response.model_name
 
 
-class STT(Lifecycle):
+class STT(Component):
     """
     Abstract base class for Speech-to-Text implementations.
     """
