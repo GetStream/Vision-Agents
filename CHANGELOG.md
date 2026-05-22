@@ -14,6 +14,38 @@ Three internal events used only by the `heygen` plugin (`LLMResponseChunkEvent`,
 
 The workspace and the `vision-agents init` scaffold now cap `requires-python` at `<3.14`. Python 3.14 has no `scipy 1.15.3` wheels for macOS arm64, so installs fell through to a source build that needs gfortran and failed. Use Python 3.10–3.13.
 
+### Unified plugin lifecycle via `Component` base class (#578)
+
+`LLM`, `STT`, `TTS`, `TurnDetector`, `EdgeTransport`, `Avatar` and `Processor` now inherit from a new
+`vision_agents.core.base.Component` base, which defines a uniform `start()` / `close()` lifecycle (both default to no-ops; subclasses override what they need).
+
+Concrete shape changes for out-of-tree plugins:
+
+- **`TurnDetector.stop` is renamed to `close`.** Plugins that subclassed `TurnDetector` and overrode `stop()` must rename the override; the agent no longer invokes `stop`. The base classes for vogent and smart_turn turn detectors were migrated in this release.
+- `Processor` and `EdgeTransport` no longer redeclare `close` as `@abstractmethod` — the abstract contract now comes from `Component`. Existing implementations that override `close` keep working unchanged.
+- `Component` inherits from `ABC` and keeps `ABCMeta`, so subclasses can continue to declare their own `@abstractmethod`s.
+
+## New Features
+
+### Faster agent startup via parallel component lifecycle (#578)
+
+`Agent.join()` now starts every component concurrently (`asyncio.gather`) instead of stacking their network connects one after another. On a realistic setup
+(Gemini LLM + ElevenLabs STT + Deepgram TTS + vogent + LemonSlice avatar) this cuts the lifecycle phase of `join()` from **~4.3 s to ~2.4 s (≈45% faster, ~1.9 s saved)**;
+the remaining time is the single slowest component (here, the LemonSlice RTC connect).
+
+Error handling is asymmetric and explicit:
+
+- **Startup is fail-fast.** If any component's `start()` raises, the failure is logged with the component class name, in-flight siblings are cancelled and awaited so no
+  half-open network connects leak, and `agent.join()` re-raises so the agent doesn't run half-initialised.
+- **Shutdown is best-effort.** A failing `close()` is logged via `log_exceptions` and swallowed so the remaining components still get a chance to release resources.
+
+Plugin authors: because lifecycle hooks now run concurrently, components must not assume sibling ordering during `start` / `close`. Audio and video frames are still dispatched to processors in list order.
+
+### Friendlier `vision-agents init` errors (#579)
+
+`vision-agents init` without an agent name now prints a message that says what's missing and shows an example, instead of Click's bare `Missing argument 'NAME'.`. The
+positional argument is renamed `AGENT_NAME` and documented in `--help`.
+
 ## Bug Fixes
 
 - **Packaging**: stop double-packing CLI templates into the wheel — `hatchling` already includes the `.j2` files via the `packages` entry, so the extra `force-include` wrote each template twice and triggered `UserWarning: Duplicate name` during builds. (#571)
