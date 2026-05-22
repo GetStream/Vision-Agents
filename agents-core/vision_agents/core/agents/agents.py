@@ -679,10 +679,20 @@ class Agent:
     async def _start_components(self) -> None:
         """Start all components concurrently; abort the agent if any fails.
 
-        On failure, in-flight siblings are cancelled and awaited so we don't
-        leak orphan network connects.
+        Errors are logged with the failing component's name and re-raised; in
+        flight siblings are cancelled and awaited so we don't leak orphan
+        network connects.
         """
-        tasks = [asyncio.create_task(c.start()) for c in self._get_components()]
+
+        async def _safe_start(component: Component) -> None:
+            with log_exceptions(
+                self.logger,
+                f"Error starting {type(component).__name__}",
+                reraise=True,
+            ):
+                await component.start()
+
+        tasks = [asyncio.create_task(_safe_start(c)) for c in self._get_components()]
         try:
             await asyncio.gather(*tasks)
         except BaseException:
