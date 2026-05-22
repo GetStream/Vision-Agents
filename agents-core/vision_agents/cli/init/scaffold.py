@@ -1,5 +1,6 @@
 """Jinja template rendering for ``vision-agents init``."""
 
+import tempfile
 from pathlib import Path
 
 from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescape
@@ -22,7 +23,31 @@ def jinja_env() -> Environment:
     )
 
 
-def scaffold(project_name: str, target: Path) -> None:
+def create_project(name: str, target: Path) -> None:
+    """Create a new agent project at ``target`` named ``name``.
+
+    Renders into a sibling staging dir on the same filesystem, then renames
+    atomically so partial output is never observable at ``target`` and we
+    never delete a path we didn't create.
+
+    Raises:
+        FileExistsError: if ``target`` already exists.
+        OSError: on filesystem failures.
+        jinja2.TemplateError: on template rendering failures.
+    """
+    if target.exists():
+        raise FileExistsError(target)
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{target.name}-init-", dir=target.parent
+    ) as tmp:
+        staging = Path(tmp) / target.name
+        _render_templates(name, staging)
+        staging.rename(target)
+
+
+def _render_templates(project_name: str, target: Path) -> None:
     target.mkdir(parents=True)
     env = jinja_env()
     context = {"project_name": project_name}

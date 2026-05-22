@@ -39,6 +39,12 @@ class TestInitCommand:
         assert result.exit_code != 0
         assert "already exists" in result.output
 
+    def test_errors_with_friendly_message_when_name_missing(self, runner: CliRunner):
+        result = runner.invoke(init_cmd, [])
+        assert result.exit_code != 0
+        assert "agent name is required" in result.output
+        assert "vision-agents init my-agent" in result.output
+
 
 class TestAgentCommand:
     @pytest.fixture
