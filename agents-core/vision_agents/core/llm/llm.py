@@ -30,6 +30,7 @@ from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
 
+from ..base import Component
 from ..utils.video_forwarder import VideoForwarder
 from .function_registry import FunctionRegistry
 from .llm_types import NormalizedToolCallItem, ToolSchema
@@ -93,7 +94,7 @@ class LLMResponseFinal:
     """Original response object."""
 
 
-class LLM(abc.ABC):
+class LLM(Component):
     provider_name: Optional[str] = None
     # The model identifier this LLM is configured to use.
     model: str = ""

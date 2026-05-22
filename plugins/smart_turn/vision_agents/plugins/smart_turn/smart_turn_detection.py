@@ -335,9 +335,9 @@ class SmartTurnDetection(
         # Timeout reached
         logger.warning(f"wait_for_processing_complete timed out after {timeout}s")
 
-    async def stop(self):
+    async def close(self):
         """Stop turn detection and cleanup background task."""
-        await super().stop()
+        await super().close()
 
         if self._processing_task:
             self._shutdown_event.set()

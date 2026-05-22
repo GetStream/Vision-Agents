@@ -16,6 +16,7 @@ from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.observability import MetricsCollector
+from vision_agents.core.base import Component
 
 from . import events
 from .events import (
@@ -58,7 +59,7 @@ class TTSOutputEnd:
     interrupted: bool = False
 
 
-class TTS(abc.ABC):
+class TTS(Component):
     """
     Text-to-Speech base class.
 

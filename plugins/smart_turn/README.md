@@ -46,7 +46,7 @@ turn_detector.start()
 await turn_detector.process_audio(pcm_data, user_id="user123")
 
 # Stop detection
-turn_detector.stop()
+turn_detector.close()
 ```
 
 ## Configuration Options
