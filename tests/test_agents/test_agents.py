@@ -297,8 +297,8 @@ class TestAgent:
             async with agent.join(call):
                 ...
 
-    async def test_apply_start_runs_components_concurrently(self):
-        """``_apply`` must drive component lifecycle in parallel, not sequentially."""
+    async def test_start_components_runs_concurrently(self):
+        """Components must be started in parallel, not sequentially."""
         agent = Agent(
             llm=DummyLLM(),
             tts=DummyTTS(),
@@ -308,7 +308,7 @@ class TestAgent:
             agent_user=User(name="test"),
         )
         t0 = time.perf_counter()
-        await agent._apply("start", fail_fast=True)
+        await agent._start_components()
         elapsed = time.perf_counter() - t0
         # Two 200ms sleeps in parallel ≈ 0.2s; sequentially they would take ≈ 0.4s.
         assert elapsed < 0.35
@@ -326,8 +326,8 @@ class TestAgent:
             async with agent.join(call):
                 ...
 
-    async def test_apply_close_swallows_component_failures(self):
-        """``_apply("close")`` is best-effort: a failing component must not block others."""
+    async def test_stop_components_swallows_failures(self):
+        """``_stop_components`` is best-effort: a failing component must not block others."""
         agent = Agent(
             llm=DummyLLM(),
             tts=DummyTTS(),
@@ -336,9 +336,9 @@ class TestAgent:
             agent_user=User(name="test"),
         )
         # Must not raise.
-        await agent._apply("close")
+        await agent._stop_components()
 
-    async def test_apply_start_cancels_siblings_on_failure(self):
+    async def test_start_components_cancels_siblings_on_failure(self):
         """When one ``start`` raises, in-flight siblings must be cancelled."""
         slow = SlowTurnDetector(delay=1.0)
         agent = Agent(
@@ -350,7 +350,7 @@ class TestAgent:
             agent_user=User(name="test"),
         )
         with pytest.raises(SomeException):
-            await agent._apply("start", fail_fast=True)
+            await agent._start_components()
         assert slow.start_completed is False
 
     async def test_send_custom_event(self):

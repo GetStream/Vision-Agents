@@ -53,7 +53,8 @@ from ..utils.logging import (
     CallContextToken,
 )
 from ..utils.exceptions import log_exceptions
-from ..utils.utils import await_or_run, cancel_and_wait
+from ..utils.lifecycle import Lifecycle
+from ..utils.utils import cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
 from . import events
@@ -150,11 +151,9 @@ class Agent:
                 Not needed when using a realtime LLM.
             processors: Processors that run alongside the agent (e.g. video analysis,
                 data fetching). Their state is passed to the LLM. Audio and video
-                frames are dispatched to processors in list order. Lifecycle
-                hooks, however, are concurrent: ``close`` (and ``start`` /
-                ``stop`` if a processor defines them) is invoked via
-                ``asyncio.gather``, so processors must not depend on one
-                another's startup or shutdown.
+                frames are dispatched to processors in list order; their
+                lifecycle hooks (``start`` / ``close``) run concurrently, so
+                processors must not depend on one another's startup or shutdown.
             avatar: Optional avatar plugin. When set, the avatar owns the
                 agent's outbound video/audio tracks and the agent's
                 audio output is routed through the avatar for lip-sync.
@@ -499,8 +498,7 @@ class Agent:
             self.call = call
             self.conversation = None
 
-            # run start on all subclasses
-            await self._apply("start", fail_fast=True)
+            await self._start_components()
 
             # Connect to MCP servers if manager is available
             if self.mcp_manager:
@@ -662,27 +660,29 @@ class Agent:
         # Activate the root context globally so all subsequent spans are nested under it
         self._context_token = otel_context.attach(self._root_ctx)
 
-    async def _apply(
-        self, function_name: str, *args, fail_fast: bool = False, **kwargs
-    ) -> None:
-        components = (
-            self.llm,
-            self.stt,
-            self.tts,
-            self.turn_detection,
-            self.edge,
-            self.avatar,
-            *self.processors,
-        )
-        tasks = [
-            asyncio.create_task(
-                self._safe_invoke(
-                    component, function_name, *args, fail_fast=fail_fast, **kwargs
-                )
+    def _lifecycle_components(self) -> tuple[Lifecycle, ...]:
+        """All agent-owned components that implement the Lifecycle protocol."""
+        return tuple(
+            c
+            for c in (
+                self.llm,
+                self.stt,
+                self.tts,
+                self.turn_detection,
+                self.edge,
+                self.avatar,
+                *self.processors,
             )
-            for component in components
-            if component is not None
-        ]
+            if c is not None
+        )
+
+    async def _start_components(self) -> None:
+        """Start all components concurrently; abort the agent if any fails.
+
+        On failure, in-flight siblings are cancelled and awaited so we don't
+        leak orphan network connects.
+        """
+        tasks = [asyncio.create_task(c.start()) for c in self._lifecycle_components()]
         try:
             await asyncio.gather(*tasks)
         except BaseException:
@@ -692,26 +692,17 @@ class Agent:
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
 
-    async def _safe_invoke(
-        self,
-        component: object,
-        function_name: str,
-        *args,
-        fail_fast: bool = False,
-        **kwargs,
-    ) -> None:
-        """Call ``function_name`` on ``component`` if it exists, logging any error.
+    async def _stop_components(self) -> None:
+        """Close all components concurrently. Errors are logged but swallowed."""
 
-        If ``fail_fast`` is True, the exception is re-raised after logging.
-        """
-        if (func := getattr(component, function_name, None)) is None:
-            return
-        with log_exceptions(
-            self.logger,
-            f"Error calling {function_name} on {type(component).__name__}",
-            reraise=fail_fast,
-        ):
-            await await_or_run(func, *args, **kwargs)
+        async def _safe_close(component: Lifecycle) -> None:
+            with log_exceptions(
+                self.logger,
+                f"Error closing {type(component).__name__}",
+            ):
+                await component.close()
+
+        await asyncio.gather(*(_safe_close(c) for c in self._lifecycle_components()))
 
     def _end_tracing(self):
         if self._root_span is not None:
@@ -781,10 +772,7 @@ class Agent:
             await cancel_and_wait(self._metrics_broadcast_task)
             self._metrics_broadcast_task = None
 
-        # run stop on all subclasses
-        await self._apply("stop")
-        # run close on all subclasses
-        await self._apply("close")
+        await self._stop_components()
 
         # Disconnect from MCP servers
         if self.mcp_manager:
