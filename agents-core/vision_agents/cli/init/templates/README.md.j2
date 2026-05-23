@@ -1,6 +1,6 @@
 # {{project_name}}
 
-Generated with `uvx vision-agents init`.
+Generated with `uvx vision-agents init`. See the docs at <https://visionagents.ai>.
 
 ## Setup
 
@@ -14,8 +14,19 @@ Generated with `uvx vision-agents init`.
 3. Run the agent:
 
    ```bash
-   uv run vision-agents agent run     # single-call console
-   uv run vision-agents agent serve   # HTTP server
+   uv run agent.py run     # single-call console
+   uv run agent.py serve   # HTTP server
    ```
 
-   The CLI imports `agent:runner` (configured in `pyproject.toml`) and dispatches to its `Runner.cli()` in-process.
+4. Run the tests:
+
+   ```bash
+   uv run pytest
+   ```
+
+## Docker
+
+```bash
+docker build -t {{project_name}} .
+docker run --env-file .env -p 8000:8000 {{project_name}}
+```

@@ -18,9 +18,12 @@ class TestInitCommand:
         assert result.exit_code == 0, result.output
         for name in (
             "agent.py",
+            "tests/test_agent.py",
             "pyproject.toml",
             ".env.example",
             ".gitignore",
+            ".dockerignore",
+            "Dockerfile",
             "README.md",
         ):
             assert (target / name).is_file(), f"missing {name}"

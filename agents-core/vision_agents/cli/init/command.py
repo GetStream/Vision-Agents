@@ -56,4 +56,4 @@ def init_cmd(name: str | None, no_install: bool) -> None:
     )
     if not install:
         click.echo(click.style("  uv sync", fg="cyan"))
-    click.echo(click.style("  uv run vision-agents agent run", fg="cyan"))
+    click.echo(click.style("  uv run agent.py run", fg="cyan"))

@@ -7,9 +7,12 @@ from jinja2 import Environment, PackageLoader, StrictUndefined, select_autoescap
 
 TEMPLATE_FILES: dict[str, str] = {
     "agent.py.j2": "agent.py",
+    "tests/test_agent.py.j2": "tests/test_agent.py",
     "pyproject.toml.j2": "pyproject.toml",
     "env.example.j2": ".env.example",
     "gitignore.j2": ".gitignore",
+    "dockerignore.j2": ".dockerignore",
+    "Dockerfile.j2": "Dockerfile",
     "README.md.j2": "README.md",
 }
 
@@ -53,4 +56,6 @@ def _render_templates(project_name: str, target: Path) -> None:
     context = {"project_name": project_name}
     for src, dst in TEMPLATE_FILES.items():
         rendered = env.get_template(src).render(**context)
-        (target / dst).write_text(rendered, encoding="utf-8")
+        out = target / dst
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(rendered, encoding="utf-8")
