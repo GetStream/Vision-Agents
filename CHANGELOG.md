@@ -4,7 +4,7 @@
 
 ### Python 3.14 support
 
-`agents-core` and every plugin except `kokoro` and `smart_turn` now advertise Python 3.14 support. Those two stay capped at `<3.14` because they pin `numpy<2.3`, which conflicts with the `numpy>=2.3.2` constraint that `getstream[webrtc]` carries on 3.14.
+`agents-core` and every plugin except `kokoro`, `smart_turn`, and `vogent` now advertise Python 3.14 support. `kokoro` and `smart_turn` pin `numpy<2.3`, which conflicts with `getstream[webrtc]`'s `numpy>=2.3.2` on 3.14. `vogent` pulls `vogent-turn==0.1.1`, which pins `onnxruntime-gpu==1.22.*` on Linux/Windows x86_64, and that has no `cp314` wheels.
 
 Until a new `getstream` release ships, the workspace temporarily pins `getstream` to a `main` commit via `[tool.uv.sources]`.
 
