@@ -7,7 +7,7 @@ name = "vision-agents-plugins-moondream"
 dynamic = ["version"]
 description = "Moondream 3 vision processor plugin for Vision Agents"
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",

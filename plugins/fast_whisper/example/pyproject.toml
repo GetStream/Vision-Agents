@@ -2,7 +2,7 @@
 name = "fast-whisper-example"
 version = "0.1.0"
 description = "Fast Whisper STT example"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 dependencies = [
     "vision-agents",
     "vision-agents-plugins-fast-whisper",

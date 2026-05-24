@@ -2,7 +2,7 @@
 name = "moondream-example"
 version = "0.1.0"
 description = "Example using Moondream Detect and VLM with Vision Agents"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 dependencies = [
     "vision-agents",
     "vision-agents-plugins-moondream",
