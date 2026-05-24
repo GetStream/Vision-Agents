@@ -2,7 +2,7 @@
 
 ## New Features
 
-### Python 3.14 support
+### Python 3.14 support (#582)
 
 `agents-core` and every plugin except `kokoro`, `smart_turn`, and `vogent` now advertise Python 3.14 support. `kokoro` and `smart_turn` pin `numpy<2.3`, which conflicts with `getstream[webrtc]`'s `numpy>=2.3.2` on 3.14. `vogent` pulls `vogent-turn==0.1.1`, which pins `onnxruntime-gpu==1.22.*` on Linux/Windows x86_64, and that has no `cp314` wheels.
 
@@ -10,7 +10,7 @@ Until a new `getstream` release ships, the workspace temporarily pins `getstream
 
 ## Bug Fixes
 
-### `smart_turn` and `vogent` `requires-python` raised to `>=3.11`
+### `smart_turn` and `vogent` `requires-python` raised to `>=3.11` (#582)
 
 Both plugins depend on `onnxruntime>=1.24.3`, which has no `cp310` wheels. Their metadata previously advertised `>=3.10`, so a 3.10 install would fail at resolution time. Bumping to `>=3.11` makes the published metadata honest.
 
