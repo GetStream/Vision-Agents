@@ -23,3 +23,6 @@ entrypoint = "agent:runner"
 pythonpath = ["."]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "integration: tests that call real model services",
+]

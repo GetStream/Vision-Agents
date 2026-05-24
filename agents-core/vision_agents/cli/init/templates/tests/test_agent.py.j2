@@ -17,10 +17,13 @@ from vision_agents.testing import LLMJudge, TestSession
 load_dotenv()
 
 
-pytestmark = pytest.mark.skipif(
-    not os.getenv("GOOGLE_API_KEY"),
-    reason="GOOGLE_API_KEY not set",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not os.getenv("GOOGLE_API_KEY"),
+        reason="GOOGLE_API_KEY not set",
+    ),
+]
 
 
 async def test_greeting_is_friendly():
