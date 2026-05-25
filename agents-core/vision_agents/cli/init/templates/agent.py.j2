@@ -11,13 +11,6 @@ INSTRUCTIONS = (
     "Keep responses short and conversational."
 )
 
-MODEL = "gemini-2.5-flash"
-
-
-def create_llm() -> gemini.LLM:
-    """Text `gemini.LLM` used by tests (production uses `gemini.Realtime`)."""
-    return gemini.LLM(MODEL)
-
 
 async def create_agent(**kwargs) -> Agent:
     return Agent(

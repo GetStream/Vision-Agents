@@ -9,7 +9,7 @@ import os
 import pytest
 from dotenv import load_dotenv
 
-from agent import INSTRUCTIONS, MODEL, create_llm
+from agent import INSTRUCTIONS
 
 from vision_agents.plugins import gemini
 from vision_agents.testing import LLMJudge, TestSession
@@ -25,12 +25,14 @@ pytestmark = [
     ),
 ]
 
+MODEL = "gemini-2.5-flash"
+
 
 async def test_greeting_is_friendly():
     """Use `LLMJudge` to verify the agent's greeting intent."""
     judge = LLMJudge(gemini.LLM(MODEL))
 
-    async with TestSession(llm=create_llm(), instructions=INSTRUCTIONS) as session:
+    async with TestSession(llm=gemini.LLM(MODEL), instructions=INSTRUCTIONS) as session:
         response = await session.simple_response("Hi there!")
 
         assert response.output is not None
@@ -48,7 +50,7 @@ async def test_stays_conversational():
     """Replies should stay short and free of markdown formatting."""
     judge = LLMJudge(gemini.LLM(MODEL))
 
-    async with TestSession(llm=create_llm(), instructions=INSTRUCTIONS) as session:
+    async with TestSession(llm=gemini.LLM(MODEL), instructions=INSTRUCTIONS) as session:
         response = await session.simple_response("Tell me about yourself.")
         verdict = await judge.evaluate(
             response.chat_messages[-1],
@@ -61,7 +63,7 @@ async def test_remembers_context_across_turns():
     """Within one `TestSession`, conversation history accumulates."""
     judge = LLMJudge(gemini.LLM(MODEL))
 
-    async with TestSession(llm=create_llm(), instructions=INSTRUCTIONS) as session:
+    async with TestSession(llm=gemini.LLM(MODEL), instructions=INSTRUCTIONS) as session:
         await session.simple_response("My name is Alex.")
         response = await session.simple_response("What is my name?")
 
