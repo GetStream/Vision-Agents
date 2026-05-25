@@ -8,7 +8,7 @@ from fastapi import Response
 from opentelemetry import metrics
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.metrics import MeterProvider
-from prometheus_client import Gauge, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, Gauge, generate_latest
 from vision_agents.core import Agent, AgentLauncher, Runner, User
 from vision_agents.core.agents.session_registry import (
     RedisSessionKVStore,
@@ -27,7 +27,7 @@ Deploy example - similar to 01_simple_agent_example but containerized.
 Eager turn taking STT, LLM, TTS workflow
 - deepgram for optimal latency
 - eleven labs for TTS
-- gemini-3.1-flash-lite-preview for fast responses
+- gemini-flash-lite-latest for fast responses
 - stream's edge network for video transport
 """
 
@@ -41,7 +41,7 @@ ACTIVE_SESSIONS = Gauge("ai_demo_active_sessions", "Number of active agent sessi
 
 
 async def create_agent(**kwargs) -> Agent:
-    llm = gemini.LLM("gemini-3.1-flash-lite-preview")
+    llm = gemini.LLM("gemini-flash-lite-latest")
 
     agent = Agent(
         edge=getstream.Edge(),
