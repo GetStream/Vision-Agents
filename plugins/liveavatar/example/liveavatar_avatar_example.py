@@ -35,7 +35,7 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="Avatar Agent", id="agent"),
         instructions=INSTRUCTIONS,
         avatar=liveavatar.Avatar(),
-        llm=gemini.LLM("gemini-3.1-flash-lite-preview"),
+        llm=gemini.LLM("gemini-flash-lite-latest"),
         tts=deepgram.TTS(),
         stt=deepgram.STT(eager_turn_detection=True),
     )
