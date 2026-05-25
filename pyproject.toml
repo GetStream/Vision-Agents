@@ -3,9 +3,6 @@ requires = ["hatchling", "hatch-vcs", "setuptools-scm"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
-# Temporary: pin getstream to a main commit that adds Python 3.14 support.
-# Drop once a release containing https://github.com/GetStream/stream-py/pull/253 is on PyPI.
-getstream = { git = "https://github.com/GetStream/stream-py.git", rev = "c112150845c3233d8a5fc76dc1a9333cddd10364" }
 vision-agents = { workspace = true }
 vision-agents-plugins-anthropic = { workspace = true }
 vision-agents-plugins-aws = { workspace = true }

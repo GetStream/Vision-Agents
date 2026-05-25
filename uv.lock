@@ -1713,8 +1713,8 @@ wheels = [
 
 [[package]]
 name = "getstream"
-version = "3.3.4"
-source = { git = "https://github.com/GetStream/stream-py.git?rev=c112150845c3233d8a5fc76dc1a9333cddd10364#c112150845c3233d8a5fc76dc1a9333cddd10364" }
+version = "3.4.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dataclasses-json" },
     { name = "httpx" },
@@ -1727,6 +1727,10 @@ dependencies = [
     { name = "pyjwt" },
     { name = "python-dateutil" },
     { name = "twirp" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/19/c9/46a87f7571645fb64b1ae7fac198d8dfc7d352e52cb580602ab7b596b925/getstream-3.4.0.tar.gz", hash = "sha256:a2ef23807f7960de6d68b0c211769cb4095e40fc2e002fbfdcde2bbc5693bb92", size = 562754, upload-time = "2026-05-25T20:58:42.397Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/89/25/12489ca22c10e7d1ec37bfb7be3b983dcd7b2ac187c0433b618c8c3ac981/getstream-3.4.0-py3-none-any.whl", hash = "sha256:5fb610c5d61941e6a503e4bcbddc8d815aa99892da9d322774dd2e96592008d5", size = 352147, upload-time = "2026-05-25T20:58:44.115Z" },
 ]
 
 [package.optional-dependencies]
@@ -6454,7 +6458,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "colorlog", specifier = ">=6.10.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
-    { name = "getstream", extras = ["telemetry", "webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=c112150845c3233d8a5fc76dc1a9333cddd10364" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.4.0,<4" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "mcp", specifier = ">=1.23.3,<2" },
     { name = "mypy", marker = "extra == 'dev'" },
@@ -6853,7 +6857,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "getstream", extras = ["telemetry", "webrtc"], git = "https://github.com/GetStream/stream-py.git?rev=c112150845c3233d8a5fc76dc1a9333cddd10364" },
+    { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=3.4.0,<4" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
