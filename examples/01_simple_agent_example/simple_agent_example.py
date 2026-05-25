@@ -17,7 +17,7 @@ Agent example optimized for fast response time.
 Eager turn taking STT, LLM, TTS workflow
 - deepgram for optimal latency
 - eleven labs for TTS
-- gemini-flash-latest for fast responses
+- gemini-flash-lite-latest for fast responses
 - stream's edge network for video transport
 
 This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_example
