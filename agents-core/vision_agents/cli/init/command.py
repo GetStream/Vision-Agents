@@ -1,50 +1,46 @@
 """``vision-agents init`` — scaffold a new agent project."""
 
-import tempfile
 from pathlib import Path
 
 import click
 from jinja2 import TemplateError
 
 from vision_agents.cli.errors import CliError
-from vision_agents.cli.init.scaffold import scaffold
+from vision_agents.cli.init.scaffold import create_project
 from vision_agents.cli.init.uv import install_dependencies
 
 
-@click.command("init", help="Scaffold a new agent project from a template.")
-@click.argument("name")
+@click.command(
+    "init",
+    help=(
+        "Create a new agent project.\n\n"
+        "\b\n"
+        "Arguments:\n"
+        "  AGENT_NAME  Name for the new agent. Used as the directory and\n"
+        "              Python project name, e.g. my-agent."
+    ),
+)
+@click.argument("name", required=False, metavar="AGENT_NAME")
 @click.option(
     "--no-install",
     is_flag=True,
     help="Do not run 'uv sync' after generating the project.",
 )
-def init_cmd(name: str, no_install: bool) -> None:
+def init_cmd(name: str | None, no_install: bool) -> None:
+    if not name:
+        raise CliError(
+            "agent name is required.\n\nExample: vision-agents init my-agent"
+        )
     install = not no_install
     target = Path(name).resolve()
-    if target.exists():
-        raise CliError(f"{target} already exists")
 
-    # Scaffold into a staging dir on the same filesystem, then rename
-    # atomically so partial output is never observable at `target` and
-    # we never delete a path we didn't create.
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp_ctx = tempfile.TemporaryDirectory(
-            prefix=f".{target.name}-init-", dir=target.parent
-        )
-    except OSError as err:
-        raise CliError(f"failed to prepare scaffold target {target}: {err}") from err
+        create_project(target.name, target)
+    except FileExistsError:
+        raise CliError(f"{target} already exists") from None
+    except (OSError, TemplateError) as err:
+        raise CliError(f"failed to create project at {target}: {err}") from err
 
-    with tmp_ctx as tmp:
-        staging = Path(tmp) / target.name
-        try:
-            scaffold(target.name, staging)
-        except (OSError, TemplateError) as err:
-            raise CliError(f"failed to scaffold {target}: {err}") from err
-        try:
-            staging.rename(target)
-        except OSError as err:
-            raise CliError(f"failed to finalize {target}: {err}") from err
     click.echo(f"{click.style('Created', fg='green', bold=True)} {target}")
 
     if install:
@@ -60,4 +56,4 @@ def init_cmd(name: str, no_install: bool) -> None:
     )
     if not install:
         click.echo(click.style("  uv sync", fg="cyan"))
-    click.echo(click.style("  uv run vision-agents agent run", fg="cyan"))
+    click.echo(click.style("  uv run agent.py run", fg="cyan"))

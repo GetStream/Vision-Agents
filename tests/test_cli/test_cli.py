@@ -18,9 +18,12 @@ class TestInitCommand:
         assert result.exit_code == 0, result.output
         for name in (
             "agent.py",
+            "tests/test_agent.py",
             "pyproject.toml",
             ".env.example",
             ".gitignore",
+            ".dockerignore",
+            "Dockerfile",
             "README.md",
         ):
             assert (target / name).is_file(), f"missing {name}"
@@ -38,6 +41,12 @@ class TestInitCommand:
         result = runner.invoke(init_cmd, [str(target), "--no-install"])
         assert result.exit_code != 0
         assert "already exists" in result.output
+
+    def test_errors_with_friendly_message_when_name_missing(self, runner: CliRunner):
+        result = runner.invoke(init_cmd, [])
+        assert result.exit_code != 0
+        assert "agent name is required" in result.output
+        assert "vision-agents init my-agent" in result.output
 
 
 class TestAgentCommand:

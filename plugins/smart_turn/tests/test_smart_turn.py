@@ -16,7 +16,7 @@ async def smart_turn():
     await td.warmup()
     await td.start()
     yield td
-    await td.stop()
+    await td.close()
 
 
 class TestSmartTurn:

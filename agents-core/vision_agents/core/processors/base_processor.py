@@ -6,6 +6,7 @@ from typing import Optional
 import aiortc
 from getstream.video.rtc import AudioStreamTrack, PcmData
 from vision_agents.core.observability import MetricsCollector
+from vision_agents.core.base import Component
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 if typing.TYPE_CHECKING:
@@ -14,7 +15,7 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class Processor(abc.ABC):
+class Processor(Component):
     """
     A base class for all audio and video processors.
     """
@@ -27,12 +28,6 @@ class Processor(abc.ABC):
     def name(self) -> str:
         """
         Processor name.
-        """
-
-    @abc.abstractmethod
-    async def close(self) -> None:
-        """
-        Close the processor and clean up resources when the application exits.
         """
 
     def attach_agent(self, agent: "Agent") -> None:

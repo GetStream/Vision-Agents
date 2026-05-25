@@ -3,6 +3,7 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 from vision_agents.core import Agent, AgentLauncher, Runner, User
+from vision_agents.core.llm import LLM
 from vision_agents.core.utils.examples import get_weather_by_location
 from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
 
@@ -16,7 +17,7 @@ Agent example optimized for fast response time.
 Eager turn taking STT, LLM, TTS workflow
 - deepgram for optimal latency
 - eleven labs for TTS
-- gemini-3.1-flash-lite-preview for fast responses
+- gemini-flash-lite-latest for fast responses
 - stream's edge network for video transport
 
 This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_example
@@ -26,7 +27,7 @@ This example uses STT, for a realtime openAI/gemini example see 02_golf_coach_ex
 INSTRUCTIONS = "You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful."
 
 
-def setup_llm(model: str = "gemini-3.1-flash-lite-preview") -> gemini.LLM:
+def setup_llm(model: str = "gemini-flash-lite-latest") -> LLM:
     llm = gemini.LLM(model)
 
     @llm.register_function(description="Get current weather for a location")

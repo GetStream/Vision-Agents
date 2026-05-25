@@ -8,11 +8,11 @@ dynamic = ["version"]
 description = "GetStream video/voice integration for Vision Agents"
 readme = "README.md"
 keywords = ["getstream", "video", "realtime", "streaming", "AI", "voice agents", "agents"]
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "getstream[webrtc,telemetry]>=3.3.4,<4",
+    "getstream[webrtc,telemetry]>=3.4.0,<4",
 ]
 
 [project.urls]

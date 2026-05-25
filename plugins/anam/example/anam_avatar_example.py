@@ -16,7 +16,7 @@ INSTRUCTIONS = (
 )
 
 
-def setup_llm(model: str = "gemini-3.1-flash-lite-preview") -> gemini.LLM:
+def setup_llm(model: str = "gemini-flash-lite-latest") -> gemini.LLM:
     llm = gemini.LLM(model)
 
     @llm.register_function(description="Get current weather for a location")

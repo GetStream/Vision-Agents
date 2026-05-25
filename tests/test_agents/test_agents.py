@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -133,6 +134,69 @@ class SomeException(Exception):
     pass
 
 
+class SlowSTT(BaseSTT):
+    """STT whose ``start`` sleeps for a configurable delay before completing."""
+
+    turn_detection: bool = False
+
+    def __init__(self, delay: float) -> None:
+        super().__init__()
+        self._delay = delay
+
+    async def start(self) -> None:
+        await asyncio.sleep(self._delay)
+        await super().start()
+
+    async def process_audio(self, pcm_data, participant):
+        pass
+
+
+class SlowTurnDetector(TurnDetector):
+    """Turn detector whose ``start`` sleeps and records completion."""
+
+    def __init__(self, delay: float) -> None:
+        super().__init__()
+        self._delay = delay
+        self.start_completed = False
+
+    async def start(self) -> None:
+        await asyncio.sleep(self._delay)
+        self.start_completed = True
+        await super().start()
+
+    async def process_audio(self, data, participant, conversation=None):
+        pass
+
+
+class FailingSTT(BaseSTT):
+    """STT that raises a configured exception in ``start`` or ``close``."""
+
+    turn_detection: bool = False
+
+    def __init__(
+        self,
+        *,
+        exc_on_start: Optional[Exception] = None,
+        exc_on_close: Optional[Exception] = None,
+    ) -> None:
+        super().__init__()
+        self._exc_on_start = exc_on_start
+        self._exc_on_close = exc_on_close
+
+    async def start(self) -> None:
+        if self._exc_on_start is not None:
+            raise self._exc_on_start
+        await super().start()
+
+    async def close(self) -> None:
+        if self._exc_on_close is not None:
+            raise self._exc_on_close
+        await super().close()
+
+    async def process_audio(self, pcm_data, participant):
+        pass
+
+
 class WriteRecordingTrack:
     def __init__(self):
         self.writes: list[PcmData] = []
@@ -232,6 +296,62 @@ class TestAgent:
         with pytest.raises(SomeException):
             async with agent.join(call):
                 ...
+
+    async def test_start_components_runs_concurrently(self):
+        """Components must be started in parallel, not sequentially."""
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            stt=SlowSTT(delay=0.2),
+            turn_detection=SlowTurnDetector(delay=0.2),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        t0 = time.perf_counter()
+        await agent._start_components()
+        elapsed = time.perf_counter() - t0
+        # Two 200ms sleeps in parallel ≈ 0.2s; sequentially they would take ≈ 0.4s.
+        assert elapsed < 0.35
+
+    async def test_join_propagates_component_start_failure(self, call: Call):
+        """A failing component ``start`` must surface as an error from ``join``."""
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            stt=FailingSTT(exc_on_start=SomeException("boom")),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        with pytest.raises(SomeException):
+            async with agent.join(call):
+                ...
+
+    async def test_stop_components_swallows_failures(self):
+        """``_stop_components`` is best-effort: a failing component must not block others."""
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            stt=FailingSTT(exc_on_close=SomeException("boom")),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        # Must not raise.
+        await agent._stop_components()
+
+    async def test_start_components_cancels_siblings_on_failure(self):
+        """When one ``start`` raises, in-flight siblings must be cancelled."""
+        slow = SlowTurnDetector(delay=1.0)
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            stt=FailingSTT(exc_on_start=SomeException("boom")),
+            turn_detection=slow,
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        with pytest.raises(SomeException):
+            await agent._start_components()
+        assert slow.start_completed is False
 
     async def test_send_custom_event(self):
         """Test that custom events are sent through the edge transport."""

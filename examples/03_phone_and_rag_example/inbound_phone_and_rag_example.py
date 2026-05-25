@@ -24,19 +24,18 @@ import uuid
 from pathlib import Path
 
 import uvicorn
-from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse
-
-from vision_agents.core import User, Agent
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+from vision_agents.core import Agent, User
 from vision_agents.plugins import (
-    getstream,
-    gemini,
-    twilio,
-    elevenlabs,
     deepgram,
+    elevenlabs,
+    gemini,
+    getstream,
     turbopuffer,
+    twilio,
 )
 
 logger = logging.getLogger(__name__)
@@ -168,7 +167,7 @@ async def create_agent() -> Agent:
     instructions = """Read the instructions in @instructions.md"""
 
     if RAG_BACKEND == "turbopuffer":
-        llm = gemini.LLM("gemini-3.1-flash-lite-preview")
+        llm = gemini.LLM("gemini-flash-lite-latest")
 
         @llm.register_function(
             description="Search Stream's product knowledge base for detailed information about Chat, Video, Feeds, and Moderation APIs."
@@ -178,7 +177,7 @@ async def create_agent() -> Agent:
 
     else:
         llm = gemini.LLM(
-            "gemini-3.1-flash-lite-preview",
+            "gemini-flash-lite-latest",
             tools=[gemini.tools.FileSearch(file_search_store)],
         )
 

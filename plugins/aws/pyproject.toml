@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "AWS (Bedrock LLM, Transcribe STT, Polly TTS) integration for Vision Agents"
 readme = "README.md"
 keywords = ["aws", "bedrock", "transcribe", "polly", "STT", "TTS", "LLM", "AI", "voice agents", "agents"]
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
     "vision-agents",

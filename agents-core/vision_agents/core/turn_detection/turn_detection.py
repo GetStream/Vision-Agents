@@ -1,5 +1,5 @@
 import uuid
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -8,6 +8,7 @@ from vision_agents.core.events.manager import EventManager
 from vision_agents.core.observability import MetricsCollector
 
 from ..edge.types import Participant
+from ..base import Component
 from ..utils.stream import Stream
 
 if TYPE_CHECKING:
@@ -33,7 +34,7 @@ class TurnEnded:
     duration_ms: Optional[float] = None
 
 
-class TurnDetector(ABC):
+class TurnDetector(Component):
     """Base implementation for turn detection with common functionality."""
 
     def __init__(
@@ -73,7 +74,7 @@ class TurnDetector(ABC):
             raise ValueError(f"start() has already been called for {self}")
         self.is_active = True
 
-    async def stop(self) -> None:
+    async def close(self) -> None:
         """Again, some turn detection systems want to run cleanup here"""
         self.is_active = False
 

@@ -52,7 +52,9 @@ from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
 )
-from ..utils.utils import await_or_run, cancel_and_wait
+from ..base import Component
+from ..utils.exceptions import log_exceptions
+from ..utils.utils import cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
 from . import events
@@ -148,7 +150,10 @@ class Agent:
             turn_detection: Turn detector for managing conversational turns.
                 Not needed when using a realtime LLM.
             processors: Processors that run alongside the agent (e.g. video analysis,
-                data fetching). Their state is passed to the LLM.
+                data fetching). Their state is passed to the LLM. Audio and video
+                frames are dispatched to processors in list order; their
+                lifecycle hooks (``start`` / ``close``) run concurrently, so
+                processors must not depend on one another's startup or shutdown.
             avatar: Optional avatar plugin. When set, the avatar owns the
                 agent's outbound video/audio tracks and the agent's
                 audio output is routed through the avatar for lip-sync.
@@ -493,8 +498,7 @@ class Agent:
             self.call = call
             self.conversation = None
 
-            # run start on all subclasses
-            await self._apply("start")
+            await self._start_components()
 
             # Connect to MCP servers if manager is available
             if self.mcp_manager:
@@ -656,29 +660,59 @@ class Agent:
         # Activate the root context globally so all subsequent spans are nested under it
         self._context_token = otel_context.attach(self._root_ctx)
 
-    async def _apply(self, function_name: str, *args, **kwargs):
-        subclasses = [
-            self.llm,
-            self.stt,
-            self.tts,
-            self.turn_detection,
-            self.edge,
-            self.avatar,
-            *self.processors,
-        ]
-        for subclass in subclasses:
-            if (
-                subclass is not None
-                and getattr(subclass, function_name, None) is not None
+    def _get_components(self) -> tuple[Component, ...]:
+        """All agent-owned components that implement the Lifecycle protocol."""
+        return tuple(
+            c
+            for c in (
+                self.llm,
+                self.stt,
+                self.tts,
+                self.turn_detection,
+                self.edge,
+                self.avatar,
+                *self.processors,
+            )
+            if c is not None
+        )
+
+    async def _start_components(self) -> None:
+        """Start all components concurrently; abort the agent if any fails.
+
+        Errors are logged with the failing component's name and re-raised; in
+        flight siblings are cancelled and awaited so we don't leak orphan
+        network connects.
+        """
+
+        async def _safe_start(component: Component) -> None:
+            with log_exceptions(
+                self.logger,
+                f"Error starting {type(component).__name__}",
+                reraise=True,
             ):
-                func = getattr(subclass, function_name)
-                if func is not None:
-                    try:
-                        await await_or_run(func, *args, **kwargs)
-                    except Exception as e:
-                        self.logger.exception(
-                            f"Error calling {function_name} on {subclass.__class__.__name__}: {e}"
-                        )
+                await component.start()
+
+        tasks = [asyncio.create_task(_safe_start(c)) for c in self._get_components()]
+        try:
+            await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+    async def _stop_components(self) -> None:
+        """Close all components concurrently. Errors are logged but swallowed."""
+
+        async def _safe_close(component: Component) -> None:
+            with log_exceptions(
+                self.logger,
+                f"Error closing {type(component).__name__}",
+            ):
+                await component.close()
+
+        await asyncio.gather(*(_safe_close(c) for c in self._get_components()))
 
     def _end_tracing(self):
         if self._root_span is not None:
@@ -748,10 +782,7 @@ class Agent:
             await cancel_and_wait(self._metrics_broadcast_task)
             self._metrics_broadcast_task = None
 
-        # run stop on all subclasses
-        await self._apply("stop")
-        # run close on all subclasses
-        await self._apply("close")
+        await self._stop_components()
 
         # Disconnect from MCP servers
         if self.mcp_manager:

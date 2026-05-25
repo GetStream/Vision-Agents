@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Inworld AI integration for Vision Agents (TTS + Realtime WebRTC)"
 readme = "README.md"
 keywords = ["inworld", "TTS", "text-to-speech", "realtime", "webrtc", "AI", "voice agents", "agents"]
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",

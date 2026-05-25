@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Fish Audio TTS and STT integration for Vision Agents"
 readme = "README.md"
 keywords = ["fish-audio", "TTS", "STT", "text-to-speech", "speech-to-text", "AI", "voice agents", "agents"]
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
