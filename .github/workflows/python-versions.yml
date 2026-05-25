@@ -1,4 +1,4 @@
-name: Python compat
+name: Python compatibility check
 on:
   push:
     branches: [ "main" ]
@@ -16,7 +16,7 @@ on:
       - '.github/workflows/python-versions.yml'
 
 concurrency:
-  group: python-compat-${{ github.workflow }}-${{ github.ref }}
+  group: python-compatibility-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
