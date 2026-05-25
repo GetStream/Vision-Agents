@@ -2,8 +2,8 @@ import logging
 from typing import Any, Dict
 
 from dotenv import load_dotenv
-from llm import LLM
 from vision_agents.core import Agent, AgentLauncher, Runner, User
+from vision_agents.core.llm import LLM
 from vision_agents.core.utils.examples import get_weather_by_location
 from vision_agents.plugins import deepgram, elevenlabs, gemini, getstream
 
