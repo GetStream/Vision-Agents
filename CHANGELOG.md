@@ -1,3 +1,19 @@
+# Unreleased
+
+## New Features
+
+### Python 3.14 support (#582)
+
+`agents-core` and every plugin except `kokoro`, `smart_turn`, and `vogent` now advertise Python 3.14 support. `kokoro` and `smart_turn` pin `numpy<2.3`, which conflicts with `getstream[webrtc]`'s `numpy>=2.3.2` on 3.14. `vogent` pulls `vogent-turn==0.1.1`, which pins `onnxruntime-gpu==1.22.*` on Linux/Windows x86_64, and that has no `cp314` wheels.
+
+Bumps the minimum `getstream` to `>=3.4.0` — that's the first release containing the Python 3.14 wheel-availability fix (https://github.com/GetStream/stream-py/pull/253).
+
+## Bug Fixes
+
+### `smart_turn` and `vogent` `requires-python` raised to `>=3.11` (#582)
+
+Both plugins depend on `onnxruntime>=1.24.3`, which has no `cp310` wheels. Their metadata previously advertised `>=3.10`, so a 3.10 install would fail at resolution time. Bumping to `>=3.11` makes the published metadata honest.
+
 # v0.6.1
 
 ## Breaking Changes
@@ -16,7 +32,7 @@ Three internal events used only by the `heygen` plugin (`LLMResponseChunkEvent`,
 
 ### Event types cleanup (#552)
 
-Follow-up to the v0.6.0 inference-pipeline rewrite (#501).  
+Follow-up to the v0.6.0 inference-pipeline rewrite (#501).
 The events that used to carry audio / transcript / turn payloads are gone — that data now flows through
 `Stream[T]` outputs on STT, TTS, LLM, and Realtime. Only lifecycle / notification events remain on the event bus.
 

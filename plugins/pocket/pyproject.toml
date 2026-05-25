@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Pocket TTS integration for Vision Agents - lightweight CPU-based text-to-speech"
 readme = "README.md"
 keywords = ["pocket-tts", "TTS", "text-to-speech", "AI", "voice agents", "agents", "kyutai"]
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",

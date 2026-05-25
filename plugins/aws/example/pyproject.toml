@@ -1,7 +1,7 @@
 [project]
 name = "aws-bedrock-realtime-example"
 version = "0.0.0"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.12"
 
 # put only what this example needs
 dependencies = [
