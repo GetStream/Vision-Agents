@@ -1,4 +1,25 @@
-# Unreleased
+# v0.6.2
+
+## Breaking Changes
+
+### `heygen` plugin removed (#563)
+
+The `heygen` plugin, deprecated in v0.6.0 (#553), is now removed. Use
+`vision_agents.plugins.liveavatar.Avatar` instead — it targets the same product via the supported LITE-mode integration path.
+
+Three internal events used only by the `heygen` plugin (`LLMResponseChunkEvent`, `LLMResponseCompletedEvent`, `RealtimeAgentSpeechTranscriptionEvent`) were also removed from
+`vision_agents.core.llm.events`.
+
+### Unified plugin lifecycle via `Component` base class (#578)
+
+`LLM`, `STT`, `TTS`, `TurnDetector`, `EdgeTransport`, `Avatar` and `Processor` now inherit from a new
+`vision_agents.core.base.Component` base, which defines a uniform `start()` / `close()` lifecycle (both default to no-ops; subclasses override what they need).
+
+Concrete shape changes for out-of-tree plugins:
+
+- **`TurnDetector.stop` is renamed to `close`.** Plugins that subclassed `TurnDetector` and overrode `stop()` must rename the override; the agent no longer invokes `stop`. The base classes for vogent and smart_turn turn detectors were migrated in this release.
+- `Processor` and `EdgeTransport` no longer redeclare `close` as `@abstractmethod` — the abstract contract now comes from `Component`. Existing implementations that override `close` keep working unchanged.
+- `Component` inherits from `ABC` and keeps `ABCMeta`, so subclasses can continue to declare their own `@abstractmethod`s.
 
 ## New Features
 
@@ -6,25 +27,36 @@
 
 `agents-core` and every plugin except `kokoro`, `smart_turn`, and `vogent` now advertise Python 3.14 support. `kokoro` and `smart_turn` pin `numpy<2.3`, which conflicts with `getstream[webrtc]`'s `numpy>=2.3.2` on 3.14. `vogent` pulls `vogent-turn==0.1.1`, which pins `onnxruntime-gpu==1.22.*` on Linux/Windows x86_64, and that has no `cp314` wheels.
 
-Bumps the minimum `getstream` to `>=3.4.0` — that's the first release containing the Python 3.14 wheel-availability fix (https://github.com/GetStream/stream-py/pull/253).
+Bumps the minimum `getstream` to `>=3.4.0` — the first release containing the Python 3.14 wheel-availability fix (https://github.com/GetStream/stream-py/pull/253).
+
+### Faster agent startup via parallel component lifecycle (#578)
+
+`Agent.join()` now starts every component concurrently (`asyncio.gather`) instead of stacking their network connects one after another. On a realistic setup
+(Gemini LLM + ElevenLabs STT + Deepgram TTS + vogent + LemonSlice avatar) this cuts the lifecycle phase of `join()` from **~4.3 s to ~2.4 s (≈45% faster, ~1.9 s saved)**;
+the remaining time is the single slowest component (here, the LemonSlice RTC connect).
+
+Error handling is asymmetric and explicit:
+
+- **Startup is fail-fast.** If any component's `start()` raises, the failure is logged with the component class name, in-flight siblings are cancelled and awaited so no
+  half-open network connects leak, and `agent.join()` re-raises so the agent doesn't run half-initialised.
+- **Shutdown is best-effort.** A failing `close()` is logged via `log_exceptions` and swallowed so the remaining components still get a chance to release resources.
+
+Plugin authors: because lifecycle hooks now run concurrently, components must not assume sibling ordering during `start` / `close`. Audio and video frames are still dispatched to processors in list order.
+
+### Friendlier `vision-agents init` errors (#579)
+
+`vision-agents init` without an agent name now prints a message that says what's missing and shows an example, instead of Click's bare `Missing argument 'NAME'.`. The
+positional argument is renamed `AGENT_NAME` and documented in `--help`.
+
+### Richer `vision-agents init` scaffold (#581)
+
+Scaffolded projects now ship with a `tests/` directory backed by `vision_agents.testing` (`TestSession`, `LLMJudge`, multi-turn example) and pytest configured in `pyproject.toml`, plus a `Dockerfile` and `.dockerignore` for deployment. The README and the "next steps" hint switch from `uv run vision-agents agent run` to `uv run agent.py run` — same dispatch, but the command now mirrors what's in `agent.py` so the entrypoint is the file you actually edit.
 
 ## Bug Fixes
 
-### `smart_turn` and `vogent` `requires-python` raised to `>=3.11` (#582)
-
-Both plugins depend on `onnxruntime>=1.24.3`, which has no `cp310` wheels. Their metadata previously advertised `>=3.10`, so a 3.10 install would fail at resolution time. Bumping to `>=3.11` makes the published metadata honest.
-
-# v0.6.1
-
-## Breaking Changes
-
-### `heygen` plugin removed
-
-The `heygen` plugin, deprecated in v0.6.0 (#553), is now removed. Use
-`vision_agents.plugins.liveavatar.Avatar` instead — it targets the same product via the supported LITE-mode integration path.
-
-Three internal events used only by the `heygen` plugin (`LLMResponseChunkEvent`, `LLMResponseCompletedEvent`, `RealtimeAgentSpeechTranscriptionEvent`) were also removed from
-`vision_agents.core.llm.events`.
+- **Packaging**: stop double-packing CLI templates into the wheel — `hatchling` already includes the `.j2` files via the `packages` entry, so the extra `force-include` wrote each template twice and triggered `UserWarning: Duplicate name` during builds. (#571)
+- **Gemini default model**: `gemini-3.1-flash-lite-preview` was decommissioned upstream; replaced with `gemini-flash-lite-latest` in defaults, examples, tests, and docs. (#583)
+- **`smart_turn` and `vogent` `requires-python` raised to `>=3.11`**: both depend on `onnxruntime>=1.24.3`, which has no `cp310` wheels, so the previous `>=3.10` metadata was broken — a 3.10 install would fail at resolution time. (#582)
 
 # v0.6.1
 
