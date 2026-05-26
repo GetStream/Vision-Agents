@@ -15,7 +15,7 @@ from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 from .lemonslice_client import LemonSliceClient
-from .lemonslice_rtc_manager import LemonSliceRTCManager
+from .lemonslice_rtc_manager import StreamRTCManager
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def _task_done_callback(task: asyncio.Task[None]) -> None:
 class LemonSliceAvatar(Avatar):
     """LemonSlice avatar video and audio publisher.
 
-    Sends TTS audio to LemonSlice over LiveKit and receives synchronized
+    Sends TTS audio to LemonSlice over a Stream call and receives synchronized
     avatar video and audio back.
 
     For standard LLMs: LemonSlice provides both video and audio.
@@ -49,9 +49,9 @@ class LemonSliceAvatar(Avatar):
         idle_timeout: int | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
-        livekit_url: str | None = None,
-        livekit_api_key: str | None = None,
-        livekit_api_secret: str | None = None,
+        stream_api_key: str | None = None,
+        stream_api_secret: str | None = None,
+        stream_call_type: str = "default",
         width: int = 1280,
         height: int = 720,
         fps: int = 30,
@@ -66,9 +66,13 @@ class LemonSliceAvatar(Avatar):
             idle_timeout: Seconds before an idle session is closed.
             api_key: LemonSlice API key. Uses LEMONSLICE_API_KEY env var if not provided.
             base_url: LemonSlice API base URL override.
-            livekit_url: LiveKit server URL. Uses LIVEKIT_URL env var if not provided.
-            livekit_api_key: LiveKit API key. Uses LIVEKIT_API_KEY env var if not provided.
-            livekit_api_secret: LiveKit API secret. Uses LIVEKIT_API_SECRET env var if not provided.
+            stream_api_key: Stream API key. Uses STREAM_API_KEY env var if not provided.
+            stream_api_secret: Stream API secret. Uses STREAM_API_SECRET env var if not provided.
+            stream_call_type: Stream call type controlling the default feature set and
+                per-role permissions for the call. The built-in "default" type is meant
+                for 1:1/group video+audio calls: it enables audio, video, screensharing,
+                recording, HLS broadcasting, transcription and ringing, and gives
+                admins/hosts elevated permissions over regular participants.
             width: Output video width in pixels.
             height: Output video height in pixels.
             fps: Output video frame rate. Must be > 0.
@@ -94,13 +98,13 @@ class LemonSliceAvatar(Avatar):
             client_kwargs["base_url"] = base_url
 
         self._client = LemonSliceClient(**client_kwargs)
-        self._rtc_manager = LemonSliceRTCManager(
+        self._rtc_manager = StreamRTCManager(
             on_video=self._on_video_frame,
             on_audio=self._on_audio_frame,
             on_disconnect=self._on_disconnect,
-            livekit_url=livekit_url,
-            livekit_api_key=livekit_api_key,
-            livekit_api_secret=livekit_api_secret,
+            stream_api_secret=stream_api_secret,
+            stream_api_key=stream_api_key,
+            stream_call_type=stream_call_type,
         )
         self._sync = AVSynchronizer(
             width=width,
@@ -171,7 +175,10 @@ class LemonSliceAvatar(Avatar):
         await self._rtc_manager.connect(credentials)
         try:
             await self._client.create_session(
-                credentials.livekit_url, credentials.livekit_token
+                call_id=credentials.call_id,
+                call_type=credentials.call_type,
+                token=credentials.avatar_token,
+                api_key=credentials.api_key,
             )
         except Exception:
             await self._rtc_manager.close()

@@ -7,10 +7,8 @@ from vision_agents.plugins.lemonslice.lemonslice_avatar import LemonSliceAvatar
 def _make_avatar(**overrides) -> LemonSliceAvatar:
     default_kwargs = {
         "agent_id": "test-agent",
-        "api_key": "ls-test-key",
-        "livekit_url": "wss://test.livekit.cloud",
-        "livekit_api_key": "devkey",
-        "livekit_api_secret": "devsecret",
+        "stream_api_key": "key",
+        "stream_api_secret": "secret",
     }
     return LemonSliceAvatar(**{**default_kwargs, **overrides})
 
@@ -32,20 +30,13 @@ class TestLemonSliceAvatar:
         with pytest.raises(ValueError, match="API key required"):
             _make_avatar(api_key=None)
 
-    async def test_init_missing_livekit_url_raises(
+    async def test_init_missing_stream_secret_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.delenv("LIVEKIT_URL", raising=False)
-        with pytest.raises(ValueError, match="LiveKit URL required"):
-            _make_avatar(livekit_url=None)
-
-    async def test_init_missing_livekit_secret_raises(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.delenv("LIVEKIT_API_KEY", raising=False)
-        monkeypatch.delenv("LIVEKIT_API_SECRET", raising=False)
-        with pytest.raises(ValueError, match="LiveKit API key and secret required"):
-            _make_avatar(livekit_api_key=None, livekit_api_secret=None)
+        monkeypatch.delenv("STREAM_API_KEY", raising=False)
+        monkeypatch.delenv("STREAM_API_SECRET", raising=False)
+        with pytest.raises(ValueError, match="Stream API key and secret required"):
+            _make_avatar(stream_api_key=None, stream_api_secret=None)
 
     async def test_video_output(self):
         avatar = _make_avatar(width=640, height=480)

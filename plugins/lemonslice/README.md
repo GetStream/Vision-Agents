@@ -64,10 +64,9 @@ LEMONSLICE_AGENT_ID=your_agent_id
 # Or, instead of LEMONSLICE_AGENT_ID:
 # LEMONSLICE_AGENT_IMAGE_URL=https://example.com/avatar.png
 
-# LemonSlice uses LiveKit as a transport for audio and video
-LIVEKIT_URL=wss://your-livekit-server.com
-LIVEKIT_API_KEY=your_livekit_api_key
-LIVEKIT_API_SECRET=your_livekit_api_secret
+# LemonSlice uses Stream as the transport for audio and video
+STREAM_API_KEY=your_stream_api_key
+STREAM_API_SECRET=your_stream_api_secret
 ```
 
 ### Avatar Options
@@ -79,18 +78,19 @@ lemonslice.Avatar(
     agent_prompt=None,  # Prompt to influence avatar expressions/movements
     api_key=None,  # Optional: override LEMONSLICE_API_KEY env var
     idle_timeout=None,  # Session timeout in seconds
-    livekit_url=None,  # Optional: override LIVEKIT_URL env var
-    livekit_api_key=None,  # Optional: override LIVEKIT_API_KEY env var
-    livekit_api_secret=None,  # Optional: override LIVEKIT_API_SECRET env var
-    width=1920,  # Output video width in pixels
-    height=1080,  # Output video height in pixels
+    stream_api_key=None,  # Optional: override STREAM_API_KEY env var
+    stream_api_secret=None,  # Optional: override STREAM_API_SECRET env var
+    width=1280,  # Output video width in pixels
+    height=720,  # Output video height in pixels
+    fps=30,  # Output video frame rate
+    buffer_seconds=1.0,  # Max video buffer depth in seconds
 )
 ```
 
 ## How It Works
 
-1. **LemonSlice Session**: Creates a session via LemonSlice API, and joins the LiveKit room as a participant
-2. **Audio Forwarding**: TTS audio is captured and sent to LemonSlice via the room
+1. **LemonSlice Session**: Creates a session via LemonSlice API, and joins the Stream call as a participant
+2. **Audio Forwarding**: TTS audio is captured and sent to LemonSlice via the Stream call
 3. **Avatar Generation**: LemonSlice generates synchronized avatar video and audio
 4. **Video Streaming**: Avatar video is streamed to call participants via GetStream Edge
 
@@ -98,7 +98,6 @@ lemonslice.Avatar(
 
 - Python 3.10+
 - LemonSlice API key (get one at [lemonslice.com](https://lemonslice.com))
-- LiveKit server (cloud or self-hosted)
 - GetStream account for video calls
 - TTS provider (Cartesia, ElevenLabs, etc.) or Realtime LLM
 

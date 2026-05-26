@@ -2,39 +2,47 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from os import getenv
-from typing import Callable, Coroutine
+from typing import Any, Callable, Coroutine
 from uuid import uuid4
 
 import av
+from getstream import AsyncStream
+from getstream.video import rtc
+from getstream.video.async_call import Call
+from getstream.video.rtc.connection_manager import ConnectionManager
 from getstream.video.rtc.track_util import AudioFormat, FrameResampler, PcmData
-from livekit import api, rtc
-from PIL import Image
-from vision_agents.core.utils.utils import cancel_and_wait
+from vision_agents.core.utils.utils import cancel_and_wait, get_vision_agents_version
+
+from .track import AvatarInputTrack
 
 logger = logging.getLogger(__name__)
 
-_AUDIO_STREAM_TOPIC = "lk.audio_stream"
-_AVATAR_IDENTITY = "avatar"
-_PLUGIN_IDENTITY = "plugin"
-_SAMPLE_RATE = 16000
-_NUM_CHANNELS = 1
+_AVATAR_AUDIO_SAMPLE_RATE = 16000
+_AVATAR_AUDIO_CHANNELS = 1
+_CUSTOM_EVENT_END_UTTERANCE = "lemonslice.end_utterance"
+_CUSTOM_EVENT_INTERRUPT = "lemonslice.interrupt"
 
 
 @dataclass(frozen=True)
-class ConnectionCredentials:
-    """All credentials needed for a LemonSlice LiveKit session."""
+class StreamConnectionCredentials:
+    """Credentials a LemonSlice avatar needs to join a Stream call."""
 
-    room_name: str
-    agent_token: str
-    livekit_url: str
-    livekit_token: str
+    api_key: str
+    call_id: str
+    call_type: str
+    avatar_user_id: str
+    avatar_token: str
 
 
-class LemonSliceRTCManager:
-    """Manages a LiveKit room connection for LemonSlice avatar streaming.
+class StreamRTCManager:
+    """Stream-backed RTC manager for the LemonSlice avatar.
 
-    Creates a LiveKit room, sends TTS audio to LemonSlice via data streams,
-    and receives synchronized avatar video and audio tracks.
+    Creates a Stream call, mints a call-scoped token for the avatar, joins as
+    the plugin participant, publishes outgoing TTS audio, and dispatches
+    incoming avatar audio and video to the supplied callbacks.
+
+    flush() emits end-of-utterance RPC event to the avatar call.
+    interrupt() emits the "interrupt" RPC event to stop the current avatar's utterance
     """
 
     def __init__(
@@ -42,240 +50,224 @@ class LemonSliceRTCManager:
         on_video: Callable[[av.VideoFrame], Coroutine[None, None, None]],
         on_audio: Callable[[PcmData], Coroutine[None, None, None]],
         on_disconnect: Callable[[], Coroutine[None, None, None]],
-        livekit_url: str | None = None,
-        livekit_api_key: str | None = None,
-        livekit_api_secret: str | None = None,
+        stream_api_key: str | None = None,
+        stream_api_secret: str | None = None,
+        stream_call_type: str = "default",
     ):
-        self._livekit_url = livekit_url or getenv("LIVEKIT_URL") or ""
-        if not self._livekit_url:
+        """Create the RTC manager.
+
+        Args:
+            on_video: Async callback invoked for each avatar video frame.
+            on_audio: Async callback invoked for each avatar audio chunk.
+            on_disconnect: Async callback invoked when the avatar leaves or the call ends.
+            stream_api_key: Stream API key. Uses STREAM_API_KEY env var if not provided.
+            stream_api_secret: Stream API secret. Uses STREAM_API_SECRET env var if not provided.
+            stream_call_type: Stream call type controlling the default feature set and
+                per-role permissions for the call. The built-in "default" type is meant
+                for 1:1/group video+audio calls: it enables audio, video, screensharing,
+                recording, HLS broadcasting, transcription and ringing, and gives
+                admins/hosts elevated permissions over regular participants.
+        """
+        stream_api_key = stream_api_key or getenv("STREAM_API_KEY")
+        stream_api_secret = stream_api_secret or getenv("STREAM_API_SECRET")
+
+        if not stream_api_key or not stream_api_secret:
             raise ValueError(
-                "LiveKit URL required. Set LIVEKIT_URL environment variable "
-                "or pass livekit_url parameter."
+                "Stream API key and secret required. Set STREAM_API_KEY and "
+                "STREAM_API_SECRET environment variables or pass them as parameters."
             )
 
-        self._livekit_api_key = livekit_api_key or getenv("LIVEKIT_API_KEY") or ""
-        self._livekit_api_secret = (
-            livekit_api_secret or getenv("LIVEKIT_API_SECRET") or ""
-        )
-        if not self._livekit_api_key or not self._livekit_api_secret:
-            raise ValueError(
-                "LiveKit API key and secret required. Set LIVEKIT_API_KEY and "
-                "LIVEKIT_API_SECRET environment variables or pass them as parameters."
-            )
+        self._stream_api_key = stream_api_key
+        self._stream_api_secret = stream_api_secret
+        self._stream_call_type = stream_call_type
 
         self._on_video = on_video
         self._on_audio = on_audio
         self._on_disconnect = on_disconnect
 
-        self._room: rtc.Room | None = None
-        self._stream_writer: rtc.ByteStreamWriter | None = None
+        version = get_vision_agents_version()
+        client_kwargs: dict[str, Any] = {
+            "api_key": self._stream_api_key,
+            "api_secret": self._stream_api_secret,
+            "user_agent": f"stream-vision-agents-{version}",
+        }
+        self._client = AsyncStream(**client_kwargs)
+
+        self._plugin_user_id = f"plugin-{uuid4()}"
+        self._avatar_user_id = f"avatar-{uuid4()}"
+
+        self._call: Call | None = None
+        self._connection: ConnectionManager | None = None
+        self._input_track: AvatarInputTrack | None = None
         self._resampler = FrameResampler(
             rate=_SAMPLE_RATE, layout="mono", format="s16", frame_size=0
         )
         self._connected = False
+        self._event_id = 0
         self._tasks: set[asyncio.Task[None]] = set()
 
     @property
     def is_connected(self) -> bool:
         return self._connected
 
-    def generate_credentials(self) -> ConnectionCredentials:
-        """Generate credentials for a new LiveKit room session.
-
-        Returns:
-            Credentials for both the agent and the LemonSlice participant.
-        """
-        room_name = f"lemonslice-{uuid4()}"
-        agent_token = self._generate_token(room_name, _PLUGIN_IDENTITY, kind="agent")
-        lemonslice_token = self._generate_token(
-            room_name, _AVATAR_IDENTITY, kind="agent"
+    def generate_credentials(self) -> StreamConnectionCredentials:
+        call_id = f"lemonslice-{uuid4()}"
+        call_cid = f"{self._stream_call_type}:{call_id}"
+        avatar_token = self._client.create_call_token(
+            self._avatar_user_id,
+            call_cids=[call_cid],
+            expiration=3600,
         )
-        return ConnectionCredentials(
-            room_name=room_name,
-            agent_token=agent_token,
-            livekit_url=self._livekit_url,
-            livekit_token=lemonslice_token,
+        return StreamConnectionCredentials(
+            api_key=self._stream_api_key,
+            call_id=call_id,
+            call_type=self._stream_call_type,
+            avatar_user_id=self._avatar_user_id,
+            avatar_token=avatar_token,
         )
 
-    async def connect(self, credentials: ConnectionCredentials) -> None:
-        """Connect to a LiveKit room.
+    async def connect(self, credentials: StreamConnectionCredentials) -> None:
+        """Join the Stream call and publish an outgoing audio track."""
+        await self._client.create_user(
+            id=self._plugin_user_id, name=self._plugin_user_id
+        )
+        await self._client.create_user(
+            id=self._avatar_user_id, name=self._avatar_user_id
+        )
 
-        Args:
-            credentials: Connection credentials from generate_credentials().
-        """
-        room = rtc.Room()
+        call = self._client.video.call(credentials.call_type, credentials.call_id)
+        await call.get_or_create(data={"created_by_id": self._plugin_user_id})
+        self._call = call
 
-        @room.on("connected")
-        def on_connected():
-            logger.info("Room connected")
-
-        @room.on("participant_connected")
-        def on_participant_connected(participant: rtc.RemoteParticipant):
-            if participant.identity == _AVATAR_IDENTITY:
-                logger.info("LemonSlice avatar entered the room")
-
-        @room.on("track_subscribed")
-        def on_track_subscribed(
-            track: rtc.Track,
-            publication: rtc.RemoteTrackPublication,
-            participant: rtc.RemoteParticipant,
-        ) -> None:
-            if participant.identity == _AVATAR_IDENTITY:
-                if track.kind == rtc.TrackKind.KIND_VIDEO:
-                    logger.info("Received video track from LemonSlice")
-                    video_stream = rtc.VideoStream(track)
-                    self._create_task(self._consume_video(video_stream))
-                elif track.kind == rtc.TrackKind.KIND_AUDIO:
-                    logger.info("Received audio track from LemonSlice")
-                    audio_stream = rtc.AudioStream(
-                        track, sample_rate=48000, num_channels=2
-                    )
-                    self._create_task(self._consume_audio(audio_stream))
-
-        @room.on("participant_disconnected")
-        def on_participant_disconnected(participant: rtc.RemoteParticipant) -> None:
-            logger.info(
-                f"Participant disconnected: {participant.identity}; "
-                f"reason: {participant.disconnect_reason}"
+        subscription_config = SubscriptionConfig(
+            default=TrackSubscriptionConfig(
+                track_types=[
+                    StreamTrackType.TRACK_TYPE_VIDEO,
+                    StreamTrackType.TRACK_TYPE_AUDIO,
+                ]
             )
+        )
+
+        connection = await rtc.join(
+            call,
+            self._plugin_user_id,
+            subscription_config=subscription_config,
+        )
+        self._connection = connection
+
+        input_track = AvatarInputTrack(
+            sample_rate=_AVATAR_AUDIO_SAMPLE_RATE,
+            channels=_AVATAR_AUDIO_CHANNELS,
+        )
+        self._input_track = input_track
+
+        @connection.on("track_added")
+        async def on_track_added(track_id: str, kind: str, user: Any) -> None:
+            if user is None or user.user_id != self._avatar_user_id:
+                return
+
+            if kind == "video":
+                logger.info("Received video track from LemonSlice avatar")
+                track = connection.subscriber_pc.add_track_subscriber(track_id)
+                if track is not None:
+                    self._create_task(self._consume_video(track))
+
+        @connection.on("audio")
+        async def on_audio(pcm: PcmData) -> None:
+            participant = pcm.participant
+            if participant is None or participant.user_id != self._avatar_user_id:
+                return
+            await self._on_audio(pcm)
+
+        @connection.on("participant_left")
+        async def on_participant_left(event: events_pb2.ParticipantLeft) -> None:
+            if event.participant.user_id != self._avatar_user_id:
+                return
+            logger.info("LemonSlice avatar left the call")
             self._connected = False
             self._create_task(self._on_disconnect())
-            if self._room is not None:
-                self._create_task(self._room.disconnect())
 
-        @room.on("disconnected")
-        def on_disconnected(reason: str) -> None:
-            # The "disconnected" callback may be triggered multiple times
-            # because we disconnect ourselves when the avatar leaves the call.
-            if self._connected:
-                logger.info(f"Room disconnected; reason: {reason}")
-                self._connected = False
-                self._create_task(self._on_disconnect())
+        @connection.on("call_ended")
+        async def on_call_ended(event: Any) -> None:
+            if not self._connected:
+                return
+            logger.info("Stream call ended")
+            self._connected = False
+            self._create_task(self._on_disconnect())
 
-        logger.info(f"Connecting to LiveKit room {credentials.room_name}")
-        await room.connect(self._livekit_url, credentials.agent_token)
-        logger.info(f"Connected to LiveKit room {credentials.room_name}")
-
-        room.local_participant.register_rpc_method(
-            "lk.playback_finished", self._rpc_on_playback_finished
+        logger.info(
+            f"Joining Stream call {credentials.call_type}:{credentials.call_id}"
         )
-
-        self._room = room
+        await connection.__aenter__()
+        await connection.add_tracks(audio=input_track)
+        await connection.republish_tracks()
         self._connected = True
+        logger.info("Connected to Stream call")
 
     async def send_audio(self, pcm: PcmData) -> None:
-        """Resample a PCM audio chunk to 16 kHz mono and send it to LemonSlice."""
-        for frame in self._resampler.resample(pcm):
-            await self._write_frame(frame)
-
-    async def _write_frame(self, frame: av.AudioFrame) -> None:
-        """Write one resampled audio frame to the LemonSlice byte stream."""
-        if self._room is None or not self._room.isconnected():
+        """Push a PCM chunk into the outgoing audio track."""
+        if self._input_track is None or not self._connected:
             return
-
-        if self._stream_writer is None:
-            self._stream_writer = await self._room.local_participant.stream_bytes(
-                name=f"AUDIO_{uuid4()}",
-                topic=_AUDIO_STREAM_TOPIC,
-                destination_identities=[_AVATAR_IDENTITY],
-                attributes={
-                    "sample_rate": str(_SAMPLE_RATE),
-                    "num_channels": str(_NUM_CHANNELS),
-                },
-            )
-            logger.debug("Opened audio byte stream to LemonSlice")
-
-        await self._stream_writer.write(frame.to_ndarray().tobytes())
+        await self._input_track.write(pcm)
 
     async def flush(self) -> None:
-        """Flush the resampler tail and close the byte stream (segment end)."""
-        for frame in self._resampler.flush():
-            await self._write_frame(frame)
-        if self._stream_writer is not None:
-            await self._stream_writer.aclose()
-            self._stream_writer = None
-            logger.debug("Closed audio byte stream (segment end)")
+        """Signal end of a TTS segment to the avatar via a custom call event."""
+        if self._call is None or not self._connected or self._input_track is None:
+            return
+        pts = await self._input_track.pts()
+        await self._call.send_call_event(
+            user_id=self._plugin_user_id,
+            custom={
+                "type": _CUSTOM_EVENT_END_UTTERANCE,
+                "pts": pts,
+                "event_id": self._next_event_id(),
+            },
+        )
 
     async def interrupt(self) -> None:
-        """Send clear_buffer RPC to interrupt avatar playback."""
-        if self._room is None or not self._room.isconnected():
+        """Clear pending outgoing audio and signal the avatar to stop playback."""
+        if self._input_track is not None:
+            await self._input_track.flush()
+        if self._call is None or not self._connected:
             return
-        try:
-            await self._room.local_participant.perform_rpc(
-                destination_identity=_AVATAR_IDENTITY,
-                method="lk.clear_buffer",
-                payload="",
-            )
-        except rtc.RpcError:
-            logger.warning("clear_buffer RPC failed", exc_info=True)
+        await self._call.send_call_event(
+            user_id=self._plugin_user_id,
+            custom={
+                "type": _CUSTOM_EVENT_INTERRUPT,
+                "event_id": self._next_event_id(),
+            },
+        )
 
     async def close(self) -> None:
-        """Disconnect from the LiveKit room and clean up resources."""
+        """Leave the Stream call and clean up resources."""
         try:
-            if self._stream_writer is not None:
-                await self._stream_writer.aclose()
-
             await cancel_and_wait(*self._tasks)
             self._tasks.clear()
 
-            if self._room is not None:
-                await self._room.disconnect()
+            if self._connection is not None:
+                await self._connection.leave()
+
+            if self._call is not None:
+                await self._call.end()
+            await self._client.aclose()
         finally:
-            self._room = None
-            self._stream_writer = None
+            self._connection = None
+            self._call = None
+            self._input_track = None
             self._connected = False
-            logger.debug("LemonSlice RTC manager closed")
+            logger.debug("LemonSlice Stream RTC manager closed")
 
-    async def _consume_video(self, video_stream: rtc.VideoStream) -> None:
-        async for event in video_stream:
-            lk_frame = event.frame.convert(rtc.VideoBufferType.RGBA)
-            img = Image.frombuffer(
-                "RGBA", (lk_frame.width, lk_frame.height), lk_frame.data
-            )
-            frame = av.VideoFrame.from_image(img)
-            await self._on_video(frame)
-
-    async def _consume_audio(self, audio_stream: rtc.AudioStream) -> None:
-        async for event in audio_stream:
-            frame = event.frame
-            pcm = PcmData.from_bytes(
-                frame.data,  # type: ignore[arg-type]
-                sample_rate=frame.sample_rate,
-                format=AudioFormat.S16,
-                channels=frame.num_channels,
-            )
-            await self._on_audio(pcm)
-
-    def _rpc_on_playback_finished(self, data: rtc.RpcInvocationData) -> str:
-        logger.debug(
-            "playback finished event received",
-            extra={"caller_identity": data.caller_identity},
-        )
-        return "ok"
-
-    def _generate_token(
-        self,
-        room_name: str,
-        identity: str,
-        kind: api.AccessToken.ParticipantKind,
-    ) -> str:
-        token = (
-            api.AccessToken(self._livekit_api_key, self._livekit_api_secret)
-            .with_kind(kind)
-            .with_identity(identity)
-            .with_name(identity)
-            .with_grants(
-                api.VideoGrants(
-                    room_join=True,
-                    room=room_name,
-                    can_publish=True,
-                    can_subscribe=True,
-                )
-            )
-        )
-        return token.to_jwt()
+    async def _consume_video(self, track: aiortc.mediastreams.MediaStreamTrack) -> None:
+        while True:
+            frame = await track.recv()
+            if isinstance(frame, av.VideoFrame):
+                await self._on_video(frame)
 
     def _create_task(self, coro: Coroutine[None, None, None]) -> None:
         task: asyncio.Task[None] = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    def _next_event_id(self) -> int:
+        self._event_id += 1
+        return self._event_id
