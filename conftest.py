@@ -64,6 +64,9 @@ def blockbuster(request) -> Iterator[BlockBuster | None]:
                 # Some libs use "importlib_metadata" to determine the current version
                 func.can_block_in("importlib_metadata/__init__.py", "mtime")
                 func.can_block_in("importlib_metadata/__init__.py", "version")
+                # Same calls land in the stdlib's importlib.metadata on Python 3.10+.
+                func.can_block_in("importlib/metadata/__init__.py", "mtime")
+                func.can_block_in("importlib/metadata/__init__.py", "version")
 
             # Allow Python's standard logging which is inherently synchronous.
             if "io.TextIOWrapper.write" in bb.functions:

@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "decart>=0.0.34",
+    "decart>=0.0.34,<0.0.36",
 ]
 
 [project.urls]
@@ -38,4 +38,3 @@ dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
 ]
-

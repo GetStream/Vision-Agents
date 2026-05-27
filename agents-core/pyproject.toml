@@ -15,13 +15,14 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
     "Operating System :: OS Independent",
 ]
 
 requires-python = ">=3.10"
 dependencies = [
-    "getstream[webrtc,telemetry]>=3.3.4,<4",
+    "getstream[webrtc,telemetry]>=3.4.0,<4",
     "aiortc>=1.14.0,<1.15.0",
     "av>=14.2.0, <17",
     "python-dotenv>=1.1.1",
@@ -53,7 +54,6 @@ deepgram = ["vision-agents-plugins-deepgram"]
 elevenlabs = ["vision-agents-plugins-elevenlabs"]
 gemini = ["vision-agents-plugins-gemini"]
 getstream = ["vision-agents-plugins-getstream"]
-heygen = ["vision-agents-plugins-heygen"]
 lemonslice = ["vision-agents-plugins-lemonslice"]
 inworld = ["vision-agents-plugins-inworld"]
 kokoro = ["vision-agents-plugins-kokoro"]
@@ -94,7 +94,6 @@ all-plugins = [
     "vision-agents-plugins-elevenlabs",
     "vision-agents-plugins-gemini",
     "vision-agents-plugins-getstream",
-    "vision-agents-plugins-heygen",
     "vision-agents-plugins-lemonslice",
     "vision-agents-plugins-inworld",
     "vision-agents-plugins-kokoro",

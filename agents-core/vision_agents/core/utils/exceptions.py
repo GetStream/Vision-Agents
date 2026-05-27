@@ -9,7 +9,7 @@ from vision_agents.core.utils.logging import logger
 
 @contextmanager
 def log_exceptions(
-    logger: logging.Logger,
+    logger: logging.Logger | logging.LoggerAdapter,
     message: str,
     *exceptions: type[Exception],
     reraise: bool = False,

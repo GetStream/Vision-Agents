@@ -25,20 +25,19 @@ import uuid
 from pathlib import Path
 
 import uvicorn
-from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse
-
-from vision_agents.core import User, Agent
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+from vision_agents.core import Agent, User
 from vision_agents.plugins import (
-    getstream,
-    gemini,
-    twilio,
-    elevenlabs,
     deepgram,
+    elevenlabs,
+    gemini,
+    getstream,
     turbopuffer,
     qdrant,
+    twilio,
 )
 
 logger = logging.getLogger(__name__)

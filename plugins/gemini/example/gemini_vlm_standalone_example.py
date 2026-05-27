@@ -22,7 +22,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MODEL = "gemini-3.1-flash-lite-preview"
+MODEL = "gemini-flash-lite-latest"
 
 
 def capture_webcam_frames(count: int = 3) -> list[av.VideoFrame]:

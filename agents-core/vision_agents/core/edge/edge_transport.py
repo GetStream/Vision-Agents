@@ -5,6 +5,7 @@ import aiortc
 from getstream.video.rtc import AudioStreamTrack
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.observability import MetricsCollector
+from vision_agents.core.base import Component
 
 from .call import Call
 from .events import (
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 T_Call = TypeVar("T_Call", bound=Call)
 
 
-class EdgeTransport(abc.ABC, Generic[T_Call]):
+class EdgeTransport(Component, Generic[T_Call]):
     """Abstract base class for edge transports.
 
     Required Events (implementations must emit these):
@@ -79,15 +80,6 @@ class EdgeTransport(abc.ABC, Generic[T_Call]):
 
         Returns:
             AudioStreamTrack: A track that can be used to stream audio data.
-        """
-        pass
-
-    @abc.abstractmethod
-    async def close(self):
-        """Close the transport and clean up all resources.
-
-        This should disconnect from any active calls, release network resources,
-        and perform any necessary cleanup.
         """
         pass
 

@@ -5,11 +5,12 @@ import aiortc
 from vision_agents.core.agents.inference import AudioOutputStream
 from vision_agents.core.events import EventManager
 from vision_agents.core.observability import MetricsCollector
+from vision_agents.core.base import Component
 
 logger = logging.getLogger(__name__)
 
 
-class Avatar(abc.ABC):
+class Avatar(Component):
     """Base class for avatar plugins (passthrough mode).
 
     Avatars consume the agent's audio output and produce a synced video
@@ -32,7 +33,7 @@ class Avatar(abc.ABC):
         - ``attach_audio_input(stream)`` is called during ``Agent.__init__``.
         - ``start()`` is called during ``Agent.join()`` to open the
           provider connection and begin consuming the input stream.
-        - ``stop()`` is called during ``Agent.close()`` for teardown.
+        - ``close()`` is called during ``Agent.close()`` for teardown.
         - ``interrupt()`` may be called at any time to stop the in-flight
           utterance at the provider.
     """
@@ -82,7 +83,3 @@ class Avatar(abc.ABC):
         """
         Start consuming the input stream.
         """
-
-    @abc.abstractmethod
-    async def close(self) -> None:
-        """Tear down the provider connection and cancel any consumer tasks."""
