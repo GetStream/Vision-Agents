@@ -16,8 +16,10 @@ async def rag():
     collection = f"test-rag-{uuid.uuid4().hex[:8]}"
     rag = QdrantRAG(collection=collection)
     yield rag
-    await rag.clear()
-    await rag.close()
+    try:
+        await rag.clear()
+    finally:
+        await rag.close()
 
 
 @pytest.fixture

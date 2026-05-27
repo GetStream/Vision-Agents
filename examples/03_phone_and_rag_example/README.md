@@ -1,4 +1,4 @@
-# Phone & RAG example with Twilio, Stream and Turbopuffer/Qdrant
+# Phone & RAG example with Twilio, Stream and RAG (Gemini/Turbopuffer/Qdrant)
 
 This example shows you how easy it is to build both inbound and outbound calling agents.
 It uses Twilio for calling, Stream for video edge, and either Gemini, Turbopuffer or Qdrant for RAG.
