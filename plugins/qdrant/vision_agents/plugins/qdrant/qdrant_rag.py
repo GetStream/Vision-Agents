@@ -99,6 +99,7 @@ class QdrantRAG(RAG):
 
         all_chunks: list[str] = []
         chunk_sources: list[tuple[str, int]] = []
+        indexed_sources: list[str] = []
 
         for doc in documents:
             chunks = self._splitter.split_text(doc.text)
@@ -108,7 +109,7 @@ class QdrantRAG(RAG):
             for i, chunk in enumerate(chunks):
                 all_chunks.append(chunk)
                 chunk_sources.append((doc.source, i))
-            self._indexed_files.append(doc.source)
+            indexed_sources.append(doc.source)
 
         if not all_chunks:
             return 0
@@ -129,6 +130,7 @@ class QdrantRAG(RAG):
             ],
         )
 
+        self._indexed_files.extend(indexed_sources)
         logger.info(f"Indexed {len(all_chunks)} chunks from {len(documents)} documents")
         return len(all_chunks)
 
@@ -223,5 +225,9 @@ async def create_rag(
         chunk_overlap=chunk_overlap,
         cloud_inference=cloud_inference,
     )
-    await rag.add_directory(knowledge_dir, extensions=extensions)
+    try:
+        await rag.add_directory(knowledge_dir, extensions=extensions)
+    except Exception:
+        await rag.close()
+        raise
     return rag

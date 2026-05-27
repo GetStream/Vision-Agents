@@ -61,6 +61,11 @@ jobs:
   test:
     name: Test "${{ inputs.marker }}"
     runs-on: ubuntu-latest
+    services:
+      qdrant:
+        image: qdrant/qdrant
+        ports:
+          - 6333:6333
     env:
       ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

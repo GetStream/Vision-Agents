@@ -180,7 +180,11 @@ async def create_agent() -> Agent:
     instructions = """Read the instructions in @instructions.md"""
 
     if RAG_BACKEND in ("turbopuffer", "qdrant"):
-        llm = gemini.LLM("gemini-3.1-flash-lite-preview")
+        if rag is None:
+            raise RuntimeError(
+                f"RAG backend '{RAG_BACKEND}' is selected but not initialized."
+            )
+        llm = gemini.LLM("gemini-flash-lite-latest")
 
         @llm.register_function(
             description="Search Stream's product knowledge base for detailed information about Chat, Video, Feeds, and Moderation APIs."
@@ -190,7 +194,7 @@ async def create_agent() -> Agent:
 
     else:
         llm = gemini.LLM(
-            "gemini-3.1-flash-lite-preview",
+            "gemini-flash-lite-latest",
             tools=[gemini.tools.FileSearch(file_search_store)],
         )
 
