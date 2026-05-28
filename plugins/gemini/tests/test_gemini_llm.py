@@ -1,5 +1,4 @@
 import os
-from typing import Any
 
 import pytest
 from dotenv import load_dotenv
@@ -119,7 +118,7 @@ class TestGeminiLLM:
             def __init__(self) -> None:
                 self.received: list[tuple[tuple, dict]] = []
 
-            async def send_message_stream(self, *args: Any, **kwargs: Any):
+            async def send_message_stream(self, *args: object, **kwargs: object):
                 message = args[0] if args else kwargs.get("message")
                 # mirror google-genai's t_parts() guard
                 if isinstance(message, list) and not message:
