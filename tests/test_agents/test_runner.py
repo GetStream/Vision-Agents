@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -43,6 +43,7 @@ def agent_launcher_factory():
         async def create_agent(**kwargs) -> Agent:
             stream_edge_mock = MagicMock()
             stream_edge_mock.events = EventManager()
+            stream_edge_mock.close = AsyncMock()
 
             return Agent(
                 llm=DummyLLM(),
