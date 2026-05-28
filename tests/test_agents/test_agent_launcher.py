@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 import redis.asyncio as redis
@@ -53,6 +53,7 @@ class DummyLLM(LLM, Warmable[bool]):
 async def stream_edge_mock() -> MagicMock:
     mock = MagicMock()
     mock.events = EventManager()
+    mock.close = AsyncMock()
     return mock
 
 
