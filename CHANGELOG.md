@@ -1,3 +1,11 @@
+# Unreleased
+
+## Bug Fixes
+
+### `gemini` plugin: crash on duplicate follow-up tool calls
+
+`GeminiLLM.simple_response` crashed with `ValueError('content parts are required.')` when the model echoed an already-executed function call in a follow-up turn. `_dedup_and_execute` filtered it out, leaving the follow-up `chat.send_message_stream(parts=[], ...)` with an empty list, which google-genai rejects. The multi-hop loop now exits cleanly when every requested call is a duplicate.
+
 # v0.6.2
 
 ## Breaking Changes
