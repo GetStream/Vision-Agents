@@ -131,7 +131,8 @@ class TestGeminiLLM:
 
                 return _iter()
 
-        llm.chat = _FakeChat()
+        fake = _FakeChat()
+        llm.chat = fake
 
         try:
             async for _ in llm.simple_response("call probe"):
@@ -140,6 +141,12 @@ class TestGeminiLLM:
             if "content parts are required" in str(exc):
                 pytest.fail(f"empty-parts bug regressed: {exc}")
             raise
+
+        # Initial text turn + exactly one follow-up with the tool result.
+        # A third call would mean we sent parts=[] (the bug).
+        assert len(fake.received) == 2
+        follow_up_args, _ = fake.received[1]
+        assert follow_up_args and follow_up_args[0], "follow-up parts must be non-empty"
 
 
 @pytest.mark.integration
