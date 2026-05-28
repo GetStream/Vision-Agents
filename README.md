@@ -115,6 +115,15 @@ Check out the full docs at [VisionAgents.ai](https://visionagents.ai/).
 | <br><h3>Custom Video Models (Roboflow, YOLO, and More)</h3>Train and run custom computer vision models for security monitoring, moderation, and other domain-specific workflows.<br><br>• Bring your own CV models<br>• Real-time moderation pipelines<br>• Security and detection use cases<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/11_moderation_example) | <img src="assets/demo_gifs/security_camera.gif" width="320" alt="Custom Video Models Demo">          |
 | <br><h3>Tools, MCP, and Phone Calling</h3>Connect external APIs and services so agents can validate data and take real-world actions during live conversations.<br><br>• MCP and function calling support<br>• Twilio-based phone workflows<br>• Real-time fraud response automation<br><br> [>Phone + RAG example](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) · [>Fraud workflow example](https://github.com/GetStream/Vision-Agents/tree/main/plugins/openai/examples/nemotron_example) | <img src="assets/demo_gifs/fraud_detection.gif" width="320" alt="Tools and Phone Demo"> |
 
+## Community highlights
+
+More involved demos built by the community and the Stream team - full applications that go beyond the in-repo examples and show what's possible with Vision Agents in production.
+
+Got a demo you'd like featured? Open a PR or reach out on [Discord](https://discord.gg/RkhX9PxMS6).
+
+- [Sales Assistant Demo](https://github.com/GetStream/vision-agents-sales-assistant-demo) — a real-time AI meeting coach that lives on your desktop as a translucent macOS overlay. Built on Vision Agents and Flutter.
+
+
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md)
