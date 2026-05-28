@@ -22,7 +22,6 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-CORE_EXTRAS_ALL_SECTION = "all-plugins"
 CORE_EXTRAS_DEV_SECTION = "dev"
 CORE_PACKAGE_NAME = "agents-core"
 PLUGINS_DIR = "plugins"
@@ -64,21 +63,21 @@ def cli(ctx):
 def test_integration():
     """Run integration tests (requires secrets in place)."""
     click.echo("Running integration tests...")
-    run("uv run py.test -m integration")
+    run("uv run pytest -m integration")
 
 
 @cli.command()
 def test():
     """Run all tests except integration tests."""
     click.echo("Running unit tests...")
-    run("uv run py.test -m 'not integration'")
+    run("uv run pytest -m 'not integration'")
 
 
 @cli.command()
 def test_plugins():
     """Run plugin tests (TODO: not quite right. uv env is different for each plugin)."""
     click.echo("Running plugin tests...")
-    run("uv run py.test plugins/*/tests/*.py -m 'not integration'")
+    run("uv run pytest plugins/*/tests/*.py -m 'not integration'")
 
 
 @cli.command()
@@ -112,7 +111,6 @@ def mypy_plugins():
 
 
 class CoreDependencies(NamedTuple):
-    all: list[str]
     plugins: dict[str, list[str]]
 
 
@@ -145,15 +143,12 @@ def _get_core_optional_dependencies() -> CoreDependencies:
     optionals: dict[str, list[str]] = pyproject.get("project", {}).get(
         "optional-dependencies", {}
     )
-    optionals_all = [
-        _requirement_name(r) for r in optionals.get(CORE_EXTRAS_ALL_SECTION, [])
-    ]
     optionals_plugins = {
         k: [_requirement_name(r) for r in v]
         for k, v in optionals.items()
-        if k not in (CORE_EXTRAS_ALL_SECTION, CORE_EXTRAS_DEV_SECTION)
+        if k not in (CORE_EXTRAS_DEV_SECTION,)
     }
-    return CoreDependencies(all=optionals_all, plugins=optionals_plugins)
+    return CoreDependencies(plugins=optionals_plugins)
 
 
 @cli.command(name="validate-extras")
@@ -173,20 +168,6 @@ def validate_extra_dependencies():
 
     # Get optional dependencies for "agents-core" package.
     core_optional_dependencies = _get_core_optional_dependencies()
-
-    # Validate that "agents-core" has "all-plugins" section in optional dependencies
-    if not core_optional_dependencies.all:
-        raise click.ClickException(
-            f'Optional dependencies for "{CORE_PACKAGE_NAME}" are missing the "{CORE_EXTRAS_ALL_SECTION}" section.'
-        )
-
-    # Validate that all available plugins are listed in "all-plugins"
-    not_included_in_all = set(plugins_packages) - set(core_optional_dependencies.all)
-    if not_included_in_all:
-        raise click.ClickException(
-            f'The following plugins are not included in the "{CORE_EXTRAS_ALL_SECTION}" '
-            f'section in "{CORE_PACKAGE_NAME}" package: {", ".join(not_included_in_all)}"'
-        )
 
     # Validate that every plugin has a dedicated section in core's optional dependencies
     plugins_sections_reversed = {
@@ -295,7 +276,7 @@ def check():
 
     # Run unit tests
     click.echo("\n=== 5. Unit Tests ===")
-    run("uv run py.test -m 'not integration' -n auto")
+    run("uv run pytest -m 'not integration'")
 
     click.echo("\n✅ All checks passed!")
 
