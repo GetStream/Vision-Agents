@@ -6,6 +6,7 @@ A voice AI agent that answers phone calls via Twilio with RAG capabilities.
 RAG Backend Configuration (via RAG_BACKEND environment variable):
 - "gemini" (default): Uses Gemini's built-in File Search
 - "turbopuffer": Uses TurboPuffer + LangChain with function calling
+- "qdrant": Uses Qdrant hybrid search with function calling
 
 Flow:
 1. Twilio triggers webhook on /twilio/voice, which starts preparing the call
@@ -35,6 +36,7 @@ from vision_agents.plugins import (
     gemini,
     getstream,
     turbopuffer,
+    qdrant,
     twilio,
 )
 
@@ -150,6 +152,16 @@ async def create_rag_from_directory():
         logger.info(
             f"✅ TurboPuffer RAG ready with {len(rag._indexed_files)} documents indexed"
         )
+    elif RAG_BACKEND == "qdrant":
+        logger.info(f"📚 Initializing Qdrant RAG from {KNOWLEDGE_DIR}")
+        rag = await qdrant.create_rag(
+            collection="stream-product-knowledge",
+            knowledge_dir=KNOWLEDGE_DIR,
+            extensions=[".md"],
+        )
+        logger.info(
+            f"✅ Qdrant RAG ready with {len(rag.indexed_files)} documents indexed"
+        )
     else:
         logger.info(f"📚 Initializing Gemini File Search from {KNOWLEDGE_DIR}")
         file_search_store = await gemini.create_file_search_store(
@@ -166,7 +178,11 @@ async def create_agent() -> Agent:
     """Create an agent with RAG capabilities."""
     instructions = """Read the instructions in @instructions.md"""
 
-    if RAG_BACKEND == "turbopuffer":
+    if RAG_BACKEND in ("turbopuffer", "qdrant"):
+        if rag is None:
+            raise RuntimeError(
+                f"RAG backend '{RAG_BACKEND}' is selected but not initialized."
+            )
         llm = gemini.LLM("gemini-flash-lite-latest")
 
         @llm.register_function(
