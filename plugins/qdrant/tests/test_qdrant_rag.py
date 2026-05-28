@@ -5,16 +5,25 @@ from dotenv import load_dotenv
 
 from vision_agents.core.rag import Document
 from vision_agents.plugins.qdrant import QdrantRAG
+from testcontainers.qdrant import QdrantContainer
 
 load_dotenv()
 
 pytestmark = [pytest.mark.integration, pytest.mark.skip_blockbuster]
 
 
+@pytest.fixture(scope="module")
+def qdrant_url():
+    with QdrantContainer(image="qdrant/qdrant:latest") as container:
+        host = container.get_container_host_ip()
+        port = container.get_exposed_port(6333)
+        yield f"http://{host}:{port}"
+
+
 @pytest.fixture
-async def rag():
+async def rag(qdrant_url):
     collection = f"test-rag-{uuid.uuid4().hex[:8]}"
-    rag = QdrantRAG(collection=collection)
+    rag = QdrantRAG(collection=collection, url=qdrant_url)
     yield rag
     try:
         await rag.clear()
