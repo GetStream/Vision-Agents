@@ -94,6 +94,39 @@ lemonslice.Avatar(
 3. **Avatar Generation**: LemonSlice generates synchronized avatar video and audio
 4. **Video Streaming**: Avatar video is streamed to call participants via GetStream Edge
 
+## Custom Stream Call Type (recommended)
+
+The plugin runs its own internal Stream call as a bridge between your process and the LemonSlice avatar service — this is separate from the user-facing call the agent joins. Only two users ever need to be on the bridge call: the plugin user and the avatar user. We recommend passing a custom `stream_call_type` whose permissions allow **only those two** to join, so no other token-holder in your app can accidentally enter the bridge.
+
+Reference docs:
+- [Built-in call types](https://getstream.io/video/docs/api/call_types/builtin/)
+- [Managing call types](https://getstream.io/video/docs/api/call_types/manage/)
+- [Permissions & capabilities](https://getstream.io/video/docs/api/call_types/permissions/)
+
+The plugin attaches both users to the bridge call as members with `role="call_member"`. Configure your custom call type so the `call_member` role has exactly the capabilities the plugin needs — and no other role has `join-call`:
+
+```python
+client.video.create_call_type(
+    name="lemonslice_bridge",
+    grants={
+        # plugin + avatar — everything they need to bridge audio/video
+        "call_member": ["join-call", "read-call", "send-audio", "send-video"],
+        # everyone else — denied
+        "user": [],
+        "admin": [],
+        "host": [],
+        "moderator": [],
+    },
+)
+
+lemonslice.Avatar(
+    agent_id="your-avatar-id",
+    stream_call_type="lemonslice_bridge",
+)
+```
+
+If you stick with the default `"default"` call type the plugin still works, but the bridge call uses the same broad permissions as any default Stream call.
+
 ## Requirements
 
 - Python 3.10+

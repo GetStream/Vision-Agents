@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import av
 from getstream import AsyncStream
+from getstream.models import CallRequest, MemberRequest
 from getstream.video import rtc
 from getstream.video.async_call import Call
 from getstream.video.rtc.connection_manager import ConnectionManager
@@ -67,6 +68,13 @@ class StreamRTCManager:
                 for 1:1/group video+audio calls: it enables audio, video, screensharing,
                 recording, HLS broadcasting, transcription and ringing, and gives
                 admins/hosts elevated permissions over regular participants.
+                If you pass a custom call type, it must grant the `call_member` role
+                the `join-call`, `read-call`, `send-audio`, and `send-video`
+                capabilities — the plugin and avatar users are attached as members
+                with that role so they can join regardless of the type's default
+                user-role grants.
+                See https://getstream.io/video/docs/api/call_types/builtin/ and
+                https://getstream.io/video/docs/api/call_types/permissions/.
         """
         stream_api_key = stream_api_key or getenv("STREAM_API_KEY")
         stream_api_secret = stream_api_secret or getenv("STREAM_API_SECRET")
@@ -136,7 +144,18 @@ class StreamRTCManager:
         )
 
         call = self._client.video.call(credentials.call_type, credentials.call_id)
-        await call.get_or_create(data={"created_by_id": self._plugin_user_id})
+        # Attach plugin + avatar users as members so they can join regardless of
+        # the call type's per-role grants. See README for the contract on custom
+        # call types.
+        await call.get_or_create(
+            data=CallRequest(
+                created_by_id=self._plugin_user_id,
+                members=[
+                    MemberRequest(user_id=self._plugin_user_id, role="call_member"),
+                    MemberRequest(user_id=self._avatar_user_id, role="call_member"),
+                ],
+            )
+        )
         self._call = call
 
         subscription_config = SubscriptionConfig(

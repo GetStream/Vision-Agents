@@ -73,6 +73,11 @@ class LemonSliceAvatar(Avatar):
                 for 1:1/group video+audio calls: it enables audio, video, screensharing,
                 recording, HLS broadcasting, transcription and ringing, and gives
                 admins/hosts elevated permissions over regular participants.
+                If you pass a custom call type, it must grant the `call_member` role
+                the `join-call`, `read-call`, `send-audio`, and `send-video`
+                capabilities — the plugin and avatar users are attached as members
+                with that role so they can join regardless of the type's default
+                user-role grants.
             width: Output video width in pixels.
             height: Output video height in pixels.
             fps: Output video frame rate. Must be > 0.
