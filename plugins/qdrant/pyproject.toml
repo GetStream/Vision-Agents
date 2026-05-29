@@ -26,7 +26,7 @@ source = "vcs"
 raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["vision_agents"]
 
 [tool.hatch.build.targets.sdist]
 include = ["/vision_agents"]

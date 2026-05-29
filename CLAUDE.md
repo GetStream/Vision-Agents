@@ -99,6 +99,11 @@ module-level `logger = logging.getLogger(__name__)`. Use `debug` for lifecycle, 
 - Change only what I asked for. Don't refactor adjacent code — ask first.
 - Do not remove valid comments when editing/refactoring code.
 
+## Plugins
+
+- In every `plugins/*/pyproject.toml`, the wheel target must be `packages = ["vision_agents"]`. Listing `"."` pulls `tests/`, `README.md`, `example/`, etc. into the published wheel.
+- Each plugin must keep `readme = "README.md"` in `[project]` and a `README.md` next to its `pyproject.toml` so PyPI renders a description page.
+
 ## Token efficiency
 
 - When making multiple related changes to the same file, combine them into fewer Edit calls with enough surrounding context, rather than one edit per change.
