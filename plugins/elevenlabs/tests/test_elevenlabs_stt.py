@@ -28,6 +28,17 @@ class TestElevenLabsSTT:
         yield stt
         await stt.close()
 
+    @pytest.fixture
+    async def stt_short_keepalive(self):
+        stt = elevenlabs.STT(
+            language_code="en",
+            audio_chunk_duration_ms=100,
+            keepalive_interval_ms=500,
+        )
+        await stt.start()
+        yield stt
+        await stt.close()
+
     @pytest.mark.integration
     async def test_transcribe_mia_audio_16khz(self, stt, mia_audio_16khz, participant):
         """Test transcription with 16kHz audio (native sample rate)"""
@@ -76,12 +87,14 @@ class TestElevenLabsSTT:
 
     @pytest.mark.integration
     async def test_turn_events_emitted(self, stt, mia_audio_16khz, participant):
-        """Test that TurnStarted and TurnEnded are emitted"""
+        """One TurnStarted and exactly one TurnEnded per utterance."""
         await stt.process_audio(mia_audio_16khz, participant=participant)
 
         items = await stt.output.collect(timeout=10.0)
-        assert any(isinstance(i, TurnStarted) for i in items)
-        assert any(isinstance(i, TurnEnded) for i in items)
+        turn_started = [i for i in items if isinstance(i, TurnStarted)]
+        turn_ended = [i for i in items if isinstance(i, TurnEnded)]
+        assert len(turn_started) == 1
+        assert len(turn_ended) == 1
 
     @pytest.mark.integration
     async def test_multiple_audio_segments(
@@ -96,3 +109,23 @@ class TestElevenLabsSTT:
         finals = [i for i in items if isinstance(i, Transcript) and i.final]
         full_transcript = " ".join(t.text for t in finals)
         assert len(full_transcript) > 0
+
+    @pytest.mark.integration
+    async def test_connection_survives_idle_after_audio(
+        self, stt_short_keepalive, mia_audio_16khz, participant
+    ):
+        """WS must stay open across an idle window after real audio has been sent.
+
+        Exercises the keep-alive path: once a real chunk sets the queue's
+        sample_rate, ``get_samples`` raises ``QueueEmpty`` after 100 ms instead
+        of letting ``wait_for`` time out. Without the fix the silence frame
+        never fires and the server eventually closes the WS.
+        """
+        stt = stt_short_keepalive
+        await stt.process_audio(mia_audio_16khz, participant=participant)
+        await asyncio.sleep(stt.keepalive_interval_ms / 1000 * 3)
+        await stt.process_audio(mia_audio_16khz, participant=participant)
+
+        items = await stt.output.collect(timeout=15.0)
+        finals = [i for i in items if isinstance(i, Transcript) and i.final]
+        assert len(finals) >= 2

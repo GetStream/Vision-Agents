@@ -299,7 +299,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
         current_messages = list(messages)
         seen: set[tuple[str | None, str, str]] = set()
 
-        for round_num in range(self._max_tool_rounds):
+        for round_num in range(self._max_tool_rounds + 1):
             try:
                 inputs = await asyncio.to_thread(
                     self._build_processor_inputs,
@@ -371,6 +371,9 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                     model=self.model_id,
                 )
                 return
+
+            if round_num >= self._max_tool_rounds:
+                break
 
             logger.info(
                 "Tool call round %d: executing %d call(s) — %s",

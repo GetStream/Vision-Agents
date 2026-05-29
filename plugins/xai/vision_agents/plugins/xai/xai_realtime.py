@@ -23,7 +23,6 @@ import websockets
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
-from vision_agents.core.llm.events import LLMResponseChunkEvent
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import ToolSchema
 from websockets.asyncio.client import ClientConnection
@@ -243,8 +242,7 @@ class XAIRealtime(realtime.Realtime):
         # Configure the session
         await self._configure_session()
 
-        self.connected = True
-        self._emit_connected_event(
+        self._on_connected(
             session_config={
                 "voice": self.voice,
                 "turn_detection": self.turn_detection,
@@ -325,8 +323,7 @@ class XAIRealtime(realtime.Realtime):
 
     async def close(self):
         """Close the connection and clean up resources."""
-        self.connected = False
-        self._emit_disconnected_event(reason="close requested", was_clean=True)
+        self._on_disconnected()
 
         await self._await_pending_tools()
 
@@ -595,12 +592,6 @@ class XAIRealtime(realtime.Realtime):
             has_audio = any(cp.get("type") == "audio" for cp in content)
             if has_audio:
                 continue
-            for content_part in content:
-                if content_part.get("type") == "text":
-                    text = content_part.get("text", "")
-                    if text:
-                        event = LLMResponseChunkEvent(delta=text, plugin_name="xai")
-                        self.events.send(event)
 
     async def _handle_function_call(self, data: dict[str, Any]) -> None:
         """Handle function calls from xAI realtime."""

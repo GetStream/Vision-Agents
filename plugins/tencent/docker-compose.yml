@@ -1,0 +1,33 @@
+services:
+  tencent-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ../..:/app
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Set TENCENT_LITEAV_DEBUG=1 to surface the C++ SDK's `[I][...]`
+      # console logs (jitter buffer, watchdog, signal resolves). Off by
+      # default.
+      - TENCENT_LITEAV_DEBUG
+    # `${TENCENT_TEST_ROOM_ID:?...}` is interpolated by docker-compose
+    # from the host shell at run time and lands as `--call-id <roomId>`
+    # for the runner. The `:?` makes compose fail fast with a clear
+    # message if the variable is unset or empty, instead of silently
+    # launching the agent with an empty call id (which the runner
+    # would then replace with a UUID, defeating the test).
+    command:
+      - /bin/sh
+      - -c
+      - |
+        uv sync --no-dev \
+          --package vision-agents-plugins-tencent \
+          --package vision-agents-plugins-openai \
+          --package vision-agents-plugins-elevenlabs && \
+        uv run --no-sync --package vision-agents-plugins-tencent \
+          python plugins/tencent/example/tencent_edge_example.py run \
+          --call-id "${TENCENT_TEST_ROOM_ID:?set TENCENT_TEST_ROOM_ID to the RoomID from the Tencent demo, see plugins/tencent/README.md}"

@@ -107,7 +107,7 @@ To see how the agent work open up agents.py
 * STT then fires the STTPartialTranscriptEvent and STTTranscriptEvent event.
 * The agent receives this event and calls agent.llm.simple_response.
 * The LLM triggers LLMResponseEvent, and the agent calls
-* await self.tts.send(llm_response.text)
+* async for chunk in self.tts.send_iter(llm_response.text): ...
 
 ### Realtime STS flow
 
@@ -507,7 +507,7 @@ For example:
 In order to standardise how these resources are loaded and to make it performant, the framework provides a special ABC
 `vision_agents.core.warmup.Warmable`.
 
-To use it, simply subclass it and define the required methods.  
+To use it, simply subclass it and define the required methods.
 Note that `Warmable` supports generics to leverage type checking.
 
 **Example:**

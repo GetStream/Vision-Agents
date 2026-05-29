@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any, AsyncIterator
 
 import boto3
@@ -16,13 +17,23 @@ logger = logging.getLogger(__name__)
 PLUGIN_NAME = "aws"
 
 
-def _drain_stream(client, request_kwargs: dict[str, Any]) -> list[dict[str, Any]]:
-    """Synchronously consume a Bedrock converse_stream response into a list."""
-    response = client.converse_stream(**request_kwargs)
+_STREAM_SENTINEL: Any = object()
+
+
+async def _iter_stream(
+    client, request_kwargs: dict[str, Any]
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield Bedrock converse_stream events one at a time from a worker thread."""
+    response = await asyncio.to_thread(client.converse_stream, **request_kwargs)
     stream = response.get("stream")
     if not stream:
-        return []
-    return list(stream)
+        return
+    iterator = iter(stream)
+    while True:
+        event = await asyncio.to_thread(next, iterator, _STREAM_SENTINEL)
+        if event is _STREAM_SENTINEL:
+            return
+        yield event
 
 
 class BedrockLLM(LLM):
@@ -110,7 +121,7 @@ class BedrockLLM(LLM):
 
         Args:
             text: The text to respond to.
-            participant: the Participant object, optional. If not provided, the message will be sent with the "user" role.
+            participant: the Participant object, optional.
 
         Examples:
 
@@ -123,12 +134,7 @@ class BedrockLLM(LLM):
             yield LLMResponseFinal(original=None, text="")
             return
 
-        if participant is None:
-            await self._conversation.send_message(
-                role="user", user_id="user", content=text
-            )
-
-        messages = await self._build_model_request()
+        messages = await self._build_model_request(text)
         tools_param: list[dict[str, Any]] | None = None
         tools_spec = self.get_available_functions()
         if tools_spec:
@@ -139,16 +145,23 @@ class BedrockLLM(LLM):
         ):
             yield item
 
-    async def _build_model_request(self) -> list[dict[str, Any]]:
+    async def _build_model_request(self, text: str) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
         if self._conversation is not None:
             for message in self._conversation.messages:
+                content = (message.content or "").strip()
+                if not content:
+                    continue
                 messages.append(
                     {
                         "role": message.role,
                         "content": [{"text": message.content}],
                     }
                 )
+        user_message = {"role": "user", "content": [{"text": text}]}
+        last = messages[-1] if messages else None
+        if last != user_message:
+            messages.append(user_message)
         return messages
 
     async def _create_response_internal(
@@ -168,19 +181,9 @@ class BedrockLLM(LLM):
 
         request_start_time = time.perf_counter()
         client = await self.client
-
-        try:
-            stream_events = await asyncio.to_thread(
-                _drain_stream, client, request_kwargs
-            )
-        except ClientError as e:
-            logger.exception(f'Failed to get a response from the LLM "{self.model}"')
-            self.metrics.on_llm_error(
-                provider=self.provider_name,
-                error_type=type(e).__name__,
-            )
-            yield LLMResponseFinal(original=None, text="")
-            return
+        # Bedrock does not provide any response ids to match the chunks together.
+        # Generate our own so the conversation collapses deltas into one message.
+        response_id = str(uuid.uuid4())
 
         text_chunks: list[str] = []
         self._pending_tool_uses_by_index.clear()
@@ -191,72 +194,77 @@ class BedrockLLM(LLM):
         input_tokens: int | None = None
         output_tokens: int | None = None
 
-        for event in stream_events:
-            last_event = event
+        try:
+            async for event in _iter_stream(client, request_kwargs):
+                last_event = event
 
-            if "contentBlockStart" in event:
-                start = event["contentBlockStart"].get("start", {})
-                if "toolUse" in start:
-                    tool_use = start["toolUse"]
-                    idx = event["contentBlockStart"].get("contentBlockIndex", 0)
-                    self._pending_tool_uses_by_index[idx] = {
-                        "id": tool_use.get("toolUseId", ""),
-                        "name": tool_use.get("name", ""),
-                        "parts": [],
-                    }
+                if "contentBlockStart" in event:
+                    start = event["contentBlockStart"].get("start", {})
+                    if "toolUse" in start:
+                        tool_use = start["toolUse"]
+                        idx = event["contentBlockStart"].get("contentBlockIndex", 0)
+                        self._pending_tool_uses_by_index[idx] = {
+                            "id": tool_use.get("toolUseId", ""),
+                            "name": tool_use.get("name", ""),
+                            "parts": [],
+                        }
 
-            if "contentBlockDelta" in event:
-                delta = event["contentBlockDelta"].get("delta", {})
-                if "text" in delta:
-                    is_first = first_token_time is None
-                    ttft_ms: float | None = None
-                    if is_first:
-                        first_token_time = time.perf_counter()
-                        ttft_ms = (first_token_time - request_start_time) * 1000
-
-                    text_chunks.append(delta["text"])
-                    yield LLMResponseDelta(
-                        content_index=event["contentBlockDelta"].get(
-                            "contentBlockIndex", 0
-                        ),
-                        item_id=None,
-                        output_index=0,
-                        sequence_number=sequence_number,
-                        delta=delta["text"],
-                        is_first_chunk=is_first,
-                        time_to_first_token_ms=ttft_ms,
-                    )
-                    sequence_number += 1
-                if "toolUse" in delta:
-                    idx = event["contentBlockDelta"].get("contentBlockIndex", 0)
-                    if idx in self._pending_tool_uses_by_index:
-                        input_data = delta["toolUse"].get("input", "")
-                        self._pending_tool_uses_by_index[idx]["parts"].append(
-                            input_data
+                if "contentBlockDelta" in event:
+                    delta = event["contentBlockDelta"].get("delta", {})
+                    if delta.get("text"):
+                        is_first = first_token_time is None
+                        ttft_ms: float | None = None
+                        if is_first:
+                            first_token_time = time.perf_counter()
+                            ttft_ms = (first_token_time - request_start_time) * 1000
+                        text_chunks.append(delta["text"])
+                        yield LLMResponseDelta(
+                            content_index=event["contentBlockDelta"].get(
+                                "contentBlockIndex", 0
+                            ),
+                            item_id=response_id,
+                            output_index=0,
+                            sequence_number=sequence_number,
+                            delta=delta["text"],
+                            is_first_chunk=is_first,
+                            time_to_first_token_ms=ttft_ms,
                         )
+                        sequence_number += 1
+                    if "toolUse" in delta:
+                        idx = event["contentBlockDelta"].get("contentBlockIndex", 0)
+                        if idx in self._pending_tool_uses_by_index:
+                            input_data = delta["toolUse"].get("input", "")
+                            self._pending_tool_uses_by_index[idx]["parts"].append(
+                                input_data
+                            )
 
-            if "contentBlockStop" in event:
-                idx = event["contentBlockStop"].get("contentBlockIndex", 0)
-                pending = self._pending_tool_uses_by_index.pop(idx, None)
-                if pending:
-                    buf = "".join(pending["parts"]).strip() or "{}"
-                    try:
-                        args = json.loads(buf)
-                    except json.JSONDecodeError:
-                        args = {}
-                    tool_call: NormalizedToolCallItem = {
-                        "type": "tool_call",
-                        "id": pending["id"],
-                        "name": pending["name"],
-                        "arguments_json": args,
-                    }
-                    accumulated_tool_calls.append(tool_call)
+                if "contentBlockStop" in event:
+                    idx = event["contentBlockStop"].get("contentBlockIndex", 0)
+                    pending = self._pending_tool_uses_by_index.pop(idx, None)
+                    if pending:
+                        buf = "".join(pending["parts"]).strip() or "{}"
+                        try:
+                            args = json.loads(buf)
+                        except json.JSONDecodeError:
+                            args = {}
+                        tool_call: NormalizedToolCallItem = {
+                            "type": "tool_call",
+                            "id": pending["id"],
+                            "name": pending["name"],
+                            "arguments_json": args,
+                        }
+                        accumulated_tool_calls.append(tool_call)
 
-            if "metadata" in event:
-                usage = event["metadata"].get("usage", {})
-                if usage:
-                    input_tokens = usage.get("inputTokens")
-                    output_tokens = usage.get("outputTokens")
+                if "metadata" in event:
+                    usage = event["metadata"].get("usage", {})
+                    if usage:
+                        input_tokens = usage.get("inputTokens")
+                        output_tokens = usage.get("outputTokens")
+        except ClientError as e:
+            logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+            self.on_llm_error(error=e)
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         total_text = "".join(text_chunks)
 
@@ -268,6 +276,7 @@ class BedrockLLM(LLM):
                 request_start_time,
                 first_token_time,
                 sequence_number,
+                response_id,
             ):
                 yield item
             return
@@ -284,7 +293,7 @@ class BedrockLLM(LLM):
         yield LLMResponseFinal(
             original=last_event,
             text=total_text,
-            item_id=None,
+            item_id=response_id,
             latency_ms=latency_ms,
             time_to_first_token_ms=ttft_total,
             input_tokens=input_tokens,
@@ -301,6 +310,7 @@ class BedrockLLM(LLM):
         request_start_time: float,
         first_token_time: float | None,
         sequence_number: int,
+        response_id: str,
     ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Execute tool calls and stream follow-up responses for up to _tools_max_rounds rounds."""
         current_tool_calls = tool_calls
@@ -370,88 +380,81 @@ class BedrockLLM(LLM):
             if tools:
                 request_kwargs["toolConfig"] = {"tools": tools}
 
-            try:
-                stream_events = await asyncio.to_thread(
-                    _drain_stream, client, request_kwargs
-                )
-            except ClientError as e:
-                logger.exception("Failed to get follow-up response")
-                self.metrics.on_llm_error(
-                    provider=self.provider_name,
-                    error_type=type(e).__name__,
-                )
-                break
-
             text_chunks: list[str] = []
             self._pending_tool_uses_by_index.clear()
             next_tool_calls: list[NormalizedToolCallItem] = []
 
-            for event in stream_events:
-                last_event = event
+            try:
+                async for event in _iter_stream(client, request_kwargs):
+                    last_event = event
 
-                if "contentBlockStart" in event:
-                    start = event["contentBlockStart"].get("start", {})
-                    if "toolUse" in start:
-                        tool_use = start["toolUse"]
-                        idx = event["contentBlockStart"].get("contentBlockIndex", 0)
-                        self._pending_tool_uses_by_index[idx] = {
-                            "id": tool_use.get("toolUseId", ""),
-                            "name": tool_use.get("name", ""),
-                            "parts": [],
-                        }
+                    if "contentBlockStart" in event:
+                        start = event["contentBlockStart"].get("start", {})
+                        if "toolUse" in start:
+                            tool_use = start["toolUse"]
+                            idx = event["contentBlockStart"].get("contentBlockIndex", 0)
+                            self._pending_tool_uses_by_index[idx] = {
+                                "id": tool_use.get("toolUseId", ""),
+                                "name": tool_use.get("name", ""),
+                                "parts": [],
+                            }
 
-                if "contentBlockDelta" in event:
-                    delta = event["contentBlockDelta"].get("delta", {})
-                    if "text" in delta:
-                        is_first = first_token_time is None
-                        ttft_ms: float | None = None
-                        if is_first:
-                            first_token_time = time.perf_counter()
-                            ttft_ms = (first_token_time - request_start_time) * 1000
+                    if "contentBlockDelta" in event:
+                        delta = event["contentBlockDelta"].get("delta", {})
+                        if delta.get("text"):
+                            is_first = first_token_time is None
+                            ttft_ms: float | None = None
+                            if is_first:
+                                first_token_time = time.perf_counter()
+                                ttft_ms = (first_token_time - request_start_time) * 1000
 
-                        text_chunks.append(delta["text"])
-                        yield LLMResponseDelta(
-                            content_index=event["contentBlockDelta"].get(
-                                "contentBlockIndex", 0
-                            ),
-                            item_id=None,
-                            output_index=0,
-                            sequence_number=sequence_number,
-                            delta=delta["text"],
-                            is_first_chunk=is_first,
-                            time_to_first_token_ms=ttft_ms,
-                        )
-                        sequence_number += 1
-                    if "toolUse" in delta:
-                        idx = event["contentBlockDelta"].get("contentBlockIndex", 0)
-                        if idx in self._pending_tool_uses_by_index:
-                            input_data = delta["toolUse"].get("input", "")
-                            self._pending_tool_uses_by_index[idx]["parts"].append(
-                                input_data
+                            text_chunks.append(delta["text"])
+                            yield LLMResponseDelta(
+                                content_index=event["contentBlockDelta"].get(
+                                    "contentBlockIndex", 0
+                                ),
+                                item_id=response_id,
+                                output_index=0,
+                                sequence_number=sequence_number,
+                                delta=delta["text"],
+                                is_first_chunk=is_first,
+                                time_to_first_token_ms=ttft_ms,
                             )
+                            sequence_number += 1
+                        if "toolUse" in delta:
+                            idx = event["contentBlockDelta"].get("contentBlockIndex", 0)
+                            if idx in self._pending_tool_uses_by_index:
+                                input_data = delta["toolUse"].get("input", "")
+                                self._pending_tool_uses_by_index[idx]["parts"].append(
+                                    input_data
+                                )
 
-                if "contentBlockStop" in event:
-                    idx = event["contentBlockStop"].get("contentBlockIndex", 0)
-                    pending = self._pending_tool_uses_by_index.pop(idx, None)
-                    if pending:
-                        buf = "".join(pending["parts"]).strip() or "{}"
-                        try:
-                            args = json.loads(buf)
-                        except json.JSONDecodeError:
-                            args = {}
-                        tool_call: NormalizedToolCallItem = {
-                            "type": "tool_call",
-                            "id": pending["id"],
-                            "name": pending["name"],
-                            "arguments_json": args,
-                        }
-                        next_tool_calls.append(tool_call)
+                    if "contentBlockStop" in event:
+                        idx = event["contentBlockStop"].get("contentBlockIndex", 0)
+                        pending = self._pending_tool_uses_by_index.pop(idx, None)
+                        if pending:
+                            buf = "".join(pending["parts"]).strip() or "{}"
+                            try:
+                                args = json.loads(buf)
+                            except json.JSONDecodeError:
+                                args = {}
+                            tool_call: NormalizedToolCallItem = {
+                                "type": "tool_call",
+                                "id": pending["id"],
+                                "name": pending["name"],
+                                "arguments_json": args,
+                            }
+                            next_tool_calls.append(tool_call)
 
-                if "metadata" in event:
-                    usage = event["metadata"].get("usage", {})
-                    if usage:
-                        input_tokens = usage.get("inputTokens")
-                        output_tokens = usage.get("outputTokens")
+                    if "metadata" in event:
+                        usage = event["metadata"].get("usage", {})
+                        if usage:
+                            input_tokens = usage.get("inputTokens")
+                            output_tokens = usage.get("outputTokens")
+            except ClientError as e:
+                logger.exception("Failed to get follow-up response")
+                self.on_llm_error(error=e)
+                break
 
             total_text = "".join(text_chunks)
 
@@ -473,7 +476,7 @@ class BedrockLLM(LLM):
         yield LLMResponseFinal(
             original=last_event,
             text=total_text,
-            item_id=None,
+            item_id=response_id,
             latency_ms=latency_ms,
             time_to_first_token_ms=ttft_total,
             input_tokens=input_tokens,

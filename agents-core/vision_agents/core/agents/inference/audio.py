@@ -4,6 +4,14 @@ from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.utils.stream import Stream
 
+__all__ = [
+    "AudioInputStream",
+    "AudioInputChunk",
+    "AudioOutputStream",
+    "AudioOutputChunk",
+    "AudioOutputFlush",
+]
+
 
 @dataclass
 class AudioInputChunk:

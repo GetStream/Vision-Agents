@@ -1,0 +1,32 @@
+# {{project_name}}
+
+Generated with `uvx vision-agents init`. See the docs at <https://visionagents.ai>.
+
+## Setup
+
+1. Copy `.env.example` to `.env` and fill in the keys.
+2. Install dependencies:
+
+   ```bash
+   uv sync
+   ```
+
+3. Run the agent:
+
+   ```bash
+   uv run agent.py run     # single-call console
+   uv run agent.py serve   # HTTP server
+   ```
+
+4. Run the tests:
+
+   ```bash
+   uv run pytest
+   ```
+
+## Docker
+
+```bash
+docker build -t {{project_name}} .
+docker run --env-file .env -p 8000:8000 {{project_name}}
+```

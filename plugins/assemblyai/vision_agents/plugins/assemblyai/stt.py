@@ -138,6 +138,7 @@ class STT(stt.STT):
         self._ws = await self._session.ws_connect(url, headers=headers)
         self._receive_task = asyncio.create_task(self._receive_loop())
         self._send_task = asyncio.create_task(self._send_loop())
+        self._on_connected()
 
     async def _disconnect(self) -> None:
         """Cancel tasks and close WebSocket + session."""
@@ -375,3 +376,4 @@ class STT(stt.STT):
         self._connection_ready.clear()
         self._audio_start_time = None
         self._speaker_participants.clear()
+        self._on_disconnected()

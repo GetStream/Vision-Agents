@@ -210,10 +210,7 @@ class GeminiLLM(LLM):
                 iterator = await self.chat.send_message_stream(message=text)
         except Exception as e:
             logger.exception(f'Failed to get a response from the LLM "{self.model}"')
-            self.metrics.on_llm_error(
-                provider=self.provider_name,
-                error_type=type(e).__name__,
-            )
+            self.on_llm_error(error=e)
             yield LLMResponseFinal(original=None, text="")
             return
         text_parts: List[str] = []
@@ -295,6 +292,17 @@ class GeminiLLM(LLM):
                         func_response_part.thought_signature = tc["thought_signature"]
 
                     parts.append(func_response_part)
+
+                # If every requested call was a duplicate already executed in a
+                # previous round, `parts` is empty. Sending it would trip
+                # google-genai's `t_parts` guard with "content parts are required.".
+                if not parts:
+                    logger.warning(
+                        "Gemini returned only duplicate tool calls in round %d; "
+                        "ending tool loop to avoid empty follow-up message.",
+                        rounds,
+                    )
+                    break
 
                 # Fix for Gemini 3 Pro: Remove empty model messages from history
                 # Gemini 3 Pro streaming adds an empty model message after function calls

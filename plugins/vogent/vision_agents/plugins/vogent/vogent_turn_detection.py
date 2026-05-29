@@ -160,9 +160,9 @@ class VogentTurnDetection(
         # Start background processing task
         self._processing_task = asyncio.create_task(self._process_audio_loop())
 
-    async def stop(self):
+    async def close(self):
         """Stop turn detection and cleanup background task."""
-        await super().stop()
+        await super().close()
 
         if self._processing_task:
             self._shutdown_event.set()

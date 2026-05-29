@@ -401,7 +401,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
         current_inputs = inputs
         seen: set[tuple[str | None, str, str]] = set()
 
-        for round_num in range(self._max_tool_rounds):
+        for round_num in range(self._max_tool_rounds + 1):
             text = ""
             original: Any = None
             async for item in self._generate_non_streaming(
@@ -443,6 +443,9 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                     model=self.model_id,
                 )
                 return
+
+            if round_num >= self._max_tool_rounds:
+                break
 
             logger.info(
                 "Tool call round %d: executing %d call(s) — %s",
@@ -565,10 +568,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
             except RuntimeError as e:
                 generation_error = e
                 logger.exception("Generation failed")
-                self.metrics.on_llm_error(
-                    provider=self.provider_name,
-                    error_type=type(e).__name__,
-                )
+                self.on_llm_error(error=e)
             finally:
                 # Flush any text still buffered inside the TextStreamer
                 # (everything after the last word boundary). model.generate

@@ -111,10 +111,6 @@ class ChatCompletionsLLM(LLM):
     async def close(self) -> None:
         await self._client.close()
 
-    def _extra_request_kwargs(self) -> dict[str, Any]:
-        """Hook for subclasses to inject extra fields (e.g. ``extra_body``) into ``chat.completions.create``."""
-        return {}
-
     async def _create_response_internal(
         self,
         messages: list[dict[str, Any]],
@@ -129,7 +125,6 @@ class ChatCompletionsLLM(LLM):
         }
         if tools:
             request_kwargs["tools"] = tools
-        request_kwargs.update(self._extra_request_kwargs())
 
         # Track timing
         request_start_time = time.perf_counter()
@@ -138,10 +133,7 @@ class ChatCompletionsLLM(LLM):
             response = await self._client.chat.completions.create(**request_kwargs)
         except Exception as e:
             logger.exception(f'Failed to get a response from the LLM "{self.model}"')
-            self.metrics.on_llm_error(
-                provider=self.provider_name,
-                error_type=type(e).__name__,
-            )
+            self.on_llm_error(error=e)
             yield LLMResponseFinal(original=None, text="")
             return
 
@@ -235,7 +227,7 @@ class ChatCompletionsLLM(LLM):
             item_id=item_id,
             latency_ms=latency_ms,
             time_to_first_token_ms=ttft_ms,
-            model=last_chunk.model if last_chunk is not None else self.model,
+            model=self.model,
         )
 
     async def _build_model_request(self) -> list[dict]:
@@ -244,13 +236,9 @@ class ChatCompletionsLLM(LLM):
         if self._instructions:
             messages.append({"role": "system", "content": self._instructions})
 
-        # Add all messages from the conversation to the prompt. Skip any
-        # with empty content — providers like Inworld reject requests
-        # containing empty messages with "message content cannot be empty".
+        # Add all messages from the conversation to the prompt
         if self._conversation is not None:
             for message in self._conversation.messages:
-                if not message.content:
-                    continue
                 messages.append({"role": message.role, "content": message.content})
         return messages
 
@@ -397,7 +385,6 @@ class ChatCompletionsLLM(LLM):
             }
             if tools:
                 request_kwargs["tools"] = tools
-            request_kwargs.update(self._extra_request_kwargs())
 
             try:
                 follow_up = await self._client.chat.completions.create(**request_kwargs)
@@ -466,5 +453,5 @@ class ChatCompletionsLLM(LLM):
             item_id=item_id,
             latency_ms=latency_ms,
             time_to_first_token_ms=ttft_ms,
-            model=last_chunk.model if last_chunk is not None else self.model,
+            model=self.model,
         )

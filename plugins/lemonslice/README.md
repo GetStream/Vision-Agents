@@ -40,14 +40,10 @@ async def start_avatar_agent():
         tts=cartesia.TTS(),
         stt=deepgram.STT(),
 
-        processors=[
-            lemonslice.LemonSliceAvatarPublisher(
-                agent_id="your-avatar-id",
-            )
-        ]
+        avatar=lemonslice.Avatar(agent_id="your-avatar-id"),
     )
 
-    call = agent.edge.client.video.call("default", str(uuid4()))
+    call = await agent.create_call("default", str(uuid4()))
 
     async with agent.join(call):
         await agent.simple_response("Hello! I'm your AI assistant with an avatar.")
@@ -64,18 +60,22 @@ if __name__ == "__main__":
 
 ```bash
 LEMONSLICE_API_KEY=your_lemonslice_api_key
-# LemonSlice uses Livekit as a transport for audio and video
+LEMONSLICE_AGENT_ID=your_agent_id
+# Or, instead of LEMONSLICE_AGENT_ID:
+# LEMONSLICE_AGENT_IMAGE_URL=https://example.com/avatar.png
+
+# LemonSlice uses LiveKit as a transport for audio and video
 LIVEKIT_URL=wss://your-livekit-server.com
 LIVEKIT_API_KEY=your_livekit_api_key
 LIVEKIT_API_SECRET=your_livekit_api_secret
 ```
 
-### AvatarPublisher Options
+### Avatar Options
 
 ```python
-lemonslice.LemonSliceAvatarPublisher(
-    agent_id="your-avatar-id",  # LemonSlice agent ID
-    agent_image_url=None,  # Or provide a custom image URL (368x560px)
+lemonslice.Avatar(
+    agent_id="your-avatar-id",  # LemonSlice agent ID (or set LEMONSLICE_AGENT_ID env var)
+    agent_image_url=None,  # Custom image URL, 368x560px (or set LEMONSLICE_AGENT_IMAGE_URL env var)
     agent_prompt=None,  # Prompt to influence avatar expressions/movements
     api_key=None,  # Optional: override LEMONSLICE_API_KEY env var
     idle_timeout=None,  # Session timeout in seconds

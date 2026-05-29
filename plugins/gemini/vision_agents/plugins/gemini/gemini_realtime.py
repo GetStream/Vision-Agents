@@ -37,9 +37,6 @@ from google.genai.types import (
 )
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-)
 from vision_agents.core.llm.llm import (
     LLMResponseDelta,
     LLMResponseFinal,
@@ -97,7 +94,7 @@ RETRY = "retry"
 
 
 def _classify_loop_error(exc: Exception) -> tuple[str, str, bool]:
-    """Classify a processing-loop exception into (action, reason, was_clean)."""
+    """Classify a processing-loop exception into (action, reason, clean)."""
     match exc:
         case websockets.ConnectionClosedOK():
             return STOP, "WebSocket closed cleanly", True
@@ -198,6 +195,11 @@ class GeminiRealtime(realtime.Realtime):
         self._processing_task: Optional[asyncio.Task] = None
         self._exit_stack = contextlib.AsyncExitStack()
         self._executor = ThreadPoolExecutor(max_workers=1)
+        # Gemini Live has no agent-speech-started wire event; fire once per turn.
+        self._agent_audio_started: bool = False
+        # Gemini Live's user VAD signals are allowlisted-only; derive user-speech
+        # boundaries from input_transcription + model_turn instead.
+        self._user_audio_started: bool = False
 
     @property
     def _session(self):
@@ -334,13 +336,19 @@ class GeminiRealtime(realtime.Realtime):
 
     async def _establish_session(self):
         """Create a new Gemini WebSocket session without managing the processing task."""
+        # Reset per-turn flags so a reconnect mid-utterance doesn't inherit stale state.
+        self._agent_audio_started = False
+        self._user_audio_started = False
         logger.debug("Connecting to Gemini live, config set to %s", self._base_config)
         self._real_session = await self._exit_stack.enter_async_context(
             self._client.aio.live.connect(  # type: ignore[arg-type]
                 model=self.model, config=self.get_config()
             )
         )
-        self.connected = True
+        self._on_connected(
+            session_config={"model": self.model},
+            capabilities=["text", "audio", "function_calling"],
+        )
         logger.info("Gemini live connected to session %s", self._session)
 
     async def close(self):
@@ -349,7 +357,7 @@ class GeminiRealtime(realtime.Realtime):
         Returns:
 
         """
-        self.connected = False
+        self._on_disconnected()
 
         await self.stop_watching_video_track()
 
@@ -415,6 +423,12 @@ class GeminiRealtime(realtime.Realtime):
             self._processing_task.cancel()
             await self._processing_task
 
+    def _end_user_speech_if_started(self) -> None:
+        """Emit user_speech_ended once per user turn and clear the flag."""
+        if self._user_audio_started:
+            self._user_audio_started = False
+            self._emit_user_speech_ended()
+
     async def _process_events(self) -> bool:
         """
         Process events from Gemini Live API.
@@ -428,6 +442,9 @@ class GeminiRealtime(realtime.Realtime):
             if server_content and server_content.input_transcription:
                 text = server_content.input_transcription.text
                 if text:
+                    if not self._user_audio_started:
+                        self._user_audio_started = True
+                        self._emit_user_speech_started()
                     self._emit_user_speech_transcription(text=text, mode="delta")
                     handled = True
 
@@ -439,6 +456,8 @@ class GeminiRealtime(realtime.Realtime):
 
             if server_content and server_content.model_turn:
                 handled = True
+                # Model is responding → user has finished speaking.
+                self._end_user_speech_if_started()
                 # Store the resumption id so we can resume a broken connection
                 if server_message.session_resumption_update:
                     update = server_message.session_resumption_update
@@ -447,11 +466,11 @@ class GeminiRealtime(realtime.Realtime):
 
                 parts = server_content.model_turn.parts or []
                 for part in parts:
-                    if part.text and not part.thought:
-                        event = LLMResponseChunkEvent(delta=part.text)
-                        self.events.send(event)
                     if part.inline_data:
                         pcm = PcmData.from_bytes(part.inline_data.data, 24000)
+                        if not self._agent_audio_started:
+                            self._agent_audio_started = True
+                            self._emit_agent_speech_started()
                         self._emit_audio_output_event(pcm=pcm)
                     if part.function_call:
                         self._run_tool_in_background(
@@ -460,13 +479,23 @@ class GeminiRealtime(realtime.Realtime):
 
             if server_content and server_content.interrupted:
                 await self.interrupt()
+                if self._agent_audio_started:
+                    self._agent_audio_started = False
+                    self._emit_agent_speech_ended(interrupted=True)
                 self._emit_audio_output_done_event(interrupted=True)
                 handled = True
             elif server_content and server_content.turn_complete:
+                if self._agent_audio_started:
+                    self._agent_audio_started = False
+                    self._emit_agent_speech_ended()
                 self._emit_audio_output_done_event()
                 handled = True
 
             if server_message.tool_call:
+                # tool_call is an independent turn terminator per the Live API
+                # handleTurn example (https://ai.google.dev/gemini-api/docs/live-tools),
+                # so it can arrive without a preceding model_turn.
+                self._end_user_speech_if_started()
                 self._run_tool_in_background(
                     self._handle_tool_calls(server_message.tool_call)
                 )
@@ -490,7 +519,7 @@ class GeminiRealtime(realtime.Realtime):
                     await self._process_events()
                     consecutive_errors = 0
                 except Exception as exc:
-                    action, reason, was_clean = _classify_loop_error(exc)
+                    action, reason, clean = _classify_loop_error(exc)
 
                     if action == RECONNECT:
                         logger.info("Gemini connection lost (%s), reconnecting", reason)
@@ -500,9 +529,7 @@ class GeminiRealtime(realtime.Realtime):
 
                     if action == STOP:
                         logger.info("Gemini connection closed: %s", reason)
-                        self._emit_disconnected_event(
-                            reason=reason, was_clean=was_clean
-                        )
+                        self._on_disconnected(reason=reason, clean=clean)
                         return
 
                     consecutive_errors += 1
@@ -516,8 +543,8 @@ class GeminiRealtime(realtime.Realtime):
                         logger.error(
                             "Too many consecutive errors, stopping processing loop"
                         )
-                        self._emit_disconnected_event(
-                            reason="Too many consecutive errors", was_clean=False
+                        self._on_disconnected(
+                            reason="Too many consecutive errors", clean=False
                         )
                         return
 

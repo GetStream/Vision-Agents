@@ -23,7 +23,6 @@ vision-agents-plugins-huggingface = { workspace = true }
 vision-agents-plugins-ultralytics = { workspace = true }
 vision-agents-plugins-smart-turn = { workspace = true }
 vision-agents-plugins-wizper = { workspace = true }
-vision-agents-plugins-heygen = { workspace = true }
 vision-agents-plugins-lemonslice = { workspace = true }
 vision-agents-plugins-inworld = { workspace = true }
 vision-agents-plugins-moondream = { workspace = true }
@@ -33,12 +32,15 @@ vision-agents-plugins-roboflow = { workspace = true }
 vision-agents-plugins-decart = { workspace = true }
 vision-agents-plugins-twilio = { workspace = true }
 vision-agents-plugins-turbopuffer = { workspace = true }
+vision-agents-plugins-qdrant = { workspace = true }
 vision-agents-plugins-nvidia = { workspace = true }
 vision-agents-plugins-mistral = { workspace = true }
 vision-agents-plugins-assemblyai = { workspace = true }
 vision-agents-plugins-local = { workspace = true }
 vision-agents-plugins-anam = { workspace = true }
 vision-agents-plugins-sarvam = { workspace = true }
+vision-agents-plugins-liveavatar = { workspace = true }
+vision-agents-plugins-tencent = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -69,7 +71,6 @@ members = [
     "plugins/ultralytics",
     "plugins/smart_turn",
     "plugins/wizper",
-    "plugins/heygen",
     "plugins/lemonslice",
     "plugins/inworld",
     "plugins/vogent",
@@ -79,12 +80,15 @@ members = [
     "plugins/decart",
     "plugins/twilio",
     "plugins/turbopuffer",
+    "plugins/qdrant",
     "plugins/nvidia",
     "plugins/mistral",
     "plugins/assemblyai",
     "plugins/local",
     "plugins/anam",
     "plugins/sarvam",
+    "plugins/liveavatar",
+    "plugins/tencent",
 ]
 exclude = [
     "**/__pycache__",

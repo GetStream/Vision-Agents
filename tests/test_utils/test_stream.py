@@ -312,7 +312,7 @@ class TestStream:
         await stream.send(20)
         await stream.send(30)
         await asyncio.gather(*tasks)
-        assert sorted(results) == [10, 20, 30]
+        assert results == [10, 20, 30]
 
     async def test_multiple_senders_served_in_order(self):
         s: Stream[int] = Stream(maxsize=1)

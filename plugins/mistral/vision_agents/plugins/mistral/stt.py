@@ -87,6 +87,7 @@ class STT(stt.STT):
 
         self._receive_task = asyncio.create_task(self._receive_loop())
         self._connection_ready.set()
+        self._on_connected()
 
         logger.info("Mistral WebSocket connection established")
 
@@ -248,4 +249,5 @@ class STT(stt.STT):
         self._audio_start_time = None
         self._accumulated_text = ""
 
+        self._on_disconnected()
         await super().close()

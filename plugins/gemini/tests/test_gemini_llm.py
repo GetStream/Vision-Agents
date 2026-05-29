@@ -2,6 +2,7 @@ import os
 
 import pytest
 from dotenv import load_dotenv
+from google.genai import types
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
 from vision_agents.plugins.gemini.gemini_llm import (
     GeminiLLM,
@@ -85,6 +86,66 @@ class TestGeminiLLM:
         ]
         assert "$schema" not in schema
         assert "$schema" not in schema["properties"]["inner"]
+
+    async def test_duplicate_tool_calls_in_followup_do_not_send_empty_parts(
+        self, llm: GeminiLLM
+    ):
+        """If the model echoes the same function call after a tool result,
+        `_dedup_and_execute` filters it out and the loop ends up calling
+        `chat.send_message_stream(parts=[], ...)`, which google-genai rejects
+        with `ValueError('content parts are required.')`.
+        """
+        # The bug is model-agnostic. We pick a non-"gemini-3" name only to skip
+        # the gemini-3 history-cleanup branch, which would require the fake chat
+        # to implement get_history() and client.chats.create().
+        llm.model = "gemini-2.5-pro"
+
+        @llm.register_function(description="probe")
+        async def probe(ping: str) -> str:
+            return f"ok:{ping}"
+
+        def _function_call_chunk() -> types.GenerateContentResponse:
+            part = types.Part(
+                function_call=types.FunctionCall(name="probe", args={"ping": "pong"})
+            )
+            return types.GenerateContentResponse(
+                candidates=[
+                    types.Candidate(content=types.Content(role="model", parts=[part]))
+                ]
+            )
+
+        class _FakeChat:
+            def __init__(self) -> None:
+                self.received: list[tuple[tuple, dict]] = []
+
+            async def send_message_stream(self, *args: object, **kwargs: object):
+                message = args[0] if args else kwargs.get("message")
+                # mirror google-genai's t_parts() guard
+                if isinstance(message, list) and not message:
+                    raise ValueError("content parts are required.")
+                self.received.append((args, kwargs))
+
+                async def _iter():
+                    yield _function_call_chunk()
+
+                return _iter()
+
+        fake = _FakeChat()
+        llm.chat = fake
+
+        try:
+            async for _ in llm.simple_response("call probe"):
+                pass
+        except ValueError as exc:
+            if "content parts are required" in str(exc):
+                pytest.fail(f"empty-parts bug regressed: {exc}")
+            raise
+
+        # Initial text turn + exactly one follow-up with the tool result.
+        # A third call would mean we sent parts=[] (the bug).
+        assert len(fake.received) == 2
+        follow_up_args, _ = fake.received[1]
+        assert follow_up_args and follow_up_args[0], "follow-up parts must be non-empty"
 
 
 @pytest.mark.integration

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import abc
 import asyncio
 import json
@@ -21,7 +19,7 @@ from typing import (
 import aiortc
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm import events
-from vision_agents.core.llm.events import ToolEndEvent, ToolStartEvent
+from vision_agents.core.llm.events import LLMErrorEvent, ToolEndEvent, ToolStartEvent
 from vision_agents.core.observability import MetricsCollector
 
 if TYPE_CHECKING:
@@ -32,6 +30,7 @@ from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
 
+from ..base import Component
 from ..utils.video_forwarder import VideoForwarder
 from .function_registry import FunctionRegistry
 from .llm_types import NormalizedToolCallItem, ToolSchema
@@ -95,8 +94,10 @@ class LLMResponseFinal:
     """Original response object."""
 
 
-class LLM(abc.ABC):
+class LLM(Component):
     provider_name: Optional[str] = None
+    # The model identifier this LLM is configured to use.
+    model: str = ""
 
     def __init__(self):
         super().__init__()
@@ -126,6 +127,28 @@ class LLM(abc.ABC):
         Handle barge-in interruptions here.
         """
         ...
+
+    def on_llm_error(
+        self,
+        *,
+        error: Exception | None = None,
+        error_type: str | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        """Record an LLM error: emit metric + LLMErrorEvent."""
+        resolved_type = error_type or (type(error).__name__ if error else None)
+        self.metrics.on_llm_error(
+            provider=self.provider_name,
+            error_type=resolved_type,
+            error_code=error_code,
+        )
+        self.events.send(
+            LLMErrorEvent(
+                plugin_name=self.provider_name,
+                error=error,
+                error_code=error_code,
+            )
+        )
 
     def _get_tools_for_provider(self) -> List[Dict[str, Any]]:
         """
@@ -203,14 +226,14 @@ class LLM(abc.ABC):
         # Default implementation - should be overridden
         return []
 
-    def _attach_agent(self, agent: Agent):
+    def _attach_agent(self, agent: "Agent"):
         """
         Attach agent to the llm
         """
         self.agent = agent
         self.set_instructions(agent.instructions)
 
-    def set_conversation(self, conversation: Conversation):
+    def set_conversation(self, conversation: "Conversation"):
         """
         Provide the Conversation object to the LLM to access the chat history.
         To be called by the Agent after it joins the call.

@@ -110,10 +110,7 @@ class XAILLM(LLM):
                 logger.exception(
                     f'Failed to get a response from the LLM "{self.model}"'
                 )
-                self.metrics.on_llm_error(
-                    provider=self.provider_name,
-                    error_type=type(e).__name__,
-                )
+                self.on_llm_error(error=e)
                 yield LLMResponseFinal(original=None, text="")
                 return
 

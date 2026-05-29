@@ -14,7 +14,8 @@ track = AudioStreamTrack(framerate=24_000)
 tts = KokoroTTS(lang_code="a", voice="af_heart")
 tts.set_output_track(track)
 
-await tts.send("Hello from Kokoro!")
+async for chunk in tts.send_iter("Hello from Kokoro!"):
+    pass
 ```
 
 ## Installation

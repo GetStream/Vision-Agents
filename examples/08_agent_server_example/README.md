@@ -53,7 +53,7 @@ The `create_agent` function defines how agents are configured:
 
 ```python
 async def create_agent(**kwargs) -> Agent:
-    llm = gemini.LLM("gemini-3.1-flash-lite-preview")
+    llm = gemini.LLM("gemini-flash-lite-latest")
 
     agent = Agent(
         edge=getstream.Edge(),
@@ -135,13 +135,13 @@ runner = Runner(
 
 **Available options:**
 
-| Option                   | Default   | Description                                       |
-|--------------------------|-----------|---------------------------------------------------|
-| `fast_api`               | none      | Custom FastAPI instance (skips all configuration) |
-| `cors_allow_origins`     | `("*",)`  | Allowed CORS origins                              |
-| `cors_allow_methods`     | `("*",)`  | Allowed CORS methods                              |
-| `cors_allow_headers`     | `("*",)`  | Allowed CORS headers                              |
-| `cors_allow_credentials` | `True`    | Allow CORS credentials                            |
+| Option                   | Default   | Description                                                               |
+|--------------------------|-----------|---------------------------------------------------------------------------|
+| `fast_api`               | none      | Custom FastAPI instance (skips all configuration)                         |
+| `cors_allow_origins`     | `("*",)`  | Allowed CORS origins                                                      |
+| `cors_allow_methods`     | `("*",)`  | Allowed CORS methods                                                      |
+| `cors_allow_headers`     | `("*",)`  | Allowed CORS headers                                                      |
+| `cors_allow_credentials` | `True`    | Allow CORS credentials                                                    |
 | `can_start_session`      | allow all | Permission check for starting sessions. Receives `call_id` from URL path. |
 | `can_close_session`      | allow all | Permission check for closing sessions. Receives `call_id` from URL path.  |
 | `can_view_session`       | allow all | Permission check for viewing sessions. Receives `call_id` from URL path.  |
@@ -186,7 +186,8 @@ async def can_start_session(call_id: str, token_payload=Depends(verify_token)):
 
 ## Scaling to Multiple Nodes with Redis
 
-By default, `AgentLauncher` uses an in-memory session store which works for single-node deployments. For running across multiple nodes behind a load balancer, you can use a Redis-backed session store so that every node shares the same session state.
+By default,
+`AgentLauncher` uses an in-memory session store which works for single-node deployments. For running across multiple nodes behind a load balancer, you can use a Redis-backed session store so that every node shares the same session state.
 
 ```python
 from vision_agents.core import AgentLauncher, Runner, SessionRegistry, RedisSessionKVStore
@@ -194,7 +195,7 @@ from vision_agents.core import AgentLauncher, Runner, SessionRegistry, RedisSess
 registry = SessionRegistry(
     store=RedisSessionKVStore(url="redis://localhost:6379/0"),
     node_id="node-1",  # optional, unique identifier for this node
-    ttl=30.0,           # heartbeat TTL in seconds (default: 30)
+    ttl=30.0,  # heartbeat TTL in seconds (default: 30)
 )
 
 runner = Runner(
@@ -217,13 +218,13 @@ client = redis.from_url("redis://localhost:6379/0")
 store = RedisSessionKVStore(client=client, key_prefix="my_app:")
 ```
 
-| Parameter    | Default             | Description                                      |
-|--------------|---------------------|--------------------------------------------------|
-| `url`        | —                   | Redis connection URL (store owns the client)     |
-| `client`     | —                   | Existing `redis.asyncio.Redis` (caller owns it)  |
-| `key_prefix` | `"vision_agents:"`  | Namespace prefix for all Redis keys              |
-| `node_id`    | random UUID         | Unique identifier for this deployment node       |
-| `ttl`        | `30.0`              | Heartbeat TTL in seconds                         |
+| Parameter    | Default            | Description                                     |
+|--------------|--------------------|-------------------------------------------------|
+| `url`        | —                  | Redis connection URL (store owns the client)    |
+| `client`     | —                  | Existing `redis.asyncio.Redis` (caller owns it) |
+| `key_prefix` | `"vision_agents:"` | Namespace prefix for all Redis keys             |
+| `node_id`    | random UUID        | Unique identifier for this deployment node      |
+| `ttl`        | `30.0`             | Heartbeat TTL in seconds                        |
 
 ### API Reference
 

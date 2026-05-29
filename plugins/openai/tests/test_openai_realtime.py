@@ -8,9 +8,13 @@ from getstream.video.rtc.track_util import AudioFormat, PcmData
 from scipy import signal
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.realtime import (
+    RealtimeAgentSpeechEnded,
+    RealtimeAgentSpeechStarted,
     RealtimeAgentTranscript,
     RealtimeAudioOutput,
     RealtimeAudioOutputDone,
+    RealtimeUserSpeechEnded,
+    RealtimeUserSpeechStarted,
     RealtimeUserTranscript,
 )
 from vision_agents.plugins.openai import Realtime
@@ -127,13 +131,17 @@ class TestOpenAIRealtimeIntegration:
         async for _ in realtime.simple_response("Hello, can you hear me?"):
             pass
 
-        await asyncio.sleep(3.0)
-        items = realtime.output.peek()
+        items = await realtime.output.collect(10.0)
         audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
         done = [i for i in items if isinstance(i, RealtimeAudioOutputDone)]
+        agent_started = [i for i in items if isinstance(i, RealtimeAgentSpeechStarted)]
+        agent_ended = [i for i in items if isinstance(i, RealtimeAgentSpeechEnded)]
         assert len(audio) > 0
         assert len(done) >= 1
         assert any(not d.interrupted for d in done)
+        assert len(agent_started) >= 1
+        assert len(agent_ended) >= 1
+        assert any(not e.interrupted for e in agent_ended)
 
     async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
         # Wait for connection to be fully established
@@ -154,15 +162,27 @@ class TestOpenAIRealtimeIntegration:
             pass
         await asyncio.sleep(5.0)
 
-        await realtime.simple_audio_response(
-            audio_48khz, Participant(original=None, user_id="u", id="u")
-        )
+        participant = Participant(original=None, user_id="u", id="u")
+        await realtime.simple_audio_response(audio_48khz, participant)
 
-        await asyncio.sleep(10.0)
-        audio = [
-            i for i in realtime.output.peek() if isinstance(i, RealtimeAudioOutput)
-        ]
+        # Emulate a real pause in utterance so semantic_vad commits the turn:
+        # 1s silence × 3 with 1s sleeps between.
+        silence_1s_48khz = PcmData(
+            samples=np.zeros(48000, dtype=np.int16),
+            sample_rate=48000,
+            format=AudioFormat.S16,
+        )
+        for _ in range(3):
+            await realtime.simple_audio_response(silence_1s_48khz, participant)
+            await asyncio.sleep(1.0)
+
+        items = await realtime.output.collect(10.0)
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        user_started = [i for i in items if isinstance(i, RealtimeUserSpeechStarted)]
+        user_ended = [i for i in items if isinstance(i, RealtimeUserSpeechEnded)]
         assert len(audio) > 0
+        assert len(user_started) >= 1
+        assert len(user_ended) >= 1
 
     async def test_video_sending_flow(self, realtime, bunny_video_track):
         async for _ in realtime.simple_response(

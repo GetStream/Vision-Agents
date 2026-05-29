@@ -6,6 +6,7 @@ A voice AI agent that answers phone calls via Twilio with RAG capabilities.
 RAG Backend Configuration (via RAG_BACKEND environment variable):
 - "gemini" (default): Uses Gemini's built-in File Search
 - "turbopuffer": Uses TurboPuffer + LangChain with function calling
+- "qdrant": Uses Qdrant hybrid search with function calling
 
 Flow:
 1. Twilio triggers webhook on /twilio/voice, which starts preparing the call
@@ -24,19 +25,19 @@ import uuid
 from pathlib import Path
 
 import uvicorn
-from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse
-
-from vision_agents.core import User, Agent
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+from vision_agents.core import Agent, User
 from vision_agents.plugins import (
-    getstream,
-    gemini,
-    twilio,
-    elevenlabs,
     deepgram,
+    elevenlabs,
+    gemini,
+    getstream,
     turbopuffer,
+    qdrant,
+    twilio,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,16 @@ async def create_rag_from_directory():
         logger.info(
             f"✅ TurboPuffer RAG ready with {len(rag._indexed_files)} documents indexed"
         )
+    elif RAG_BACKEND == "qdrant":
+        logger.info(f"📚 Initializing Qdrant RAG from {KNOWLEDGE_DIR}")
+        rag = await qdrant.create_rag(
+            collection="stream-product-knowledge",
+            knowledge_dir=KNOWLEDGE_DIR,
+            extensions=[".md"],
+        )
+        logger.info(
+            f"✅ Qdrant RAG ready with {len(rag.indexed_files)} documents indexed"
+        )
     else:
         logger.info(f"📚 Initializing Gemini File Search from {KNOWLEDGE_DIR}")
         file_search_store = await gemini.create_file_search_store(
@@ -167,8 +178,12 @@ async def create_agent() -> Agent:
     """Create an agent with RAG capabilities."""
     instructions = """Read the instructions in @instructions.md"""
 
-    if RAG_BACKEND == "turbopuffer":
-        llm = gemini.LLM("gemini-3.1-flash-lite-preview")
+    if RAG_BACKEND in ("turbopuffer", "qdrant"):
+        if rag is None:
+            raise RuntimeError(
+                f"RAG backend '{RAG_BACKEND}' is selected but not initialized."
+            )
+        llm = gemini.LLM("gemini-flash-lite-latest")
 
         @llm.register_function(
             description="Search Stream's product knowledge base for detailed information about Chat, Video, Feeds, and Moderation APIs."
@@ -178,7 +193,7 @@ async def create_agent() -> Agent:
 
     else:
         llm = gemini.LLM(
-            "gemini-3.1-flash-lite-preview",
+            "gemini-flash-lite-latest",
             tools=[gemini.tools.FileSearch(file_search_store)],
         )
 

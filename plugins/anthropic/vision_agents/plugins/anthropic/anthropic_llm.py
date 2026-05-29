@@ -3,6 +3,11 @@ import logging
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional
 
+from vision_agents.core.agents.conversation import Message
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
+
 import anthropic
 from anthropic import AsyncAnthropic, AsyncStream
 from anthropic.types import (
@@ -12,12 +17,6 @@ from anthropic.types import (
     RawContentBlockDeltaEvent,
     RawMessageStreamEvent,
 )
-from vision_agents.core.agents.conversation import Message
-from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
-from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
-
-from . import events
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +63,6 @@ class ClaudeLLM(LLM):
             tools_max_rounds: max calling rounds for multi-hop tool call. Default - ``3``.
         """
         super().__init__()
-        self.events.register_events_from_module(events)
         self.model = model
         self._tools_max_rounds = max(tools_max_rounds, 1)
         self._pending_tool_uses_by_index: Dict[
@@ -147,10 +145,7 @@ class ClaudeLLM(LLM):
             original = await self.client.messages.create(*args, **kwargs)
         except anthropic.APIError as e:
             logger.exception(f'Failed to get a response from the LLM "{self.model}"')
-            self.metrics.on_llm_error(
-                provider=self.provider_name,
-                error_type=type(e).__name__,
-            )
+            self.on_llm_error(error=e)
             yield LLMResponseFinal(original=None, text="")
             return
         if isinstance(original, ClaudeMessage):

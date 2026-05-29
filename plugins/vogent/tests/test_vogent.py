@@ -17,7 +17,7 @@ async def vogent_turn_detection():
     try:
         yield td
     finally:
-        await td.stop()
+        await td.close()
 
 
 @pytest.mark.skip()

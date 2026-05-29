@@ -143,13 +143,13 @@ class CloudVLM(llm.VideoLLM):
             if self.mode == "vqa":
                 # Moondream SDK returns {"answer": <generator>}, extract the generator
                 result = await asyncio.to_thread(
-                    self.model.query, image, text, stream=True
+                    self._md_client.query, image, text, stream=True
                 )
                 stream = result["answer"]
             else:  # caption
                 # Moondream SDK returns {"caption": <generator>}, extract the generator
                 result = await asyncio.to_thread(
-                    self.model.caption, image, length="normal", stream=True
+                    self._md_client.caption, image, length="normal", stream=True
                 )
                 stream = result["caption"]
 
@@ -232,7 +232,7 @@ class CloudVLM(llm.VideoLLM):
                 raise ValueError("api_key is required for Moondream Cloud API")
 
             # Initialize cloud model
-            self.model = md.vl(api_key=self.api_key)
+            self._md_client = md.vl(api_key=self.api_key)
             logger.info("✅ Moondream SDK initialized")
 
         except Exception as e:

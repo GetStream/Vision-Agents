@@ -12,7 +12,7 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    llm = gemini.LLM("gemini-3.1-flash-lite-preview")
+    llm = gemini.LLM("gemini-flash-lite-latest")
 
     agent = Agent(
         edge=getstream.Edge(),  # low latency edge. clients for React, iOS, Android, RN, Flutter etc.

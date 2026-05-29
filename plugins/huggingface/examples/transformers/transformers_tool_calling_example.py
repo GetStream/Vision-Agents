@@ -61,7 +61,6 @@ async def create_agent(**kwargs) -> Agent:
         llm=llm,
         tts=deepgram.TTS(),
         stt=deepgram.STT(),
-        streaming_tts=True,
     )
     return agent
 

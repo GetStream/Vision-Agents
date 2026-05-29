@@ -1,7 +1,7 @@
 [project]
 name = "vision-agents-phone"
 version = "0.0.0"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.13"
 
 # put only what this example needs
 dependencies = [
@@ -14,6 +14,7 @@ dependencies = [
   "vision-agents-plugins-openai",
   "vision-agents-plugins-deepgram",
   "vision-agents-plugins-turbopuffer",
+  "vision-agents-plugins-qdrant",
   "fastapi",
   "uvicorn",
   "langchain-google-genai>=2.0",
@@ -29,3 +30,4 @@ dependencies = [
 "vision-agents-plugins-elevenlabs" = {path = "../../plugins/elevenlabs", editable=true}
 "vision-agents-plugins-deepgram" = {path = "../../plugins/deepgram", editable=true}
 "vision-agents-plugins-turbopuffer" = {path = "../../plugins/turbopuffer", editable=true}
+"vision-agents-plugins-qdrant" = {path = "../../plugins/qdrant", editable=true}

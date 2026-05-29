@@ -30,11 +30,6 @@ class InworldTTS(tts.TTS):
 
     streaming = True
 
-    # Each ``stream_audio`` call POSTs a full text input and streams audio
-    # back, so the agent feeds sentence-grain deltas: audio for sentence N
-    # plays while the LLM is still emitting sentence N+1.
-    streaming = True
-
     def __init__(
         self,
         api_key: str | None = None,
@@ -97,17 +92,11 @@ class InworldTTS(tts.TTS):
         self, text: str, *_, **__
     ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:
         """Convert text to speech over Inworld bidirectional WebSocket."""
+        context_id = str(uuid.uuid4())
+        self._active_context_id = context_id
         self._generation += 1
         generation = self._generation
 
-        context_id = str(uuid.uuid4())
-        await self._send_with_reconnect(text, context_id)
-
-        return self._stream_with_retry(text, context_id, generation)
-
-    async def _send_with_reconnect(self, text: str, context_id: str) -> None:
-        """Send create+text+flush, reconnecting once on connection-level errors."""
-        self._active_context_id = context_id
         try:
             await self._send_text_and_flush(text, context_id)
         except (websockets.exceptions.WebSocketException, OSError):
@@ -116,37 +105,7 @@ class InworldTTS(tts.TTS):
             self._active_context_id = context_id
             await self._send_text_and_flush(text, context_id)
 
-    async def _stream_with_retry(
-        self, text: str, context_id: str, generation: int
-    ) -> AsyncIterator[PcmData]:
-        """Yield PCM frames, retrying once on the "Context not found" race.
-
-        Inworld occasionally processes ``send_text`` before ``create_context``
-        has registered, returning a status frame with ``"Context … not found
-        during sendText"``. The race only fires before any audio is emitted,
-        so we reset the connection and reissue once with a fresh context id.
-        """
-        emitted_any = False
-        try:
-            async for pcm in self._receive_audio(context_id, generation):
-                emitted_any = True
-                yield pcm
-            return
-        except RuntimeError as exc:
-            msg = str(exc).lower()
-            if emitted_any or "context" not in msg or "not found" not in msg:
-                raise
-
-        logger.warning(
-            "Inworld TTS context-not-found race; retrying once with a fresh connection"
-        )
-        await self._reset_connection()
-
-        context_id = str(uuid.uuid4())
-        await self._send_with_reconnect(text, context_id)
-
-        async for pcm in self._receive_audio(context_id, generation):
-            yield pcm
+        return self._receive_audio(context_id, generation)
 
     async def stop_audio(self) -> None:
         """Stop current synthesis by closing the active context."""
@@ -162,6 +121,7 @@ class InworldTTS(tts.TTS):
 
     async def close(self) -> None:
         await self._reset_connection()
+        self._on_disconnected()
         await super().close()
 
     async def _send_text_and_flush(self, text: str, context_id: str) -> None:
@@ -219,7 +179,16 @@ class InworldTTS(tts.TTS):
                     continue
 
                 status = result.get("status", {})
-                if status.get("code", 0) != 0:
+                status_code = status.get("code", 0)
+
+                # Drop messages addressed to a different context: they belong
+                # to a stale or already-closed call (or a keepalive whose
+                # context the server doesn't know about). Server-wide errors
+                # with no contextId still pass through.
+                if msg_context_id and msg_context_id != context_id:
+                    continue
+
+                if status_code != 0:
                     error_message = status.get("message", "Unknown Inworld error")
                     if "max contexts limit reached" in error_message.lower():
                         logger.warning(
@@ -327,6 +296,7 @@ class InworldTTS(tts.TTS):
                 "X-Request-Id": request_id,
             },
         )
+        self._on_connected()
         if self._keepalive_task is None:
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
         return self._websocket
@@ -358,9 +328,17 @@ class InworldTTS(tts.TTS):
                 if self._websocket is websocket:
                     self._websocket = None
                 return
-            payload: dict[str, object] = {"send_text": {"text": ""}}
-            if self._active_context_id:
-                payload["contextId"] = self._active_context_id
+            # Without an active context the server has nothing to attach a
+            # `send_text` to and responds with "Context not found", which then
+            # corrupts the next valid TTS call's receive stream. The websockets
+            # library handles TCP-level keepalive via PING/PONG on its own, so
+            # skipping iterations here is safe.
+            if self._active_context_id is None:
+                continue
+            payload: dict[str, object] = {
+                "send_text": {"text": ""},
+                "contextId": self._active_context_id,
+            }
             try:
                 await websocket.send(json.dumps(payload))
             except (websockets.exceptions.WebSocketException, OSError):

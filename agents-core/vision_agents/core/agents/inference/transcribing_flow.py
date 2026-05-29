@@ -6,14 +6,28 @@ from uuid import uuid4
 from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.trace import Tracer
+from vision_agents.core.agents.events import (
+    AgentTurnEndedEvent,
+    AgentTurnStartedEvent,
+    UserTranscriptEvent,
+    UserTurnEndedEvent,
+    UserTurnStartedEvent,
+)
 from vision_agents.core.agents.transcript import TranscriptStore
 from vision_agents.core.edge.types import Participant
+from vision_agents.core.events import EventManager
 from vision_agents.core.llm import LLM, Realtime
+from vision_agents.core.llm.events import LLMResponseFinalEvent
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.stt import STT
 from vision_agents.core.stt.stt import Transcript
 from vision_agents.core.tts import TTS
-from vision_agents.core.tts.tts import TTSInput, TTSInputEnd, TTSOutputChunk
+from vision_agents.core.tts.tts import (
+    TTSInput,
+    TTSInputEnd,
+    TTSOutputChunk,
+    TTSOutputEnd,
+)
 from vision_agents.core.turn_detection import TurnDetector, TurnEnded, TurnStarted
 from vision_agents.core.utils.exceptions import log_exceptions
 from vision_agents.core.utils.stream import Stream
@@ -41,6 +55,7 @@ class TranscribingInferenceFlow(InferenceFlow):
         transcripts: TranscriptStore,
         agent_user_id: str,
         conversation: "Conversation",
+        events: EventManager,
         stt: STT | None = None,
         turn_detector: TurnDetector | None = None,
         tts: TTS | None = None,
@@ -51,6 +66,15 @@ class TranscribingInferenceFlow(InferenceFlow):
                 f"Realtime LLMs are not supported by {self.__class__.__name__}"
             )
         self._llm = llm
+        self.events = events
+        self.events.register(
+            UserTurnStartedEvent,
+            UserTurnEndedEvent,
+            UserTranscriptEvent,
+            AgentTurnStartedEvent,
+            AgentTurnEndedEvent,
+            LLMResponseFinalEvent,
+        )
 
         if turn_detector and stt and stt.turn_detection:
             logger.warning(
@@ -79,7 +103,7 @@ class TranscribingInferenceFlow(InferenceFlow):
         self._tts = tts
         self._tts_task: asyncio.Task | None = None
         self._tts_input = Stream[TTSInput | TTSInputEnd]()
-        self._tts_output = Stream[TTSOutputChunk]()
+        self._tts_output = Stream[TTSOutputChunk | TTSOutputEnd]()
         self._audio_output_task: asyncio.Task | None = None
         self._tts_tokenizer = TTSSentenceTokenizer()
 
@@ -153,7 +177,8 @@ class TranscribingInferenceFlow(InferenceFlow):
         if self._llm_turn is not None:
             await self._llm_turn.cancel()
             self._llm_turn = None
-        await self._llm.interrupt()
+        else:
+            await self._llm.interrupt()
         self._transcripts.flush_users_transcripts()
         self._llm_output.clear()
         self._tts_input.clear()
@@ -161,6 +186,7 @@ class TranscribingInferenceFlow(InferenceFlow):
         if self._tts:
             await self._tts.interrupt()
         self._tts_output.clear()
+        self._tts_output.send_nowait(TTSOutputEnd(interrupted=True))
 
         self._audio_output.clear()
         # flush() signals downstream consumers (e.g. rtc audio track)
@@ -206,7 +232,9 @@ class TranscribingInferenceFlow(InferenceFlow):
             if busy:
                 await self.interrupt()
 
-            llm_turn = LLMTurn(transcript=text, participant=participant)
+            llm_turn = LLMTurn(
+                transcript=text, participant=participant, events=self.events
+            )
             llm_turn.start(llm=self._llm)
             llm_turn.confirm()
             llm_turn.finalize(self._llm_output)
@@ -306,12 +334,19 @@ class TranscribingInferenceFlow(InferenceFlow):
                         "👉 Participant %s barged-in, interrupting the agent",
                         event.participant.user_id,
                     )
+                    self.events.send(UserTurnStartedEvent(participant=participant))
                     await self.interrupt()
 
                 elif isinstance(event, Transcript):
                     if event.final:
                         # Final transcript is ready
                         logger.info(f"🎤 [Transcript Complete]: {event.text}")
+                        self.events.send(
+                            UserTranscriptEvent(
+                                text=event.text or "",
+                                participant=participant,
+                            )
+                        )
 
                         # Update the bufferred transcript and mark it as "final".
                         self._transcripts.update_user_transcript(
@@ -368,7 +403,9 @@ class TranscribingInferenceFlow(InferenceFlow):
                         # and the user stopped speaking, but the STT is slow, and we
                         # haven't received any transcripts yet.
                         self._llm_turn = LLMTurn(
-                            transcript=transcript, participant=event.participant
+                            transcript=transcript,
+                            participant=event.participant,
+                            events=self.events,
                         )
                         self._llm_turn.confirm()
                     elif event.eager and transcript:
@@ -380,7 +417,9 @@ class TranscribingInferenceFlow(InferenceFlow):
 
                         # Start a new LLM turn
                         self._llm_turn = LLMTurn(
-                            transcript=transcript, participant=event.participant
+                            transcript=transcript,
+                            participant=event.participant,
+                            events=self.events,
                         )
                         logger.info(
                             '🤖 Starting eager LLM turn for transcript "%s"', transcript
@@ -413,7 +452,9 @@ class TranscribingInferenceFlow(InferenceFlow):
                     confirmed = llm_turn and llm_turn.confirmed
                     # Start a new turn for the final transcript.
                     llm_turn = LLMTurn(
-                        transcript=transcript, participant=event.participant
+                        transcript=transcript,
+                        participant=event.participant,
+                        events=self.events,
                     )
                     logger.info(
                         '🤖 Starting non-eager LLM turn for transcript "%s"', transcript
@@ -437,6 +478,7 @@ class TranscribingInferenceFlow(InferenceFlow):
                     and not llm_turn.finalized
                 ):
                     llm_turn.finalize(llm_output)
+                    self.events.send(UserTurnEndedEvent(participant=event.participant))
                     buffer.reset()
 
     async def process_llm_output(
@@ -464,32 +506,24 @@ class TranscribingInferenceFlow(InferenceFlow):
                 elif isinstance(item, LLMResponseFinal):
                     # Process the final response
                     text = sanitize_text(item.text) or ""
-                    model_suffix = f" ({item.model})" if item.model else ""
-                    logger.info(f"🤖 [LLM response final]{model_suffix}: {text}")
-                    # Skip persistence for empty finals — these come from LLM
-                    # errors (e.g. upstream unavailable) and would otherwise
-                    # poison conversation history with an empty assistant
-                    # turn that some providers (e.g. Inworld) reject on the
-                    # next request as "message content cannot be empty".
-                    if text:
-                        await self._conversation.upsert_message(
-                            message_id=item.item_id,
-                            role="assistant",
-                            user_id=self._agent_user_id,
-                            content=text,
-                            completed=True,
-                            replace=True,  # Replace any partial content from deltas
-                        )
-                        # Send the full response so non-streaming TTS can speak it.
-                        await tts_input.send(TTSInput(text=item.text, delta=False))
-                    # Always signal end so streaming TTS flushes tokenizer state
-                    # and the pipeline doesn't hang waiting for a turn boundary.
+                    logger.info(f"🤖 [LLM response final]: {text}")
+                    await self._conversation.upsert_message(
+                        message_id=item.item_id,
+                        role="assistant",
+                        user_id=self._agent_user_id,
+                        content=text,
+                        completed=True,
+                        replace=True,  # Replace any partial content from deltas
+                    )
+                    # Send the full response so non-streaming TTS can speak it,
+                    # then signal end so streaming TTS can flush tokenizer state.
+                    await tts_input.send(TTSInput(text=item.text, delta=False))
                     await tts_input.send(TTSInputEnd())
 
     async def process_tts(
         self,
         tts_input: Stream[TTSInput | TTSInputEnd],
-        tts_output: Stream[TTSOutputChunk],
+        tts_output: Stream[TTSOutputChunk | TTSOutputEnd],
     ) -> None:
         # No TTS provided, exit early
         if not self._tts:
@@ -519,10 +553,26 @@ class TranscribingInferenceFlow(InferenceFlow):
                             await tts_output.send(chunk)
 
     async def write_audio_output(
-        self, tts_output: Stream[TTSOutputChunk], audio_output: AudioOutputStream
+        self,
+        tts_output: Stream[TTSOutputChunk | TTSOutputEnd],
+        audio_output: AudioOutputStream,
     ):
+        speaking = False
         async for item in tts_output:
             with log_exceptions(logger, "Error while processing TTS output"):
+                if isinstance(item, TTSOutputEnd):
+                    if speaking:
+                        self.events.send(
+                            AgentTurnEndedEvent(interrupted=item.interrupted)
+                        )
+                        speaking = False
+                    continue
+                if not speaking:
+                    self.events.send(AgentTurnStartedEvent())
+                    speaking = True
                 await audio_output.send(
                     AudioOutputChunk(data=item.data, final=item.final)
                 )
+                if item.final:
+                    self.events.send(AgentTurnEndedEvent())
+                    speaking = False

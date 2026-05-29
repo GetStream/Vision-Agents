@@ -19,6 +19,7 @@ from opentelemetry.context import Token
 from opentelemetry.trace import Tracer, set_span_in_context
 from opentelemetry.trace.propagation import Context, Span
 
+from ..avatars import Avatar
 from ..edge import Call, EdgeTransport
 from ..edge.events import (
     AudioReceivedEvent,
@@ -51,11 +52,13 @@ from ..utils.audio_queue import AudioQueue
 from ..utils.logging import (
     CallContextToken,
 )
-from ..utils.utils import await_or_run, cancel_and_wait
+from ..base import Component
+from ..utils.exceptions import log_exceptions
+from ..utils.utils import cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
 from . import events
-from .agent_types import AgentOptions, LLMTurn, TrackInfo, default_agent_options
+from .agent_types import AgentOptions, TrackInfo, default_agent_options
 from .conversation import Conversation, InMemoryConversation
 from .inference import (
     AudioInputChunk,
@@ -120,15 +123,15 @@ class Agent:
         # - often combined with API calls to fetch stats etc
         # - state from each processor is passed to the LLM
         processors: Optional[list[Processor]] = None,
+        # optional avatar plugin. When set, the avatar owns the agent's
+        # outbound video/audio tracks and the inference flow's audio output
+        # is routed through the avatar provider for lipsync.
+        avatar: Optional[Avatar] = None,
         # MCP servers for external tool and resource access
         mcp_servers: Optional[list[MCPBaseServer]] = None,
         options: Optional[AgentOptions] = None,
         tracer: Tracer = trace.get_tracer("agents"),
         profiler: Optional[Profiler] = None,
-        # Send text to TTS as sentences stream from the LLM rather than
-        # waiting for the complete response. Reduces perceived latency for
-        # non-realtime LLMs that emit LLMResponseChunkEvent.
-        streaming_tts: bool = False,
         # Metrics broadcasting to call participants
         broadcast_metrics: bool = False,
         broadcast_metrics_interval: float = 5.0,
@@ -147,7 +150,13 @@ class Agent:
             turn_detection: Turn detector for managing conversational turns.
                 Not needed when using a realtime LLM.
             processors: Processors that run alongside the agent (e.g. video analysis,
-                data fetching). Their state is passed to the LLM.
+                data fetching). Their state is passed to the LLM. Audio and video
+                frames are dispatched to processors in list order; their
+                lifecycle hooks (``start`` / ``close``) run concurrently, so
+                processors must not depend on one another's startup or shutdown.
+            avatar: Optional avatar plugin. When set, the avatar owns the
+                agent's outbound video/audio tracks and the agent's
+                audio output is routed through the avatar for lip-sync.
             mcp_servers: MCP servers for external tool and resource access.
             options: Agent configuration options. Merged with defaults when provided.
             tracer: OpenTelemetry tracer for distributed tracing.
@@ -173,7 +182,6 @@ class Agent:
             self.agent_user.id = self._agent_user_id
 
         self._id = str(uuid4())
-        self._pending_turn: Optional[LLMTurn] = None
         self.call: Optional[Call] = None
 
         self._active_processed_track_id: Optional[str] = None
@@ -212,6 +220,7 @@ class Agent:
         self.tts = tts
         self.turn_detection = turn_detection
         self.processors: list[Processor] = processors or []
+        self.avatar = avatar
         self.mcp_servers = mcp_servers or []
         self._call_context_token: CallContextToken | None = None
         self._context_token: Token[Context] | None = None
@@ -234,12 +243,12 @@ class Agent:
 
         self._collector = MetricsCollector()
         # Merge plugin metric collectors so plugin on_*() calls forward to the agent root
-        for plugin in [stt, tts, turn_detection, llm, *self.processors]:
+        for plugin in [stt, tts, turn_detection, llm, avatar, *self.processors]:
             if plugin is not None:
                 self._collector.merge(plugin.metrics)
 
         # Merge plugin events BEFORE subscribing to any events
-        for component in [stt, tts, turn_detection, llm, edge, profiler]:
+        for component in [stt, tts, turn_detection, llm, avatar, edge, profiler]:
             if component is not None:
                 self.logger.debug(f"Register events from plugin {component}")
                 self.events.merge(component.events)
@@ -293,6 +302,9 @@ class Agent:
 
         self._audio_input_stream = AudioInputStream()
         self._audio_output_stream = AudioOutputStream()
+        if self.avatar is not None:
+            # The agent's audio output is the avatar's input
+            self.avatar.attach_audio_input(self._audio_output_stream)
         self._flow = self.resolve_inference_flow()
 
     @property
@@ -425,6 +437,7 @@ class Agent:
                 ),
                 transcripts=self.transcripts,
                 agent_user_id=self._agent_user_id,
+                events=self.events,
             )
         else:
             return TranscribingInferenceFlow(
@@ -440,6 +453,7 @@ class Agent:
                 ),
                 transcripts=self.transcripts,
                 agent_user_id=self._agent_user_id,
+                events=self.events,
             )
 
     def subscribe(self, function):
@@ -484,8 +498,7 @@ class Agent:
             self.call = call
             self.conversation = None
 
-            # run start on all subclasses
-            await self._apply("start")
+            await self._start_components()
 
             # Connect to MCP servers if manager is available
             if self.mcp_manager:
@@ -502,6 +515,7 @@ class Agent:
             with self.span("edge.join"):
                 self._connection = await self.edge.join(self, call)
             self.logger.info(f"🤖 Agent joined call: {call.id}")
+            self.events.send(events.AgentJoinedCallEvent(call=call))
 
             # Set up audio and video tracks together to avoid SDP issues
             audio_track = self._audio_track if self.publish_audio else None
@@ -646,28 +660,59 @@ class Agent:
         # Activate the root context globally so all subsequent spans are nested under it
         self._context_token = otel_context.attach(self._root_ctx)
 
-    async def _apply(self, function_name: str, *args, **kwargs):
-        subclasses = [
-            self.llm,
-            self.stt,
-            self.tts,
-            self.turn_detection,
-            self.edge,
-            *self.processors,
-        ]
-        for subclass in subclasses:
-            if (
-                subclass is not None
-                and getattr(subclass, function_name, None) is not None
+    def _get_components(self) -> tuple[Component, ...]:
+        """All agent-owned components that implement the Lifecycle protocol."""
+        return tuple(
+            c
+            for c in (
+                self.llm,
+                self.stt,
+                self.tts,
+                self.turn_detection,
+                self.edge,
+                self.avatar,
+                *self.processors,
+            )
+            if c is not None
+        )
+
+    async def _start_components(self) -> None:
+        """Start all components concurrently; abort the agent if any fails.
+
+        Errors are logged with the failing component's name and re-raised; in
+        flight siblings are cancelled and awaited so we don't leak orphan
+        network connects.
+        """
+
+        async def _safe_start(component: Component) -> None:
+            with log_exceptions(
+                self.logger,
+                f"Error starting {type(component).__name__}",
+                reraise=True,
             ):
-                func = getattr(subclass, function_name)
-                if func is not None:
-                    try:
-                        await await_or_run(func, *args, **kwargs)
-                    except Exception as e:
-                        self.logger.exception(
-                            f"Error calling {function_name} on {subclass.__class__.__name__}: {e}"
-                        )
+                await component.start()
+
+        tasks = [asyncio.create_task(_safe_start(c)) for c in self._get_components()]
+        try:
+            await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+    async def _stop_components(self) -> None:
+        """Close all components concurrently. Errors are logged but swallowed."""
+
+        async def _safe_close(component: Component) -> None:
+            with log_exceptions(
+                self.logger,
+                f"Error closing {type(component).__name__}",
+            ):
+                await component.close()
+
+        await asyncio.gather(*(_safe_close(c) for c in self._get_components()))
 
     def _end_tracing(self):
         if self._root_span is not None:
@@ -713,6 +758,8 @@ class Agent:
     async def _close(self):
         # Set call_ended event again in case the agent is closed externally
         self.logger.info("🤖 Stopping the agent")
+        if self.call is not None:
+            self.events.send(events.AgentLeftCallEvent(call=self.call))
         if self._call_ended_event is not None:
             self._call_ended_event.set()
 
@@ -740,10 +787,7 @@ class Agent:
             await cancel_and_wait(self._metrics_broadcast_task)
             self._metrics_broadcast_task = None
 
-        # run stop on all subclasses
-        await self._apply("stop")
-        # run close on all subclasses
-        await self._apply("close")
+        await self._stop_components()
 
         # Disconnect from MCP servers
         if self.mcp_manager:
@@ -808,12 +852,6 @@ class Agent:
         )
         return call
 
-    def _on_rtc_reconnect(self):
-        # update the code to listen?
-        # republish the audio track and video track?
-        # TODO: implement me
-        pass
-
     def set_video_track_override_path(self, path: str):
         if not path or not self.publish_video:
             return
@@ -825,21 +863,19 @@ class Agent:
         self._video_track_override_path = path
 
     async def _poll_audio_queues(self) -> AsyncIterator[tuple[Participant, PcmData]]:
-        """Poll all participant audio queues sequentially.
-
-        Yields (Participant, PcmData) tuples for each queue that has data ready.
-        Queues that time out are silently skipped.
-        """
+        """Yield 20 ms chunks, draining the whole backlog per queue so the
+        consumer can catch up after a stall."""
         # Make a copy before iterating because the track maybe get unpublished
         queues = self._participant_queues.copy()
         for participant, queue in queues.values():
-            try:
-                pcm = await asyncio.wait_for(
-                    queue.get_duration(duration_ms=20), timeout=0.001
-                )
-                yield participant, pcm
-            except (TimeoutError, asyncio.QueueEmpty):
-                continue
+            while not queue.empty():
+                try:
+                    pcm = await asyncio.wait_for(
+                        queue.get_duration(duration_ms=20), timeout=0.001
+                    )
+                    yield participant, pcm
+                except (TimeoutError, asyncio.QueueEmpty):
+                    break
 
     async def _consume_incoming_audio(self) -> None:
         """Consumer that continuously processes audio from per-participant queues."""
@@ -848,7 +884,6 @@ class Agent:
         # Store audio processors in the variable to avoid calling
         # the property all the time
         audio_processors = self.audio_processors
-        is_audio_llm = _is_audio_llm(self.llm)
 
         try:
             while self._call_ended_event and not self._call_ended_event.is_set():
@@ -868,19 +903,10 @@ class Agent:
                         await self._audio_input_stream.send(
                             AudioInputChunk(data=pcm, participant=participant)
                         )
-                        continue
 
                         # Pass PCM through audio processors
                         for processor in audio_processors:
                             await processor.process_audio(pcm)
-
-                        # Pass audio directly to LLM if it supports it
-                        if is_audio_llm:
-                            await self.simple_audio_response(pcm, participant)
-
-                        # Otherwise, go through stt
-                        elif self.stt:
-                            await self.stt.process_audio(pcm, participant)
 
                 # Sleep for remaining time to maintain consistent interval
                 elapsed = time.perf_counter() - loop_start
@@ -898,14 +924,20 @@ class Agent:
         if self._audio_track is None:
             return
 
+        # When `avatar` is provided, we use its audio output instead of the
+        # default one.
+        stream = (
+            self.avatar.audio_output()
+            if self.avatar is not None
+            else self._audio_output_stream
+        )
         try:
-            while self._call_ended_event and not self._call_ended_event.is_set():
-                async for audio_output in self._audio_output_stream:
-                    match audio_output:
-                        case AudioOutputChunk(data=data) if data is not None:
-                            await self._audio_track.write(audio_output.data)
-                        case AudioOutputFlush():
-                            await self._audio_track.flush()
+            async for audio_output in stream:
+                match audio_output:
+                    case AudioOutputChunk(data=data) if data is not None:
+                        await self._audio_track.write(data)
+                    case AudioOutputFlush():
+                        await self._audio_track.flush()
 
         except asyncio.CancelledError:
             self.logger.info("🎵 Audio producer task cancelled")
@@ -1073,7 +1105,7 @@ class Agent:
         """
         if self.tts is not None or _is_audio_llm(self.llm):
             return True
-        # Also publish audio if there are audio publishers (e.g., HeyGen avatar)
+
         if self.audio_publishers:
             return True
         return False
@@ -1081,6 +1113,10 @@ class Agent:
     @property
     def publish_video(self) -> bool:
         """Whether the agent should publish an outbound video track."""
+
+        # Avatars always publish video track
+        if self.avatar is not None:
+            return True
         return len(self.video_publishers) > 0
 
     def _needs_video(self) -> bool:
@@ -1162,29 +1198,36 @@ class Agent:
             else:
                 self._audio_track = self.edge.create_audio_track()
 
-        # Set up video track if video publishers are available
-        if self.publish_video:
-            # Get the first video publisher to create the track
-            video_publisher = self.video_publishers[0]
-            self._video_track = video_publisher.publish_video_track()
-            forwarder = VideoForwarder(
-                self._video_track,  # type: ignore[arg-type]
-                max_buffer=30,
-                fps=30,
-                # Max FPS for the producer (individual consumers can throttle down)
-                name=f"video_forwarder_{video_publisher.name}",
-            )
-            self._active_video_tracks[self._video_track.id] = TrackInfo(
-                id=self._video_track.id,
-                type=TrackType.VIDEO.value,
-                processor=video_publisher.name,
-                track=self._video_track,
-                participant=None,
-                priority=2,
-                forwarder=forwarder,
-            )
+        if not self.publish_video:
+            return
 
-            self.logger.info("🎥 Video track initialized from video publisher")
+        # Avatar owns the outbound video track. Its track is NOT placed in
+        # `_active_video_tracks` — that dict is for inputs the LLM and
+        # processors might watch.
+        if self.avatar is not None:
+            self._video_track = self.avatar.video_output()
+            return
+
+        video_publisher = self.video_publishers[0]
+        self._video_track = video_publisher.publish_video_track()
+        forwarder = VideoForwarder(
+            self._video_track,  # type: ignore[arg-type]
+            max_buffer=30,
+            fps=30,
+            # Max FPS for the producer (individual consumers can throttle down)
+            name=f"video_forwarder_{video_publisher.name}",
+        )
+        self._active_video_tracks[self._video_track.id] = TrackInfo(
+            id=self._video_track.id,
+            type=TrackType.VIDEO.value,
+            processor=video_publisher.name,
+            track=self._video_track,
+            participant=None,
+            priority=2,
+            forwarder=forwarder,
+        )
+
+        self.logger.info("🎥 Video track initialized from video publisher")
 
     async def _get_video_track_override(self) -> VideoFileTrack:
         """
