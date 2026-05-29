@@ -16,9 +16,9 @@ from vision_agents.plugins.openai import ChatCompletionsVLM
 from .llm import (
     INWORLD_BASE_URL,
     PLUGIN_NAME,
-    LLM,
-    TTFT_TIMEOUT_MIN_MS,
-    ttft_timeout_to_ms,
+    _validate_ttft_timeout,
+    build_extra_body,
+    inject_compression,
 )
 
 
@@ -72,13 +72,7 @@ class VLM(ChatCompletionsVLM):
         ``frame_height``, ``max_workers``) match
         :class:`vision_agents.plugins.openai.ChatCompletionsVLM`.
         """
-        if ttft_timeout is not None:
-            ttft_ms = ttft_timeout_to_ms(ttft_timeout)
-            if ttft_ms < TTFT_TIMEOUT_MIN_MS:
-                raise ValueError(
-                    f"ttft_timeout must be >= {TTFT_TIMEOUT_MIN_MS}ms; "
-                    f"Inworld's gateway returns 502 below this. Got {ttft_timeout!r}."
-                )
+        _validate_ttft_timeout(ttft_timeout)
 
         super().__init__(
             model=model,
@@ -92,7 +86,7 @@ class VLM(ChatCompletionsVLM):
             client=client,
         )
         self._compression_aggressiveness = compression_aggressiveness
-        self._extra_body = LLM._build_extra_body(
+        self._extra_body = build_extra_body(
             fallback_models=fallback_models,
             ignore_models=ignore_models,
             sort_by=sort_by,
@@ -108,11 +102,4 @@ class VLM(ChatCompletionsVLM):
 
     async def _build_model_request(self) -> list[dict]:
         messages = await super()._build_model_request()
-        if self._compression_aggressiveness is not None:
-            for msg in messages:
-                if msg.get("role") == "system":
-                    msg["compression"] = {
-                        "aggressiveness": self._compression_aggressiveness
-                    }
-                    break
-        return messages
+        return inject_compression(messages, self._compression_aggressiveness)

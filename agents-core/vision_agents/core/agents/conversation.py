@@ -228,7 +228,6 @@ class Conversation(ABC):
         (e.g. ``StreamConversation``) override this to drain those tasks
         before tests assert or before the agent shuts down.
         """
-        return None
 
     def _find_message(self, message_id: str) -> Optional[Message]:
         """Find a message by ID."""

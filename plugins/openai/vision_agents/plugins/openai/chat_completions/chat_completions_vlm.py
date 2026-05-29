@@ -4,7 +4,7 @@ import logging
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from typing import AsyncIterator, Optional, cast
+from typing import Any, AsyncIterator, Optional, cast
 
 import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
@@ -135,12 +135,15 @@ class ChatCompletionsVLM(VideoLLM):
         request_start_time = time.perf_counter()
         first_token_time: Optional[float] = None
 
+        request_kwargs: dict[str, Any] = {
+            "messages": messages,
+            "model": self.model,
+            "stream": True,
+        }
+        request_kwargs.update(self._extra_request_kwargs())
+
         try:
-            response = await self._client.chat.completions.create(  # type: ignore[arg-type]
-                messages=messages,  # type: ignore[arg-type]
-                model=self.model,
-                stream=True,
-            )
+            response = await self._client.chat.completions.create(**request_kwargs)  # type: ignore[arg-type]
         except Exception:
             logger.exception(f'Failed to get a response from the model "{self.model}"')
             yield LLMResponseFinal(original=None, text="")
@@ -285,9 +288,13 @@ class ChatCompletionsVLM(VideoLLM):
                 }
             )
 
-        # Add all messages from the conversation to the prompt
+        # Add all messages from the conversation to the prompt. Skip any
+        # with empty content — providers like Inworld reject requests
+        # containing empty messages with "message content cannot be empty".
         if self._conversation is not None:
             for message in self._conversation.messages:
+                if not message.content:
+                    continue
                 messages.append(
                     {
                         "role": message.role,
@@ -317,3 +324,7 @@ class ChatCompletionsVLM(VideoLLM):
     async def close(self) -> None:
         await self._client.close()
         self._executor.shutdown(wait=False)
+
+    def _extra_request_kwargs(self) -> dict[str, Any]:
+        """Hook for subclasses to inject extra fields (e.g. ``extra_body``) into ``chat.completions.create``."""
+        return {}

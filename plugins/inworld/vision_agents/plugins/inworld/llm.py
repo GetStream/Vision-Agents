@@ -34,6 +34,62 @@ def ttft_timeout_to_ms(value: str) -> float:
     return float(amount) * (1000.0 if unit == "s" else 1.0)
 
 
+def _validate_ttft_timeout(ttft_timeout: Optional[str]) -> None:
+    """Reject sub-500ms timeouts that Inworld's gateway answers with a 502."""
+    if (
+        ttft_timeout is not None
+        and ttft_timeout_to_ms(ttft_timeout) < TTFT_TIMEOUT_MIN_MS
+    ):
+        raise ValueError(
+            f"ttft_timeout must be >= {TTFT_TIMEOUT_MIN_MS}ms; "
+            f"Inworld's gateway returns 502 below this. Got {ttft_timeout!r}."
+        )
+
+
+def build_extra_body(
+    *,
+    fallback_models: Optional[list[str]] = None,
+    ignore_models: Optional[list[str]] = None,
+    sort_by: Optional[list[str]] = None,
+    ttft_timeout: Optional[str] = None,
+    metadata: Optional[dict[str, Any]] = None,
+    web_search: bool = False,
+    web_search_options: Optional[dict[str, Any]] = None,
+    override: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Assemble Inworld's ``extra_body`` routing payload from router kwargs."""
+    body: dict[str, Any] = {}
+    if fallback_models:
+        body["models"] = list(fallback_models)
+    if ignore_models:
+        body["ignore"] = list(ignore_models)
+    if sort_by:
+        body["sort"] = list(sort_by)
+    if ttft_timeout:
+        body.setdefault("fallback", {})["ttft_timeout"] = ttft_timeout
+    if metadata:
+        body["metadata"] = dict(metadata)
+    if web_search:
+        body["web_search"] = True
+        if web_search_options:
+            body["web_search_options"] = dict(web_search_options)
+    if override:
+        body.update(override)
+    return body
+
+
+def inject_compression(
+    messages: list[dict], compression_aggressiveness: Optional[float]
+) -> list[dict]:
+    """Attach Inworld's ``compression`` field to the system message in-place."""
+    if compression_aggressiveness is not None:
+        for msg in messages:
+            if msg.get("role") == "system":
+                msg["compression"] = {"aggressiveness": compression_aggressiveness}
+                break
+    return messages
+
+
 class LLM(ChatCompletionsLLM):
     """Inworld LLM router (text chat completions).
 
@@ -111,13 +167,7 @@ class LLM(ChatCompletionsLLM):
             extra_body: Raw escape hatch merged into the request's
                 ``extra_body`` after the helpers above (overrides them).
         """
-        if ttft_timeout is not None:
-            ttft_ms = ttft_timeout_to_ms(ttft_timeout)
-            if ttft_ms < TTFT_TIMEOUT_MIN_MS:
-                raise ValueError(
-                    f"ttft_timeout must be >= {TTFT_TIMEOUT_MIN_MS}ms; "
-                    f"Inworld's gateway returns 502 below this. Got {ttft_timeout!r}."
-                )
+        _validate_ttft_timeout(ttft_timeout)
 
         super().__init__(
             model=model,
@@ -127,7 +177,7 @@ class LLM(ChatCompletionsLLM):
             tools_max_rounds=tools_max_rounds,
         )
         self._compression_aggressiveness = compression_aggressiveness
-        self._extra_body = self._build_extra_body(
+        self._extra_body = build_extra_body(
             fallback_models=fallback_models,
             ignore_models=ignore_models,
             sort_by=sort_by,
@@ -138,47 +188,9 @@ class LLM(ChatCompletionsLLM):
             override=extra_body,
         )
 
-    @staticmethod
-    def _build_extra_body(
-        *,
-        fallback_models: Optional[list[str]],
-        ignore_models: Optional[list[str]],
-        sort_by: Optional[list[str]],
-        ttft_timeout: Optional[str],
-        metadata: Optional[dict[str, Any]],
-        web_search: bool,
-        web_search_options: Optional[dict[str, Any]],
-        override: Optional[dict[str, Any]],
-    ) -> dict[str, Any]:
-        body: dict[str, Any] = {}
-        if fallback_models:
-            body["models"] = list(fallback_models)
-        if ignore_models:
-            body["ignore"] = list(ignore_models)
-        if sort_by:
-            body["sort"] = list(sort_by)
-        if ttft_timeout:
-            body.setdefault("fallback", {})["ttft_timeout"] = ttft_timeout
-        if metadata:
-            body["metadata"] = dict(metadata)
-        if web_search:
-            body["web_search"] = True
-            if web_search_options:
-                body["web_search_options"] = dict(web_search_options)
-        if override:
-            body.update(override)
-        return body
-
     def _extra_request_kwargs(self) -> dict[str, Any]:
         return {"extra_body": self._extra_body} if self._extra_body else {}
 
     async def _build_model_request(self) -> list[dict]:
         messages = await super()._build_model_request()
-        if self._compression_aggressiveness is not None:
-            for msg in messages:
-                if msg.get("role") == "system":
-                    msg["compression"] = {
-                        "aggressiveness": self._compression_aggressiveness
-                    }
-                    break
-        return messages
+        return inject_compression(messages, self._compression_aggressiveness)
