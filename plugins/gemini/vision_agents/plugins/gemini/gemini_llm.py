@@ -293,6 +293,17 @@ class GeminiLLM(LLM):
 
                     parts.append(func_response_part)
 
+                # If every requested call was a duplicate already executed in a
+                # previous round, `parts` is empty. Sending it would trip
+                # google-genai's `t_parts` guard with "content parts are required.".
+                if not parts:
+                    logger.warning(
+                        "Gemini returned only duplicate tool calls in round %d; "
+                        "ending tool loop to avoid empty follow-up message.",
+                        rounds,
+                    )
+                    break
+
                 # Fix for Gemini 3 Pro: Remove empty model messages from history
                 # Gemini 3 Pro streaming adds an empty model message after function calls
                 # which breaks the "function response must immediately follow function call" requirement
