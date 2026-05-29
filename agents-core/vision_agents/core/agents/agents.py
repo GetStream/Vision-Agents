@@ -777,11 +777,6 @@ class Agent:
         self._audio_input_stream.close()
         self._audio_output_stream.close()
 
-        # Drain any background conversation persistence so we don't drop
-        # in-flight Stream Chat writes (e.g. the final assistant message).
-        if self.conversation is not None:
-            await self.conversation.wait_for_pending_syncs()
-
         # Stop metrics broadcast task
         if self._metrics_broadcast_task:
             await cancel_and_wait(self._metrics_broadcast_task)

@@ -221,14 +221,6 @@ class Conversation(ABC):
         """
         pass
 
-    async def wait_for_pending_syncs(self) -> None:
-        """Wait for any backend-sync work dispatched in the background.
-
-        Default no-op. Implementations that fire backend syncs as tasks
-        (e.g. ``StreamConversation``) override this to drain those tasks
-        before tests assert or before the agent shuts down.
-        """
-
     def _find_message(self, message_id: str) -> Optional[Message]:
         """Find a message by ID."""
         return next((m for m in self.messages if m.id == message_id), None)

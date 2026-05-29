@@ -73,8 +73,7 @@ class TestStreamConversation:
         assert stream_conversation.messages[0].role == "user"
         assert stream_conversation.messages[0].user_id == "user123"
 
-        # Verify Stream API was called (backend sync runs as a task)
-        await stream_conversation.wait_for_pending_syncs()
+        # Verify Stream API was called
         mock_channel.send_message.assert_called_once()
         call_args = mock_channel.send_message.call_args
         request = call_args[0][0]
@@ -99,8 +98,7 @@ class TestStreamConversation:
         assert stream_conversation.messages[0].role == "user"
         assert stream_conversation.messages[0].user_id == "user123"
 
-        # Verify Stream API was called (backend sync runs as a task)
-        await stream_conversation.wait_for_pending_syncs()
+        # Verify Stream API was called
         mock_channel.send_message.assert_called_once()
         call_args = mock_channel.send_message.call_args
         request = call_args[0][0]
@@ -125,7 +123,6 @@ class TestStreamConversation:
 
         assert len(stream_conversation.messages) == 1
         assert stream_conversation.messages[0].content == "Hello"
-        await stream_conversation.wait_for_pending_syncs()
         mock_channel.send_message.assert_called_once()
 
         # Delta 2
@@ -142,7 +139,6 @@ class TestStreamConversation:
         assert len(stream_conversation.messages) == 1
         assert stream_conversation.messages[0].content == "Hello world"
         # Should call ephemeral update, not send_message
-        await stream_conversation.wait_for_pending_syncs()
         mock_channel.send_message.assert_not_called()
         mock_channel.client.ephemeral_message_update.assert_called_once()
 
@@ -185,7 +181,6 @@ class TestStreamConversation:
         assert stream_conversation.messages[0].content == "Hello world!"
 
         # Should call update_message_partial for completion
-        await stream_conversation.wait_for_pending_syncs()
         mock_channel.client.update_message_partial.assert_called_once()
 
     @pytest.mark.asyncio
@@ -322,7 +317,6 @@ async def test_streaming_deltas_then_completion_integration():
     assert conversation.messages[0].content == "Hello world!"
 
     # Verify only 1 message in Stream
-    await conversation.wait_for_pending_syncs()
     response = await channel.get_or_create(
         state=True, messages=MessagePaginationParams(limit=10)
     )
@@ -381,7 +375,6 @@ async def test_completion_before_deltas_integration():
     assert conversation.messages[0].content == full_text
 
     # Verify only 1 message in Stream
-    await conversation.wait_for_pending_syncs()
     response = await channel.get_or_create(
         state=True, messages=MessagePaginationParams(limit=10)
     )
@@ -449,7 +442,6 @@ async def test_out_of_order_fragments_integration():
     assert len(conversation.messages) == 1
 
     # Verify in Stream
-    await conversation.wait_for_pending_syncs()
     response = await channel.get_or_create(
         state=True, messages=MessagePaginationParams(limit=10)
     )
@@ -507,7 +499,6 @@ async def test_race_condition_delta_and_completion_concurrent():
     assert conversation.messages[0].content == "The old lighthouse keeper..."
 
     # Verify only 1 message in Stream
-    await conversation.wait_for_pending_syncs()
     response = await channel.get_or_create(
         state=True, messages=MessagePaginationParams(limit=10)
     )
@@ -560,7 +551,6 @@ async def test_concurrent_messages():
     assert len(conversation.messages) == 2
 
     # Verify in Stream
-    await conversation.wait_for_pending_syncs()
     response = await channel.get_or_create(
         state=True, messages=MessagePaginationParams(limit=10)
     )
@@ -602,7 +592,6 @@ async def test_large_message_chunking_integration():
     assert conversation.messages[0].content == large_text
 
     # Should have 3 chunks in Stream
-    await conversation.wait_for_pending_syncs()
     response = await channel.get_or_create(
         state=True, messages=MessagePaginationParams(limit=10)
     )
@@ -697,7 +686,6 @@ async def test_streaming_with_chunking_integration():
     assert conversation.messages[0].content == final_text
 
     # Should have 2 chunks in Stream (3rd deleted)
-    await conversation.wait_for_pending_syncs()
     response = await channel.get_or_create(
         state=True, messages=MessagePaginationParams(limit=10)
     )
@@ -761,7 +749,6 @@ And here's more text after the code block to force multiple chunks."""
     assert len(conversation.messages) == 1
 
     # Should have multiple chunks in Stream
-    await conversation.wait_for_pending_syncs()
     response = await channel.get_or_create(
         state=True, messages=MessagePaginationParams(limit=10)
     )
