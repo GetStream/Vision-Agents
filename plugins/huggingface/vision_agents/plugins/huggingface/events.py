@@ -32,3 +32,36 @@ class DetectionCompletedEvent(VideoProcessorDetectionEvent):
 
     def __post_init__(self):
         self.detection_count = len(self.objects)
+
+
+class SegmentedObject(TypedDict):
+    """An object segmented by a video processor."""
+
+    label: str
+    confidence: float
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+    mask_area: int
+
+
+@dataclass
+class SegmentationCompletedEvent(VideoProcessorDetectionEvent):
+    """Event emitted when Transformers segmentation completes.
+
+    Attributes:
+        objects: Segmented objects with labels, bounding boxes, and mask areas.
+        masks: Per-object binary masks as numpy arrays, each of shape ``(H, W)``.
+        image_width: Width of the source image in pixels.
+        image_height: Height of the source image in pixels.
+    """
+
+    objects: list[SegmentedObject] = field(default_factory=list)
+    masks: list[Any] = field(default_factory=list)
+    image_width: int = 0
+    image_height: int = 0
+    type: str = field(default="plugin.huggingface.segmentation_completed", init=False)
+
+    def __post_init__(self):
+        self.detection_count = len(self.objects)
