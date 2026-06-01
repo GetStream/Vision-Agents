@@ -7030,6 +7030,7 @@ dependencies = [
     { name = "httpx" },
     { name = "openai", extra = ["realtime"] },
     { name = "vision-agents" },
+    { name = "vision-agents-plugins-openai" },
     { name = "websockets" },
 ]
 
@@ -7045,6 +7046,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "openai", extras = ["realtime"], specifier = ">=2.26.0,<3" },
     { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
     { name = "websockets", specifier = ">=14.0" },
 ]
 
