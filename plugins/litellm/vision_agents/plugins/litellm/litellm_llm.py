@@ -225,7 +225,10 @@ class LiteLLMChatCompletions(LLM):
         if self._instructions:
             messages.append({"role": "system", "content": self._instructions})
         if self._conversation:
-            messages.extend(await self._conversation.get_messages())
+            messages.extend(
+                {"role": m.role, "content": m.content}
+                for m in self._conversation.messages
+            )
         return messages
 
     def _convert_tools_to_provider_format(
@@ -235,9 +238,9 @@ class LiteLLMChatCompletions(LLM):
             {
                 "type": "function",
                 "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters,
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t.get("parameters_schema", {}),
                 },
             }
             for t in tools
