@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 
 PLUGIN_NAME = "chat_completions_llm"
 
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
 
 class ChatCompletionsLLM(LLM):
     """
@@ -57,6 +60,10 @@ class ChatCompletionsLLM(LLM):
         self._tools_max_rounds = max(tools_max_rounds, 1)
         # Track tool calls being accumulated during streaming
         self._pending_tool_calls: dict[int, dict[str, Any]] = {}
+        # Buffer for stripping <think> reasoning spans across streamed chunks
+        self._think_buffer: str = ""
+        self._in_think: bool = False
+        self._emitted_visible: bool = False
 
         if client is not None:
             self._client = client
@@ -98,6 +105,17 @@ class ChatCompletionsLLM(LLM):
             )
 
         messages = await self._build_model_request()
+        # The model is stateless: the request is rebuilt from the conversation on
+        # every call. The conversation may not yet contain this turn's text - an
+        # injected instruction is never persisted there, and an eager turn runs
+        # before the transcript is committed - so ensure `text` is the trailing
+        # user message, skipping when it already is to avoid duplicating it.
+        if text and (
+            not messages
+            or messages[-1]["role"] != "user"
+            or messages[-1]["content"] != text
+        ):
+            messages.append({"role": "user", "content": text})
         tools_param = None
         tools_spec = self.get_available_functions()
         if tools_spec:
@@ -153,6 +171,7 @@ class ChatCompletionsLLM(LLM):
         """Process a streaming response, handling tool calls if present."""
         text_chunks: list[str] = []
         self._pending_tool_calls = {}
+        self._reset_think_filter()
         accumulated_tool_calls: list[NormalizedToolCallItem] = []
         sequence_number = 0
         first_token_time: Optional[float] = None
@@ -172,23 +191,25 @@ class ChatCompletionsLLM(LLM):
                     self._accumulate_tool_call_chunk(tc)
 
             if content:
-                is_first = first_token_time is None
-                ttft_ms = None
-                if is_first:
-                    first_token_time = time.perf_counter()
-                    ttft_ms = (first_token_time - request_start_time) * 1000
+                visible = self._filter_think(content)
+                if visible:
+                    is_first = first_token_time is None
+                    ttft_ms = None
+                    if is_first:
+                        first_token_time = time.perf_counter()
+                        ttft_ms = (first_token_time - request_start_time) * 1000
 
-                text_chunks.append(content)
-                yield LLMResponseDelta(
-                    content_index=None,
-                    item_id=chunk.id,
-                    output_index=0,
-                    sequence_number=sequence_number,
-                    delta=content,
-                    is_first_chunk=is_first,
-                    time_to_first_token_ms=ttft_ms,
-                )
-                sequence_number += 1
+                    text_chunks.append(visible)
+                    yield LLMResponseDelta(
+                        content_index=None,
+                        item_id=chunk.id,
+                        output_index=0,
+                        sequence_number=sequence_number,
+                        delta=visible,
+                        is_first_chunk=is_first,
+                        time_to_first_token_ms=ttft_ms,
+                    )
+                    sequence_number += 1
 
             if finish_reason:
                 if finish_reason in ("length", "content"):
@@ -198,6 +219,20 @@ class ChatCompletionsLLM(LLM):
 
                 if finish_reason == "tool_calls":
                     accumulated_tool_calls = self._finalize_pending_tool_calls()
+
+        leftover = self._flush_think()
+        if leftover:
+            text_chunks.append(leftover)
+            yield LLMResponseDelta(
+                content_index=None,
+                item_id=last_chunk.id if last_chunk is not None else None,
+                output_index=0,
+                sequence_number=sequence_number,
+                delta=leftover,
+                is_first_chunk=first_token_time is None,
+                time_to_first_token_ms=None,
+            )
+            sequence_number += 1
 
         total_text = "".join(text_chunks)
 
@@ -241,6 +276,68 @@ class ChatCompletionsLLM(LLM):
             for message in self._conversation.messages:
                 messages.append({"role": message.role, "content": message.content})
         return messages
+
+    def _reset_think_filter(self) -> None:
+        self._think_buffer = ""
+        self._in_think = False
+        self._emitted_visible = False
+
+    def _filter_think(self, content: str) -> str:
+        """Strip ``<think>...</think>`` reasoning spans from streamed content.
+
+        Reasoning models such as MiniMax-M3 inline their chain-of-thought in
+        ``<think>`` tags within the content. Buffering across chunks keeps tags
+        that split at a chunk boundary intact, so only text outside a think
+        span is returned.
+        """
+        self._think_buffer += content
+        out: list[str] = []
+        while self._think_buffer:
+            if self._in_think:
+                idx = self._think_buffer.find(_THINK_CLOSE)
+                if idx == -1:
+                    keep = self._partial_tail(self._think_buffer, _THINK_CLOSE)
+                    self._think_buffer = self._think_buffer[
+                        len(self._think_buffer) - keep :
+                    ]
+                    break
+                self._think_buffer = self._think_buffer[idx + len(_THINK_CLOSE) :]
+                self._in_think = False
+            else:
+                idx = self._think_buffer.find(_THINK_OPEN)
+                if idx == -1:
+                    keep = self._partial_tail(self._think_buffer, _THINK_OPEN)
+                    emit_to = len(self._think_buffer) - keep
+                    if emit_to > 0:
+                        out.append(self._think_buffer[:emit_to])
+                    self._think_buffer = self._think_buffer[emit_to:]
+                    break
+                if idx > 0:
+                    out.append(self._think_buffer[:idx])
+                self._think_buffer = self._think_buffer[idx + len(_THINK_OPEN) :]
+                self._in_think = True
+        result = "".join(out)
+        # Trim whitespace the model leaves between the think span and the answer
+        # (e.g. "</think>\nHello") so the visible reply does not start blank.
+        if not self._emitted_visible:
+            result = result.lstrip()
+        if result:
+            self._emitted_visible = True
+        return result
+
+    def _flush_think(self) -> str:
+        """Return text held back to disambiguate a partial tag, then reset."""
+        leftover = "" if self._in_think else self._think_buffer
+        self._reset_think_filter()
+        return leftover
+
+    @staticmethod
+    def _partial_tail(buffer: str, tag: str) -> int:
+        """Length of the longest buffer suffix that is a proper prefix of tag."""
+        for n in range(min(len(buffer), len(tag) - 1), 0, -1):
+            if buffer[-n:] == tag[:n]:
+                return n
+        return 0
 
     def _accumulate_tool_call_chunk(self, tc_chunk: Any) -> None:
         """Accumulate tool call data from streaming chunks."""
@@ -394,6 +491,7 @@ class ChatCompletionsLLM(LLM):
 
             text_chunks: list[str] = []
             self._pending_tool_calls = {}
+            self._reset_think_filter()
             next_tool_calls: list[NormalizedToolCallItem] = []
 
             async for chunk in cast(AsyncStream[ChatCompletionChunk], follow_up):
@@ -410,27 +508,43 @@ class ChatCompletionsLLM(LLM):
                         self._accumulate_tool_call_chunk(tc)
 
                 if content:
-                    is_first = first_token_time is None
-                    ttft_ms = None
-                    if is_first:
-                        first_token_time = time.perf_counter()
-                        ttft_ms = (first_token_time - request_start_time) * 1000
+                    visible = self._filter_think(content)
+                    if visible:
+                        is_first = first_token_time is None
+                        ttft_ms = None
+                        if is_first:
+                            first_token_time = time.perf_counter()
+                            ttft_ms = (first_token_time - request_start_time) * 1000
 
-                    text_chunks.append(content)
-                    yield LLMResponseDelta(
-                        content_index=None,
-                        item_id=chunk.id,
-                        output_index=0,
-                        sequence_number=sequence_number,
-                        delta=content,
-                        is_first_chunk=is_first,
-                        time_to_first_token_ms=ttft_ms,
-                    )
-                    sequence_number += 1
+                        text_chunks.append(visible)
+                        yield LLMResponseDelta(
+                            content_index=None,
+                            item_id=chunk.id,
+                            output_index=0,
+                            sequence_number=sequence_number,
+                            delta=visible,
+                            is_first_chunk=is_first,
+                            time_to_first_token_ms=ttft_ms,
+                        )
+                        sequence_number += 1
 
                 if finish_reason:
                     if finish_reason == "tool_calls":
                         next_tool_calls = self._finalize_pending_tool_calls()
+
+            leftover = self._flush_think()
+            if leftover:
+                text_chunks.append(leftover)
+                yield LLMResponseDelta(
+                    content_index=None,
+                    item_id=last_chunk.id if last_chunk is not None else None,
+                    output_index=0,
+                    sequence_number=sequence_number,
+                    delta=leftover,
+                    is_first_chunk=first_token_time is None,
+                    time_to_first_token_ms=None,
+                )
+                sequence_number += 1
 
             total_text = "".join(text_chunks)
 
