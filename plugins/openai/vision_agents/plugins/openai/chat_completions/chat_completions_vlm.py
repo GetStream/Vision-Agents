@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, Optional, cast
 
 import av
 from aiortc.mediastreams import MediaStreamTrack, VideoStreamTrack
-from openai import AsyncOpenAI, AsyncStream
+from openai import AsyncOpenAI, AsyncStream, OpenAIError
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal, VideoLLM
@@ -143,8 +143,8 @@ class ChatCompletionsVLM(VideoLLM):
         request_kwargs.update(self._extra_request_kwargs())
 
         try:
-            response = await self._client.chat.completions.create(**request_kwargs)  # type: ignore[arg-type]
-        except Exception:
+            response = await self._client.chat.completions.create(**request_kwargs)
+        except OpenAIError:
             logger.exception(f'Failed to get a response from the model "{self.model}"')
             yield LLMResponseFinal(original=None, text="")
             return
