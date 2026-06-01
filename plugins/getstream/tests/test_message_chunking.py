@@ -278,6 +278,7 @@ class TestChunkingIntegration:
         assert conversation.messages[0].content == large_text
 
         # Should have created 3 chunks in Stream
+        await conversation.wait_for_pending_syncs()
         assert len(mock_channel.sent_messages) == 3
 
         # Verify chunk metadata
@@ -308,6 +309,7 @@ class TestChunkingIntegration:
             completed=False,
         )
 
+        await conversation.wait_for_pending_syncs()
         assert len(mock_channel.sent_messages) == 1
         assert conversation.messages[0].content == "Short"
         # First chunk created with generating=True (it's the last/only chunk initially)
@@ -324,6 +326,7 @@ class TestChunkingIntegration:
         )
 
         # Should have created a new chunk (2 total)
+        await conversation.wait_for_pending_syncs()
         assert len(mock_channel.sent_messages) == 2
 
         # Chunk 1 (last, newly created): should have generating=True
@@ -358,6 +361,7 @@ class TestChunkingIntegration:
             completed=False,
         )
 
+        await conversation.wait_for_pending_syncs()
         initial_chunk_count = len(mock_channel.sent_messages)
         assert initial_chunk_count >= 2
 
@@ -373,6 +377,7 @@ class TestChunkingIntegration:
         )
 
         # Should have deleted extra chunks
+        await conversation.wait_for_pending_syncs()
         assert mock_channel.client.delete_message.call_count == initial_chunk_count - 1
 
     @pytest.mark.asyncio
@@ -394,6 +399,7 @@ End."""
         )
 
         # Verify code block is complete in at least one chunk
+        await conversation.wait_for_pending_syncs()
         full_text = "".join(req.text for req in mock_channel.sent_messages)
         assert "```python" in full_text
         assert "def hello():" in full_text
@@ -411,6 +417,7 @@ End."""
             content=large_text,
         )
 
+        await conversation.wait_for_pending_syncs()
         chunks_created = len(mock_channel.sent_messages)
 
         # Verify metadata on all chunks
@@ -444,6 +451,7 @@ End."""
         )
 
         # Check the requests sent
+        await conversation.wait_for_pending_syncs()
         chunks_sent = len(mock_channel.sent_messages)
         assert chunks_sent >= 2
 

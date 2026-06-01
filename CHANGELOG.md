@@ -1,5 +1,11 @@
 # Unreleased
 
+## New Features
+
+### `getstream` plugin: non-blocking StreamConversation persistence (#589)
+
+`StreamConversation` now persists messages to Stream Chat in the background instead of awaiting each REST round-trip inline. Voice pipelines call `upsert_message` on the critical path (per transcript and per LLM delta), where the inline ~150–300 ms round-trip compounded into audible response latency. Writes are dispatched as fire-and-forget tasks serialized behind a per-channel lock, so ordering is preserved and the final persisted message always matches the final content. Adds `Conversation.wait_for_pending_syncs()`, drained on agent shutdown so in-flight writes are not dropped.
+
 ## Bug Fixes
 
 ### `openai` plugin: `ChatCompletionsLLM` ignored injected/eager turn text and leaked `<think>` reasoning
