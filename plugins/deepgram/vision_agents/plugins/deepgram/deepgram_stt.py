@@ -180,34 +180,34 @@ class STT(stt.STT):
 
         TODO: errors in this function are hidden silently. Not sure why this happens.
         """
-        # Extract message data
-        if not hasattr(message, "type"):
-            logger.warning(f"Received message without 'type' attribute: {message}")
+        # v2 listen messages are delivered as plain dicts
+        if not isinstance(message, dict):
+            logger.warning(f"Received unexpected message: {message}")
             return
 
         # Handle TurnInfo messages (v2 API)
-        if message.type == "TurnInfo":
+        if message.get("type") == "TurnInfo":
             # Extract transcript text
-            transcript_text = getattr(message, "transcript", "").strip()
+            transcript_text = (message.get("transcript") or "").strip()
 
             if not transcript_text:
                 return
 
             # Get event type to determine if final or partial
             # "StartOfTurn" and "Update" = partial, "EndOfTurn" = final
-            event = getattr(message, "event", "")
+            event = message.get("event", "")
 
             is_final = event == "EndOfTurn"
             eager_end_of_turn = event == "EagerEndOfTurn"
             start_of_turn = event == "StartOfTurn"
 
             # Get end of turn confidence
-            end_of_turn_confidence = getattr(message, "end_of_turn_confidence", 0.0)
+            end_of_turn_confidence = message.get("end_of_turn_confidence", 0.0)
 
             # Calculate average confidence from words
-            words = getattr(message, "words", [])
+            words = message.get("words", [])
             if words:
-                confidences = [w.confidence for w in words if hasattr(w, "confidence")]
+                confidences = [w["confidence"] for w in words if "confidence" in w]
                 avg_confidence = (
                     sum(confidences) / len(confidences) if confidences else 0.0
                 )
@@ -215,7 +215,7 @@ class STT(stt.STT):
                 avg_confidence = 0.0
 
             # Get audio duration
-            audio_window_end = getattr(message, "audio_window_end", 0.0)
+            audio_window_end = message.get("audio_window_end", 0.0)
             duration_ms = int(audio_window_end * 1000)
 
             # Calculate processing time (time from first audio to transcript)
