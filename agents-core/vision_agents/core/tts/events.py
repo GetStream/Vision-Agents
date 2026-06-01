@@ -1,23 +1,22 @@
 import uuid
-
-from getstream.video.rtc import PcmData
-
-from vision_agents.core.events import PluginBaseEvent, ConnectionState
 from dataclasses import dataclass, field
-from typing import Optional, Any
+from typing import Optional
+
+from vision_agents.core.events import PluginBaseEvent
 
 
 @dataclass
-class TTSAudioEvent(PluginBaseEvent):
-    """Event emitted when TTS audio data is available."""
+class TTSErrorEvent(PluginBaseEvent):
+    """Event emitted when a TTS error occurs."""
 
-    type: str = field(default="plugin.tts_audio", init=False)
-    data: Optional[PcmData] = None
-    chunk_index: int = 0
-    is_final_chunk: bool = True
-    text_source: Optional[str] = None
-    synthesis_id: Optional[str] = None
-    epoch: int = 0
+    type: str = field(default="plugin.tts_error", init=False)
+    error: Optional[Exception] = None
+    error_code: Optional[str] = None
+    context: Optional[str] = None
+
+    @property
+    def error_message(self) -> str:
+        return str(self.error) if self.error else "Unknown error"
 
 
 @dataclass
@@ -47,27 +46,16 @@ class TTSSynthesisCompleteEvent(PluginBaseEvent):
 
 
 @dataclass
-class TTSErrorEvent(PluginBaseEvent):
-    """Event emitted when a TTS error occurs."""
+class TTSConnectedEvent(PluginBaseEvent):
+    """Event emitted when a TTS connection is established."""
 
-    type: str = field(default="plugin.tts_synthesis_error", init=False)
-    error: Optional[Exception] = None
-    error_code: Optional[str] = None
-    context: Optional[str] = None
-    text_source: Optional[str] = None
-    synthesis_id: Optional[str] = None
-    is_recoverable: bool = True
-
-    @property
-    def error_message(self) -> str:
-        return str(self.error) if self.error else "Unknown error"
+    type: str = field(default="plugin.tts_connected", init=False)
 
 
 @dataclass
-class TTSConnectionEvent(PluginBaseEvent):
-    """Event emitted for TTS connection state changes."""
+class TTSDisconnectedEvent(PluginBaseEvent):
+    """Event emitted when a TTS connection is closed."""
 
-    type: str = field(default="plugin.tts_connection", init=False)
-    connection_state: Optional[ConnectionState] = None
-    provider: Optional[str] = None
-    details: Optional[dict[str, Any]] = None
+    type: str = field(default="plugin.tts_disconnected", init=False)
+    reason: Optional[str] = None
+    clean: bool = True

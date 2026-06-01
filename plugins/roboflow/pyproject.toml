@@ -14,6 +14,7 @@ dependencies = [
     "numpy>=2.0.0",
     "rfdetr>=1.3.0",
     "inference-sdk>=0.17.0",
+    "supervision>=0.21.0,<0.28",
 ]
 
 [project.urls]
@@ -26,7 +27,7 @@ source = "vcs"
 raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
-packages = [".", "vision_agents"]
+packages = ["vision_agents"]
 
 [tool.uv.sources]
 vision-agents = { workspace = true }

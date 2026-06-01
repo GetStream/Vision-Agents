@@ -173,6 +173,8 @@ class StreamEdge(EdgeTransport[StreamCall]):
         self.events.subscribe(self._on_track_published)
         self.events.subscribe(self._on_track_removed)
         self.events.subscribe(self._on_call_ended)
+        self.events.subscribe(self._on_sfu_participant_joined)
+        self.events.subscribe(self._on_sfu_participant_left)
 
     @property
     def _connection(self) -> ConnectionManager:
@@ -277,9 +279,46 @@ class StreamEdge(EdgeTransport[StreamCall]):
             )
 
     async def _on_call_ended(self, event: sfu_events.CallEndedEvent):
+        if self._call is None:
+            return
         self.events.send(
             events.CallEndedEvent(
                 plugin_name="getstream",
+                call=self._call,
+            )
+        )
+
+    async def _on_sfu_participant_joined(
+        self, event: sfu_events.ParticipantJoinedEvent
+    ):
+        core_participant = _to_core_participant(event.participant)
+        if core_participant is None:
+            return
+        if core_participant.user_id == self._agent_user_id:
+            return
+        if self._call is None:
+            return
+        self.events.send(
+            events.ParticipantJoinedEvent(
+                plugin_name="getstream",
+                participant=core_participant,
+                call=self._call,
+            )
+        )
+
+    async def _on_sfu_participant_left(self, event: sfu_events.ParticipantLeftEvent):
+        core_participant = _to_core_participant(event.participant)
+        if core_participant is None:
+            return
+        if core_participant.user_id == self._agent_user_id:
+            return
+        if self._call is None:
+            return
+        self.events.send(
+            events.ParticipantLeftEvent(
+                plugin_name="getstream",
+                participant=core_participant,
+                call=self._call,
             )
         )
 
@@ -393,7 +432,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         return standardize_connection
 
     def create_audio_track(
-        self, sample_rate: int = 48000, stereo: bool = True
+        self, sample_rate: int = 48000, stereo: bool = False
     ) -> AudioStreamTrack:
         return AudioStreamTrack(
             audio_buffer_size_ms=300_000,

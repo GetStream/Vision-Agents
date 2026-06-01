@@ -16,12 +16,9 @@ from openai.types.chat.chat_completion_chunk import (
     ChoiceDelta,
 )
 from vision_agents.core.agents.conversation import InMemoryConversation
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
 from vision_agents.plugins.openai import ChatCompletionsLLM, ChatCompletionsVLM
-from vision_agents.plugins.openai.events import LLMErrorEvent
+
+from vision_agents.testing import collect_simple_response
 
 
 @pytest.fixture()
@@ -65,31 +62,16 @@ class TestChatCompletionsVLM:
         stream.add_chunk(content="", finish_reason="stop")
         openai_client_mock.chat.completions.create = AsyncMock(return_value=stream)
 
-        # Gather the events fired by LLM
-        events = []
-
-        @vlm.events.subscribe
-        async def listen(
-            event: LLMResponseChunkEvent | LLMResponseCompletedEvent | LLMErrorEvent,
-        ):
-            events.append(event)
-
         # Wait a few seconds to let the video forwarder consume video frames
         await asyncio.sleep(2)
 
-        response = await vlm.simple_response(text="prompt")
-        await vlm.events.wait(1)
-        assert response.text == "chunk1 chunk2"
+        deltas, final = await collect_simple_response(
+            vlm.simple_response(text="prompt")
+        )
+        assert final.text == "chunk1 chunk2"
+        assert [d.delta for d in deltas] == ["chunk1", " chunk2"]
 
         await vlm.stop_watching_video_track()
-
-        # Check that events are fired
-        assert len(events) == 3
-        assert events[0].type == "plugin.llm_response_chunk"
-        assert events[0].delta == "chunk1"
-        assert events[1].type == "plugin.llm_response_chunk"
-        assert events[1].delta == " chunk2"
-        assert events[2].type == "plugin.llm_response_completed"
 
         # Check that correct messages are sent to the model
         call_args = openai_client_mock.chat.completions.create.call_args_list
@@ -108,23 +90,12 @@ class TestChatCompletionsVLM:
         self, vlm, conversation, openai_client_mock
     ):
         openai_client_mock.chat.completions.create = AsyncMock(
-            side_effect=ValueError("test")
+            side_effect=openai.OpenAIError("test")
         )
 
-        # Gather the events fired by LLM
-        events = []
-
-        @vlm.events.subscribe
-        async def listen(
-            event: LLMResponseChunkEvent | LLMResponseCompletedEvent | LLMErrorEvent,
-        ):
-            events.append(event)
-
-        await vlm.simple_response(text="prompt")
-        await vlm.events.wait(1)
-        assert len(events) == 1
-        assert events[0].type == "plugin.llm.error"
-        assert events[0].error_message == "test"
+        _, final = await collect_simple_response(vlm.simple_response(text="prompt"))
+        assert final.text == ""
+        assert final.original is None
 
 
 class TestChatCompletionsLLM:
@@ -140,26 +111,11 @@ class TestChatCompletionsLLM:
         stream.add_chunk(content="", finish_reason="stop")
         openai_client_mock.chat.completions.create = AsyncMock(return_value=stream)
 
-        # Gather the events fired by LLM
-        events = []
-
-        @llm.events.subscribe
-        async def listen(
-            event: LLMResponseChunkEvent | LLMResponseCompletedEvent | LLMErrorEvent,
-        ):
-            events.append(event)
-
-        response = await llm.simple_response(text="prompt")
-        await llm.events.wait(1)
-        assert response.text == "chunk1 chunk2"
-
-        # Check that events are fired
-        assert len(events) == 3
-        assert events[0].type == "plugin.llm_response_chunk"
-        assert events[0].delta == "chunk1"
-        assert events[1].type == "plugin.llm_response_chunk"
-        assert events[1].delta == " chunk2"
-        assert events[2].type == "plugin.llm_response_completed"
+        deltas, final = await collect_simple_response(
+            llm.simple_response(text="prompt")
+        )
+        assert final.text == "chunk1 chunk2"
+        assert [delta.delta for delta in deltas] == ["chunk1", " chunk2"]
 
         # Check that correct messages are sent to the model
         call_args = openai_client_mock.chat.completions.create.call_args_list
@@ -180,37 +136,33 @@ class TestChatCompletionsLLM:
             side_effect=ValueError("test")
         )
 
-        # Gather the events fired by LLM
-        events = []
-
-        @llm.events.subscribe
-        async def listen(
-            event: LLMResponseChunkEvent | LLMResponseCompletedEvent | LLMErrorEvent,
-        ):
-            events.append(event)
-
-        await llm.simple_response(text="")
-        await llm.events.wait(1)
-        assert len(events) == 1
-        assert events[0].type == "plugin.llm.error"
-        assert events[0].error_message == "test"
+        _, final = await collect_simple_response(llm.simple_response(text=""))
+        assert final.text == ""
+        assert final.original is None
 
     @pytest.mark.integration
+    @pytest.mark.skipif(
+        not os.getenv("BASETEN_BASE_URL"),
+        reason="BASETEN_BASE_URL not set, skipping test",
+    )
+    @pytest.mark.skipif(
+        not os.getenv("BASETEN_API_KEY"),
+        reason="BASETEN_API_KEY not set, skipping test",
+    )
     async def test_simple_response_model_baseten_deepseek(self, conversation):
-        base_url = os.getenv("BASETEN_BASE_URL")
         api_key = os.getenv("BASETEN_API_KEY")
-        if not base_url:
-            pytest.skip("BASETEN_BASE_URL not set, skipping test")
-        if not api_key:
-            pytest.skip("BASETEN_API_KEY not set, skipping test")
+        base_url = os.getenv("BASETEN_BASE_URL")
 
         llm = ChatCompletionsLLM(
             api_key=api_key, base_url=base_url, model="deepseek-ai/DeepSeek-V3.1"
         )
         llm.set_conversation(conversation)
 
-        response = await llm.simple_response(text="greet the user")
-        assert response.text
+        deltas, final = await collect_simple_response(
+            llm.simple_response(text="greet the user")
+        )
+        assert deltas
+        assert final.text
 
 
 class AsyncStreamStub:

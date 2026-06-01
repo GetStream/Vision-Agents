@@ -114,19 +114,39 @@ class TestTranscriptStore:
         store = TranscriptStore(agent_user_id="agent-1")
         assert store.flush_agent_transcript() is None
 
-    def test_final_clears_user_entry(self):
+    def test_final_preserves_user_entry(self):
         store = TranscriptStore(agent_user_id="agent-1")
 
         store.update_user_transcript(
             participant_id="p1", user_id="u1", text="Done", mode="final"
         )
 
-        assert store.flush_users_transcripts() == []
+        pending = store.flush_users_transcripts()
+        assert len(pending) == 1
+        assert pending[0].text == "Done"
 
-    def test_final_clears_agent_entry(self):
+    def test_final_preserves_agent_entry(self):
         store = TranscriptStore(agent_user_id="agent-1")
 
         store.update_agent_transcript(text="Done", mode="final")
+
+        pending = store.flush_agent_transcript()
+        assert pending is not None
+        assert pending.text == "Done"
+
+    def test_drop_clears_user_entry(self):
+        store = TranscriptStore(agent_user_id="agent-1")
+
+        store.update_user_transcript(
+            participant_id="p1", user_id="u1", text="Done", mode="final", drop=True
+        )
+
+        assert store.flush_users_transcripts() == []
+
+    def test_drop_clears_agent_entry(self):
+        store = TranscriptStore(agent_user_id="agent-1")
+
+        store.update_agent_transcript(text="Done", mode="final", drop=True)
 
         assert store.flush_agent_transcript() is None
 
@@ -159,23 +179,30 @@ class TestTranscriptStore:
         assert r3.text == "Thinking about it."
         assert r3.mode == "final"
 
-    def test_final_assigns_new_message_id_for_next_entry(self):
+    def test_drop_assigns_new_message_id_for_next_agent_entry(self):
         store = TranscriptStore(agent_user_id="agent-1")
 
-        r1 = store.update_agent_transcript(text="First", mode="final")
-        r2 = store.update_agent_transcript(text="Second", mode="final")
+        r1 = store.update_agent_transcript(text="First", mode="final", drop=True)
+        r2 = store.update_agent_transcript(text="Second", mode="final", drop=True)
         assert r1.message_id != r2.message_id
 
-    def test_user_final_assigns_new_message_id_for_next_entry(self):
+    def test_drop_assigns_new_message_id_for_next_user_entry(self):
         store = TranscriptStore(agent_user_id="agent-1")
 
         r1 = store.update_user_transcript(
-            participant_id="p1", user_id="u1", text="First", mode="final"
+            participant_id="p1", user_id="u1", text="First", mode="final", drop=True
         )
         r2 = store.update_user_transcript(
-            participant_id="p1", user_id="u1", text="Second", mode="final"
+            participant_id="p1", user_id="u1", text="Second", mode="final", drop=True
         )
         assert r1.message_id != r2.message_id
+
+    def test_final_preserves_message_id_for_same_entry(self):
+        store = TranscriptStore(agent_user_id="agent-1")
+
+        r1 = store.update_agent_transcript(text="First", mode="replacement")
+        r2 = store.update_agent_transcript(text="First done", mode="final")
+        assert r1.message_id == r2.message_id
 
     def test_get_buffer_user(self):
         store = TranscriptStore(agent_user_id="agent-1")

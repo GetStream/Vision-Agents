@@ -2,19 +2,26 @@ import abc
 import logging
 import time
 import uuid
-from typing import Any, AsyncGenerator, AsyncIterator, Iterator, Optional, Union
+from dataclasses import dataclass
+from typing import (
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Iterator,
+    Optional,
+    Union,
+)
 
-import av
 from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.events import (
-    AudioFormat,
-)
 from vision_agents.core.events.manager import EventManager
+from vision_agents.core.observability import MetricsCollector
+from vision_agents.core.base import Component
 
 from . import events
 from .events import (
-    TTSAudioEvent,
+    TTSConnectedEvent,
+    TTSDisconnectedEvent,
     TTSErrorEvent,
     TTSSynthesisCompleteEvent,
     TTSSynthesisStartEvent,
@@ -23,14 +30,42 @@ from .events import (
 logger = logging.getLogger(__name__)
 
 
-class TTS(abc.ABC):
+@dataclass
+class TTSInput:
+    text: str
+    # True: ``text`` is a chunk of a larger streaming utterance (append/buffer).
+    # False: ``text`` is a complete utterance to synthesize as-is.
+    delta: bool
+
+
+@dataclass
+class TTSInputEnd:
+    """Control message: the current utterance is finished."""
+
+
+@dataclass
+class TTSOutputChunk:
+    data: PcmData | None = None  # can be None if it's a final chunk
+    index: int = 0
+    final: bool = False
+    text: str = ""
+    synthesis_id: str | None = None
+
+
+@dataclass
+class TTSOutputEnd:
+    """Sentinel marking end of TTS output; ``interrupted`` set on barge-in."""
+
+    interrupted: bool = False
+
+
+class TTS(Component):
     """
     Text-to-Speech base class.
 
     This abstract class provides the interface for text-to-speech implementations.
     It handles:
     - Converting text to speech
-    - Resampling and rechanneling audio to a desired format
     - Emitting audio events
 
     Events:
@@ -41,6 +76,12 @@ class TTS(abc.ABC):
 
     Implementations should inherit from this class and implement the synthesize method.
     """
+
+    # True if the plugin accepts partial text deltas (e.g. token-by-token
+    # via a persistent connection). False means it only synthesizes complete
+    # utterances. Callers use this to decide whether to feed partial text
+    # as it arrives or wait for a full sentence.
+    streaming: bool = False
 
     def __init__(self, provider_name: Optional[str] = None):
         """
@@ -54,40 +95,11 @@ class TTS(abc.ABC):
         self.provider_name = provider_name or self.__class__.__name__
         self.events = EventManager()
         self.events.register_events_from_module(events, ignore_not_compatible=True)
-
-        # Desired output audio format (what downstream audio track expects)
-        self._desired_sample_rate: int = 16000
-        self._desired_channels: int = 1
-        self._desired_format: AudioFormat = AudioFormat.PCM_S16
+        self.metrics = MetricsCollector()
 
         # Monotonic epoch counter; incremented on interrupt so stale events
         # emitted before the interrupt can be identified and dropped.
         self._epoch: int = 0
-
-        # Persistent resampler to avoid discontinuities between chunks
-        self._resampler: Optional[av.AudioResampler] = None
-        self._resampler_input_rate: Optional[int] = None
-        self._resampler_input_channels: Optional[int] = None
-
-    def set_output_format(
-        self,
-        sample_rate: int,
-        channels: int = 1,
-        audio_format: AudioFormat = AudioFormat.PCM_S16,
-    ) -> None:
-        """Set the desired output audio format for emitted events.
-
-        The agent should call this with its output track properties so this
-        TTS instance can resample and rechannel audio appropriately.
-
-        Args:
-            sample_rate: Desired sample rate in Hz (e.g., 48000)
-            channels: Desired channel count (1 for mono, 2 for stereo)
-            audio_format: Desired audio format (defaults to PCM S16)
-        """
-        self._desired_sample_rate = int(sample_rate)
-        self._desired_channels = int(channels)
-        self._desired_format = audio_format
 
     @property
     def epoch(self) -> int:
@@ -97,6 +109,34 @@ class TTS(abc.ABC):
         """Increment epoch and stop audio. Stale events will be discarded."""
         self._epoch += 1
         await self.stop_audio()
+
+    def _on_connected(self) -> None:
+        """Emit TTSConnectedEvent."""
+        self.events.send(TTSConnectedEvent(plugin_name=self.provider_name))
+
+    def _on_disconnected(
+        self, reason: Optional[str] = None, clean: bool = True
+    ) -> None:
+        """Emit TTSDisconnectedEvent."""
+        self.events.send(
+            TTSDisconnectedEvent(
+                plugin_name=self.provider_name, reason=reason, clean=clean
+            )
+        )
+
+    def _emit_error_event(self, error: Exception, *, context: str = "") -> None:
+        """Record metric and emit TTSErrorEvent. Caller may also re-raise."""
+        self.metrics.on_tts_error(
+            provider=self.provider_name,
+            error_type=type(error).__name__,
+        )
+        self.events.send(
+            TTSErrorEvent(
+                plugin_name=self.provider_name,
+                error=error,
+                context=context,
+            )
+        )
 
     async def _iter_pcm(self, resp: Any) -> AsyncGenerator[PcmData, None]:
         """Yield PcmData chunks from a provider response of various shapes."""
@@ -125,41 +165,6 @@ class TTS(abc.ABC):
                 yield item
             return
         raise TypeError(f"Unsupported return type from stream_audio: {type(resp)}")
-
-    def _emit_chunk(
-        self,
-        pcm: Optional[PcmData],
-        idx: int,
-        is_final: bool,
-        synthesis_id: str,
-        text: str,
-        participant: Optional[Participant],
-        epoch: int,
-    ) -> tuple[int, float]:
-        """Emit TTSAudioEvent; return (bytes_len, duration_ms)."""
-
-        if pcm is not None:
-            pcm = pcm.resample(
-                target_sample_rate=self._desired_sample_rate,
-                target_channels=self._desired_channels,
-            )
-
-        self.events.send(
-            TTSAudioEvent(
-                session_id=self.session_id,
-                plugin_name=self.provider_name,
-                data=pcm,
-                synthesis_id=synthesis_id,
-                text_source=text,
-                participant=participant,
-                chunk_index=idx,
-                is_final_chunk=is_final,
-                epoch=epoch,
-            )
-        )
-        if pcm is not None:
-            return len(pcm.samples), pcm.duration_ms
-        return 0, 0.0
 
     @abc.abstractmethod
     async def stream_audio(
@@ -201,13 +206,13 @@ class TTS(abc.ABC):
         """
         pass
 
-    async def send(
+    async def send_iter(
         self,
         text: str,
         participant: Optional[Participant] = None,
         *args,
         **kwargs,
-    ):
+    ) -> AsyncIterator[TTSOutputChunk]:
         """
         Convert text to speech and emit audio events with the desired format.
 
@@ -220,11 +225,8 @@ class TTS(abc.ABC):
 
         start_time = time.perf_counter()
         synthesis_id = str(uuid.uuid4())
+        # Store epoch into a variable before yielding
         epoch = self._epoch
-
-        logger.debug(
-            "Starting text-to-speech synthesis", extra={"text_length": len(text)}
-        )
 
         self.events.send(
             TTSSynthesisStartEvent(
@@ -249,12 +251,17 @@ class TTS(abc.ABC):
 
             # Fast-path: single buffer -> mark final
             synthesis_time = time.perf_counter() - start_time
-            if isinstance(response, (PcmData,)):
-                bytes_len, dur_ms = self._emit_chunk(
-                    response, 0, True, synthesis_id, text, participant, epoch
+            if isinstance(response, PcmData):
+                bytes_len, duration_ms = len(response.samples), response.duration_ms
+                yield TTSOutputChunk(
+                    data=response,
+                    index=0,
+                    final=True,
+                    synthesis_id=synthesis_id,
+                    text=text,
                 )
                 total_audio_bytes += bytes_len
-                total_audio_ms += dur_ms
+                total_audio_ms += duration_ms
                 chunk_index = 1
             else:
                 async for pcm in self._iter_pcm(response):
@@ -263,19 +270,29 @@ class TTS(abc.ABC):
                     # Register the synthesis time only when we get the first chunk
                     if chunk_index == 0:
                         synthesis_time = time.perf_counter() - start_time
-                    bytes_len, dur_ms = self._emit_chunk(
-                        pcm, chunk_index, False, synthesis_id, text, participant, epoch
+
+                    bytes_len, duration_ms = len(pcm.samples), pcm.duration_ms
+                    yield TTSOutputChunk(
+                        data=pcm,
+                        index=chunk_index,
+                        final=False,
+                        synthesis_id=synthesis_id,
+                        text=text,
                     )
                     total_audio_bytes += bytes_len
-                    total_audio_ms += dur_ms
+                    total_audio_ms += duration_ms
                     chunk_index += 1
 
                 # Emit an empty chunk with "final=True" after the iterator completes.
                 # The consumers of these events may use it as a signal
                 # to e.g. flush the buffer.
                 if chunk_index > 0:
-                    self._emit_chunk(
-                        None, chunk_index, True, synthesis_id, text, participant, epoch
+                    yield TTSOutputChunk(
+                        data=None,
+                        index=chunk_index,
+                        final=True,
+                        synthesis_id=synthesis_id,
+                        text=text,
                     )
 
             # Use accumulated PcmData duration for total audio duration
@@ -300,19 +317,19 @@ class TTS(abc.ABC):
                     real_time_factor=real_time_factor,
                 )
             )
-        except Exception as e:
-            self.events.send(
-                TTSErrorEvent(
-                    session_id=self.session_id,
-                    plugin_name=self.provider_name,
-                    error=e,
-                    context="synthesis",
-                    text_source=text,
-                    synthesis_id=synthesis_id or None,
-                    participant=participant,
-                )
+            self.metrics.on_tts_synthesis(
+                provider=self.provider_name,
+                synthesis_time_ms=synthesis_time * 1000,
+                audio_duration_ms=estimated_audio_duration_ms,
+                character_count=len(text),
             )
+        except Exception as e:
+            self._emit_error_event(e, context="synthesis")
             raise
 
     async def close(self):
         """Close the TTS service and release any resources."""
+        # Bump the epoch to allow existing iterators to stop
+        self._epoch += 1
+        # Clear the buffers and close connections
+        await self.stop_audio()

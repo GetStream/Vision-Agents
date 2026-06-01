@@ -2,23 +2,38 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+import uuid
+from typing import Any, AsyncIterator
 
 import boto3
 from botocore.exceptions import ClientError
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.llm.events import (
-    LLMRequestStartedEvent,
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
 
-from . import events
+logger = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    from vision_agents.core.agents.conversation import Message
+
+PLUGIN_NAME = "aws"
+
+
+_STREAM_SENTINEL: Any = object()
+
+
+async def _iter_stream(
+    client, request_kwargs: dict[str, Any]
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield Bedrock converse_stream events one at a time from a worker thread."""
+    response = await asyncio.to_thread(client.converse_stream, **request_kwargs)
+    stream = response.get("stream")
+    if not stream:
+        return
+    iterator = iter(stream)
+    while True:
+        event = await asyncio.to_thread(next, iterator, _STREAM_SENTINEL)
+        if event is _STREAM_SENTINEL:
+            return
+        yield event
 
 
 class BedrockLLM(LLM):
@@ -39,14 +54,16 @@ class BedrockLLM(LLM):
         )
     """
 
+    provider_name = PLUGIN_NAME
+
     def __init__(
         self,
         model: str,
         region_name: str = "us-east-1",
-        aws_access_key_id: Optional[str] = None,
-        aws_secret_access_key: Optional[str] = None,
-        aws_session_token: Optional[str] = None,
-        aws_profile: Optional[str] = None,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
+        aws_profile: str | None = None,
         tools_max_rounds: int = 3,
     ):
         """
@@ -62,12 +79,11 @@ class BedrockLLM(LLM):
             tools_max_rounds: max calling rounds for multi-hop tool call. Default - ``3``.
         """
         super().__init__()
-        self.events.register_events_from_module(events)
         self.model = model
-        self._pending_tool_uses_by_index: Dict[int, Dict[str, Any]] = {}
+        self._pending_tool_uses_by_index: dict[int, dict[str, Any]] = {}
 
         # Build boto3 Session kwargs
-        session_kwargs: Dict[str, Any] = {"region_name": region_name}
+        session_kwargs: dict[str, Any] = {"region_name": region_name}
         if aws_profile:
             session_kwargs["profile_name"] = aws_profile
         if aws_access_key_id:
@@ -81,7 +97,6 @@ class BedrockLLM(LLM):
         self._session_kwargs = session_kwargs
         self._tools_max_rounds = max(tools_max_rounds, 1)
         self.region_name = region_name
-        self.logger = logging.getLogger(__name__)
 
     @property
     async def client(self) -> Any:
@@ -97,636 +112,382 @@ class BedrockLLM(LLM):
     async def simple_response(
         self,
         text: str,
-        participant: Optional[Participant] = None,
-    ):
+        participant: Participant | None = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """
-        Simple response is a standardized way to create a response.
+        simple_response is a standardized way to create an LLM response.
+
+        This method is also called every time the new STT transcript is received.
 
         Args:
-            text: The text to respond to
-            participant: optionally the participant object
+            text: The text to respond to.
+            participant: the Participant object, optional.
 
         Examples:
 
-            await llm.simple_response("say hi to the user")
+            llm.simple_response("say hi to the user, be nice")
         """
-        return await self.converse_stream(
-            messages=[{"role": "user", "content": [{"text": text}]}]
-        )
-
-    async def converse(self, *args, **kwargs) -> LLMResponseEvent[Any]:
-        """
-        Converse gives full access to the Bedrock Converse API.
-        This method wraps the Bedrock method and broadcasts events for agent integration.
-        """
-        if "modelId" not in kwargs:
-            kwargs["modelId"] = self.model
-
-        # Add tools if available
-        tools = self.get_available_functions()
-        if tools:
-            converted_tools = self._convert_tools_to_provider_format(tools)
-            kwargs["toolConfig"] = {"tools": converted_tools}
-
-        # Combine original instructions with markdown file contents
-        if self._instructions:
-            kwargs["system"] = [{"text": self._instructions}]
-
-        # Ensure the AI remembers the past conversation
-        new_messages = kwargs.get("messages", [])
-        if hasattr(self, "_conversation") and self._conversation:
-            old_messages = [m.original for m in self._conversation.messages]
-            kwargs["messages"] = old_messages + new_messages
-            # Add messages to conversation
-            normalized_messages = self._normalize_message(new_messages)
-            for msg in normalized_messages:
-                self._conversation.messages.append(msg)
-
-        # Emit request started event
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name="aws",
-                model=self.model,
-                streaming=False,
+        if self._conversation is None:
+            logger.warning(
+                f'Cannot request a response from the LLM "{self.model}" - the conversation has not been initialized yet.'
             )
-        )
+            yield LLMResponseFinal(original=None, text="")
+            return
 
-        # Track timing
+        messages = await self._build_model_request(text)
+        tools_param: list[dict[str, Any]] | None = None
+        tools_spec = self.get_available_functions()
+        if tools_spec:
+            tools_param = self._convert_tools_to_provider_format(tools_spec)
+
+        async for item in self._create_response_internal(
+            messages=messages, tools=tools_param
+        ):
+            yield item
+
+    async def _build_model_request(self, text: str) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
+        if self._conversation is not None:
+            for message in self._conversation.messages:
+                content = (message.content or "").strip()
+                if not content:
+                    continue
+                messages.append(
+                    {
+                        "role": message.role,
+                        "content": [{"text": message.content}],
+                    }
+                )
+        user_message = {"role": "user", "content": [{"text": text}]}
+        last = messages[-1] if messages else None
+        if last != user_message:
+            messages.append(user_message)
+        return messages
+
+    async def _create_response_internal(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        """Internal method to create response from a streamed converse_stream call."""
+        request_kwargs: dict[str, Any] = {
+            "modelId": self.model,
+            "messages": messages,
+        }
+        if self._instructions:
+            request_kwargs["system"] = [{"text": self._instructions}]
+        if tools:
+            request_kwargs["toolConfig"] = {"tools": tools}
+
         request_start_time = time.perf_counter()
-
         client = await self.client
+        # Bedrock does not provide any response ids to match the chunks together.
+        # Generate our own so the conversation collapses deltas into one message.
+        response_id = str(uuid.uuid4())
+
+        text_chunks: list[str] = []
+        self._pending_tool_uses_by_index.clear()
+        accumulated_tool_calls: list[NormalizedToolCallItem] = []
+        sequence_number = 0
+        first_token_time: float | None = None
+        last_event: dict[str, Any] | None = None
+        input_tokens: int | None = None
+        output_tokens: int | None = None
 
         try:
-            system_param = kwargs.get("system")
+            async for event in _iter_stream(client, request_kwargs):
+                last_event = event
 
-            response = await asyncio.to_thread(client.converse, **kwargs)
+                if "contentBlockStart" in event:
+                    start = event["contentBlockStart"].get("start", {})
+                    if "toolUse" in start:
+                        tool_use = start["toolUse"]
+                        idx = event["contentBlockStart"].get("contentBlockIndex", 0)
+                        self._pending_tool_uses_by_index[idx] = {
+                            "id": tool_use.get("toolUseId", ""),
+                            "name": tool_use.get("name", ""),
+                            "parts": [],
+                        }
 
-            # Extract text from response
-            text = self._extract_text_from_response(response)
-            llm_response = LLMResponseEvent(response, text)
-
-            # Handle tool calls if present
-            function_calls = self._extract_tool_calls_from_response(response)
-            if function_calls:
-                for i, fc in enumerate(function_calls):
-                    self.logger.debug(
-                        f"Tool call {i + 1}: {fc.get('name')} with args: {fc.get('arguments_json')}"
-                    )
-                messages = kwargs["messages"][:]
-                assistant_msg_from_response = response.get("output", {}).get(
-                    "message", {}
-                )
-                if assistant_msg_from_response:
-                    messages.append(assistant_msg_from_response)
-
-                rounds = 0
-                seen: set[tuple[str, str, str]] = set()
-                current_calls = function_calls
-
-                while current_calls and rounds < self._tools_max_rounds:
-                    # Execute calls concurrently with dedup
-                    triples, seen = await self._dedup_and_execute(
-                        cast(List[NormalizedToolCallItem], current_calls),
-                        seen=seen,
-                        max_concurrency=8,
-                        timeout_s=30,
-                    )
-
-                    if not triples:
-                        self.logger.warning(
-                            "No tool execution results despite tool calls"
+                if "contentBlockDelta" in event:
+                    delta = event["contentBlockDelta"].get("delta", {})
+                    if delta.get("text"):
+                        is_first = first_token_time is None
+                        ttft_ms: float | None = None
+                        if is_first:
+                            first_token_time = time.perf_counter()
+                            ttft_ms = (first_token_time - request_start_time) * 1000
+                        text_chunks.append(delta["text"])
+                        yield LLMResponseDelta(
+                            content_index=event["contentBlockDelta"].get(
+                                "contentBlockIndex", 0
+                            ),
+                            item_id=response_id,
+                            output_index=0,
+                            sequence_number=sequence_number,
+                            delta=delta["text"],
+                            is_first_chunk=is_first,
+                            time_to_first_token_ms=ttft_ms,
                         )
-                        break
-
-                    # Build tool result message
-                    tool_result_blocks = []
-                    for tc, res, err in triples:
-                        if err:
-                            self.logger.error(
-                                f"Tool {tc['name']} execution error: {err}"
+                        sequence_number += 1
+                    if "toolUse" in delta:
+                        idx = event["contentBlockDelta"].get("contentBlockIndex", 0)
+                        if idx in self._pending_tool_uses_by_index:
+                            input_data = delta["toolUse"].get("input", "")
+                            self._pending_tool_uses_by_index[idx]["parts"].append(
+                                input_data
                             )
-                            tool_response = str(err)
-                        else:
-                            # Convert result to string format (AWS expects text, not json content type)
-                            if isinstance(res, (dict, list)):
-                                tool_response = json.dumps(res)
-                            elif isinstance(res, str):
-                                tool_response = res
-                            else:
-                                tool_response = str(res)
 
-                        tool_result_blocks.append(
-                            {
-                                "toolUseId": tc["id"],
-                                "content": [{"text": tool_response}],
-                            }
-                        )
+                if "contentBlockStop" in event:
+                    idx = event["contentBlockStop"].get("contentBlockIndex", 0)
+                    pending = self._pending_tool_uses_by_index.pop(idx, None)
+                    if pending:
+                        buf = "".join(pending["parts"]).strip() or "{}"
+                        try:
+                            args = json.loads(buf)
+                        except json.JSONDecodeError:
+                            args = {}
+                        tool_call: NormalizedToolCallItem = {
+                            "type": "tool_call",
+                            "id": pending["id"],
+                            "name": pending["name"],
+                            "arguments_json": args,
+                        }
+                        accumulated_tool_calls.append(tool_call)
 
-                    user_tool_results_msg = {
-                        "role": "user",
-                        "content": [{"toolResult": tr} for tr in tool_result_blocks],
-                    }
-                    messages = messages + [user_tool_results_msg]
-                    follow_up_kwargs = {
-                        "modelId": self.model,
-                        "messages": messages,
-                        "toolConfig": kwargs.get("toolConfig", {}),
-                    }
-                    if system_param:
-                        follow_up_kwargs["system"] = system_param
-
-                    try:
-                        follow_up_response = client.converse(**follow_up_kwargs)
-                    except ClientError as e:
-                        self.logger.error(
-                            f"AWS Bedrock API error in follow-up call: {e}"
-                        )
-                        error_code = (
-                            e.response.get("Error", {}).get("Code", "Unknown")
-                            if hasattr(e, "response")
-                            else "Unknown"
-                        )
-                        self.logger.error(
-                            f"Error code: {error_code}, Full error: {str(e)}"
-                        )
-                        raise
-
-                    current_calls = self._extract_tool_calls_from_response(
-                        follow_up_response
-                    )
-                    follow_up_text = self._extract_text_from_response(
-                        follow_up_response
-                    )
-                    llm_response = LLMResponseEvent(follow_up_response, follow_up_text)
-
-                    if current_calls:
-                        assistant_msg_from_follow_up = follow_up_response.get(
-                            "output", {}
-                        ).get("message", {})
-                        if assistant_msg_from_follow_up:
-                            messages.append(assistant_msg_from_follow_up)
-
-                    if follow_up_text and not current_calls:
-                        text = follow_up_text
-                        break
-
-                    rounds += 1
-
-                if current_calls:
-                    final_kwargs = {
-                        "modelId": self.model,
-                        "messages": messages,
-                    }
-                    if system_param:
-                        final_kwargs["system"] = system_param
-
-                    try:
-                        final_response = client.converse(**final_kwargs)
-                    except ClientError as e:
-                        self.logger.error(f"AWS Bedrock API error in final pass: {e}")
-                        error_code = (
-                            e.response.get("Error", {}).get("Code", "Unknown")
-                            if hasattr(e, "response")
-                            else "Unknown"
-                        )
-                        self.logger.error(
-                            f"Error code: {error_code}, Full error: {str(e)}"
-                        )
-                        raise
-
-                    final_text = self._extract_text_from_response(final_response)
-                    llm_response = LLMResponseEvent(final_response, final_text)
-                    text = final_text
-                elif rounds > 0:
-                    text = llm_response.text or text
-
-            final_text_for_event = llm_response.text or text
-            original_for_event = llm_response.original or response
-
-            if not final_text_for_event:
-                self.logger.warning(
-                    "Final response text is empty - model may not have responded"
-                )
-
-            # Calculate timing metrics
-            latency_ms = (time.perf_counter() - request_start_time) * 1000
-
-            # Extract token usage from response if available
-            input_tokens: Optional[int] = None
-            output_tokens: Optional[int] = None
-            usage = (
-                original_for_event.get("usage", {})
-                if isinstance(original_for_event, dict)
-                else {}
-            )
-            if usage:
-                input_tokens = usage.get("inputTokens")
-                output_tokens = usage.get("outputTokens")
-
-            self.events.send(
-                LLMResponseCompletedEvent(
-                    original=original_for_event,
-                    text=final_text_for_event,
-                    plugin_name="aws",
-                    latency_ms=latency_ms,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    total_tokens=(input_tokens or 0) + (output_tokens or 0)
-                    if input_tokens or output_tokens
-                    else None,
-                    model=self.model,
-                )
-            )
-
+                if "metadata" in event:
+                    usage = event["metadata"].get("usage", {})
+                    if usage:
+                        input_tokens = usage.get("inputTokens")
+                        output_tokens = usage.get("outputTokens")
         except ClientError as e:
-            error_code = (
-                e.response.get("Error", {}).get("Code", "Unknown")
-                if hasattr(e, "response")
-                else "Unknown"
-            )
-            error_msg = (
-                e.response.get("Error", {}).get("Message", str(e))
-                if hasattr(e, "response")
-                else str(e)
-            )
-            self.logger.error(
-                f"AWS Bedrock API error: {error_code} - {error_msg}", exc_info=True
-            )
-            llm_response = LLMResponseEvent(None, error_msg, exception=e)
-        except Exception as e:
-            self.logger.error(
-                f"Unexpected error in converse: {type(e).__name__}: {str(e)}",
-                exc_info=True,
-            )
-            llm_response = LLMResponseEvent(
-                None, f"Unexpected error: {str(e)}", exception=e
-            )
+            logger.exception(f'Failed to get a response from the LLM "{self.model}"')
+            self.on_llm_error(error=e)
+            yield LLMResponseFinal(original=None, text="")
+            return
 
-        return llm_response
+        total_text = "".join(text_chunks)
 
-    async def converse_stream(self, *args, **kwargs) -> LLMResponseEvent[Any]:
-        """
-        Streaming version of converse using Bedrock's ConverseStream API.
-        """
-        client = await self.client
+        if accumulated_tool_calls:
+            async for item in self._handle_tool_calls(
+                accumulated_tool_calls,
+                messages,
+                tools,
+                request_start_time,
+                first_token_time,
+                sequence_number,
+                response_id,
+            ):
+                yield item
+            return
 
-        if "modelId" not in kwargs:
-            kwargs["modelId"] = self.model
+        latency_ms = (time.perf_counter() - request_start_time) * 1000
+        ttft_total: float | None = None
+        if first_token_time is not None:
+            ttft_total = (first_token_time - request_start_time) * 1000
 
-        # Add tools if available
-        tools = self.get_available_functions()
-        if tools:
-            converted_tools = self._convert_tools_to_provider_format(tools)
-            kwargs["toolConfig"] = {"tools": converted_tools}
+        total_tokens: int | None = None
+        if input_tokens is not None or output_tokens is not None:
+            total_tokens = (input_tokens or 0) + (output_tokens or 0)
 
-        # Ensure the AI remembers the past conversation
-        new_messages = kwargs.get("messages", [])
-        if hasattr(self, "_conversation") and self._conversation:
-            old_messages = [m.original for m in self._conversation.messages]
-            kwargs["messages"] = old_messages + new_messages
-            normalized_messages = self._normalize_message(new_messages)
-            for msg in normalized_messages:
-                self._conversation.messages.append(msg)
-
-        if self._instructions:
-            kwargs["system"] = [{"text": self._instructions}]
-
-        # Emit request started event
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name="aws",
-                model=self.model,
-                streaming=True,
-            )
+        yield LLMResponseFinal(
+            original=last_event,
+            text=total_text,
+            item_id=response_id,
+            latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_total,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            model=self.model,
         )
 
-        # Track timing
-        request_start_time = time.perf_counter()
-        first_token_time: Optional[float] = None
+    async def _handle_tool_calls(
+        self,
+        tool_calls: list[NormalizedToolCallItem],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        request_start_time: float,
+        first_token_time: float | None,
+        sequence_number: int,
+        response_id: str,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        """Execute tool calls and stream follow-up responses for up to _tools_max_rounds rounds."""
+        current_tool_calls = tool_calls
+        seen: set[tuple] = set()
+        current_messages = list(messages)
+        last_event: dict[str, Any] | None = None
+        total_text = ""
+        input_tokens: int | None = None
+        output_tokens: int | None = None
 
-        try:
-            system_param = kwargs.get("system")
+        client = await self.client
 
-            # Helper to consume stream in a thread (stream iteration is blocking I/O)
-            def _consume_stream():
-                response = client.converse_stream(**kwargs)
-                stream = response.get("stream")
-                if not stream:
-                    return None, [], []
+        for round_num in range(self._tools_max_rounds):
+            triples, seen = await self._dedup_and_execute(
+                current_tool_calls,
+                max_concurrency=8,
+                timeout_s=30,
+                seen=seen,
+            )
 
-                events = []
-                for event in stream:
-                    events.append(event)
-                return stream, events, response
+            if not triples:
+                break
+
+            assistant_content: list[dict[str, Any]] = []
+            tool_result_content: list[dict[str, Any]] = []
+            for tc, res, err in triples:
+                cid = tc.get("id")
+                if not cid:
+                    continue
+
+                assistant_content.append(
+                    {
+                        "toolUse": {
+                            "toolUseId": cid,
+                            "name": tc["name"],
+                            "input": tc.get("arguments_json", {}),
+                        }
+                    }
+                )
+                tool_result_content.append(
+                    {
+                        "toolResult": {
+                            "toolUseId": cid,
+                            "content": [
+                                {
+                                    "text": self._sanitize_tool_output(
+                                        err if err is not None else res
+                                    )
+                                }
+                            ],
+                        }
+                    }
+                )
+
+            if not tool_result_content:
+                break
+
+            current_messages.append({"role": "assistant", "content": assistant_content})
+            current_messages.append({"role": "user", "content": tool_result_content})
+
+            request_kwargs: dict[str, Any] = {
+                "modelId": self.model,
+                "messages": current_messages,
+            }
+            if self._instructions:
+                request_kwargs["system"] = [{"text": self._instructions}]
+            if tools:
+                request_kwargs["toolConfig"] = {"tools": tools}
+
+            text_chunks: list[str] = []
+            self._pending_tool_uses_by_index.clear()
+            next_tool_calls: list[NormalizedToolCallItem] = []
 
             try:
-                stream, events, response = await asyncio.to_thread(_consume_stream)
+                async for event in _iter_stream(client, request_kwargs):
+                    last_event = event
+
+                    if "contentBlockStart" in event:
+                        start = event["contentBlockStart"].get("start", {})
+                        if "toolUse" in start:
+                            tool_use = start["toolUse"]
+                            idx = event["contentBlockStart"].get("contentBlockIndex", 0)
+                            self._pending_tool_uses_by_index[idx] = {
+                                "id": tool_use.get("toolUseId", ""),
+                                "name": tool_use.get("name", ""),
+                                "parts": [],
+                            }
+
+                    if "contentBlockDelta" in event:
+                        delta = event["contentBlockDelta"].get("delta", {})
+                        if delta.get("text"):
+                            is_first = first_token_time is None
+                            ttft_ms: float | None = None
+                            if is_first:
+                                first_token_time = time.perf_counter()
+                                ttft_ms = (first_token_time - request_start_time) * 1000
+
+                            text_chunks.append(delta["text"])
+                            yield LLMResponseDelta(
+                                content_index=event["contentBlockDelta"].get(
+                                    "contentBlockIndex", 0
+                                ),
+                                item_id=response_id,
+                                output_index=0,
+                                sequence_number=sequence_number,
+                                delta=delta["text"],
+                                is_first_chunk=is_first,
+                                time_to_first_token_ms=ttft_ms,
+                            )
+                            sequence_number += 1
+                        if "toolUse" in delta:
+                            idx = event["contentBlockDelta"].get("contentBlockIndex", 0)
+                            if idx in self._pending_tool_uses_by_index:
+                                input_data = delta["toolUse"].get("input", "")
+                                self._pending_tool_uses_by_index[idx]["parts"].append(
+                                    input_data
+                                )
+
+                    if "contentBlockStop" in event:
+                        idx = event["contentBlockStop"].get("contentBlockIndex", 0)
+                        pending = self._pending_tool_uses_by_index.pop(idx, None)
+                        if pending:
+                            buf = "".join(pending["parts"]).strip() or "{}"
+                            try:
+                                args = json.loads(buf)
+                            except json.JSONDecodeError:
+                                args = {}
+                            tool_call: NormalizedToolCallItem = {
+                                "type": "tool_call",
+                                "id": pending["id"],
+                                "name": pending["name"],
+                                "arguments_json": args,
+                            }
+                            next_tool_calls.append(tool_call)
+
+                    if "metadata" in event:
+                        usage = event["metadata"].get("usage", {})
+                        if usage:
+                            input_tokens = usage.get("inputTokens")
+                            output_tokens = usage.get("outputTokens")
             except ClientError as e:
-                error_code = (
-                    e.response.get("Error", {}).get("Code", "Unknown")
-                    if hasattr(e, "response")
-                    else "Unknown"
-                )
-                error_msg = (
-                    e.response.get("Error", {}).get("Message", str(e))
-                    if hasattr(e, "response")
-                    else str(e)
-                )
-                self.logger.error(
-                    f"AWS Bedrock API error in converse_stream: {error_code} - {error_msg}",
-                    exc_info=True,
-                )
-                raise
+                logger.exception("Failed to get follow-up response")
+                self.on_llm_error(error=e)
+                break
 
-            if not stream:
-                self.logger.error("converse_stream response has no 'stream' field")
-                llm_response = LLMResponseEvent(None, "No stream in response")
-                return llm_response
+            total_text = "".join(text_chunks)
 
-            text_parts: List[str] = []
-            accumulated_calls: List[NormalizedToolCallItem] = []
-            last_event = None
+            if next_tool_calls and round_num < self._tools_max_rounds - 1:
+                current_tool_calls = next_tool_calls
+                continue
 
-            for event in events:
-                last_event = event
-                # Track time to first token
-                if first_token_time is None and "contentBlockDelta" in event:
-                    delta = event["contentBlockDelta"].get("delta", {})
-                    if "text" in delta:
-                        first_token_time = time.perf_counter()
-                self._process_stream_event(event, text_parts, accumulated_calls)
+            break
 
-            messages = kwargs["messages"][:]
-            rounds = 0
-            seen: set[tuple[str, str, str]] = set()
+        latency_ms = (time.perf_counter() - request_start_time) * 1000
+        ttft_total: float | None = None
+        if first_token_time is not None:
+            ttft_total = (first_token_time - request_start_time) * 1000
 
-            if accumulated_calls:
-                assistant_content = []
-                for tool_call in accumulated_calls:
-                    assistant_content.append(
-                        {
-                            "toolUse": {
-                                "toolUseId": tool_call["id"],
-                                "name": tool_call["name"],
-                                "input": tool_call["arguments_json"],
-                            }
-                        }
-                    )
-                assistant_msg_from_stream = {
-                    "role": "assistant",
-                    "content": assistant_content,
-                }
-                messages.append(assistant_msg_from_stream)
+        total_tokens: int | None = None
+        if input_tokens is not None or output_tokens is not None:
+            total_tokens = (input_tokens or 0) + (output_tokens or 0)
 
-            while accumulated_calls and rounds < self._tools_max_rounds:
-                triples, seen = await self._dedup_and_execute(
-                    cast(List[NormalizedToolCallItem], accumulated_calls),
-                    seen=seen,
-                    max_concurrency=8,
-                    timeout_s=30,
-                )
-
-                if not triples:
-                    self.logger.warning("No tool execution results despite tool calls")
-                    break
-
-                tool_result_blocks = []
-                for tc, res, err in triples:
-                    if err:
-                        self.logger.error(f"Tool {tc['name']} execution error: {err}")
-                        tool_response = str(err)
-                    else:
-                        # Convert result to string format (AWS expects text, not json content type)
-                        if isinstance(res, (dict, list)):
-                            tool_response = json.dumps(res)
-                        elif isinstance(res, str):
-                            tool_response = res
-                        else:
-                            tool_response = str(res)
-
-                    tool_result_blocks.append(
-                        {
-                            "toolUseId": tc["id"],
-                            "content": [{"text": tool_response}],
-                        }
-                    )
-
-                user_tool_results_msg = {
-                    "role": "user",
-                    "content": [{"toolResult": tr} for tr in tool_result_blocks],
-                }
-                messages = messages + [user_tool_results_msg]
-                follow_up_kwargs = {
-                    "modelId": self.model,
-                    "messages": messages,
-                    "toolConfig": kwargs.get("toolConfig", {}),
-                }
-                if system_param:
-                    follow_up_kwargs["system"] = system_param
-
-                follow_up_response = client.converse_stream(**follow_up_kwargs)
-
-                accumulated_calls = []
-                follow_up_text_parts: List[str] = []
-                follow_up_stream = follow_up_response.get("stream")
-                for event in follow_up_stream:
-                    last_event = event
-                    self._process_stream_event(
-                        event, follow_up_text_parts, accumulated_calls
-                    )
-
-                if follow_up_text_parts:
-                    text_parts.extend(follow_up_text_parts)
-
-                if accumulated_calls:
-                    follow_up_assistant_content = []
-                    for tool_call in accumulated_calls:
-                        follow_up_assistant_content.append(
-                            {
-                                "toolUse": {
-                                    "toolUseId": tool_call["id"],
-                                    "name": tool_call["name"],
-                                    "input": tool_call["arguments_json"],
-                                }
-                            }
-                        )
-                    follow_up_assistant_msg = {
-                        "role": "assistant",
-                        "content": follow_up_assistant_content,
-                    }
-                    messages.append(follow_up_assistant_msg)
-
-                if follow_up_text_parts and not accumulated_calls:
-                    break
-
-                rounds += 1
-
-            if accumulated_calls:
-                final_kwargs = {
-                    "modelId": self.model,
-                    "messages": messages,
-                }
-                if system_param:
-                    final_kwargs["system"] = system_param
-
-                def _consume_final_stream():
-                    response = client.converse_stream(**final_kwargs)
-                    stream = response.get("stream")
-                    if not stream:
-                        return []
-                    events = []
-                    for event in stream:
-                        events.append(event)
-                    return events
-
-                final_events = await asyncio.to_thread(_consume_final_stream)
-                final_text_parts: List[str] = []
-                for event in final_events:
-                    last_event = event
-                    self._process_stream_event(
-                        event, final_text_parts, accumulated_calls
-                    )
-                if final_text_parts:
-                    text_parts.extend(final_text_parts)
-
-            total_text = "".join(text_parts)
-            llm_response = LLMResponseEvent(last_event, total_text)
-
-            # Calculate timing metrics
-            latency_ms = (time.perf_counter() - request_start_time) * 1000
-            ttft_ms: Optional[float] = None
-            if first_token_time is not None:
-                ttft_ms = (first_token_time - request_start_time) * 1000
-
-            self.events.send(
-                LLMResponseCompletedEvent(
-                    original=last_event,
-                    text=total_text,
-                    plugin_name="aws",
-                    latency_ms=latency_ms,
-                    time_to_first_token_ms=ttft_ms,
-                    model=self.model,
-                )
-            )
-
-        except ClientError as e:
-            error_msg = f"AWS Bedrock streaming error: {str(e)}"
-            llm_response = LLMResponseEvent(None, error_msg)
-
-        return llm_response
-
-    def _process_stream_event(
-        self,
-        event: Dict[str, Any],
-        text_parts: List[str],
-        accumulated_calls: List[NormalizedToolCallItem],
-    ):
-        """Process a streaming event from AWS."""
-        # Forward the native event
-        self.events.send(events.AWSStreamEvent(plugin_name="aws", event_data=event))
-
-        # Handle content block delta (text)
-        if "contentBlockDelta" in event:
-            delta = event["contentBlockDelta"]["delta"]
-            if "text" in delta:
-                text_parts.append(delta["text"])
-                self.events.send(
-                    LLMResponseChunkEvent(
-                        plugin_name="aws",
-                        content_index=event["contentBlockDelta"].get(
-                            "contentBlockIndex", 0
-                        ),
-                        item_id="",
-                        output_index=0,
-                        sequence_number=0,
-                        delta=delta["text"],
-                    )
-                )
-
-        # Handle tool use
-        if "contentBlockStart" in event:
-            start = event["contentBlockStart"].get("start", {})
-            if "toolUse" in start:
-                tool_use = start["toolUse"]
-                idx = event["contentBlockStart"].get("contentBlockIndex", 0)
-                self._pending_tool_uses_by_index[idx] = {
-                    "id": tool_use.get("toolUseId", ""),
-                    "name": tool_use.get("name", ""),
-                    "parts": [],
-                }
-
-        if "contentBlockDelta" in event:
-            delta = event["contentBlockDelta"]["delta"]
-            if "toolUse" in delta:
-                idx = event["contentBlockDelta"].get("contentBlockIndex", 0)
-                if idx in self._pending_tool_uses_by_index:
-                    input_data = delta["toolUse"].get("input", "")
-                    self._pending_tool_uses_by_index[idx]["parts"].append(input_data)
-
-        if "contentBlockStop" in event:
-            idx = event["contentBlockStop"].get("contentBlockIndex", 0)
-            pending = self._pending_tool_uses_by_index.pop(idx, None)
-            if pending:
-                buf = "".join(pending["parts"]).strip() or "{}"
-                try:
-                    args = json.loads(buf)
-                except Exception:
-                    args = {}
-                tool_call_item: NormalizedToolCallItem = {
-                    "type": "tool_call",
-                    "id": pending["id"],
-                    "name": pending["name"],
-                    "arguments_json": args,
-                }
-                accumulated_calls.append(tool_call_item)
-
-    def _extract_text_from_response(self, response: Dict[str, Any]) -> str:
-        """Extract text content from AWS response."""
-        output = response.get("output", {})
-        message = output.get("message", {})
-        content = message.get("content", [])
-
-        text_parts = []
-        for item in content:
-            if "text" in item:
-                text_parts.append(item["text"])
-
-        return "".join(text_parts)
-
-    def _extract_tool_calls_from_response(
-        self, response: Dict[str, Any]
-    ) -> List[NormalizedToolCallItem]:
-        """Extract tool calls from AWS response."""
-        tool_calls: List[NormalizedToolCallItem] = []
-
-        output = response.get("output", {})
-        if not output:
-            return tool_calls
-
-        message = output.get("message", {})
-        if not message:
-            return tool_calls
-
-        content = message.get("content", [])
-        if not content:
-            return tool_calls
-
-        for item in content:
-            if "toolUse" in item:
-                tool_use = item["toolUse"]
-                tool_call: NormalizedToolCallItem = {
-                    "type": "tool_call",
-                    "id": tool_use.get("toolUseId", ""),
-                    "name": tool_use.get("name", ""),
-                    "arguments_json": tool_use.get("input", {}),
-                }
-                tool_calls.append(tool_call)
-
-        return tool_calls
+        yield LLMResponseFinal(
+            original=last_event,
+            text=total_text,
+            item_id=response_id,
+            latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_total,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            model=self.model,
+        )
 
     def _convert_tools_to_provider_format(
-        self, tools: List[ToolSchema]
-    ) -> List[Dict[str, Any]]:
+        self, tools: list[ToolSchema]
+    ) -> list[dict[str, Any]]:
         """
         Convert ToolSchema objects to AWS Bedrock format.
 
@@ -774,35 +535,3 @@ class BedrockLLM(LLM):
             }
             aws_tools.append(aws_tool)
         return aws_tools
-
-    @staticmethod
-    def _normalize_message(aws_messages: Any) -> List["Message"]:
-        """Normalize AWS messages to internal Message format."""
-        from vision_agents.core.agents.conversation import Message
-
-        if isinstance(aws_messages, str):
-            aws_messages = [{"content": [{"text": aws_messages}], "role": "user"}]
-
-        if not isinstance(aws_messages, (List, tuple)):
-            aws_messages = [aws_messages]
-
-        messages: List[Message] = []
-        for m in aws_messages:
-            if isinstance(m, dict):
-                content_items = m.get("content", [])
-                # Extract text from content blocks
-                text_parts = []
-                for item in content_items:
-                    if isinstance(item, dict) and "text" in item:
-                        text_parts.append(item["text"])
-                    elif isinstance(item, str):
-                        text_parts.append(item)
-                content = " ".join(text_parts)
-                role = m.get("role", "user")
-            else:
-                content = str(m)
-                role = "user"
-            message = Message(original=m, content=content, role=role)
-            messages.append(message)
-
-        return messages

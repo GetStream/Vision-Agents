@@ -15,28 +15,18 @@ Docs: https://docs.sarvam.ai/api-reference-docs/chat/chat-completions
 import logging
 import os
 import re
-import time
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, AsyncIterator, Optional
 
-from openai import AsyncStream
+from openai import AsyncOpenAI, AsyncStream
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.core.llm.llm import LLMResponseEvent
-from vision_agents.core.llm.llm_types import NormalizedToolCallItem
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.plugins.openai import ChatCompletionsLLM
-
-from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
 SARVAM_BASE_URL = "https://api.sarvam.ai/v1"
 DEFAULT_MODEL = "sarvam-m"
 SUPPORTED_MODELS = {"sarvam-m", "sarvam-30b", "sarvam-105b"}
-
-PLUGIN_NAME = "sarvam"
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
@@ -110,6 +100,8 @@ class SarvamLLM(ChatCompletionsLLM):
         llm = sarvam.LLM(model="sarvam-30b")
     """
 
+    provider_name = "sarvam"
+
     def __init__(
         self,
         model: str = DEFAULT_MODEL,
@@ -147,86 +139,23 @@ class SarvamLLM(ChatCompletionsLLM):
     async def _process_streaming_response(
         self,
         response: Any,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]],
-        kwargs: Dict[str, Any],
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]],
+        kwargs: dict[str, Any],
         request_start_time: float,
-    ) -> LLMResponseEvent:
-        """Process streaming response, stripping ``<think>`` blocks."""
-        llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
-        text_chunks: list[str] = []
-        total_text = ""
-        self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
-        accumulated_tool_calls: List[NormalizedToolCallItem] = []
-        seq = 0
-        first_token_time: Optional[float] = None
-        think_filter = _ThinkTagFilter()
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        """Strip ``<think>`` blocks from streamed chunks before delegating."""
+        wrapped = self._filter_think_chunks(response)
+        async for item in super()._process_streaming_response(
+            wrapped, messages, tools, kwargs, request_start_time
+        ):
+            yield item
 
-        async for chunk in cast(AsyncStream[ChatCompletionChunk], response):
-            if not chunk.choices:
-                continue
-
-            choice = chunk.choices[0]
-            content = choice.delta.content
-            finish_reason = choice.finish_reason
-
-            if choice.delta.tool_calls:
-                for tc in choice.delta.tool_calls:
-                    self._accumulate_tool_call_chunk(tc)
-
-            if content:
-                if first_token_time is None:
-                    first_token_time = time.perf_counter()
-
-                text_chunks.append(content)
-
-                filtered = think_filter.feed(content)
-                if filtered:
-                    is_first = seq == 0
-                    ttft_ms = None
-                    if is_first and first_token_time is not None:
-                        ttft_ms = (first_token_time - request_start_time) * 1000
-                    self.events.send(
-                        LLMResponseChunkEvent(
-                            plugin_name=PLUGIN_NAME,
-                            content_index=None,
-                            item_id=chunk.id,
-                            output_index=0,
-                            sequence_number=seq,
-                            delta=filtered,
-                            is_first_chunk=is_first,
-                            time_to_first_token_ms=ttft_ms,
-                        )
-                    )
-                    seq += 1
-
-            if finish_reason:
-                if finish_reason == "tool_calls":
-                    accumulated_tool_calls = self._finalize_pending_tool_calls()
-
-                total_text = think_filter.flush("".join(text_chunks))
-                latency_ms = (time.perf_counter() - request_start_time) * 1000
-                ttft_ms_final = None
-                if first_token_time is not None:
-                    ttft_ms_final = (first_token_time - request_start_time) * 1000
-
-                self.events.send(
-                    LLMResponseCompletedEvent(
-                        plugin_name=PLUGIN_NAME,
-                        original=chunk,
-                        text=total_text,
-                        item_id=chunk.id,
-                        latency_ms=latency_ms,
-                        time_to_first_token_ms=ttft_ms_final,
-                        model=self.model,
-                    )
-                )
-
-            llm_response = LLMResponseEvent(original=chunk, text=total_text)
-
-        if accumulated_tool_calls:
-            return await self._handle_tool_calls(
-                accumulated_tool_calls, messages, tools, kwargs
-            )
-
-        return llm_response
+    async def _filter_think_chunks(
+        self, response: AsyncStream[ChatCompletionChunk]
+    ) -> AsyncIterator[ChatCompletionChunk]:
+        f = _ThinkTagFilter()
+        async for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                chunk.choices[0].delta.content = f.feed(chunk.choices[0].delta.content)
+            yield chunk

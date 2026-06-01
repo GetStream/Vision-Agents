@@ -1,0 +1,28 @@
+[project]
+name = "{{project_name}}"
+version = "0.0.0"
+requires-python = ">=3.10,<3.14"
+
+dependencies = [
+  "python-dotenv>=1.2.2",
+  "vision-agents",
+  "vision-agents-plugins-gemini",
+  "vision-agents-plugins-getstream",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=1.0",
+]
+
+[tool.vision-agents.agent]
+entrypoint = "agent:runner"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+  "integration: tests that call real model services",
+]

@@ -1,21 +1,9 @@
-"""Tests for MetricsCollector handler methods.
-
-These tests verify that the MetricsCollector correctly records metrics
-when handling various events. Since the EventManager requires a running
-event loop and complex type resolution, we test the handler methods directly.
-"""
+"""Tests for MetricsCollector public ``on_*`` API."""
 
 import dataclasses
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from vision_agents.core.events import EventManager
-from vision_agents.core.llm.events import (
-    LLMResponseCompletedEvent,
-    ToolEndEvent,
-    VLMErrorEvent,
-    VLMInferenceCompletedEvent,
-)
 from vision_agents.core.observability.agent import AgentMetrics
 from vision_agents.core.observability.collector import MetricsCollector
 from vision_agents.core.observability.metrics import (
@@ -44,20 +32,11 @@ from vision_agents.core.observability.metrics import (
     vlm_input_tokens,
     vlm_output_tokens,
 )
-from vision_agents.core.stt.events import (
-    STTErrorEvent,
-    STTTranscriptEvent,
-    TranscriptResponse,
-)
-from vision_agents.core.tts.events import TTSErrorEvent, TTSSynthesisCompleteEvent
-from vision_agents.core.turn_detection.events import TurnEndedEvent
 
 
 @pytest.fixture()
 def mock_metrics():
-    """
-    Go over all the used metrics and patch their methods to record the calls.
-    """
+    """Patch every OTel instrument used by the collector so tests can assert on emits."""
     all_metrics = [
         llm_errors,
         llm_input_tokens,
@@ -98,67 +77,22 @@ def mock_metrics():
 
 
 @pytest.fixture
-async def event_manager() -> EventManager:
-    manager = EventManager()
-
-    events = [
-        LLMResponseCompletedEvent,
-        STTErrorEvent,
-        STTTranscriptEvent,
-        TTSErrorEvent,
-        TTSSynthesisCompleteEvent,
-        ToolEndEvent,
-        TurnEndedEvent,
-        VLMErrorEvent,
-        VLMInferenceCompletedEvent,
-    ]
-    for cls in events:
-        manager.register(cls)
-    return manager
-
-
-@pytest.fixture
-async def agent(event_manager):
-    agent = MagicMock()
-    agent.llm = MagicMock()
-    agent.llm.events = event_manager
-
-    agent.stt = MagicMock()
-    agent.stt.events = event_manager
-
-    agent.tts = MagicMock()
-    agent.tts.events = event_manager
-
-    agent.turn_detection = MagicMock()
-    agent.turn_detection.events = event_manager
-    agent.metrics = AgentMetrics()
-    agent.events = EventManager()
-    return agent
-
-
-@pytest.fixture
-async def collector(mock_metrics, agent) -> MetricsCollector:
-    collector = MetricsCollector(agent)
-    return collector
+def collector(mock_metrics) -> MetricsCollector:
+    return MetricsCollector()
 
 
 class TestMetricsCollector:
-    """Tests for MetricsCollector handler methods."""
+    """Tests for the public ``on_*`` API on ``MetricsCollector``."""
 
-    async def test_on_llm_response_completed(self, collector, event_manager, agent):
-        """Test LLM response completed handler records all metrics."""
-
-        event = LLMResponseCompletedEvent(
-            plugin_name="openai",
-            text="Hello",
+    def test_on_llm_response(self, collector):
+        collector.on_llm_response(
+            provider="openai",
+            model="gpt-4",
             latency_ms=150.0,
             time_to_first_token_ms=50.0,
             input_tokens=10,
             output_tokens=5,
-            model="gpt-4",
         )
-        event_manager.send(event)
-        await event_manager.wait(1)
 
         llm_latency_ms.record.assert_called_once_with(
             150.0, {"provider": "openai", "model": "gpt-4"}
@@ -172,98 +106,82 @@ class TestMetricsCollector:
         llm_output_tokens.add.assert_called_once_with(
             5, {"provider": "openai", "model": "gpt-4"}
         )
-        assert agent.metrics.llm_latency_ms__avg.value() == 150
-        assert agent.metrics.llm_time_to_first_token_ms__avg.value() == 50
-        assert agent.metrics.llm_input_tokens__total.value() == 10
-        assert agent.metrics.llm_output_tokens__total.value() == 5
+        assert collector.agent_metrics.llm_latency_ms__avg.value() == 150
+        assert collector.agent_metrics.llm_time_to_first_token_ms__avg.value() == 50
+        assert collector.agent_metrics.llm_input_tokens__total.value() == 10
+        assert collector.agent_metrics.llm_output_tokens__total.value() == 5
 
-    async def test_on_llm_response_completed_partial_data(
-        self, collector, event_manager, agent
-    ):
-        """Test LLM handler with missing optional fields."""
+    def test_on_llm_response_partial_data(self, collector):
+        collector.on_llm_response(provider="openai")
 
-        event = LLMResponseCompletedEvent(
-            plugin_name="openai",
-            text="Hello",
-            # No latency, tokens, or model
-        )
-
-        event_manager.send(event)
-        await event_manager.wait(1)
-
-        # Should not record metrics for missing fields
         llm_latency_ms.record.assert_not_called()
         llm_time_to_first_token_ms.record.assert_not_called()
         llm_input_tokens.add.assert_not_called()
         llm_output_tokens.add.assert_not_called()
 
-        assert agent.metrics.llm_latency_ms__avg.value() is None
-        assert agent.metrics.llm_time_to_first_token_ms__avg.value() is None
-        assert agent.metrics.llm_input_tokens__total.value() == 0
-        assert agent.metrics.llm_output_tokens__total.value() == 0
+        assert collector.agent_metrics.llm_latency_ms__avg.value() is None
+        assert collector.agent_metrics.llm_time_to_first_token_ms__avg.value() is None
+        assert collector.agent_metrics.llm_input_tokens__total.value() == 0
+        assert collector.agent_metrics.llm_output_tokens__total.value() == 0
 
-    async def test_on_tool_end(self, collector, event_manager, agent):
-        """Test tool end handler records metrics."""
-
-        event = ToolEndEvent(
-            plugin_name="openai",
+    def test_on_tool_call(self, collector):
+        collector.on_tool_call(
+            provider="openai",
             tool_name="get_weather",
             success=True,
             execution_time_ms=25.0,
         )
 
-        event_manager.send(event)
-        await event_manager.wait(1)
-
         llm_tool_calls.add.assert_called_once_with(
-            1, {"provider": "openai", "tool_name": "get_weather", "success": "true"}
+            1, {"tool_name": "get_weather", "success": "true", "provider": "openai"}
         )
         llm_tool_latency_ms.record.assert_called_once_with(
-            25.0, {"provider": "openai", "tool_name": "get_weather", "success": "true"}
+            25.0, {"tool_name": "get_weather", "success": "true", "provider": "openai"}
         )
 
-        assert agent.metrics.llm_tool_calls__total.value() == 1
-        assert agent.metrics.llm_tool_latency_ms__avg.value() == 25
+        assert collector.agent_metrics.llm_tool_calls__total.value() == 1
+        assert collector.agent_metrics.llm_tool_latency_ms__avg.value() == 25
 
-    async def test_on_stt_transcript(self, collector, event_manager, agent):
-        """Test STT transcript handler records metrics."""
-
-        event = STTTranscriptEvent(
-            plugin_name="deepgram",
-            text="Hello world",
-            response=TranscriptResponse(
-                processing_time_ms=100.0,
-                audio_duration_ms=2000.0,
-                model_name="nova-2",
-                language="en",
-            ),
+    def test_on_llm_error(self, collector):
+        collector.on_llm_error(
+            provider="openai",
+            error_type="ValueError",
+            error_code="BAD_REQUEST",
         )
 
-        event_manager.send(event)
-        await event_manager.wait(1)
+        llm_errors.add.assert_called_once_with(
+            1,
+            {
+                "provider": "openai",
+                "error_type": "ValueError",
+                "error_code": "BAD_REQUEST",
+            },
+        )
+
+    def test_on_stt_transcript(self, collector):
+        collector.on_stt_transcript(
+            provider="deepgram",
+            model="nova-2",
+            language="en",
+            processing_time_ms=100.0,
+            audio_duration_ms=2000.0,
+        )
 
         stt_latency_ms.record.assert_called_once_with(
             100.0, {"provider": "deepgram", "model": "nova-2", "language": "en"}
         )
         stt_audio_duration_ms.record.assert_called_once_with(
-            2000.0,
-            {"provider": "deepgram", "model": "nova-2", "language": "en"},
+            2000.0, {"provider": "deepgram", "model": "nova-2", "language": "en"}
         )
+        assert collector.agent_metrics.stt_latency_ms__avg.value() == 100.0
+        assert collector.agent_metrics.stt_audio_duration_ms__total.value() == 2000.0
 
-        assert agent.metrics.stt_latency_ms__avg.value() == 100.0
-        assert agent.metrics.stt_audio_duration_ms__total.value() == 2000.0
-
-    async def test_on_stt_error(self, collector, event_manager):
-        """Test STT error handler records metrics."""
-
-        event = STTErrorEvent(
-            plugin_name="deepgram",
-            error=ValueError("Connection failed"),
+    def test_on_stt_error(self, collector):
+        collector.on_stt_error(
+            provider="deepgram",
+            error_type="ValueError",
             error_code="CONNECTION_ERROR",
         )
-
-        event_manager.send(event)
-        await event_manager.wait(1)
 
         stt_errors.add.assert_called_once_with(
             1,
@@ -274,18 +192,13 @@ class TestMetricsCollector:
             },
         )
 
-    async def test_on_tts_synthesis_complete(self, collector, event_manager, agent):
-        """Test TTS synthesis complete handler records metrics."""
-
-        event = TTSSynthesisCompleteEvent(
-            plugin_name="cartesia",
-            text="Hello world",
+    def test_on_tts_synthesis(self, collector):
+        collector.on_tts_synthesis(
+            provider="cartesia",
             synthesis_time_ms=50.0,
             audio_duration_ms=1500.0,
+            character_count=len("Hello world"),
         )
-
-        event_manager.send(event)
-        await event_manager.wait(1)
 
         tts_latency_ms.record.assert_called_once_with(50.0, {"provider": "cartesia"})
         tts_audio_duration_ms.record.assert_called_once_with(
@@ -294,22 +207,19 @@ class TestMetricsCollector:
         tts_characters.add.assert_called_once_with(
             len("Hello world"), {"provider": "cartesia"}
         )
+        assert collector.agent_metrics.tts_latency_ms__avg.value() == 50.0
+        assert collector.agent_metrics.tts_audio_duration_ms__total.value() == 1500.0
+        assert collector.agent_metrics.tts_characters__total.value() == len(
+            "Hello world"
+        )
 
-        assert agent.metrics.tts_latency_ms__avg.value() == 50.0
-        assert agent.metrics.tts_audio_duration_ms__total.value() == 1500.0
-        assert agent.metrics.tts_characters__total.value() == len("Hello world")
-
-    async def test_on_tts_error(self, collector, event_manager):
-        """Test TTS error handler records metrics."""
-
-        event = TTSErrorEvent(
-            plugin_name="cartesia",
-            error=RuntimeError("Synthesis failed"),
+    def test_on_tts_error(self, collector):
+        collector.on_tts_error(
+            provider="cartesia",
+            error_type="RuntimeError",
             error_code="SYNTHESIS_ERROR",
         )
 
-        event_manager.send(event)
-        await event_manager.wait(1)
         tts_errors.add.assert_called_once_with(
             1,
             {
@@ -319,17 +229,12 @@ class TestMetricsCollector:
             },
         )
 
-    async def test_on_turn_ended(self, collector, event_manager, agent):
-        """Test turn ended handler records metrics."""
-
-        event = TurnEndedEvent(
-            plugin_name="smart_turn",
+    def test_on_turn_ended(self, collector):
+        collector.on_turn_ended(
+            provider="smart_turn",
             duration_ms=3500.0,
             trailing_silence_ms=500.0,
         )
-
-        event_manager.send(event)
-        await event_manager.wait(1)
 
         turn_duration_ms.record.assert_called_once_with(
             3500.0, {"provider": "smart_turn"}
@@ -337,23 +242,18 @@ class TestMetricsCollector:
         turn_trailing_silence_ms.record.assert_called_once_with(
             500.0, {"provider": "smart_turn"}
         )
-        assert agent.metrics.turn_duration_ms__avg.value() == 3500.0
-        assert agent.metrics.turn_trailing_silence_ms__avg.value() == 500.0
+        assert collector.agent_metrics.turn_duration_ms__avg.value() == 3500.0
+        assert collector.agent_metrics.turn_trailing_silence_ms__avg.value() == 500.0
 
-    async def test_on_vlm_inference_completed(self, collector, event_manager, agent):
-        """Test VLM inference completed handler records metrics."""
-
-        event = VLMInferenceCompletedEvent(
-            plugin_name="moondream",
+    def test_on_vlm_inference(self, collector):
+        collector.on_vlm_inference(
+            provider="moondream",
             model="moondream-cloud",
-            text="A person walking",
             latency_ms=200.0,
-            frames_processed=5,
             input_tokens=100,
             output_tokens=20,
+            frames_processed=5,
         )
-        event_manager.send(event)
-        await event_manager.wait(1)
 
         vlm_inferences.add.assert_called_once_with(
             1, {"provider": "moondream", "model": "moondream-cloud"}
@@ -371,22 +271,18 @@ class TestMetricsCollector:
             20, {"provider": "moondream", "model": "moondream-cloud"}
         )
 
-        assert agent.metrics.vlm_inferences__total.value() == 1
-        assert agent.metrics.vlm_inference_latency_ms__avg.value() == 200.0
-        assert agent.metrics.video_frames_processed__total.value() == 5
-        assert agent.metrics.vlm_input_tokens__total.value() == 100
-        assert agent.metrics.vlm_output_tokens__total.value() == 20
+        assert collector.agent_metrics.vlm_inferences__total.value() == 1
+        assert collector.agent_metrics.vlm_inference_latency_ms__avg.value() == 200.0
+        assert collector.agent_metrics.video_frames_processed__total.value() == 5
+        assert collector.agent_metrics.vlm_input_tokens__total.value() == 100
+        assert collector.agent_metrics.vlm_output_tokens__total.value() == 20
 
-    async def test_on_vlm_error(self, collector, event_manager, agent):
-        """Test VLM error handler records metrics."""
-
-        event = VLMErrorEvent(
-            plugin_name="moondream",
-            error=RuntimeError("Inference failed"),
+    def test_on_vlm_error(self, collector):
+        collector.on_vlm_error(
+            provider="moondream",
+            error_type="RuntimeError",
             error_code="INFERENCE_ERROR",
         )
-        event_manager.send(event)
-        await event_manager.wait(1)
 
         vlm_errors.add.assert_called_once_with(
             1,
@@ -397,25 +293,96 @@ class TestMetricsCollector:
             },
         )
 
-    async def test_base_attributes_extracts_provider(self, collector):
-        """Test that base attributes correctly extracts provider."""
-
-        event = LLMResponseCompletedEvent(
-            plugin_name="test_provider",
-            text="Hello",
+    def test_on_video_detection(self, collector):
+        collector.on_video_detection(
+            provider="roboflow",
+            model="yolo-v8",
+            detection_count=3,
+            inference_time_ms=42.0,
         )
 
-        attrs = collector._base_attributes(event)
-        assert attrs == {"provider": "test_provider"}
-
-    async def test_base_attributes_handles_missing_plugin_name(self, collector):
-        """Test that base attributes handles missing plugin_name."""
-
-        event = LLMResponseCompletedEvent(
-            text="Hello",
+        video_detections.add.assert_called_once_with(
+            3, {"provider": "roboflow", "model": "yolo-v8"}
         )
-        attrs = collector._base_attributes(event)
-        assert attrs == {}
+        video_frames_processed.add.assert_called_once_with(
+            1, {"provider": "roboflow", "model": "yolo-v8"}
+        )
+        assert collector.agent_metrics.video_frames_processed__total.value() == 1
+        assert collector.agent_metrics.video_processing_latency_ms__avg.value() == 42.0
+
+    def test_on_realtime_audio_input(self, collector):
+        collector.on_realtime_audio_input(
+            provider="openai", byte_count=1024, duration_ms=20.0
+        )
+
+        assert collector.agent_metrics.realtime_audio_input_bytes__total.value() == 1024
+        assert (
+            collector.agent_metrics.realtime_audio_input_duration_ms__total.value()
+            == 20
+        )
+
+    def test_on_realtime_user_transcription(self, collector):
+        collector.on_realtime_user_transcription(provider="openai")
+        assert collector.agent_metrics.realtime_user_transcriptions__total.value() == 1
+
+    def test_hierarchy_emits_otel_only_at_root(self, mock_metrics):
+        parent = MetricsCollector()
+        child = MetricsCollector()
+        parent.merge(child)
+
+        child.on_llm_response(provider="openai", latency_ms=100.0, input_tokens=5)
+
+        # OTel emitted exactly once, at root.
+        llm_latency_ms.record.assert_called_once_with(100.0, {"provider": "openai"})
+        llm_input_tokens.add.assert_called_once_with(5, {"provider": "openai"})
+
+        # AgentMetrics updated on every collector in the chain.
+        assert child.agent_metrics.llm_latency_ms__avg.value() == 100.0
+        assert child.agent_metrics.llm_input_tokens__total.value() == 5
+        assert parent.agent_metrics.llm_latency_ms__avg.value() == 100.0
+        assert parent.agent_metrics.llm_input_tokens__total.value() == 5
+
+    def test_merge_is_idempotent_for_same_parent(self, mock_metrics):
+        parent = MetricsCollector()
+        child = MetricsCollector()
+        parent.merge(child)
+        parent.merge(child)
+
+        assert child.parent is parent
+
+        child.on_llm_response(provider="openai", input_tokens=3)
+
+        # Re-merging didn't duplicate the chain: OTel emitted once, parent updated once.
+        llm_input_tokens.add.assert_called_once_with(3, {"provider": "openai"})
+        assert parent.agent_metrics.llm_input_tokens__total.value() == 3
+
+    def test_merge_reparents_to_new_parent(self):
+        parent_a = MetricsCollector()
+        parent_b = MetricsCollector()
+        child = MetricsCollector()
+
+        parent_a.merge(child)
+        parent_b.merge(child)
+
+        assert child.parent is parent_b
+
+        child.on_llm_response(provider="openai", input_tokens=7)
+
+        # Forwarding follows the new parent only.
+        assert parent_b.agent_metrics.llm_input_tokens__total.value() == 7
+        assert parent_a.agent_metrics.llm_input_tokens__total.value() == 0
+
+    def test_merge_self_raises(self):
+        collector = MetricsCollector()
+        with pytest.raises(ValueError, match="cannot merge a collector into itself"):
+            collector.merge(collector)
+
+    def test_merge_cycle_raises(self):
+        a = MetricsCollector()
+        b = MetricsCollector()
+        a.merge(b)
+        with pytest.raises(ValueError, match="merge would create a cycle"):
+            b.merge(a)
 
 
 class TestAgentMetrics:

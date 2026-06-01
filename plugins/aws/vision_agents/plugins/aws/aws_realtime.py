@@ -4,7 +4,7 @@ import datetime
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import aiortc
 from aws_sdk_bedrock_runtime.client import (
@@ -21,6 +21,8 @@ from getstream.video.rtc.audio_track import AudioStreamTrack
 from vision_agents.core.agents.agent_types import AgentOptions
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import realtime
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.utils.exceptions import log_task_exception
 from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.vad.silero import SileroVADSession, SileroVADSessionPool
@@ -77,12 +79,8 @@ class RealtimeConnection:
         return await self.stream.await_output()
 
     async def close(self):
-        """Close the stream connection."""
-        if self.stream:
-            try:
-                await self.stream.input_stream.close()
-            finally:
-                self.stream = None
+        """Nothing to close here — AWS closes the connection after sessionEnd."""
+        self.stream = None
 
 
 class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
@@ -146,6 +144,8 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         # Close when done
         await llm.close()
     """
+
+    provider_name = "aws_realtime"
 
     voice_id: str
     options: AgentOptions
@@ -251,9 +251,11 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         self.last_connected_at = datetime.datetime.now()
 
         # Start listener task
-        self._handle_event_task = asyncio.create_task(
-            self._handle_events(self.connection)
+        handle_event_task = asyncio.create_task(self._handle_events(self.connection))
+        handle_event_task.add_done_callback(
+            log_task_exception("Failed to handle events from AWS Realtime")
         )
+        self._handle_event_task = handle_event_task
 
         # send start and prompt event
         event = self._create_session_start_event()
@@ -274,7 +276,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
             )
         await self.content_input(self._instructions, "SYSTEM")
 
-        self.connected = True
+        self._on_connected(session_config={"model": self.model})
 
         # Start reconnection check task
         self._reconnection_check_task = asyncio.create_task(
@@ -370,7 +372,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                         logger.exception(
                             "Error closing provisional new connection during reconnect cleanup"
                         )
-                self.connected = False
+                self._on_disconnected(reason="reconnect_failed", clean=False)
 
     def _should_reconnect(self) -> bool:
         """Check if connection should be reconnected based on runtime.
@@ -455,11 +457,12 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         content_name = str(uuid.uuid4())
 
         await self.audio_content_start(content_name)
-        self._emit_audio_input_event(pcm)
 
-        # Convert PcmData to base64 encoded bytes
-        audio_base64 = base64.b64encode(pcm.samples).decode("utf-8")
-        await self.audio_input(content_name, audio_base64)
+        # Nova bidi expects streaming chunks, not one giant blob.
+        # 100ms @ 24kHz mono s16 = 2400 samples per chunk.
+        for chunk in pcm.chunks(2400):
+            audio_base64 = base64.b64encode(chunk.samples).decode("utf-8")
+            await self.audio_input(content_name, audio_base64)
 
         await self.content_end(content_name)
 
@@ -467,7 +470,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ):
+    ) -> AsyncIterator["LLMResponseDelta | LLMResponseFinal"]:
         """
         Simple response standardizes how to send a text instruction to this LLM.
 
@@ -478,6 +481,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         """
         self.logger.info("Simple response called with text: %s", text)
         await self.content_input(content=text, role="USER")
+        yield LLMResponseFinal()
 
     async def content_input(self, content: str, role: str, interactive: bool = True):
         """
@@ -803,6 +807,12 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         if error:
             response_data = {"error": str(error)}
             logger.error(f"Tool call {tool_name} failed: {error}")
+            self._emit_error_event(
+                error=error
+                if isinstance(error, BaseException)
+                else Exception(str(error)),
+                context=f"tool_call:{tool_name}",
+            )
         else:
             response_data = result
 
@@ -841,18 +851,18 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
             session_end: Dict[str, Any] = {"event": {"sessionEnd": {}}}
             await self.connection.send_event(session_end)
 
-            await self.connection.close()
-
-        # The stream is already closed above, so receive() should raise
-        # StopAsyncIteration and the listener exits naturally. Fall back to
-        # cancel if it hasn't exited within the timeout. asyncio.wait (not
-        # wait_for) so we don't re-raise any exception the handler raised
-        # during its own teardown.
+        # After sessionEnd, AWS closes the connection, listener's receive()
+        # raises StopAsyncIteration, task completes. Use asyncio.wait — not
+        # wait_for — because wait_for cancels on timeout, which races with
+        # awscrt's body delivery and hangs the process.
         if self._handle_event_task:
-            await asyncio.wait([self._handle_event_task], timeout=2.0)
-            await cancel_and_wait(self._handle_event_task)
+            done, _ = await asyncio.wait({self._handle_event_task}, timeout=10.0)
+            if not done:
+                logger.warning(
+                    "AWS Bedrock listener did not drain within 10s; leaking task"
+                )
 
-        self.connected = False
+        self._on_disconnected()
 
     async def _handle_events(self, connection: RealtimeConnection):
         """Process incoming responses from AWS Bedrock.
@@ -868,6 +878,9 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
             try:
                 output = await connection.await_output()
                 result = await output[1].receive()
+                if result is None:
+                    logger.debug("Stream ended (receive returned None)")
+                    break
                 if result.value and result.value.bytes_:
                     try:
                         response_data = result.value.bytes_.decode("utf-8")
@@ -889,6 +902,17 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 )
                                 # set role
                                 self.role = content_start["role"]
+                                content_start_type = content_start.get("type", "")
+                                # User content arrives as TEXT (transcription).
+                                # Filter agent on AUDIO to avoid firing twice
+                                # (once for TEXT, once for AUDIO blocks).
+                                if self.role == "USER":
+                                    self._emit_user_speech_started()
+                                elif (
+                                    self.role == "ASSISTANT"
+                                    and content_start_type == "AUDIO"
+                                ):
+                                    self._emit_agent_speech_started()
                                 # Reset per-turn text tracking
                                 self._emitted_text_in_turn = False
                                 # Check for speculative content
@@ -940,7 +964,6 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                         self._emit_user_speech_transcription(
                                             text=_delta,
                                             mode="delta",
-                                            original=json_data,
                                         )
                                     elif (
                                         self.role == "ASSISTANT"
@@ -949,17 +972,15 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                         self._emit_agent_speech_transcription(
                                             text=_delta,
                                             mode="delta",
-                                            original=json_data,
                                         )
                                 else:
                                     logger.info(
-                                        "Barge-in detected — emitting audio "
-                                        "output done to flush playback buffer"
+                                        "Barge-in detected — interrupting agent"
                                     )
-                                    self._emit_audio_output_done_event()
+                                    await self.interrupt()
+                                    self._emit_audio_output_done_event(interrupted=True)
 
                             elif "completionStart" in json_data["event"]:
-                                self._begin_response()
                                 logger.debug(
                                     "Completion start from AWS Bedrock: %s",
                                     json_data["event"]["completionStart"],
@@ -972,7 +993,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 audio_bytes = base64.b64decode(audio_content)
                                 pcm = PcmData.from_bytes(audio_bytes, self.sample_rate)
                                 self._emit_audio_output_event(
-                                    audio_data=pcm,
+                                    pcm=pcm,
                                 )
 
                             elif "toolUse" in json_data["event"]:
@@ -1004,6 +1025,15 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                                 logger.debug(
                                     f"Content end event: type={content_type}, stopReason={stop_reason}"
                                 )
+
+                                if stop_reason == "INTERRUPTED":
+                                    self._emit_agent_speech_ended(interrupted=True)
+                                elif self.role == "USER":
+                                    self._emit_user_speech_ended()
+                                elif (
+                                    self.role == "ASSISTANT" and content_type == "AUDIO"
+                                ):
+                                    self._emit_agent_speech_ended()
 
                                 # Process tool calls on contentEnd with type == 'TOOL' (matching reference implementation)
                                 if content_type == "TOOL":
@@ -1053,3 +1083,9 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
                 # Stream has ended normally
                 logger.debug("Stream ended normally")
                 break
+            except RuntimeError:
+                # close() set connection.stream to None while we were here.
+                if connection.stream is None:
+                    logger.debug("Connection closed during await_output")
+                    break
+                raise

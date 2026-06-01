@@ -34,7 +34,8 @@ async def on_audio(event):
     print(f"Received audio chunk: {len(event.audio_data)} bytes")
 
 # Send text to be converted to speech
-await tts.send("Hello, this is a test of the Fish Audio text-to-speech plugin.")
+async for chunk in tts.send_iter("Hello, this is a test of the Fish Audio text-to-speech plugin."):
+    pass
 ```
 
 ### Speech-to-Text (STT)

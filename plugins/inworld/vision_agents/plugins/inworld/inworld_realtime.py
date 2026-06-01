@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import TypedDict
+from typing import AsyncIterator, TypedDict
 
 import aiortc.mediastreams
 import httpx
@@ -26,6 +26,7 @@ from openai.types.realtime.realtime_transcription_session_audio_input_turn_detec
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm import realtime
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from .rtc_manager import INWORLD_API_BASE, RTCManager
@@ -88,6 +89,8 @@ class Realtime(realtime.Realtime):
             bypass the check.
     """
 
+    provider_name = "inworld_realtime"
+
     def __init__(
         self,
         model: str = "openai/gpt-4o-mini",
@@ -105,7 +108,6 @@ class Realtime(realtime.Realtime):
             )
 
         super().__init__(fps)
-        self.provider_name = "inworld_realtime"
         self._api_key = resolved_key
         self._force_tool_calling = force_tool_calling
 
@@ -148,7 +150,7 @@ class Realtime(realtime.Realtime):
         waits for the server's ``session.updated`` confirmation before
         returning so callers can trust the session is fully configured.
 
-        Emits ``RealtimeErrorEvent`` on failure before re-raising so subscribers
+        Emits ``LLMErrorEvent`` on failure before re-raising so subscribers
         are notified even if the caller does not catch.
         """
         self._session_updated.clear()
@@ -206,7 +208,7 @@ class Realtime(realtime.Realtime):
                 "Timed out waiting for Inworld session.updated; proceeding anyway"
             )
 
-        self._emit_connected_event(
+        self._on_connected(
             session_config={"model": self.model, "voice": self.voice},
             capabilities=["text", "audio", "function_calling"],
         )
@@ -215,9 +217,10 @@ class Realtime(realtime.Realtime):
         self,
         text: str,
         participant: Participant | None = None,
-    ):
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Send a text prompt to the Inworld Realtime session."""
         await self.rtc.send_text(text)
+        yield LLMResponseFinal()
 
     async def simple_audio_response(
         self, audio: PcmData, participant: Participant | None = None
@@ -236,7 +239,7 @@ class Realtime(realtime.Realtime):
         await self._await_pending_tools()
         self._pending_tool_calls.clear()
         await self.rtc.close()
-        self._emit_disconnected_event(reason="client_close", was_clean=True)
+        self._on_disconnected()
 
     async def watch_video_track(
         self,
@@ -262,9 +265,7 @@ class Realtime(realtime.Realtime):
             "response.output_audio_transcript.done",
         ):
             transcript = event.get("transcript", "")
-            self._emit_agent_speech_transcription(
-                text=transcript, mode="final", original=event
-            )
+            self._emit_agent_speech_transcription(text=transcript, mode="final")
             self._emit_response_event(
                 text=transcript,
                 response_id=event.get("response_id"),
@@ -273,7 +274,7 @@ class Realtime(realtime.Realtime):
             )
         elif et == "conversation.item.input_audio_transcription.completed":
             self._emit_user_speech_transcription(
-                text=event.get("transcript", ""), mode="final", original=event
+                text=event.get("transcript", ""), mode="final"
             )
         elif et == "input_audio_buffer.speech_started":
             await self.interrupt()
@@ -306,8 +307,6 @@ class Realtime(realtime.Realtime):
             item_id = event.get("item_id") or event.get("item", {}).get("id")
             if item_id and item_id in self._pending_tool_calls:
                 self._run_tool_in_background(self._execute_pending_tool_call(item_id))
-        elif et == "response.created":
-            self._begin_response()
         elif et == "session.created":
             logger.info("Inworld session created")
         elif et == "response.done":
@@ -345,7 +344,7 @@ class Realtime(realtime.Realtime):
 
     async def _handle_audio_output(self, pcm: PcmData) -> None:
         """Forward inbound audio from Inworld to the base-class event bus."""
-        self._emit_audio_output_event(audio_data=pcm)
+        self._emit_audio_output_event(pcm=pcm)
 
     async def _execute_pending_tool_call(self, item_id: str) -> None:
         """Execute a pending tool call after its arguments have fully streamed in."""

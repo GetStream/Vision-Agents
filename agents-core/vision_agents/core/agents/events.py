@@ -1,14 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Optional
 
-from vision_agents.core.events import BaseEvent, PluginBaseEvent
-
-
-@dataclass
-class AgentInitEvent(BaseEvent):
-    """Event emitted when Agent class initialized."""
-
-    type: str = field(default="agent.init", init=False)
+from vision_agents.core.edge.call import Call
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.events import BaseEvent
 
 
 @dataclass
@@ -19,45 +14,56 @@ class AgentFinishEvent(BaseEvent):
 
 
 @dataclass
-class AgentSayEvent(PluginBaseEvent):
-    """Event emitted when the agent wants to say something."""
+class AgentJoinedCallEvent(BaseEvent):
+    """Event emitted after the agent has joined a call."""
 
-    type: str = field(default="agent.say", init=False)
-    text: str = ""
-    metadata: Optional[Dict[str, Any]] = None
-
-    def __post_init__(self):
-        if not self.text:
-            raise ValueError("Agent say text cannot be empty")
+    type: str = field(default="agent.joined_call", init=False)
+    call: Call = field(kw_only=True)
 
 
 @dataclass
-class AgentSayStartedEvent(PluginBaseEvent):
-    """Event emitted when agent speech synthesis starts."""
+class AgentLeftCallEvent(BaseEvent):
+    """Event emitted when the agent leaves a call."""
 
-    type: str = field(default="agent.say_started", init=False)
-    text: str = ""
-    synthesis_id: Optional[str] = None
-
-
-@dataclass
-class AgentSayCompletedEvent(PluginBaseEvent):
-    """Event emitted when agent speech synthesis completes."""
-
-    type: str = field(default="agent.say_completed", init=False)
-    text: str = ""
-    synthesis_id: Optional[str] = None
-    duration_ms: Optional[float] = None
+    type: str = field(default="agent.left_call", init=False)
+    call: Call = field(kw_only=True)
 
 
 @dataclass
-class AgentSayErrorEvent(PluginBaseEvent):
-    """Event emitted when agent speech synthesis encounters an error."""
+class UserTurnStartedEvent(BaseEvent):
+    """Emitted when the user starts speaking."""
 
-    type: str = field(default="agent.say_error", init=False)
+    type: str = field(default="agent.user_turn_started", init=False)
+    participant: Optional[Participant] = None
+
+
+@dataclass
+class UserTurnEndedEvent(BaseEvent):
+    """Emitted when the user stops speaking."""
+
+    type: str = field(default="agent.user_turn_ended", init=False)
+    participant: Optional[Participant] = None
+
+
+@dataclass
+class UserTranscriptEvent(BaseEvent):
+    """Emitted with the final user transcript that triggers an LLM turn."""
+
+    type: str = field(default="agent.user_transcript", init=False)
     text: str = ""
-    error: Optional[Exception] = None
+    participant: Optional[Participant] = None
 
-    @property
-    def error_message(self) -> str:
-        return str(self.error) if self.error else "Unknown error"
+
+@dataclass
+class AgentTurnStartedEvent(BaseEvent):
+    """Emitted when the agent starts speaking (first audio chunk leaving the pipeline)."""
+
+    type: str = field(default="agent.agent_turn_started", init=False)
+
+
+@dataclass
+class AgentTurnEndedEvent(BaseEvent):
+    """Emitted when the agent stops speaking. ``interrupted`` is True for barge-in."""
+
+    type: str = field(default="agent.agent_turn_ended", init=False)
+    interrupted: bool = False

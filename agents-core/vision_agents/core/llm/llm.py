@@ -1,11 +1,12 @@
-from __future__ import annotations
-
 import abc
 import asyncio
 import json
+import time
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
+    AsyncIterator,
     Callable,
     Dict,
     Generic,
@@ -18,7 +19,8 @@ from typing import (
 import aiortc
 from vision_agents.core.instructions import Instructions
 from vision_agents.core.llm import events
-from vision_agents.core.llm.events import ToolEndEvent, ToolStartEvent
+from vision_agents.core.llm.events import LLMErrorEvent, ToolEndEvent, ToolStartEvent
+from vision_agents.core.observability import MetricsCollector
 
 if TYPE_CHECKING:
     from vision_agents.core.agents import Agent
@@ -28,6 +30,7 @@ from getstream.video.rtc import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
 
+from ..base import Component
 from ..utils.video_forwarder import VideoForwarder
 from .function_registry import FunctionRegistry
 from .llm_types import NormalizedToolCallItem, ToolSchema
@@ -42,28 +45,110 @@ class LLMResponseEvent(Generic[T]):
         self.exception = exception
 
 
-class LLM(abc.ABC):
+@dataclass
+class LLMResponseDelta:
+    delta: str | None = None
+    """The text delta that was added."""
+
+    content_index: int | None = None
+    """The index of the content part that the text delta was added to."""
+
+    item_id: str | None = None
+    """The ID of the output item that the text delta was added to."""
+
+    output_index: int | None = None
+    """The index of the output item that the text delta was added to."""
+
+    sequence_number: int | None = None
+    """The sequence number for this event."""
+
+    is_first_chunk: bool = False
+    """Whether this is the first chunk in the stream."""
+
+    time_to_first_token_ms: float | None = None
+    """Time from request start to this first chunk (only set if is_first_chunk=True)."""
+
+
+@dataclass
+class LLMResponseFinal:
+    text: str = ""
+    item_id: str | None = None
+
+    latency_ms: float | None = None
+    """Total time from request to complete response."""
+    time_to_first_token_ms: float | None = None
+    """Time from request to first token received (streaming)."""
+
+    # Token usage
+    input_tokens: int | None = None
+    """Number of input/prompt tokens consumed."""
+    output_tokens: int | None = None
+    """Number of output/completion tokens generated."""
+    total_tokens: int | None = None
+    """Total tokens (input + output). May differ from sum if cached."""
+
+    model: str | None = None
+    """Model identifier used for this response."""
+
+    original: Any = None
+    """Original response object."""
+
+
+class LLM(Component):
+    provider_name: Optional[str] = None
+    # The model identifier this LLM is configured to use.
+    model: str = ""
+
     def __init__(self):
         super().__init__()
         self.agent: Agent | None = None
         self.events = EventManager()
         self.events.register_events_from_module(events)
+        self.metrics = MetricsCollector()
         self.function_registry = FunctionRegistry()
         # LLM instructions. Provided by the Agent via `set_instructions` method
         self._instructions: str = ""
         self._conversation: Optional[Conversation] = None
 
     @abc.abstractmethod
-    async def simple_response(
+    def simple_response(
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent[Any]: ...
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]: ...
 
     async def close(self) -> None:
         """
         Close the LLM and release the resources.
         """
+
+    async def interrupt(self) -> None:
+        """
+        Handle barge-in interruptions here.
+        """
+        ...
+
+    def on_llm_error(
+        self,
+        *,
+        error: Exception | None = None,
+        error_type: str | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        """Record an LLM error: emit metric + LLMErrorEvent."""
+        resolved_type = error_type or (type(error).__name__ if error else None)
+        self.metrics.on_llm_error(
+            provider=self.provider_name,
+            error_type=resolved_type,
+            error_code=error_code,
+        )
+        self.events.send(
+            LLMErrorEvent(
+                plugin_name=self.provider_name,
+                error=error,
+                error_code=error_code,
+            )
+        )
 
     def _get_tools_for_provider(self) -> List[Dict[str, Any]]:
         """
@@ -141,14 +226,14 @@ class LLM(abc.ABC):
         # Default implementation - should be overridden
         return []
 
-    def _attach_agent(self, agent: Agent):
+    def _attach_agent(self, agent: "Agent"):
         """
         Attach agent to the llm
         """
         self.agent = agent
         self.set_instructions(agent.instructions)
 
-    def set_conversation(self, conversation: Conversation):
+    def set_conversation(self, conversation: "Conversation"):
         """
         Provide the Conversation object to the LLM to access the chat history.
         To be called by the Agent after it joins the call.
@@ -233,10 +318,9 @@ class LLM(abc.ABC):
         Returns:
             Tuple of (tool_call, result, error)
         """
-        import time
 
         args = tc.get("arguments_json", tc.get("arguments", {})) or {}
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         async def _invoke():
             fn = self.function_registry.get_callable(tc["name"])
@@ -254,7 +338,7 @@ class LLM(abc.ABC):
             )
 
             res = await asyncio.wait_for(_invoke(), timeout=timeout_s)
-            execution_time = (time.time() - start_time) * 1000
+            execution_time = (time.perf_counter() - start_time) * 1000
 
             # Send tool end event (success)
             self.events.send(
@@ -267,10 +351,16 @@ class LLM(abc.ABC):
                     execution_time_ms=execution_time,
                 )
             )
+            self.metrics.on_tool_call(
+                tool_name=tc["name"],
+                success=True,
+                provider=self.provider_name,
+                execution_time_ms=execution_time,
+            )
 
             return tc, res, None
         except Exception as e:
-            execution_time = (time.time() - start_time) * 1000
+            execution_time = (time.perf_counter() - start_time) * 1000
 
             # Send tool end event (error)
             self.events.send(
@@ -282,6 +372,12 @@ class LLM(abc.ABC):
                     tool_call_id=tc.get("id"),
                     execution_time_ms=execution_time,
                 )
+            )
+            self.metrics.on_tool_call(
+                tool_name=tc["name"],
+                success=False,
+                provider=self.provider_name,
+                execution_time_ms=execution_time,
             )
 
             return tc, {"error": str(e)}, e
@@ -373,9 +469,7 @@ class AudioLLM(LLM, metaclass=abc.ABCMeta):
     """
 
     @abc.abstractmethod
-    async def simple_audio_response(
-        self, pcm: PcmData, participant: Optional[Participant] = None
-    ):
+    async def simple_audio_response(self, pcm: PcmData, participant: Participant):
         """
         Implement this method to forward PCM audio frames to the LLM.
 
@@ -384,7 +478,7 @@ class AudioLLM(LLM, metaclass=abc.ABCMeta):
 
         Args:
             pcm: PCM audio frame to forward upstream.
-            participant: Optional participant information for the audio source.
+            participant: participant information for the audio source.
         """
 
 

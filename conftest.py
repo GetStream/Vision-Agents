@@ -6,7 +6,6 @@ available to all tests in the project, including plugin tests.
 """
 
 import asyncio
-import logging
 import os
 from typing import Iterator
 
@@ -17,11 +16,6 @@ from blockbuster import BlockBuster, blockbuster_ctx
 from dotenv import load_dotenv
 from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core.edge.types import Participant
-from vision_agents.core.stt.events import (
-    STTErrorEvent,
-    STTPartialTranscriptEvent,
-    STTTranscriptEvent,
-)
 
 load_dotenv()
 
@@ -70,6 +64,9 @@ def blockbuster(request) -> Iterator[BlockBuster | None]:
                 # Some libs use "importlib_metadata" to determine the current version
                 func.can_block_in("importlib_metadata/__init__.py", "mtime")
                 func.can_block_in("importlib_metadata/__init__.py", "version")
+                # Same calls land in the stdlib's importlib.metadata on Python 3.10+.
+                func.can_block_in("importlib/metadata/__init__.py", "mtime")
+                func.can_block_in("importlib/metadata/__init__.py", "version")
 
             # Allow Python's standard logging which is inherently synchronous.
             if "io.TextIOWrapper.write" in bb.functions:
@@ -78,70 +75,6 @@ def blockbuster(request) -> Iterator[BlockBuster | None]:
                 bb.functions["io.BufferedWriter.write"].deactivate()
 
             yield bb
-
-
-class STTSession:
-    """Helper class for testing STT implementations.
-
-    Automatically subscribes to transcript and error events,
-    collects them, and provides a convenient wait method.
-    """
-
-    def __init__(self, stt):
-        """Initialize STT session with an STT object.
-
-        Args:
-            stt: STT implementation to monitor
-        """
-        self.stt = stt
-        self.transcripts = []
-        self.partial_transcripts = []
-        self.errors = []
-        self.logger = logging.getLogger("STTSession")
-        self._event = asyncio.Event()
-
-        # Subscribe to events
-        @stt.events.subscribe
-        async def on_transcript(event: STTTranscriptEvent):
-            self.logger.info(f"Received transcript event: {event}")
-            self.transcripts.append(event)
-            self._event.set()
-
-        @stt.events.subscribe
-        async def on_partial_transcript(event: STTPartialTranscriptEvent):
-            self.logger.info("Partial transcript event: %s", event)
-            self.partial_transcripts.append(event)
-
-        @stt.events.subscribe
-        async def on_error(event: STTErrorEvent):
-            self.errors.append(event.error)
-            self._event.set()
-
-        self._on_transcript = on_transcript
-        self._on_error = on_error
-
-    async def wait_for_result(self, timeout: float = 30.0):
-        """Wait for either a transcript or error event.
-
-        Args:
-            timeout: Maximum time to wait in seconds
-
-        Raises:
-            asyncio.TimeoutError: If no result received within timeout
-        """
-        # Allow event subscriptions to be processed
-        await asyncio.sleep(0.01)
-
-        # Wait for an event
-        await asyncio.wait_for(self._event.wait(), timeout=timeout)
-
-    def get_full_transcript(self) -> str:
-        """Get full transcription text from all transcript events.
-
-        Returns:
-            Combined text from all transcripts
-        """
-        return " ".join(t.text for t in self.transcripts)
 
 
 def get_assets_dir():

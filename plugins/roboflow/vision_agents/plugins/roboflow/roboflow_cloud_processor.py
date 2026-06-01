@@ -112,6 +112,7 @@ class RoboflowCloudDetectionProcessor(VideoProcessorPublisher):
         annotate_box_thickness: int = 2,
         annotate_text_position: sv.Position = sv.Position.TOP_CENTER,
     ):
+        super().__init__()
         if not model_id:
             raise ValueError("model_id is required")
 
@@ -290,6 +291,12 @@ class RoboflowCloudDetectionProcessor(VideoProcessorPublisher):
                 inference_time_ms=inference_time_ms,
                 model_id=self.model_id,
             )
+        )
+        self.metrics.on_video_detection(
+            provider=self.name,
+            model=self.model_id,
+            detection_count=len(detected_objects),
+            inference_time_ms=inference_time_ms,
         )
 
     async def _run_inference(

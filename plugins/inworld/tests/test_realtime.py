@@ -2,23 +2,15 @@ import asyncio
 
 import pytest
 from dotenv import load_dotenv
-from vision_agents.core.llm.events import (
-    RealtimeAgentSpeechTranscriptionEvent,
-    RealtimeConnectedEvent,
-)
+from vision_agents.core.llm.realtime import RealtimeAgentTranscript, RealtimeAudioOutput
 from vision_agents.plugins import inworld
 from vision_agents.plugins.inworld.tool_utils import convert_tools_to_openai_format
 
 load_dotenv()
 
 
-class TestRealtime:
-    """Inworld Realtime plugin tests.
-
-    Unit tests exercise in-process logic (construction, event dispatch,
-    tool schema). Integration tests (marked `@pytest.mark.integration`)
-    require ``INWORLD_API_KEY`` in the environment.
-    """
+class TestInworldRealtime:
+    """Unit tests for Inworld Realtime construction, event dispatch, and tool schema."""
 
     @pytest.fixture
     async def realtime(self):
@@ -27,8 +19,6 @@ class TestRealtime:
             yield rt
         finally:
             await rt.close()
-
-    # --- Unit ---
 
     def test_missing_api_key_raises(self, monkeypatch):
         monkeypatch.delenv("INWORLD_API_KEY", raising=False)
@@ -81,13 +71,7 @@ class TestRealtime:
         await realtime.interrupt()
         assert realtime.epoch == before + 1
 
-    async def test_agent_transcript_event_flows(self, realtime):
-        received: list[RealtimeAgentSpeechTranscriptionEvent] = []
-
-        @realtime.events.subscribe
-        async def _on(event: RealtimeAgentSpeechTranscriptionEvent):
-            received.append(event)
-
+    async def test_agent_transcript_flows(self, realtime):
         await realtime._handle_inworld_event(
             {
                 "type": "response.output_audio_transcript.done",
@@ -99,9 +83,11 @@ class TestRealtime:
                 "transcript": "hello there",
             }
         )
-        # Allow the event bus to drain
-        await asyncio.sleep(0.05)
-        assert any(e.text == "hello there" for e in received)
+
+        transcripts = [
+            i for i in realtime.output.peek() if isinstance(i, RealtimeAgentTranscript)
+        ]
+        assert any(t.text == "hello there" for t in transcripts)
 
     async def test_unknown_event_type_is_swallowed(self, realtime):
         # Should not raise
@@ -147,36 +133,31 @@ class TestRealtime:
             }
         )
 
-    # --- Integration (INWORLD_API_KEY required) ---
+
+@pytest.mark.integration
+class TestInworldRealtimeIntegration:
+    """End-to-end tests against the live Inworld Realtime API.
+
+    Requires ``INWORLD_API_KEY`` in the environment.
+    """
 
     @pytest.fixture
-    async def live_realtime(self):
+    async def realtime(self):
         rt = inworld.Realtime()
         try:
+            await rt.connect()
             yield rt
         finally:
             await rt.close()
 
-    @pytest.mark.integration
-    async def test_connect_emits_connected_event(self, live_realtime):
-        received: list[RealtimeConnectedEvent] = []
+    async def test_connect_marks_connected(self, realtime):
+        assert realtime.connected is True
 
-        @live_realtime.events.subscribe
-        async def _on(event: RealtimeConnectedEvent):
-            received.append(event)
+    async def test_close_is_idempotent(self, realtime):
+        await realtime.close()
+        await realtime.close()
 
-        await live_realtime.connect()
-        await asyncio.sleep(0.2)
-        assert received, "Expected at least one RealtimeConnectedEvent"
-
-    @pytest.mark.integration
-    async def test_close_is_idempotent(self, live_realtime):
-        await live_realtime.connect()
-        await live_realtime.close()
-        await live_realtime.close()
-
-    @pytest.mark.integration
-    async def test_data_channel_opens_after_connect(self, live_realtime):
+    async def test_data_channel_opens_after_connect(self, realtime):
         """End-to-end ICE+DTLS handshake must succeed so the data channel
         opens — otherwise events can't flow and the session is useless.
 
@@ -184,11 +165,21 @@ class TestRealtime:
         TURN credentials from /v1/realtime/ice-servers, ICE stalls and this
         test hangs past the timeout.
         """
-        await live_realtime.connect()
         for _ in range(150):  # up to 15 s
-            if live_realtime.rtc._data_channel_open_event.is_set():
+            if realtime.rtc._data_channel_open_event.is_set():
                 break
             await asyncio.sleep(0.1)
-        assert live_realtime.rtc._data_channel_open_event.is_set(), (
+        assert realtime.rtc._data_channel_open_event.is_set(), (
             "Data channel did not open within 15 s — check TURN/ICE servers"
         )
+
+    async def test_simple_response_yields_audio_and_transcript(self, realtime):
+        """A text prompt should produce audio output and an agent transcript."""
+        async for _ in realtime.simple_response("Say hi in one short sentence."):
+            pass
+
+        items = await realtime.output.collect(timeout=15.0)
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        transcripts = [i for i in items if isinstance(i, RealtimeAgentTranscript)]
+        assert len(audio) > 0, "Expected audio output"
+        assert any(t.text for t in transcripts), "Expected agent transcript"

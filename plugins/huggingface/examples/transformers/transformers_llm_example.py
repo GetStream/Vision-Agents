@@ -45,7 +45,6 @@ async def create_agent(**kwargs) -> Agent:
         ),
         tts=deepgram.TTS(),
         stt=deepgram.STT(),
-        streaming_tts=True,
     )
     return agent
 
@@ -60,7 +59,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("Joining call")
 
         await asyncio.sleep(2)
-        await agent.llm.simple_response(text="Greet the user warmly.")
+        await agent.simple_response(text="Greet the user warmly.")
 
         await agent.finish()
 

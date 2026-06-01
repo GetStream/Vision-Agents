@@ -42,7 +42,7 @@ uv run --no-sync mypy
 ## Python rules
 
 - Never use `from __future__ import annotations`.
-- Never write `except Exception as e`. Catch specific exceptions.
+- Prefer specific exceptions if they are known. If the exception type is not clear, it is ok to use `except Exception as e`.
 - Avoid `getattr`, `hasattr`, `delattr`, `setattr`; prefer normal attribute access.
 - Docstrings: Google style, keep them short.
 - Do not use section comments like `# -- some section --`
@@ -98,6 +98,11 @@ module-level `logger = logging.getLogger(__name__)`. Use `debug` for lifecycle, 
 - Fix root causes, not symptoms. No try/except to swallow bugs.
 - Change only what I asked for. Don't refactor adjacent code — ask first.
 - Do not remove valid comments when editing/refactoring code.
+
+## Plugins
+
+- In every `plugins/*/pyproject.toml`, the wheel target must be `packages = ["vision_agents"]`. Listing `"."` pulls `tests/`, `README.md`, `example/`, etc. into the published wheel.
+- Each plugin must keep `readme = "README.md"` in `[project]` and a `README.md` next to its `pyproject.toml` so PyPI renders a description page.
 
 ## Token efficiency
 

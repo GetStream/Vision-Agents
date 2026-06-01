@@ -1,26 +1,21 @@
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, AsyncIterator, Optional, cast
 
-from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from openai import AsyncOpenAI, AsyncStream
-from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
-from vision_agents.core.llm.events import (
-    LLMRequestStartedEvent,
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem, ToolSchema
-
-from .. import events
 
 logger = logging.getLogger(__name__)
 
 
 PLUGIN_NAME = "chat_completions_llm"
+
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
 
 
 class ChatCompletionsLLM(LLM):
@@ -39,6 +34,8 @@ class ChatCompletionsLLM(LLM):
         llm = openai.ChatCompletionsLLM(model="deepseek-ai/DeepSeek-V3.1")
 
     """
+
+    provider_name = PLUGIN_NAME
 
     def __init__(
         self,
@@ -60,10 +57,13 @@ class ChatCompletionsLLM(LLM):
         """
         super().__init__()
         self.model = model
-        self.events.register_events_from_module(events)
         self._tools_max_rounds = max(tools_max_rounds, 1)
         # Track tool calls being accumulated during streaming
-        self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
+        self._pending_tool_calls: dict[int, dict[str, Any]] = {}
+        # Buffer for stripping <think> reasoning spans across streamed chunks
+        self._think_buffer: str = ""
+        self._in_think: bool = False
+        self._emitted_visible: bool = False
 
         if client is not None:
             self._client = client
@@ -74,7 +74,7 @@ class ChatCompletionsLLM(LLM):
         self,
         text: str,
         participant: Optional[Participant] = None,
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """
         simple_response is a standardized way to create an LLM response.
 
@@ -94,7 +94,8 @@ class ChatCompletionsLLM(LLM):
             logger.warning(
                 f'Cannot request a response from the LLM "{self.model}" - the conversation has not been initialized yet.'
             )
-            return LLMResponseEvent(original=None, text="")
+            yield LLMResponseFinal(original=None, text="")
+            return
 
         # The simple_response is called directly without providing the participant -
         # assuming it's an initial prompt.
@@ -104,119 +105,85 @@ class ChatCompletionsLLM(LLM):
             )
 
         messages = await self._build_model_request()
-        return await self.create_response(messages=messages)
-
-    async def create_response(
-        self,
-        messages: Optional[List[Dict[str, Any]]] = None,
-        *,
-        input: Optional[Any] = None,
-        stream: bool = True,
-        **kwargs: Any,
-    ) -> LLMResponseEvent:
-        """
-        Create a response using the Chat Completions API.
-
-        Args:
-            messages: List of message dicts with 'role' and 'content'.
-            input: Alternative to messages - will be converted to messages format.
-            stream: Whether to stream the response.
-            **kwargs: Additional arguments passed to the API.
-
-        Returns:
-            LLMResponseEvent with the response.
-        """
-        # Handle input parameter (for API compatibility with Responses API)
-        if messages is None:
-            if input is not None:
-                messages = self._input_to_messages(input)
-            else:
-                messages = await self._build_model_request()
-
-        # Add tools if available
+        # The model is stateless: the request is rebuilt from the conversation on
+        # every call. The conversation may not yet contain this turn's text - an
+        # injected instruction is never persisted there, and an eager turn runs
+        # before the transcript is committed - so ensure `text` is the trailing
+        # user message, skipping when it already is to avoid duplicating it.
+        if text and (
+            not messages
+            or messages[-1]["role"] != "user"
+            or messages[-1]["content"] != text
+        ):
+            messages.append({"role": "user", "content": text})
         tools_param = None
         tools_spec = self.get_available_functions()
         if tools_spec:
             tools_param = self._convert_tools_to_provider_format(tools_spec)
 
-        return await self._create_response_internal(
-            messages=messages,
-            tools=tools_param,
-            stream=stream,
-            **kwargs,
-        )
+        async for item in self._create_response_internal(
+            messages=messages, tools=tools_param
+        ):
+            yield item
 
     async def close(self) -> None:
         await self._client.close()
 
+    def _extra_request_kwargs(self) -> dict[str, Any]:
+        """Hook for subclasses to inject extra fields (e.g. ``extra_body``) into ``chat.completions.create``."""
+        return {}
+
     async def _create_response_internal(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        stream: bool = True,
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]] = None,
         **kwargs: Any,
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Internal method to create response with tool handling loop."""
-        request_kwargs: Dict[str, Any] = {
+        request_kwargs: dict[str, Any] = {
             "messages": messages,
             "model": kwargs.get("model", self.model),
-            "stream": stream,
+            "stream": True,
         }
         if tools:
             request_kwargs["tools"] = tools
-
-        # Emit request started event
-        self.events.send(
-            LLMRequestStartedEvent(
-                plugin_name=PLUGIN_NAME,
-                model=request_kwargs["model"],
-                streaming=stream,
-            )
-        )
+        request_kwargs.update(self._extra_request_kwargs())
 
         # Track timing
         request_start_time = time.perf_counter()
 
         try:
-            response = await self._client.chat.completions.create(**request_kwargs)  # type: ignore[arg-type]
+            response = await self._client.chat.completions.create(**request_kwargs)
         except Exception as e:
             logger.exception(f'Failed to get a response from the LLM "{self.model}"')
-            self.events.send(
-                events.LLMErrorEvent(
-                    plugin_name=PLUGIN_NAME,
-                    error_message=str(e),
-                    event_data=e,
-                )
-            )
-            return LLMResponseEvent(original=None, text="")
+            self.on_llm_error(error=e)
+            yield LLMResponseFinal(original=None, text="")
+            return
 
-        if stream:
-            return await self._process_streaming_response(
-                response, messages, tools, kwargs, request_start_time
-            )
-        else:
-            return await self._process_non_streaming_response(
-                response, messages, tools, kwargs, request_start_time
-            )
+        async for item in self._process_streaming_response(
+            response, messages, tools, kwargs, request_start_time
+        ):
+            yield item
 
     async def _process_streaming_response(
         self,
         response: Any,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]],
-        kwargs: Dict[str, Any],
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]],
+        kwargs: dict[str, Any],
         request_start_time: float,
-    ) -> LLMResponseEvent:
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Process a streaming response, handling tool calls if present."""
-        llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
         text_chunks: list[str] = []
-        total_text = ""
         self._pending_tool_calls = {}
-        accumulated_tool_calls: List[NormalizedToolCallItem] = []
-        i = 0
+        self._reset_think_filter()
+        accumulated_tool_calls: list[NormalizedToolCallItem] = []
+        sequence_number = 0
         first_token_time: Optional[float] = None
+        last_chunk: ChatCompletionChunk | None = None
 
         async for chunk in cast(AsyncStream[ChatCompletionChunk], response):
+            last_chunk = chunk
             if not chunk.choices:
                 continue
 
@@ -224,34 +191,30 @@ class ChatCompletionsLLM(LLM):
             content = choice.delta.content
             finish_reason = choice.finish_reason
 
-            # Accumulate tool calls from streaming chunks
             if choice.delta.tool_calls:
                 for tc in choice.delta.tool_calls:
                     self._accumulate_tool_call_chunk(tc)
 
             if content:
-                # Track time to first token
-                if first_token_time is None:
-                    first_token_time = time.perf_counter()
+                visible = self._filter_think(content)
+                if visible:
+                    is_first = first_token_time is None
+                    ttft_ms = None
+                    if is_first:
+                        first_token_time = time.perf_counter()
+                        ttft_ms = (first_token_time - request_start_time) * 1000
 
-                is_first = len(text_chunks) == 0
-                ttft_ms = None
-                if is_first:
-                    ttft_ms = (first_token_time - request_start_time) * 1000
-
-                text_chunks.append(content)
-                self.events.send(
-                    LLMResponseChunkEvent(
-                        plugin_name=PLUGIN_NAME,
+                    text_chunks.append(visible)
+                    yield LLMResponseDelta(
                         content_index=None,
                         item_id=chunk.id,
                         output_index=0,
-                        sequence_number=i,
-                        delta=content,
+                        sequence_number=sequence_number,
+                        delta=visible,
                         is_first_chunk=is_first,
                         time_to_first_token_ms=ttft_ms,
                     )
-                )
+                    sequence_number += 1
 
             if finish_reason:
                 if finish_reason in ("length", "content"):
@@ -259,80 +222,53 @@ class ChatCompletionsLLM(LLM):
                         f'The model finished the response due to reason "{finish_reason}"'
                     )
 
-                # Finalize any pending tool calls
                 if finish_reason == "tool_calls":
                     accumulated_tool_calls = self._finalize_pending_tool_calls()
 
-                total_text = "".join(text_chunks)
-                latency_ms = (time.perf_counter() - request_start_time) * 1000
-                ttft_ms_final = None
-                if first_token_time is not None:
-                    ttft_ms_final = (first_token_time - request_start_time) * 1000
+        leftover = self._flush_think()
+        if leftover:
+            text_chunks.append(leftover)
+            yield LLMResponseDelta(
+                content_index=None,
+                item_id=last_chunk.id if last_chunk is not None else None,
+                output_index=0,
+                sequence_number=sequence_number,
+                delta=leftover,
+                is_first_chunk=first_token_time is None,
+                time_to_first_token_ms=None,
+            )
+            sequence_number += 1
 
-                self.events.send(
-                    LLMResponseCompletedEvent(
-                        plugin_name=PLUGIN_NAME,
-                        original=chunk,
-                        text=total_text,
-                        item_id=chunk.id,
-                        latency_ms=latency_ms,
-                        time_to_first_token_ms=ttft_ms_final,
-                        model=self.model,
-                    )
-                )
-
-            llm_response = LLMResponseEvent(original=chunk, text=total_text)
-            i += 1
+        total_text = "".join(text_chunks)
 
         # Handle tool calls if any were accumulated
         if accumulated_tool_calls:
-            return await self._handle_tool_calls(
-                accumulated_tool_calls, messages, tools, kwargs
-            )
+            async for item in self._handle_tool_calls(
+                accumulated_tool_calls,
+                messages,
+                tools,
+                kwargs,
+                request_start_time,
+                first_token_time,
+                sequence_number,
+            ):
+                yield item
+            return
 
-        return llm_response
-
-    async def _process_non_streaming_response(
-        self,
-        response: ChatCompletion,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]],
-        kwargs: Dict[str, Any],
-        request_start_time: float,
-    ) -> LLMResponseEvent:
-        """Process a non-streaming response, handling tool calls if present."""
         latency_ms = (time.perf_counter() - request_start_time) * 1000
-        text = response.choices[0].message.content or ""
-        llm_response = LLMResponseEvent(original=response, text=text)
+        ttft_ms = None
+        if first_token_time is not None:
+            ttft_ms = (first_token_time - request_start_time) * 1000
 
-        # Check for tool calls
-        tool_calls = self._extract_tool_calls_from_response(response)
-        if tool_calls:
-            return await self._handle_tool_calls(tool_calls, messages, tools, kwargs)
-
-        # Extract token usage
-        input_tokens: Optional[int] = None
-        output_tokens: Optional[int] = None
-        if response.usage:
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
-
-        self.events.send(
-            LLMResponseCompletedEvent(
-                plugin_name=PLUGIN_NAME,
-                original=response,
-                text=text,
-                item_id=response.id,
-                latency_ms=latency_ms,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=(input_tokens or 0) + (output_tokens or 0)
-                if input_tokens or output_tokens
-                else None,
-                model=self.model,
-            )
+        item_id = last_chunk.id if last_chunk is not None else None
+        yield LLMResponseFinal(
+            original=last_chunk,
+            text=total_text,
+            item_id=item_id,
+            latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_ms,
+            model=self.model,
         )
-        return llm_response
 
     async def _build_model_request(self) -> list[dict]:
         messages: list[dict] = []
@@ -340,48 +276,77 @@ class ChatCompletionsLLM(LLM):
         if self._instructions:
             messages.append({"role": "system", "content": self._instructions})
 
-        # Add all messages from the conversation to the prompt
+        # Add all messages from the conversation to the prompt. Skip any
+        # with empty content — providers like Inworld reject requests
+        # containing empty messages with "message content cannot be empty".
         if self._conversation is not None:
             for message in self._conversation.messages:
+                if not message.content:
+                    continue
                 messages.append({"role": message.role, "content": message.content})
         return messages
 
-    def _input_to_messages(self, input_value: Any) -> List[Dict[str, Any]]:
-        """Convert input parameter to messages format for API compatibility."""
-        messages: List[Dict[str, Any]] = []
+    def _reset_think_filter(self) -> None:
+        self._think_buffer = ""
+        self._in_think = False
+        self._emitted_visible = False
 
-        # Add instructions as system message if present
-        if self._instructions:
-            messages.append({"role": "system", "content": self._instructions})
+    def _filter_think(self, content: str) -> str:
+        """Strip ``<think>...</think>`` reasoning spans from streamed content.
 
-        # Convert input to user message
-        if isinstance(input_value, str):
-            messages.append({"role": "user", "content": input_value})
-        elif isinstance(input_value, list):
-            for item in input_value:
-                if isinstance(item, dict):
-                    role = item.get("role", "user")
-                    content = item.get("content", "")
-                    # Handle Responses API format conversion
-                    if item.get("type") == "message":
-                        messages.append({"role": role, "content": content})
-                    elif item.get("type") == "function_call_output":
-                        # Convert to Chat Completions tool result format
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": item.get("call_id", ""),
-                                "content": item.get("output", ""),
-                            }
-                        )
-                    else:
-                        messages.append({"role": role, "content": content})
-                else:
-                    messages.append({"role": "user", "content": str(item)})
-        else:
-            messages.append({"role": "user", "content": str(input_value)})
+        Reasoning models such as MiniMax-M3 inline their chain-of-thought in
+        ``<think>`` tags within the content. Buffering across chunks keeps tags
+        that split at a chunk boundary intact, so only text outside a think
+        span is returned.
+        """
+        self._think_buffer += content
+        out: list[str] = []
+        while self._think_buffer:
+            if self._in_think:
+                idx = self._think_buffer.find(_THINK_CLOSE)
+                if idx == -1:
+                    keep = self._partial_tail(self._think_buffer, _THINK_CLOSE)
+                    self._think_buffer = self._think_buffer[
+                        len(self._think_buffer) - keep :
+                    ]
+                    break
+                self._think_buffer = self._think_buffer[idx + len(_THINK_CLOSE) :]
+                self._in_think = False
+            else:
+                idx = self._think_buffer.find(_THINK_OPEN)
+                if idx == -1:
+                    keep = self._partial_tail(self._think_buffer, _THINK_OPEN)
+                    emit_to = len(self._think_buffer) - keep
+                    if emit_to > 0:
+                        out.append(self._think_buffer[:emit_to])
+                    self._think_buffer = self._think_buffer[emit_to:]
+                    break
+                if idx > 0:
+                    out.append(self._think_buffer[:idx])
+                self._think_buffer = self._think_buffer[idx + len(_THINK_OPEN) :]
+                self._in_think = True
+        result = "".join(out)
+        # Trim whitespace the model leaves between the think span and the answer
+        # (e.g. "</think>\nHello") so the visible reply does not start blank.
+        if not self._emitted_visible:
+            result = result.lstrip()
+        if result:
+            self._emitted_visible = True
+        return result
 
-        return messages
+    def _flush_think(self) -> str:
+        """Return text held back to disambiguate a partial tag, then reset."""
+        leftover = "" if self._in_think else self._think_buffer
+        self._reset_think_filter()
+        return leftover
+
+    @staticmethod
+    def _partial_tail(buffer: str, tag: str) -> int:
+        """Length of the longest buffer suffix that is a proper prefix of tag."""
+        for n in range(min(len(buffer), len(tag) - 1), 0, -1):
+            if buffer[-n:] == tag[:n]:
+                return n
+        return 0
 
     def _accumulate_tool_call_chunk(self, tc_chunk: Any) -> None:
         """Accumulate tool call data from streaming chunks."""
@@ -402,9 +367,9 @@ class ChatCompletionsLLM(LLM):
             if tc_chunk.function.arguments:
                 pending["arguments_parts"].append(tc_chunk.function.arguments)
 
-    def _finalize_pending_tool_calls(self) -> List[NormalizedToolCallItem]:
+    def _finalize_pending_tool_calls(self) -> list[NormalizedToolCallItem]:
         """Convert accumulated tool call chunks into normalized tool calls."""
-        tool_calls: List[NormalizedToolCallItem] = []
+        tool_calls: list[NormalizedToolCallItem] = []
         for pending in self._pending_tool_calls.values():
             args_str = "".join(pending["arguments_parts"]).strip() or "{}"
             try:
@@ -424,8 +389,8 @@ class ChatCompletionsLLM(LLM):
         return tool_calls
 
     def _convert_tools_to_provider_format(
-        self, tools: List[ToolSchema]
-    ) -> List[Dict[str, Any]]:
+        self, tools: list[ToolSchema]
+    ) -> list[dict[str, Any]]:
         """Convert ToolSchema objects to Chat Completions API format."""
         result = []
         for t in tools or []:
@@ -449,52 +414,26 @@ class ChatCompletionsLLM(LLM):
             )
         return result
 
-    def _extract_tool_calls_from_response(
-        self, response: Any
-    ) -> List[NormalizedToolCallItem]:
-        """Extract tool calls from a non-streaming Chat Completions response."""
-        tool_calls: List[NormalizedToolCallItem] = []
-
-        if not response.choices:
-            return tool_calls
-
-        message = response.choices[0].message
-        if not message.tool_calls:
-            return tool_calls
-
-        for tc in message.tool_calls:
-            args_str = tc.function.arguments or "{}"
-            try:
-                args = json.loads(args_str)
-            except json.JSONDecodeError:
-                args = {}
-
-            tool_call: NormalizedToolCallItem = {
-                "type": "tool_call",
-                "id": tc.id,
-                "name": tc.function.name,
-                "arguments_json": args,
-            }
-            tool_calls.append(tool_call)
-
-        return tool_calls
-
     async def _handle_tool_calls(
         self,
-        tool_calls: List[NormalizedToolCallItem],
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]],
-        kwargs: Dict[str, Any],
-    ) -> LLMResponseEvent:
+        tool_calls: list[NormalizedToolCallItem],
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]],
+        kwargs: dict[str, Any],
+        request_start_time: float,
+        first_token_time: Optional[float],
+        sequence_number: int,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         """Execute tool calls and get follow-up response."""
-        llm_response: LLMResponseEvent = LLMResponseEvent(original=None, text="")
         current_tool_calls = tool_calls
         seen: set[tuple] = set()
         current_messages = list(messages)
+        last_chunk: ChatCompletionChunk | None = None
+        total_text = ""
 
         for round_num in range(self._tools_max_rounds):
             triples, seen = await self._dedup_and_execute(
-                current_tool_calls,  # type: ignore[arg-type]
+                current_tool_calls,
                 max_concurrency=8,
                 timeout_s=30,
                 seen=seen,
@@ -532,7 +471,7 @@ class ChatCompletionsLLM(LLM):
                 )
 
             if not tool_results:
-                return llm_response
+                break
 
             # Add assistant message with tool_calls, then tool results
             current_messages.append(
@@ -545,34 +484,28 @@ class ChatCompletionsLLM(LLM):
             current_messages.extend(tool_results)
 
             # Make follow-up request
-            request_kwargs: Dict[str, Any] = {
+            request_kwargs: dict[str, Any] = {
                 "messages": current_messages,
                 "model": kwargs.get("model", self.model),
                 "stream": True,
             }
             if tools:
                 request_kwargs["tools"] = tools
+            request_kwargs.update(self._extra_request_kwargs())
 
             try:
-                follow_up = await self._client.chat.completions.create(**request_kwargs)  # type: ignore[arg-type]
-            except Exception as e:
+                follow_up = await self._client.chat.completions.create(**request_kwargs)
+            except Exception:
                 logger.exception("Failed to get follow-up response")
-                self.events.send(
-                    events.LLMErrorEvent(
-                        plugin_name=PLUGIN_NAME,
-                        error_message=str(e),
-                        event_data=e,
-                    )
-                )
-                return llm_response
+                break
 
-            # Process follow-up response
             text_chunks: list[str] = []
             self._pending_tool_calls = {}
-            next_tool_calls: List[NormalizedToolCallItem] = []
-            i = 0
+            self._reset_think_filter()
+            next_tool_calls: list[NormalizedToolCallItem] = []
 
             async for chunk in cast(AsyncStream[ChatCompletionChunk], follow_up):
+                last_chunk = chunk
                 if not chunk.choices:
                     continue
 
@@ -585,40 +518,64 @@ class ChatCompletionsLLM(LLM):
                         self._accumulate_tool_call_chunk(tc)
 
                 if content:
-                    text_chunks.append(content)
-                    self.events.send(
-                        LLMResponseChunkEvent(
-                            plugin_name=PLUGIN_NAME,
+                    visible = self._filter_think(content)
+                    if visible:
+                        is_first = first_token_time is None
+                        ttft_ms = None
+                        if is_first:
+                            first_token_time = time.perf_counter()
+                            ttft_ms = (first_token_time - request_start_time) * 1000
+
+                        text_chunks.append(visible)
+                        yield LLMResponseDelta(
                             content_index=None,
                             item_id=chunk.id,
                             output_index=0,
-                            sequence_number=i,
-                            delta=content,
+                            sequence_number=sequence_number,
+                            delta=visible,
+                            is_first_chunk=is_first,
+                            time_to_first_token_ms=ttft_ms,
                         )
-                    )
+                        sequence_number += 1
 
                 if finish_reason:
                     if finish_reason == "tool_calls":
                         next_tool_calls = self._finalize_pending_tool_calls()
 
-                    total_text = "".join(text_chunks)
-                    self.events.send(
-                        LLMResponseCompletedEvent(
-                            plugin_name=PLUGIN_NAME,
-                            original=chunk,
-                            text=total_text,
-                            item_id=chunk.id,
-                        )
-                    )
-                    llm_response = LLMResponseEvent(original=chunk, text=total_text)
+            leftover = self._flush_think()
+            if leftover:
+                text_chunks.append(leftover)
+                yield LLMResponseDelta(
+                    content_index=None,
+                    item_id=last_chunk.id if last_chunk is not None else None,
+                    output_index=0,
+                    sequence_number=sequence_number,
+                    delta=leftover,
+                    is_first_chunk=first_token_time is None,
+                    time_to_first_token_ms=None,
+                )
+                sequence_number += 1
 
-                i += 1
+            total_text = "".join(text_chunks)
 
             # Continue if there are more tool calls
             if next_tool_calls and round_num < self._tools_max_rounds - 1:
                 current_tool_calls = next_tool_calls
                 continue
 
-            return llm_response
+            break
 
-        return llm_response
+        latency_ms = (time.perf_counter() - request_start_time) * 1000
+        ttft_ms = None
+        if first_token_time is not None:
+            ttft_ms = (first_token_time - request_start_time) * 1000
+
+        item_id = last_chunk.id if last_chunk is not None else None
+        yield LLMResponseFinal(
+            original=last_chunk,
+            text=total_text,
+            item_id=item_id,
+            latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_ms,
+            model=self.model,
+        )

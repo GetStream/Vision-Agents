@@ -114,6 +114,7 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR])
         annotate_box_thickness: int = 2,
         annotate_text_position: sv.Position = sv.Position.TOP_CENTER,
     ):
+        super().__init__()
         if not 0 <= conf_threshold <= 1.0:
             raise ValueError("Confidence threshold must be between 0 and 1.")
 
@@ -320,6 +321,12 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR])
                 inference_time_ms=inference_time_ms,
                 model_id=self._model_id,
             )
+        )
+        self.metrics.on_video_detection(
+            provider=self.name,
+            model=self._model_id,
+            detection_count=len(detected_objects),
+            inference_time_ms=inference_time_ms,
         )
         return None
 

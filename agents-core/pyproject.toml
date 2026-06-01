@@ -15,14 +15,16 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
     "Operating System :: OS Independent",
 ]
 
 requires-python = ">=3.10"
 dependencies = [
-    "getstream[webrtc,telemetry]>=3.3.1,<4",
+    "getstream[webrtc,telemetry]>=3.4.0,<4",
     "aiortc>=1.14.0,<1.15.0",
+    "av>=14.2.0, <17",
     "python-dotenv>=1.1.1",
     "pillow>=10.4.0",
     "numpy>=1.24.0", # capped at <2.0 via workspace override in root pyproject.toml
@@ -32,6 +34,8 @@ dependencies = [
     "uvicorn>=0.38.0",
     "urllib3>=2.6.3",
     "onnxruntime>=1.16.1,<2",
+    "click>=8.1",
+    "jinja2>=3.1",
 ]
 
 [project.urls]
@@ -39,15 +43,17 @@ Documentation = "https://visionagents.ai/"
 Website = "https://visionagents.ai/"
 Source = "https://github.com/GetStream/Vision-Agents"
 
+[project.scripts]
+vision-agents = "vision_agents.cli.main:main"
+
 [project.optional-dependencies]
-dev = ["pytest", "pytest-json-report", "mypy", "ruff", "click"]
+dev = ["pytest", "pytest-json-report", "mypy", "ruff"]
 anthropic = ["vision-agents-plugins-anthropic"]
 cartesia = ["vision-agents-plugins-cartesia"]
 deepgram = ["vision-agents-plugins-deepgram"]
 elevenlabs = ["vision-agents-plugins-elevenlabs"]
 gemini = ["vision-agents-plugins-gemini"]
 getstream = ["vision-agents-plugins-getstream"]
-heygen = ["vision-agents-plugins-heygen"]
 lemonslice = ["vision-agents-plugins-lemonslice"]
 inworld = ["vision-agents-plugins-inworld"]
 kokoro = ["vision-agents-plugins-kokoro"]
@@ -71,50 +77,16 @@ fast-whisper = ["vision-agents-plugins-fast-whisper"]
 decart = ["vision-agents-plugins-decart"]
 twilio = ["vision-agents-plugins-twilio"]
 turbopuffer = ["vision-agents-plugins-turbopuffer"]
+qdrant = ["vision-agents-plugins-qdrant"]
 mistral = ["vision-agents-plugins-mistral"]
 assemblyai = ["vision-agents-plugins-assemblyai"]
 redis = ["redis[hiredis]>=5.0.0"]
 local = ["vision-agents-plugins-local"]
 anam = ["vision-agents-plugins-anam"]
 sarvam = ["vision-agents-plugins-sarvam"]
+liveavatar = ["vision-agents-plugins-liveavatar"]
+tencent = ["vision-agents-plugins-tencent; sys_platform == 'linux'"]
 
-all-plugins = [
-    "vision-agents-plugins-anthropic",
-    "vision-agents-plugins-cartesia",
-    "vision-agents-plugins-deepgram",
-    "vision-agents-plugins-elevenlabs",
-    "vision-agents-plugins-gemini",
-    "vision-agents-plugins-getstream",
-    "vision-agents-plugins-heygen",
-    "vision-agents-plugins-lemonslice",
-    "vision-agents-plugins-inworld",
-    "vision-agents-plugins-kokoro",
-    "vision-agents-plugins-moonshine",
-    "vision-agents-plugins-nvidia",
-    "vision-agents-plugins-roboflow",
-    "vision-agents-plugins-openai",
-    "vision-agents-plugins-smart-turn",
-    "vision-agents-plugins-ultralytics",
-    "vision-agents-plugins-wizper",
-    "vision-agents-plugins-xai",
-    "vision-agents-plugins-huggingface",
-    "vision-agents-plugins-moondream",
-    "vision-agents-plugins-aws",
-    "vision-agents-plugins-openrouter",
-    "vision-agents-plugins-pocket",
-    "vision-agents-plugins-fish",
-    "vision-agents-plugins-decart",
-    "vision-agents-plugins-vogent",
-    "vision-agents-plugins-fast-whisper",
-    "vision-agents-plugins-qwen",
-    "vision-agents-plugins-twilio",
-    "vision-agents-plugins-turbopuffer",
-    "vision-agents-plugins-mistral",
-    "vision-agents-plugins-assemblyai",
-    "vision-agents-plugins-local",
-    "vision-agents-plugins-anam",
-    "vision-agents-plugins-sarvam",
-]
 
 [tool.hatch.metadata]
 allow-direct-references = true

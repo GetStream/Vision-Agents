@@ -1,17 +1,24 @@
+import os
+
 import pytest
 from dotenv import load_dotenv
+from google.genai import types
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
-from vision_agents.core.llm.events import (
-    LLMResponseChunkEvent,
-    LLMResponseCompletedEvent,
-)
-from vision_agents.plugins.gemini import events
 from vision_agents.plugins.gemini.gemini_llm import (
     GeminiLLM,
 )
-
+from vision_agents.plugins.gemini.utils import convert_tools_to_provider_format
+from vision_agents.testing import collect_simple_response
 
 load_dotenv()
+
+
+@pytest.fixture
+async def llm():
+    llm = GeminiLLM()
+    llm.set_conversation(InMemoryConversation("be friendly", []))
+    yield llm
+    await llm.close()
 
 
 class TestGeminiLLM:
@@ -27,193 +34,173 @@ class TestGeminiLLM:
         messages2 = GeminiLLM._normalize_message(advanced)
         assert messages2[0].original is not None
 
-    @pytest.fixture
-    async def llm(self):
-        llm = GeminiLLM()
-        llm.set_conversation(InMemoryConversation("be friendly", []))
-        yield llm
-        await llm.close()
+    async def test_convert_tools_routes_mcp_schema_to_parameters_json_schema(
+        self, llm: GeminiLLM
+    ):
+        tools = [
+            {
+                "name": "search_docs",
+                "description": "Search knowledge base",
+                "parameters_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"}
+                    },
+                    "required": ["query"],
+                    "additionalProperties": False,
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                },
+            }
+        ]
 
-    @pytest.mark.integration
-    async def test_simple(self, llm: GeminiLLM):
-        response = await llm.simple_response("Greet the user")
-        assert response.text
+        result = convert_tools_to_provider_format(tools)
 
-    @pytest.mark.integration
-    async def test_native_api(self, llm: GeminiLLM):
-        response = await llm.send_message(message="say hi")
+        decl = result[0]["function_declarations"][0]
+        assert "parameters" not in decl
+        schema = decl["parameters_json_schema"]
+        assert "$schema" not in schema
+        assert schema["additionalProperties"] is False
+        assert schema["required"] == ["query"]
+        assert schema["properties"]["query"]["type"] == "string"
 
-        # Assertions
-        assert response.text
-        assert hasattr(response.original, "text")  # Gemini response has text attribute
+    async def test_convert_tools_strips_nested_schema_meta(self, llm: GeminiLLM):
+        tools = [
+            {
+                "name": "nested",
+                "description": "",
+                "parameters_schema": {
+                    "type": "object",
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "properties": {
+                        "inner": {
+                            "type": "object",
+                            "$schema": "http://json-schema.org/draft-07/schema#",
+                        }
+                    },
+                },
+            }
+        ]
 
-    @pytest.mark.integration
-    async def test_stream(self, llm: GeminiLLM):
-        streaming_works = False
+        schema = convert_tools_to_provider_format(tools)[0]["function_declarations"][0][
+            "parameters_json_schema"
+        ]
+        assert "$schema" not in schema
+        assert "$schema" not in schema["properties"]["inner"]
 
-        @llm.events.subscribe
-        async def passed(event: LLMResponseChunkEvent):
-            nonlocal streaming_works
-            streaming_works = True
+    async def test_duplicate_tool_calls_in_followup_do_not_send_empty_parts(
+        self, llm: GeminiLLM
+    ):
+        """If the model echoes the same function call after a tool result,
+        `_dedup_and_execute` filters it out and the loop ends up calling
+        `chat.send_message_stream(parts=[], ...)`, which google-genai rejects
+        with `ValueError('content parts are required.')`.
+        """
+        # The bug is model-agnostic. We pick a non-"gemini-3" name only to skip
+        # the gemini-3 history-cleanup branch, which would require the fake chat
+        # to implement get_history() and client.chats.create().
+        llm.model = "gemini-2.5-pro"
 
-        await llm.simple_response("Greet the user")
+        @llm.register_function(description="probe")
+        async def probe(ping: str) -> str:
+            return f"ok:{ping}"
 
-        # Wait for all events in queue to be processed
-        await llm.events.wait()
+        def _function_call_chunk() -> types.GenerateContentResponse:
+            part = types.Part(
+                function_call=types.FunctionCall(name="probe", args={"ping": "pong"})
+            )
+            return types.GenerateContentResponse(
+                candidates=[
+                    types.Candidate(content=types.Content(role="model", parts=[part]))
+                ]
+            )
 
-        assert streaming_works
+        class _FakeChat:
+            def __init__(self) -> None:
+                self.received: list[tuple[tuple, dict]] = []
 
-    @pytest.mark.integration
+            async def send_message_stream(self, *args: object, **kwargs: object):
+                message = args[0] if args else kwargs.get("message")
+                # mirror google-genai's t_parts() guard
+                if isinstance(message, list) and not message:
+                    raise ValueError("content parts are required.")
+                self.received.append((args, kwargs))
+
+                async def _iter():
+                    yield _function_call_chunk()
+
+                return _iter()
+
+        fake = _FakeChat()
+        llm.chat = fake
+
+        try:
+            async for _ in llm.simple_response("call probe"):
+                pass
+        except ValueError as exc:
+            if "content parts are required" in str(exc):
+                pytest.fail(f"empty-parts bug regressed: {exc}")
+            raise
+
+        # Initial text turn + exactly one follow-up with the tool result.
+        # A third call would mean we sent parts=[] (the bug).
+        assert len(fake.received) == 2
+        follow_up_args, _ = fake.received[1]
+        assert follow_up_args and follow_up_args[0], "follow-up parts must be non-empty"
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")),
+    reason="GOOGLE_API_KEY or GEMINI_API_KEY not set; skipping live integration test",
+)
+class TestGeminiLLMIntegration:
+    async def test_simple_response(self, llm: GeminiLLM):
+        deltas, final = await collect_simple_response(
+            llm.simple_response("Greet the user")
+        )
+        assert deltas
+        assert final.text
+
     async def test_memory(self, llm: GeminiLLM):
-        await llm.simple_response(text="There are 2 dogs in the room")
-        response = await llm.simple_response(
-            text="How many paws are there in the room?"
+        await collect_simple_response(
+            llm.simple_response(text="There are 2 dogs in the room")
+        )
+        _, final = await collect_simple_response(
+            llm.simple_response(text="How many paws are there in the room?")
+        )
+        assert "8" in final.text or "eight" in final.text
+
+    async def test_gemini_function_calling_live_roundtrip(self, llm: GeminiLLM):
+        calls: list[str] = []
+
+        @llm.register_function(
+            description="Probe tool that records invocation and returns a marker string"
+        )
+        async def probe_tool(ping: str) -> str:
+            calls.append(ping)
+            return f"probe_ok:{ping}"
+
+        prompt = (
+            "You MUST call the tool named 'probe_tool' with the parameter ping='pong' now. "
+            "After receiving the tool result, reply by returning ONLY the tool result string and nothing else."
         )
 
-        assert "8" in response.text or "eight" in response.text
+        _, final = await collect_simple_response(llm.simple_response(prompt))
 
-    @pytest.mark.integration
-    async def test_native_memory(self, llm: GeminiLLM):
-        await llm.send_message(message="There are 2 dogs in the room")
-        response = await llm.send_message(
-            message="How many paws are there in the room?"
-        )
-        assert "8" in response.text or "eight" in response.text
+        assert len(calls) >= 1, "probe_tool was not invoked by the model"
+        assert isinstance(final.text, str)
+        assert "probe_ok:pong" in final.text
 
-    @pytest.mark.integration
     async def test_instruction_following(self):
         llm = GeminiLLM()
         llm.set_conversation(InMemoryConversation("be friendly", []))
 
         llm.set_instructions("only reply in 2 letter country shortcuts")
 
-        response = await llm.simple_response(
-            text="Which country is rainy, protected from water with dikes and below sea level?",
-        )
-        assert "nl" in response.text.lower()
-
-    @pytest.mark.integration
-    async def test_events(self, llm: GeminiLLM):
-        """Test that LLM events are properly emitted during streaming responses."""
-        # Track events and their content
-        chunk_events = []
-        complete_events = []
-        gemini_response_events = []
-        error_events = []
-
-        # Register event handlers BEFORE making the API call
-        @llm.events.subscribe
-        async def handle_chunk_event(event: LLMResponseChunkEvent):
-            chunk_events.append(event)
-
-        @llm.events.subscribe
-        async def handle_complete_event(event: LLMResponseCompletedEvent):
-            complete_events.append(event)
-
-        @llm.events.subscribe
-        async def handle_gemini_response_event(event: events.GeminiResponseEvent):
-            gemini_response_events.append(event)
-
-        @llm.events.subscribe
-        async def handle_error_event(event: events.GeminiErrorEvent):
-            error_events.append(event)
-
-        # Make API call that should generate streaming events
-        response = await llm.send_message(
-            message="Create a small story about the weather in the Netherlands. Make it at least 2 paragraphs long."
-        )
-
-        # Wait for all events to be processed
-        await llm.events.wait()
-
-        # Verify response was generated
-        assert response.text, "Response should have text content"
-        assert len(response.text) > 50, "Response should be substantial"
-
-        # Verify chunk events were emitted
-        assert len(chunk_events) > 0, (
-            "Should have received chunk events during streaming"
-        )
-
-        # Verify completion event was emitted
-        assert len(complete_events) > 0, "Should have received completion event"
-        assert len(complete_events) == 1, "Should have exactly one completion event"
-
-        # Verify Gemini response events were emitted
-        assert len(gemini_response_events) > 0, (
-            "Should have received Gemini response events"
-        )
-
-        # Verify no error events were emitted
-        assert len(error_events) == 0, (
-            f"Should not have error events, but got: {error_events}"
-        )
-
-        # Verify chunk events have proper content and item_id
-        total_delta_text = ""
-        chunk_item_ids = set()
-        content_indices = []
-        for chunk_event in chunk_events:
-            assert chunk_event.delta is not None, (
-                "Chunk events should have delta content"
+        _, final = await collect_simple_response(
+            llm.simple_response(
+                text="Which country is rainy, protected from water with dikes and below sea level?",
             )
-            assert isinstance(chunk_event.delta, str), "Delta should be a string"
-            assert chunk_event.item_id is not None, (
-                "Chunk events should have non-null item_id"
-            )
-            assert chunk_event.item_id != "", (
-                "Chunk events should have non-empty item_id"
-            )
-            chunk_item_ids.add(chunk_event.item_id)
-            total_delta_text += chunk_event.delta
-
-            # Validate content_index: should be sequential (0, 1, 2, ...) or None
-            if chunk_event.content_index is not None:
-                content_indices.append(chunk_event.content_index)
-
-        # Verify content_index sequencing if any are provided
-        if content_indices:
-            # Should be sequential starting from 0
-            expected_indices = list(range(len(content_indices)))
-            assert content_indices == expected_indices, (
-                f"content_index should be sequential (0, 1, 2, ...), but got: {content_indices}"
-            )
-
-        # Verify completion event has proper content and item_id
-        complete_event = complete_events[0]
-        assert complete_event.text == response.text, (
-            "Completion event text should match response text"
         )
-        assert complete_event.original is not None, (
-            "Completion event should have original response"
-        )
-        assert complete_event.item_id is not None, (
-            "Completion event should have non-null item_id"
-        )
-        assert complete_event.item_id != "", (
-            "Completion event should have non-empty item_id"
-        )
-
-        # Verify that completion event item_id matches chunk event item_ids
-        assert complete_event.item_id in chunk_item_ids, (
-            f"Completion event item_id '{complete_event.item_id}' should match one of the chunk event item_ids: {chunk_item_ids}"
-        )
-
-        # Verify that chunk deltas reconstruct the final text (approximately)
-        # Note: There might be slight differences due to formatting, so we check for substantial overlap
-        assert len(total_delta_text) > 0, "Should have accumulated delta text"
-        assert len(total_delta_text) >= len(response.text) * 0.8, (
-            "Delta text should be substantial portion of final text"
-        )
-
-        # Verify event ordering: chunks should come before completion
-        # This is implicit since we're using async/await, but we can verify the structure
-        assert len(chunk_events) >= 1, (
-            "Should have at least one chunk before completion"
-        )
-
-        # Verify Gemini response events contain expected content
-        for gemini_event in gemini_response_events:
-            assert gemini_event.response_chunk is not None, (
-                "Gemini response events should have response_chunk"
-            )
+        assert "nl" in final.text.lower()
+        await llm.close()

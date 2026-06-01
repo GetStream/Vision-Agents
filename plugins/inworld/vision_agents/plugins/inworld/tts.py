@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import io
 import json
 import logging
 import os
@@ -8,7 +7,6 @@ import uuid
 from importlib.metadata import PackageNotFoundError, version
 from typing import AsyncIterator, Iterator, Literal
 
-import av
 import websockets
 import websockets.exceptions
 from getstream.video.rtc.track_util import AudioFormat, PcmData
@@ -27,37 +25,7 @@ except PackageNotFoundError:
 USER_AGENT = f"vision-agents-plugins-inworld/{_pkg_version}"
 
 
-def _decode_audio(data: bytes, target_sample_rate: int) -> PcmData | None:
-    """Decode an audio chunk (WAV or raw PCM) into a PcmData object."""
-    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
-        if len(data) < 2:
-            return None
-        return PcmData.from_bytes(
-            data, sample_rate=target_sample_rate, channels=1, format=AudioFormat.S16
-        )
-
-    container = av.open(io.BytesIO(data), format="wav", mode="r")
-    try:
-        frames = list(container.decode(audio=0))
-    finally:
-        container.close()
-
-    if not frames:
-        return None
-
-    result = PcmData.from_av_frame(frames[0])
-    for frame in frames[1:]:
-        result = result.append(PcmData.from_av_frame(frame))
-
-    if result.sample_rate != target_sample_rate:
-        result = result.resample(
-            target_sample_rate=target_sample_rate, target_channels=1
-        ).to_int16()
-
-    return result
-
-
-class TTS(tts.TTS):
+class InworldTTS(tts.TTS):
     """Inworld AI Text-to-Speech plugin using bidirectional WebSocket streaming."""
 
     streaming = True
@@ -113,7 +81,6 @@ class TTS(tts.TTS):
 
         self._websocket: websockets.ClientConnection | None = None
         self._generation = 0
-        self._stop_event = asyncio.Event()
         self._active_context_id: str | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
 
@@ -125,10 +92,6 @@ class TTS(tts.TTS):
         self, text: str, *_, **__
     ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:
         """Convert text to speech over Inworld bidirectional WebSocket."""
-        if self._stop_event.is_set():
-            await self._drain()
-            self._stop_event.clear()
-
         context_id = str(uuid.uuid4())
         self._active_context_id = context_id
         self._generation += 1
@@ -147,7 +110,6 @@ class TTS(tts.TTS):
     async def stop_audio(self) -> None:
         """Stop current synthesis by closing the active context."""
         self._generation += 1
-        self._stop_event.set()
 
         if self._active_context_id and self._websocket is not None:
             try:
@@ -159,6 +121,7 @@ class TTS(tts.TTS):
 
     async def close(self) -> None:
         await self._reset_connection()
+        self._on_disconnected()
         await super().close()
 
     async def _send_text_and_flush(self, text: str, context_id: str) -> None:
@@ -189,7 +152,7 @@ class TTS(tts.TTS):
 
         try:
             while True:
-                if self._stop_event.is_set() or self._generation != generation:
+                if self._generation != generation:
                     break
 
                 try:
@@ -206,9 +169,15 @@ class TTS(tts.TTS):
                 except json.JSONDecodeError:
                     logger.warning("Skipping non-JSON Inworld TTS websocket message")
                     continue
-
                 result = data.get("result", {})
-                msg_context_id = result.get("contextId") or result.get("context_id")
+
+                # Drop stale frames from a previously-closed context that the
+                # server is still draining onto the shared websocket — including
+                # late error frames for a context we already abandoned.
+                msg_context_id = result.get("contextId")
+                if msg_context_id and msg_context_id != context_id:
+                    continue
+
                 status = result.get("status", {})
                 status_code = status.get("code", 0)
 
@@ -234,10 +203,12 @@ class TTS(tts.TTS):
                 audio_chunk = result.get("audioChunk", {})
                 audio_b64 = audio_chunk.get("audioContent")
                 if audio_b64:
-                    decoded = base64.b64decode(audio_b64)
-                    pcm = _decode_audio(decoded, self._sample_rate)
-                    if pcm:
-                        yield pcm
+                    yield PcmData.from_bytes(
+                        base64.b64decode(audio_b64),
+                        sample_rate=self._sample_rate,
+                        channels=1,
+                        format=AudioFormat.S16,
+                    )
 
                 if "contextClosed" in result:
                     should_close_context = False
@@ -246,18 +217,22 @@ class TTS(tts.TTS):
                 if "flushCompleted" in result:
                     break
         finally:
+            # Skip the close if stop_audio (or another caller) already cleared
+            # _active_context_id — they will have closed the context already,
+            # and a duplicate close_context provokes an error frame from the
+            # server that would derail the next utterance.
             if self._active_context_id == context_id:
                 self._active_context_id = None
-            if should_close_context:
-                try:
-                    await self._send_close_context(context_id)
-                except (websockets.exceptions.WebSocketException, OSError):
-                    await self._reset_connection()
+                if should_close_context:
+                    try:
+                        await self._send_close_context(context_id)
+                    except (websockets.exceptions.WebSocketException, OSError):
+                        await self._reset_connection()
 
     async def _send_create_context(self, context_id: str) -> None:
         websocket = await self._ensure_connection()
         audio_config: dict[str, object] = {
-            "audioEncoding": "LINEAR16",
+            "audioEncoding": "PCM",
             "sampleRateHertz": self._sample_rate,
         }
         if self._speaking_rate is not None:
@@ -321,6 +296,7 @@ class TTS(tts.TTS):
                 "X-Request-Id": request_id,
             },
         )
+        self._on_connected()
         if self._keepalive_task is None:
             self._keepalive_task = asyncio.create_task(self._keepalive_loop())
         return self._websocket
@@ -341,22 +317,6 @@ class TTS(tts.TTS):
                 self._websocket = None
 
         self._active_context_id = None
-        self._stop_event.clear()
-
-    async def _drain(self) -> None:
-        websocket = self._websocket
-        if websocket is None:
-            return
-
-        deadline = asyncio.get_running_loop().time() + 0.5
-        while asyncio.get_running_loop().time() < deadline:
-            try:
-                await asyncio.wait_for(websocket.recv(), timeout=0.05)
-            except TimeoutError:
-                break
-            except (websockets.exceptions.ConnectionClosed, OSError):
-                await self._reset_connection()
-                break
 
     async def _keepalive_loop(self) -> None:
         while True:

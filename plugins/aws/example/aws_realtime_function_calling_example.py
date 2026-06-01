@@ -90,7 +90,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         # Give the agent a moment to connect
         await asyncio.sleep(2)
 
-        await agent.llm.simple_response(
+        await agent.simple_response(
             text="What's the weather like in Boulder? Please use the get_weather function."
         )
         await agent.finish()  # Run till the call ends

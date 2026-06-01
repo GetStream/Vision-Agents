@@ -5,9 +5,8 @@ import logging
 from typing import AsyncIterator, Iterator, List, Optional
 
 import numpy as np
-
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core import tts
-from getstream.video.rtc.track_util import PcmData, AudioFormat
 
 try:
     from kokoro import KPipeline  # type: ignore

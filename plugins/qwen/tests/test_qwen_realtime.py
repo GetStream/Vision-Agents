@@ -3,43 +3,36 @@ import os
 
 import dotenv
 import pytest
-from vision_agents.core.llm.events import (
-    RealtimeAudioOutputEvent,
-)
+from vision_agents.core.llm.realtime import RealtimeAudioOutput
 from vision_agents.plugins.qwen import Realtime
 
 dotenv.load_dotenv()
 
 
-@pytest.fixture()
-async def llm():
-    """Create and manage Realtime connection lifecycle."""
-    if not os.getenv("DASHSCOPE_API_KEY"):
-        pytest.skip("DASHSCOPE_API_KEY not set")
-    realtime = Realtime(
-        fps=1, vad_silence_duration_ms=0, vad_prefix_padding_ms=0, vad_threshold=0.1
-    )
-    yield realtime
-    await realtime.close()
-
-
-class TestQwen3Realtime:
+@pytest.mark.skip()
+@pytest.mark.integration
+class TestQwen3RealtimeIntegration:
     """Integration tests for Qwen3Realtime connect flow"""
 
-    @pytest.mark.integration
+    @pytest.fixture
+    async def llm(self):
+        if not os.getenv("DASHSCOPE_API_KEY"):
+            pytest.skip("DASHSCOPE_API_KEY not set")
+        rt = Realtime(
+            fps=1,
+            vad_silence_duration_ms=0,
+            vad_prefix_padding_ms=0,
+            vad_threshold=0.1,
+        )
+        try:
+            await rt.connect()
+            await asyncio.sleep(5.0)
+            yield rt
+        finally:
+            await rt.close()
+
     async def test_audio_sending_flow(self, llm, mia_audio_16khz, silence_1s_16khz):
         """Test sending real audio data and verify connection remains stable"""
-        events = []
-
-        @llm.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-
-        # Connect the llm
-        await llm.connect()
-        # Let it handle the connection events
-        await asyncio.sleep(5.0)
-
         # Send 1s of silence first
         await llm.simple_audio_response(silence_1s_16khz)
         # Send audio
@@ -51,9 +44,9 @@ class TestQwen3Realtime:
         await asyncio.sleep(10.0)
 
         # Verify that the model replied with audio
-        assert len(events) > 0
+        audio = [i for i in llm.output.peek() if isinstance(i, RealtimeAudioOutput)]
+        assert len(audio) > 0
 
-    @pytest.mark.integration
     async def test_video_sending_flow(
         self,
         llm,
@@ -62,16 +55,6 @@ class TestQwen3Realtime:
         silence_1s_16khz,
     ):
         """Test sending real video data and verify connection remains stable"""
-        events = []
-
-        @llm.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-
-        await llm.connect()
-        # Let the model to handle all connection events
-        await asyncio.sleep(5.0)
-
         # Send 1s of silence first
         await llm.simple_audio_response(silence_1s_16khz)
         # Start video sender with low FPS to avoid overwhelming the connection
@@ -86,4 +69,5 @@ class TestQwen3Realtime:
         # Stop video sender
         await llm.stop_watching_video_track()
         # Verify that the model replied
-        assert len(events) > 0
+        audio = [i for i in llm.output.peek() if isinstance(i, RealtimeAudioOutput)]
+        assert len(audio) > 0

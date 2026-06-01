@@ -1,0 +1,36 @@
+name: Python compatibility check
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - '**/pyproject.toml'
+      - 'uv.lock'
+      - 'dev.py'
+      - '.github/workflows/python-versions.yml'
+  pull_request:
+    branches: [ "**" ]
+    paths:
+      - '**/pyproject.toml'
+      - 'uv.lock'
+      - 'dev.py'
+      - '.github/workflows/python-versions.yml'
+
+concurrency:
+  group: python-compatibility-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Resolve on Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: [ "3.10", "3.11", "3.12", "3.13", "3.14" ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install dependencies
+        uses: ./.github/actions/python-uv-setup
+      - name: Resolve every workspace member on Python ${{ matrix.python }}
+        run: uv run --no-sync dev.py check-python-versions ${{ matrix.python }}

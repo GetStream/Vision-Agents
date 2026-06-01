@@ -3,107 +3,15 @@ import os
 
 import pytest
 from dotenv import load_dotenv
-
-from getstream.video.rtc import PcmData, AudioFormat
-from vision_agents.core.llm.events import RealtimeAudioOutputEvent
+from getstream.video.rtc import PcmData
+from vision_agents.core.llm.realtime import RealtimeAudioOutput
 from vision_agents.plugins.xai import Realtime
 
 load_dotenv()
 
 
-@pytest.fixture
-async def realtime():
-    """Create and manage Realtime connection lifecycle."""
-    realtime = Realtime(
-        api_key=os.getenv("XAI_API_KEY"),
-        voice="ara",
-    )
-    try:
-        yield realtime
-    finally:
-        await realtime.close()
-
-
-class TestXAIRealtime:
-    """Integration tests for xAI Realtime."""
-
-    @pytest.mark.integration
-    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
-    async def test_simple_response_flow(self, realtime):
-        """Test sending a simple text message and receiving audio response."""
-        events = []
-        pcm = PcmData(sample_rate=24000, format=AudioFormat.S16)
-
-        @realtime.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-            pcm.append(event.data)
-
-        await asyncio.sleep(0.01)
-        await realtime.connect()
-        await realtime.simple_response("Hello, can you hear me? Say yes briefly.")
-
-        # Wait for response
-        await asyncio.sleep(5.0)
-        assert len(events) > 0, "Expected audio output events"
-
-    @pytest.mark.integration
-    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
-    async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
-        """Test sending real audio data and verify connection remains stable."""
-        events = []
-
-        @realtime.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-
-        await asyncio.sleep(0.01)
-        await realtime.connect()
-
-        # Send instruction and audio
-        await realtime.simple_response(
-            "Listen to the following audio and describe what you hear briefly."
-        )
-        await asyncio.sleep(3.0)
-
-        # Send audio in chunks
-        chunk_size = realtime.sample_rate // 10  # 100ms chunks
-        samples = mia_audio_16khz.samples
-        for i in range(0, len(samples), chunk_size):
-            chunk_samples = samples[i : i + chunk_size]
-            if len(chunk_samples) > 0:
-                chunk_pcm = PcmData(
-                    samples=chunk_samples,
-                    sample_rate=mia_audio_16khz.sample_rate,
-                    format=mia_audio_16khz.format,
-                )
-                await realtime.simple_audio_response(chunk_pcm)
-            await asyncio.sleep(0.05)
-
-        # Wait for processing and response
-        await asyncio.sleep(8.0)
-        assert len(events) > 0, "Expected audio output events after sending audio"
-
-    @pytest.mark.integration
-    @pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
-    async def test_function_calling(self, realtime):
-        """Test function calling with xAI realtime."""
-
-        @realtime.register_function(description="Get the current weather")
-        async def get_weather(location: str) -> str:
-            """Get weather for a location."""
-            return f"The weather in {location} is sunny and 72 degrees."
-
-        await realtime.connect()
-        await realtime.simple_response("What is the weather in San Francisco?")
-
-        # Wait for function call and response
-        await asyncio.sleep(8.0)
-        # The test passes if no exceptions are raised during function calling
-
-
 class TestXAIRealtimeConfiguration:
-    """Tests for xAI Realtime configuration options."""
+    """Unit tests for xAI Realtime configuration options."""
 
     async def test_default_configuration(self):
         """Test that default configuration is set correctly."""
@@ -113,7 +21,7 @@ class TestXAIRealtimeConfiguration:
         # xAI realtime emits PCM at 24 kHz natively.
         assert realtime.sample_rate == 24000
         assert realtime.turn_detection == "server_vad"
-        assert realtime.provider_name == "xai"
+        assert realtime.provider_name == "xai_realtime"
         # VAD interrupt defaults to False to avoid mic-echo cancellation.
         assert realtime.vad_interrupt_response is False
         # Web search and X search enabled by default
@@ -154,7 +62,6 @@ class TestXAIRealtimeConfiguration:
 
     async def test_api_key_required(self):
         """Test that API key is required."""
-        # Temporarily unset the environment variable
         original_key = os.environ.pop("XAI_API_KEY", None)
         try:
             with pytest.raises(ValueError, match="XAI API key is required"):
@@ -168,3 +75,84 @@ class TestXAIRealtimeConfiguration:
         realtime = Realtime(api_key="test-key")
         realtime.set_instructions("You are a helpful assistant.")
         assert realtime._instructions == "You are a helpful assistant."
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not os.getenv("XAI_API_KEY"), reason="XAI_API_KEY not set")
+class TestXAIRealtimeIntegration:
+    """End-to-end tests against the live xAI Realtime API."""
+
+    @pytest.fixture
+    async def realtime(self):
+        rt = Realtime(api_key=os.getenv("XAI_API_KEY"), voice="ara")
+        try:
+            await rt.connect()
+            yield rt
+        finally:
+            await rt.close()
+
+    async def test_simple_response_flow(self, realtime):
+        """A text prompt produces an audio response."""
+        async for _ in realtime.simple_response(
+            "Hello, can you hear me? Say yes briefly."
+        ):
+            pass
+
+        await asyncio.sleep(5.0)
+        audio = [
+            i for i in realtime.output.peek() if isinstance(i, RealtimeAudioOutput)
+        ]
+        assert len(audio) > 0, "Expected audio output events"
+
+    async def test_audio_sending_flow(self, realtime, mia_audio_16khz):
+        """Audio chunks sent to xAI produce an audio response."""
+        async for _ in realtime.simple_response(
+            "Listen to the following audio and describe what you hear briefly."
+        ):
+            pass
+        await asyncio.sleep(3.0)
+
+        # Send audio in 100 ms chunks at the source sample rate.
+        chunk_size = realtime.sample_rate // 10
+        samples = mia_audio_16khz.samples
+        for i in range(0, len(samples), chunk_size):
+            chunk_samples = samples[i : i + chunk_size]
+            if len(chunk_samples) > 0:
+                chunk_pcm = PcmData(
+                    samples=chunk_samples,
+                    sample_rate=mia_audio_16khz.sample_rate,
+                    format=mia_audio_16khz.format,
+                )
+                await realtime.simple_audio_response(chunk_pcm)
+            await asyncio.sleep(0.05)
+
+        await asyncio.sleep(8.0)
+        audio = [
+            i for i in realtime.output.peek() if isinstance(i, RealtimeAudioOutput)
+        ]
+        assert len(audio) > 0, "Expected audio output events after sending audio"
+
+    @pytest.fixture
+    async def realtime_with_tools(self):
+        """Realtime with get_weather registered, then connected."""
+        rt = Realtime(api_key=os.getenv("XAI_API_KEY"), voice="ara")
+
+        @rt.register_function(description="Get the current weather")
+        async def get_weather(location: str) -> str:
+            """Get weather for a location."""
+            return f"The weather in {location} is sunny and 72 degrees."
+
+        try:
+            await rt.connect()
+            yield rt
+        finally:
+            await rt.close()
+
+    async def test_function_calling(self, realtime_with_tools):
+        """Function calling completes without raising."""
+        async for _ in realtime_with_tools.simple_response(
+            "What is the weather in San Francisco?"
+        ):
+            pass
+
+        await asyncio.sleep(8.0)

@@ -1,270 +1,137 @@
-"""Tests for AWS Realtime plugin."""
-
 import asyncio
 
 import pytest
 from dotenv import load_dotenv
-from getstream.video.rtc import AudioFormat, PcmData
 from vision_agents.core.agents.agent_types import AgentOptions
+from vision_agents.core.edge.types import Participant
 from vision_agents.core.instructions import Instructions
-from vision_agents.core.llm.events import RealtimeAudioOutputEvent
-from vision_agents.core.tts.manual_test import play_pcm_with_ffplay
+from vision_agents.core.llm.realtime import (
+    RealtimeAgentSpeechEnded,
+    RealtimeAgentSpeechStarted,
+    RealtimeAudioOutput,
+    RealtimeUserSpeechEnded,
+    RealtimeUserSpeechStarted,
+)
 from vision_agents.plugins.aws import Realtime
 
-from conftest import skip_blockbuster
-
-# Load environment variables
 load_dotenv()
 
 
-@pytest.mark.skip()
-@skip_blockbuster
-class TestBedrockRealtime:
-    """Integration tests for AWS Bedrock Realtime connect flow"""
+@pytest.mark.integration
+@pytest.mark.skip_blockbuster
+class TestAWSRealtimeIntegration:
+    """End-to-end tests against AWS Bedrock Realtime."""
 
     @pytest.fixture
     async def realtime(self, tmp_path):
-        """Create and manage Realtime connection lifecycle"""
-        # Using AWS Nova Sonic model for testing
-        realtime = Realtime(
-            model="amazon.nova-sonic-v1:0",
-            region_name="us-east-1",
-        )
-
-        realtime.options = AgentOptions(model_dir=tmp_path.as_posix())
-        await realtime.warmup()
-        realtime.set_instructions(
+        rt = Realtime(region_name="us-east-1")
+        rt.options = AgentOptions(model_dir=tmp_path.as_posix())
+        await rt.warmup()
+        rt.set_instructions(
             Instructions("you're a kind assistant, always be friendly please.")
         )
         try:
-            yield realtime
+            await rt.connect()
+            yield rt
         finally:
-            await realtime.close()
+            await rt.close()
 
-    @pytest.mark.integration
+    @pytest.fixture
+    async def realtime_with_tools(self, tmp_path):
+        """Realtime with get_test_data registered, then connected."""
+        rt = Realtime(region_name="us-east-1")
+        rt.options = AgentOptions(model_dir=tmp_path.as_posix())
+        await rt.warmup()
+        rt.set_instructions(
+            Instructions("you're a kind assistant, always be friendly please.")
+        )
+
+        @rt.register_function(
+            name="get_test_data", description="Get test data for a given key"
+        )
+        async def get_test_data(key: str) -> dict:
+            """Get test data.
+
+            Args:
+                key: The key to look up
+
+            Returns:
+                Test data for the key
+            """
+            test_data = {
+                "weather": {"value": "sunny", "temp": 72},
+                "time": {"value": "12:00 PM"},
+            }
+            return test_data.get(key, {"error": "Key not found"})
+
+        try:
+            await rt.connect()
+            yield rt
+        finally:
+            await rt.close()
+
     async def test_simple_response_flow(self, realtime):
         # unlike other realtime LLMs, AWS doesn't reply if you only send text
-        events = []
         realtime.set_instructions(
             Instructions("whenever you reply mention a fun fact about The Netherlands")
         )
-
-        @realtime.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-
-        await asyncio.sleep(0.01)
-        await realtime.connect()
-        await realtime.simple_response(
+        async for _ in realtime.simple_response(
             "Hello, can you hear me? Please respond with a short greeting."
-        )
-
-        # Wait for response
-        await asyncio.sleep(10.0)
-
-    @pytest.mark.integration
-    async def test_audio_first(self, realtime, mia_audio_16khz):
-        """Test sending real audio data and verify connection remains stable"""
-        events = []
-        pcm = PcmData(sample_rate=24000, format=AudioFormat.S16)
-
-        @realtime.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-            pcm.append(event.data)
-
-        await asyncio.sleep(0.01)
-        await realtime.connect()
-
-        await realtime.simple_response(
-            "Listen to the following story, what is Mia looking for?"
-        )
-        await asyncio.sleep(10.0)
-        await realtime.simple_audio_response(mia_audio_16khz)
-
-        # Wait a moment to ensure processing
-        await asyncio.sleep(10.0)
-
-        # play the generated audio
-        await play_pcm_with_ffplay(pcm)
-
-    @pytest.mark.integration
-    async def test_connection_lifecycle(self, realtime):
-        """Test that connection can be established and closed properly"""
-        # Connect
-        await realtime.connect()
-        assert realtime.connected is True
-
-        # Send a simple message
-        await realtime.simple_response("Test message")
-        await asyncio.sleep(2.0)
-
-        # Close
-        await realtime.close()
-        assert realtime.connected is False
-
-    @pytest.mark.integration
-    async def test_function_calling(self, realtime):
-        """Test that function calling works with AWS Bedrock Realtime"""
-
-        # Register a test function
-        @realtime.register_function(
-            name="get_test_data", description="Get test data for a given key"
-        )
-        async def get_test_data(key: str) -> dict:
-            """Get test data.
-
-            Args:
-                key: The key to look up
-
-            Returns:
-                Test data for the key
-            """
-            test_data = {
-                "weather": {"value": "sunny", "temp": 72},
-                "time": {"value": "12:00 PM"},
-            }
-            return test_data.get(key, {"error": "Key not found"})
-
-        events = []
-
-        @realtime.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-
-        await asyncio.sleep(0.01)
-        await realtime.connect()
-
-        # Ask the model to use the function
-        await realtime.simple_response(
-            "Please use the get_test_data function to get data for the weather key and tell me what you find."
-        )
-
-        # Wait for response
-        await asyncio.sleep(15.0)
-
-        # Verify we got some audio output (meaning the model responded after function call)
-        assert len(events) > 0
-
-
-@pytest.mark.skip()
-@pytest.mark.integration
-@skip_blockbuster
-class TestNova2RealtimeIntegration:
-    @pytest.fixture
-    async def realtime(self, tmp_path):
-        """Create and manage Realtime connection lifecycle"""
-        # Using AWS Nova Sonic model for testing
-        realtime = Realtime(
-            model="amazon.nova-2-sonic-v1:0",
-            region_name="us-east-1",
-        )
-
-        realtime.options = AgentOptions(model_dir=tmp_path.as_posix())
-        await realtime.warmup()
-        realtime.set_instructions("you're a kind assistant, always be friendly please.")
-        try:
-            yield realtime
-        finally:
-            await realtime.close()
-
-    async def test_simple_response_flow(self, realtime):
-        # unlike other realtime LLMs, AWS doesn't reply if you only send text
-        events = []
-        realtime.set_instructions(
-            "whenever you reply mention a fun fact about The Netherlands"
-        )
-
-        @realtime.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-
-        await asyncio.sleep(0.01)
-        await realtime.connect()
-        await realtime.simple_response(
-            "Hello, can you hear me? Please respond with a short greeting."
-        )
-
-        # Wait for response
+        ):
+            pass
         await asyncio.sleep(10.0)
 
     async def test_audio_first(self, realtime, mia_audio_16khz):
         """Test sending real audio data and verify connection remains stable"""
-        events = []
-        pcm = PcmData(sample_rate=24000, format=AudioFormat.S16)
-
-        @realtime.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-            pcm.append(event.data)
-
-        await asyncio.sleep(0.01)
-        await realtime.connect()
-
-        await realtime.simple_response(
+        async for _ in realtime.simple_response(
             "Listen to the following story, what is Mia looking for?"
+        ):
+            pass
+        await asyncio.sleep(10.0)
+        await realtime.simple_audio_response(
+            mia_audio_16khz, Participant(original=None, user_id="u", id="u")
         )
-        await asyncio.sleep(10.0)
-        await realtime.simple_audio_response(mia_audio_16khz)
 
-        # Wait a moment to ensure processing
-        await asyncio.sleep(10.0)
-
-        # play the generated audio
-        await play_pcm_with_ffplay(pcm)
+        items = await realtime.output.collect(10)
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        user_started = [i for i in items if isinstance(i, RealtimeUserSpeechStarted)]
+        user_ended = [i for i in items if isinstance(i, RealtimeUserSpeechEnded)]
+        agent_started = [i for i in items if isinstance(i, RealtimeAgentSpeechStarted)]
+        agent_ended = [i for i in items if isinstance(i, RealtimeAgentSpeechEnded)]
+        assert len(audio) > 0
+        assert len(user_started) >= 1
+        assert len(user_ended) >= 1
+        assert len(agent_started) >= 1
+        assert len(agent_ended) >= 1
 
     async def test_connection_lifecycle(self, realtime):
-        """Test that connection can be established and closed properly"""
-        # Connect
-        await realtime.connect()
+        """Connection established by fixture; verify simple_response and clean close."""
         assert realtime.connected is True
 
-        # Send a simple message
-        await realtime.simple_response("Test message")
+        async for _ in realtime.simple_response("Test message"):
+            pass
         await asyncio.sleep(2.0)
 
-        # Close
         await realtime.close()
         assert realtime.connected is False
 
-    async def test_function_calling(self, realtime):
-        """Test that function calling works with AWS Bedrock Realtime"""
-
-        # Register a test function
-        @realtime.register_function(
-            name="get_test_data", description="Get test data for a given key"
+    async def test_function_calling(self, realtime_with_tools, mia_audio_16khz):
+        """Function calling produces audio output after the model invokes the tool."""
+        # AWS Nova requires at least one audio content block in the prompt;
+        # send a short clip before the text instruction.
+        await realtime_with_tools.simple_audio_response(
+            mia_audio_16khz, Participant(original=None, user_id="u", id="u")
         )
-        async def get_test_data(key: str) -> dict:
-            """Get test data.
-
-            Args:
-                key: The key to look up
-
-            Returns:
-                Test data for the key
-            """
-            test_data = {
-                "weather": {"value": "sunny", "temp": 72},
-                "time": {"value": "12:00 PM"},
-            }
-            return test_data.get(key, {"error": "Key not found"})
-
-        events = []
-
-        @realtime.events.subscribe
-        async def on_audio(event: RealtimeAudioOutputEvent):
-            events.append(event)
-
-        await asyncio.sleep(0.01)
-        await realtime.connect()
-
-        # Ask the model to use the function
-        await realtime.simple_response(
+        async for _ in realtime_with_tools.simple_response(
             "Please use the get_test_data function to get data for the weather key and tell me what you find."
-        )
-
-        # Wait for response
+        ):
+            pass
         await asyncio.sleep(15.0)
 
-        # Verify we got some audio output (meaning the model responded after function call)
-        assert len(events) > 0
+        items = realtime_with_tools.output.peek()
+        audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+        agent_started = [i for i in items if isinstance(i, RealtimeAgentSpeechStarted)]
+        agent_ended = [i for i in items if isinstance(i, RealtimeAgentSpeechEnded)]
+        assert len(audio) > 0
+        assert len(agent_started) >= 1
+        assert len(agent_ended) >= 1

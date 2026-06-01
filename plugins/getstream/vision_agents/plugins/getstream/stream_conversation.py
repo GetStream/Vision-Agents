@@ -1,5 +1,6 @@
+import asyncio
 import logging
-from typing import List, Dict
+from typing import List, Dict, Set
 
 from getstream.models import MessageRequest
 from getstream.chat.async_channel import Channel
@@ -15,7 +16,18 @@ logger = logging.getLogger(__name__)
 
 
 class StreamConversation(Conversation):
-    """Persists the message history to a Stream channel with automatic chunking."""
+    """Persists the message history to a Stream channel with automatic chunking.
+
+    Backend persistence is dispatched as fire-and-forget tasks so that callers
+    of ``upsert_message`` are not blocked on Stream Chat round-trips. Voice
+    pipelines call ``upsert_message`` on the critical path (per user
+    transcript and per LLM delta); awaiting the REST sync inline added ~150–
+    300 ms per call, which compounded into perceptible audio latency.
+
+    Ordering is preserved by serializing dispatched tasks behind a per-channel
+    asyncio.Lock. Tests and shutdown paths can call
+    ``wait_for_pending_syncs()`` to drain in-flight tasks.
+    """
 
     # Maps internal message IDs to first Stream message ID (for backward compatibility)
     internal_ids_to_stream_ids: Dict[str, str]
@@ -41,17 +53,36 @@ class StreamConversation(Conversation):
         self.channel = channel
         self.internal_ids_to_stream_ids = {}
         self.chunk_size = chunk_size
+        self._sync_lock = asyncio.Lock()
+        self._pending_syncs: Set[asyncio.Task] = set()
 
     async def _sync_to_backend(
         self, message: Message, state: MessageState, completed: bool
     ):
-        """Sync message to Stream Chat API with automatic chunking.
+        """Dispatch the Stream Chat sync as a serialized background task.
 
-        Args:
-            message: The message to sync
-            state: The message's internal state
-            completed: If True, finalize the message. If False, mark as still generating.
+        Returns immediately so the caller (e.g. an LLM-delta hot path) is not
+        blocked on the REST round-trip. Tasks queue on ``_sync_lock`` to
+        preserve write ordering against the same channel.
         """
+        task = asyncio.create_task(self._sync_with_lock(message, state, completed))
+        self._pending_syncs.add(task)
+        task.add_done_callback(self._pending_syncs.discard)
+
+    async def _sync_with_lock(
+        self, message: Message, state: MessageState, completed: bool
+    ):
+        async with self._sync_lock:
+            try:
+                await self._do_sync(message, state, completed)
+            except Exception:
+                # Fire-and-forget: never let a backend failure escape as an
+                # unretrieved task exception. Catch everything (not just
+                # StreamAPIException) so chunking/encoding/transport errors
+                # are logged instead of silently lost on the hot path.
+                logger.exception("Stream Chat sync failed for message %s", message.id)
+
+    async def _do_sync(self, message: Message, state: MessageState, completed: bool):
         # Split message into chunks (markdown-aware)
         chunks = self._smart_chunk(message.content, self.chunk_size)
 
@@ -62,6 +93,17 @@ class StreamConversation(Conversation):
         else:
             # UPDATE: Update/create/delete chunks as needed
             await self._update_chunks(message, state, chunks, completed)
+
+    async def wait_for_pending_syncs(self) -> None:
+        """Wait for all dispatched backend-sync tasks to complete.
+
+        Useful in tests that assert against the mocked Stream Chat client
+        right after ``upsert_message``, and on graceful shutdown to avoid
+        dropping in-flight persistence work.
+        """
+        if not self._pending_syncs:
+            return
+        await asyncio.gather(*self._pending_syncs, return_exceptions=True)
 
     async def _create_chunks(
         self, message: Message, state: MessageState, chunks: List[str], completed: bool

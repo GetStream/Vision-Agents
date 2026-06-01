@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "vision-agents-plugins-openai",
+    "openai>=2.26.0,<3",
 ]
 
 [project.urls]
@@ -24,15 +24,13 @@ source = "vcs"
 raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["vision_agents"]
 
 [tool.uv.sources]
 vision-agents = { workspace = true }
-vision-agents-plugins-openai = { workspace = true }
 
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.0.0",
 ]
-

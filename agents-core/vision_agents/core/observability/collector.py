@@ -1,529 +1,550 @@
-"""MetricsCollector that subscribes to events and records OpenTelemetry metrics.
-
-This class bridges the event system with OpenTelemetry metrics. It subscribes to
-events from LLM, STT, TTS, turn detection, and realtime components and records the
-corresponding metrics.
-
-Usage:
-    from vision_agents.core.observability import MetricsCollector
-
-    agent = Agent(llm=OpenAILLM(), stt=DeepgramSTT(), tts=CartesiaTTS())
-    collector = MetricsCollector(agent)
-
-    # Metrics are now automatically recorded when events are emitted
-"""
-
-from __future__ import annotations
-
 import logging
-import time
-from typing import TYPE_CHECKING, Dict
-
-# Import event types at module level so they can be resolved by typing.get_type_hints()
-from vision_agents.core.events import PluginBaseEvent, VideoProcessorDetectionEvent
-from vision_agents.core.llm.events import (
-    LLMErrorEvent,
-    LLMResponseCompletedEvent,
-    RealtimeAgentSpeechTranscriptionEvent,
-    RealtimeAudioInputEvent,
-    RealtimeAudioOutputEvent,
-    RealtimeConnectedEvent,
-    RealtimeDisconnectedEvent,
-    RealtimeErrorEvent,
-    RealtimeResponseEvent,
-    RealtimeUserSpeechTranscriptionEvent,
-    ToolEndEvent,
-    VLMErrorEvent,
-    VLMInferenceCompletedEvent,
-)
-from vision_agents.core.stt.events import STTErrorEvent, STTTranscriptEvent
-from vision_agents.core.tts.events import TTSErrorEvent, TTSSynthesisCompleteEvent
-from vision_agents.core.turn_detection.events import TurnEndedEvent
+from typing import Self
 
 from . import metrics
-
-if TYPE_CHECKING:
-    from vision_agents.core.agents import Agent
+from .agent import AgentMetrics
 
 logger = logging.getLogger(__name__)
 
 
 class MetricsCollector:
-    """Collects metrics from agent events and records them to OpenTelemetry.
+    """Collects metrics into ``AgentMetrics`` and OpenTelemetry meters.
 
-    This class subscribes to events from the agent's LLM, STT, TTS, turn
-    detection, and realtime components. When events are emitted, it extracts
-    relevant data and records OpenTelemetry metrics.
-
-    Attributes:
-        agent: The agent to collect metrics from.
+    Callers invoke ``on_*`` methods directly; each method updates the local
+    ``AgentMetrics`` and, at the root collector, writes to OpenTelemetry.
+    Child collectors forward to their parent, so OTel is emitted exactly
+    once per call regardless of merge depth.
     """
 
-    def __init__(self, agent: Agent):
-        """Initialize the metrics collector.
+    def __init__(self):
+        self.agent_metrics = AgentMetrics()
+        self.parent: Self | None = None
 
-        Args:
-            agent: The agent to collect metrics from.
+    def merge(self, child: Self) -> None:
+        """Make this collector the parent of ``child``.
+
+        After merge, every metric handler invoked on ``child`` updates
+        ``child``'s own ``AgentMetrics`` and is then forwarded to this
+        collector (and onward up the chain). Only the root collector
+        (``parent is None``) writes to OpenTelemetry meters, keeping OTel
+        writes singular per event.
+
+        Re-merging the same child into the same parent is a no-op.
+        Merging a child that already has a different parent reparents it
+        to this collector.
+
+        Raises:
+            ValueError: if ``child is self`` or the merge would create a
+                cycle.
         """
-        self.agent = agent
-        self._agent_metrics = agent.metrics
-        # Track realtime session start times for duration calculation
-        self._realtime_session_starts: Dict[str, float] = {}
-        self._subscribe()
-
-    def _subscribe(self) -> None:
-        """Subscribe to all relevant events from the agent's components."""
-        self._subscribe_to_llm_events()
-        self._subscribe_to_realtime_events()
-        self._subscribe_to_stt_events()
-        self._subscribe_to_tts_events()
-        self._subscribe_to_turn_detection_events()
-        self._subscribe_to_vlm_events()
-        self._subscribe_to_processor_events()
-
-    def _subscribe_to_llm_events(self) -> None:
-        """Subscribe to LLM events."""
-        if not self.agent.llm:
+        if child is self:
+            raise ValueError("cannot merge a collector into itself")
+        if child.parent is self:
             return
-
-        @self.agent.llm.events.subscribe
-        async def on_llm_response_completed(event: LLMResponseCompletedEvent):
-            self._on_llm_response_completed(event)
-
-        @self.agent.llm.events.subscribe
-        async def on_tool_end(event: ToolEndEvent):
-            self._on_tool_end(event)
-
-        @self.agent.llm.events.subscribe
-        async def on_llm_error(event: LLMErrorEvent):
-            self._on_llm_error(event)
-
-    def _subscribe_to_realtime_events(self) -> None:
-        """Subscribe to Realtime LLM events."""
-        if not self.agent.llm:
-            return
-
-        @self.agent.llm.events.subscribe
-        async def on_realtime_connected(event: RealtimeConnectedEvent):
-            self._on_realtime_connected(event)
-
-        @self.agent.llm.events.subscribe
-        async def on_realtime_disconnected(event: RealtimeDisconnectedEvent):
-            self._on_realtime_disconnected(event)
-
-        @self.agent.llm.events.subscribe
-        async def on_realtime_audio_input(event: RealtimeAudioInputEvent):
-            self._on_realtime_audio_input(event)
-
-        @self.agent.llm.events.subscribe
-        async def on_realtime_audio_output(event: RealtimeAudioOutputEvent):
-            self._on_realtime_audio_output(event)
-
-        @self.agent.llm.events.subscribe
-        async def on_realtime_response(event: RealtimeResponseEvent):
-            self._on_realtime_response(event)
-
-        @self.agent.llm.events.subscribe
-        async def on_realtime_user_transcription(
-            event: RealtimeUserSpeechTranscriptionEvent,
-        ):
-            self._on_realtime_user_transcription(event)
-
-        @self.agent.llm.events.subscribe
-        async def on_realtime_agent_transcription(
-            event: RealtimeAgentSpeechTranscriptionEvent,
-        ):
-            self._on_realtime_agent_transcription(event)
-
-        @self.agent.llm.events.subscribe
-        async def on_realtime_error(event: RealtimeErrorEvent):
-            self._on_realtime_error(event)
-
-    def _subscribe_to_stt_events(self) -> None:
-        """Subscribe to STT events."""
-        if not self.agent.stt:
-            return
-
-        @self.agent.stt.events.subscribe
-        async def on_stt_transcript(event: STTTranscriptEvent):
-            self._on_stt_transcript(event)
-
-        @self.agent.stt.events.subscribe
-        async def on_stt_error(event: STTErrorEvent):
-            self._on_stt_error(event)
-
-    def _subscribe_to_tts_events(self) -> None:
-        """Subscribe to TTS events."""
-        if not self.agent.tts:
-            return
-
-        @self.agent.tts.events.subscribe
-        async def on_tts_synthesis_complete(event: TTSSynthesisCompleteEvent):
-            self._on_tts_synthesis_complete(event)
-
-        @self.agent.tts.events.subscribe
-        async def on_tts_error(event: TTSErrorEvent):
-            self._on_tts_error(event)
-
-    def _subscribe_to_turn_detection_events(self) -> None:
-        """Subscribe to turn detection events."""
-        if not self.agent.turn_detection:
-            return
-
-        @self.agent.turn_detection.events.subscribe
-        async def on_turn_ended(event: TurnEndedEvent):
-            self._on_turn_ended(event)
+        node: Self | None = self
+        while node is not None:
+            if node is child:
+                raise ValueError("merge would create a cycle")
+            node = node.parent
+        child.parent = self
 
     # =========================================================================
-    # LLM Event Handlers
+    # LLM
     # =========================================================================
 
-    def _on_llm_response_completed(self, event: LLMResponseCompletedEvent) -> None:
-        """Handle LLM response completed event."""
-        attrs = self._base_attributes(event)
-        if event.model:
-            attrs["model"] = event.model
-
-        # Record latency
-        if event.latency_ms is not None:
-            metrics.llm_latency_ms.record(event.latency_ms, attrs)
-            self._agent_metrics.llm_latency_ms__avg.update(event.latency_ms)
-
-        # Record time to first token
-        if event.time_to_first_token_ms is not None:
-            metrics.llm_time_to_first_token_ms.record(
-                event.time_to_first_token_ms, attrs
+    def on_llm_response(
+        self,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        latency_ms: float | None = None,
+        time_to_first_token_ms: float | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+    ) -> None:
+        """Record a completed LLM response."""
+        if latency_ms is not None:
+            self.agent_metrics.llm_latency_ms__avg.update(latency_ms)
+        if time_to_first_token_ms is not None:
+            self.agent_metrics.llm_time_to_first_token_ms__avg.update(
+                time_to_first_token_ms
             )
-            self._agent_metrics.llm_time_to_first_token_ms__avg.update(
-                event.time_to_first_token_ms
+        if input_tokens is not None:
+            self.agent_metrics.llm_input_tokens__total.inc(input_tokens)
+        if output_tokens is not None:
+            self.agent_metrics.llm_output_tokens__total.inc(output_tokens)
+
+        if self.parent is not None:
+            self.parent.on_llm_response(
+                provider=provider,
+                model=model,
+                latency_ms=latency_ms,
+                time_to_first_token_ms=time_to_first_token_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
+            return
 
-        # Record token usage
-        if event.input_tokens is not None:
-            metrics.llm_input_tokens.add(event.input_tokens, attrs)
-            self._agent_metrics.llm_input_tokens__total.inc(event.input_tokens)
-        if event.output_tokens is not None:
-            metrics.llm_output_tokens.add(event.output_tokens, attrs)
-            self._agent_metrics.llm_output_tokens__total.inc(event.output_tokens)
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        if model:
+            attrs["model"] = model
+        if latency_ms is not None:
+            metrics.llm_latency_ms.record(latency_ms, attrs)
+        if time_to_first_token_ms is not None:
+            metrics.llm_time_to_first_token_ms.record(time_to_first_token_ms, attrs)
+        if input_tokens is not None:
+            metrics.llm_input_tokens.add(input_tokens, attrs)
+        if output_tokens is not None:
+            metrics.llm_output_tokens.add(output_tokens, attrs)
 
-    def _on_tool_end(self, event: ToolEndEvent) -> None:
-        """Handle tool execution end event."""
-        attrs = self._base_attributes(event)
-        attrs["tool_name"] = event.tool_name
-        attrs["success"] = str(event.success).lower()
+    def on_tool_call(
+        self,
+        *,
+        tool_name: str,
+        success: bool,
+        provider: str | None = None,
+        execution_time_ms: float | None = None,
+    ) -> None:
+        """Record a tool/function call executed by the LLM."""
+        self.agent_metrics.llm_tool_calls__total.inc(1)
+        if execution_time_ms is not None:
+            self.agent_metrics.llm_tool_latency_ms__avg.update(execution_time_ms)
 
+        if self.parent is not None:
+            self.parent.on_tool_call(
+                tool_name=tool_name,
+                success=success,
+                provider=provider,
+                execution_time_ms=execution_time_ms,
+            )
+            return
+
+        attrs: dict = {"tool_name": tool_name, "success": str(success).lower()}
+        if provider:
+            attrs["provider"] = provider
         metrics.llm_tool_calls.add(1, attrs)
-        self._agent_metrics.llm_tool_calls__total.inc(1)
+        if execution_time_ms is not None:
+            metrics.llm_tool_latency_ms.record(execution_time_ms, attrs)
 
-        if event.execution_time_ms is not None:
-            metrics.llm_tool_latency_ms.record(event.execution_time_ms, attrs)
-            self._agent_metrics.llm_tool_latency_ms__avg.update(event.execution_time_ms)
+    def on_llm_error(
+        self,
+        *,
+        provider: str | None = None,
+        error_type: str | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        """Record an LLM error."""
+        if self.parent is not None:
+            self.parent.on_llm_error(
+                provider=provider, error_type=error_type, error_code=error_code
+            )
+            return
 
-    def _on_llm_error(self, event: LLMErrorEvent) -> None:
-        """Handle LLM error event."""
-        attrs = self._base_attributes(event)
-        if event.error:
-            attrs["error_type"] = type(event.error).__name__
-        if event.error_code:
-            attrs["error_code"] = event.error_code
-
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        if error_type:
+            attrs["error_type"] = error_type
+        if error_code:
+            attrs["error_code"] = error_code
         metrics.llm_errors.add(1, attrs)
 
     # =========================================================================
-    # Realtime LLM Event Handlers
+    # Realtime LLM
     # =========================================================================
 
-    def _on_realtime_connected(self, event: "RealtimeConnectedEvent") -> None:
-        """Handle realtime connected event."""
-        attrs = self._base_attributes(event)
-
-        # Track session start time
-        # TODO: Some lru structure here? this dict will grow if the sessions are not closed properly
-        if event.session_id:
-            self._realtime_session_starts[event.session_id] = time.perf_counter()
-
-        metrics.realtime_sessions.add(1, attrs)
-
-    def _on_realtime_disconnected(self, event: "RealtimeDisconnectedEvent") -> None:
-        """Handle realtime disconnected event."""
-        attrs = self._base_attributes(event)
-        attrs["was_clean"] = str(event.was_clean).lower()
-
-        # Calculate session duration
-        if event.session_id and event.session_id in self._realtime_session_starts:
-            start_time = self._realtime_session_starts.pop(event.session_id)
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            metrics.realtime_session_duration_ms.record(duration_ms, attrs)
-
-    def _on_realtime_audio_input(self, event: "RealtimeAudioInputEvent") -> None:
-        """Handle realtime audio input event."""
-        attrs = self._base_attributes(event)
-
-        if event.data and event.data.samples is not None:
-            # Record bytes using nbytes to handle all audio formats
-            metrics.realtime_audio_input_bytes.add(event.data.samples.nbytes, attrs)
-            self._agent_metrics.realtime_audio_input_bytes__total.inc(
-                event.data.samples.nbytes
-            )
-
-            # Record duration
-            if event.data.duration_ms:
-                metrics.realtime_audio_input_duration_ms.add(
-                    int(event.data.duration_ms), attrs
-                )
-                self._agent_metrics.realtime_audio_input_duration_ms__total.inc(
-                    int(event.data.duration_ms)
-                )
-
-    def _on_realtime_audio_output(self, event: "RealtimeAudioOutputEvent") -> None:
-        """Handle realtime audio output event."""
-        attrs = self._base_attributes(event)
-
-        if event.data and event.data.samples is not None:
-            # Record bytes using nbytes to handle all audio formats
-            metrics.realtime_audio_output_bytes.add(event.data.samples.nbytes, attrs)
-            self._agent_metrics.realtime_audio_output_bytes__total.inc(
-                event.data.samples.nbytes
-            )
-
-            # Record duration
-            if event.data.duration_ms:
-                metrics.realtime_audio_output_duration_ms.add(
-                    int(event.data.duration_ms), attrs
-                )
-                self._agent_metrics.realtime_audio_output_duration_ms__total.inc(
-                    int(event.data.duration_ms)
-                )
-
-    def _on_realtime_response(self, event: "RealtimeResponseEvent") -> None:
-        """Handle realtime response event."""
-        attrs = self._base_attributes(event)
-        attrs["is_complete"] = str(event.is_complete).lower()
-
-        if event.is_complete:
-            metrics.realtime_responses.add(1, attrs)
-
-    def _on_realtime_user_transcription(
-        self, event: "RealtimeUserSpeechTranscriptionEvent"
+    def on_realtime_audio_input(
+        self,
+        *,
+        byte_count: int,
+        provider: str | None = None,
+        duration_ms: float | None = None,
     ) -> None:
-        """Handle realtime user speech transcription event."""
-        attrs = self._base_attributes(event)
+        """Record audio sent to a realtime LLM."""
+        self.agent_metrics.realtime_audio_input_bytes__total.inc(byte_count)
+        if duration_ms is not None:
+            self.agent_metrics.realtime_audio_input_duration_ms__total.inc(
+                int(duration_ms)
+            )
+
+        if self.parent is not None:
+            self.parent.on_realtime_audio_input(
+                byte_count=byte_count, provider=provider, duration_ms=duration_ms
+            )
+            return
+
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        metrics.realtime_audio_input_bytes.add(byte_count, attrs)
+        if duration_ms is not None:
+            metrics.realtime_audio_input_duration_ms.add(int(duration_ms), attrs)
+
+    def on_realtime_audio_output(
+        self,
+        *,
+        byte_count: int,
+        provider: str | None = None,
+        duration_ms: float | None = None,
+    ) -> None:
+        """Record audio received from a realtime LLM."""
+        self.agent_metrics.realtime_audio_output_bytes__total.inc(byte_count)
+        if duration_ms is not None:
+            self.agent_metrics.realtime_audio_output_duration_ms__total.inc(
+                int(duration_ms)
+            )
+
+        if self.parent is not None:
+            self.parent.on_realtime_audio_output(
+                byte_count=byte_count, provider=provider, duration_ms=duration_ms
+            )
+            return
+
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        metrics.realtime_audio_output_bytes.add(byte_count, attrs)
+        if duration_ms is not None:
+            metrics.realtime_audio_output_duration_ms.add(int(duration_ms), attrs)
+
+    def on_realtime_response_completed(self, *, provider: str | None = None) -> None:
+        """Record a completed realtime response."""
+        if self.parent is not None:
+            self.parent.on_realtime_response_completed(provider=provider)
+            return
+
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        metrics.realtime_responses.add(1, attrs)
+
+    def on_realtime_user_transcription(self, *, provider: str | None = None) -> None:
+        """Record a user speech transcription from a realtime LLM."""
+        self.agent_metrics.realtime_user_transcriptions__total.inc(1)
+
+        if self.parent is not None:
+            self.parent.on_realtime_user_transcription(provider=provider)
+            return
+
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
         metrics.realtime_user_transcriptions.add(1, attrs)
-        self._agent_metrics.realtime_user_transcriptions__total.inc(1)
 
-    def _on_realtime_agent_transcription(
-        self, event: "RealtimeAgentSpeechTranscriptionEvent"
-    ) -> None:
-        """Handle realtime agent speech transcription event."""
-        attrs = self._base_attributes(event)
+    def on_realtime_agent_transcription(self, *, provider: str | None = None) -> None:
+        """Record an agent speech transcription from a realtime LLM."""
+        self.agent_metrics.realtime_agent_transcriptions__total.inc(1)
+
+        if self.parent is not None:
+            self.parent.on_realtime_agent_transcription(provider=provider)
+            return
+
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
         metrics.realtime_agent_transcriptions.add(1, attrs)
-        self._agent_metrics.realtime_agent_transcriptions__total.inc(1)
 
-    def _on_realtime_error(self, event: "RealtimeErrorEvent") -> None:
-        """Handle realtime error event."""
-        attrs = self._base_attributes(event)
-        if event.error:
-            attrs["error_type"] = type(event.error).__name__
-        if event.error_code:
-            attrs["error_code"] = event.error_code
-        attrs["is_recoverable"] = str(event.is_recoverable).lower()
+    def on_realtime_error(
+        self,
+        *,
+        provider: str | None = None,
+        error_type: str | None = None,
+        error_code: str | None = None,
+        is_recoverable: bool = False,
+    ) -> None:
+        """Record a realtime LLM error."""
+        if self.parent is not None:
+            self.parent.on_realtime_error(
+                provider=provider,
+                error_type=error_type,
+                error_code=error_code,
+                is_recoverable=is_recoverable,
+            )
+            return
 
+        attrs: dict = {"is_recoverable": str(is_recoverable).lower()}
+        if provider:
+            attrs["provider"] = provider
+        if error_type:
+            attrs["error_type"] = error_type
+        if error_code:
+            attrs["error_code"] = error_code
         metrics.realtime_errors.add(1, attrs)
 
     # =========================================================================
-    # STT Event Handlers
+    # STT
     # =========================================================================
 
-    def _on_stt_transcript(self, event: STTTranscriptEvent) -> None:
-        """Handle STT transcript event."""
-        attrs = self._base_attributes(event)
-        if event.model_name:
-            attrs["model"] = event.model_name
-        if event.language:
-            attrs["language"] = event.language
+    def on_stt_transcript(
+        self,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        language: str | None = None,
+        processing_time_ms: float | None = None,
+        audio_duration_ms: float | None = None,
+    ) -> None:
+        """Record a completed STT transcript."""
+        if processing_time_ms is not None:
+            self.agent_metrics.stt_latency_ms__avg.update(processing_time_ms)
+        if audio_duration_ms is not None:
+            self.agent_metrics.stt_audio_duration_ms__total.inc(int(audio_duration_ms))
 
-        if event.processing_time_ms is not None:
-            metrics.stt_latency_ms.record(event.processing_time_ms, attrs)
-            self._agent_metrics.stt_latency_ms__avg.update(event.processing_time_ms)
-
-        if event.audio_duration_ms is not None:
-            metrics.stt_audio_duration_ms.record(event.audio_duration_ms, attrs)
-            self._agent_metrics.stt_audio_duration_ms__total.inc(
-                int(event.audio_duration_ms)
+        if self.parent is not None:
+            self.parent.on_stt_transcript(
+                provider=provider,
+                model=model,
+                language=language,
+                processing_time_ms=processing_time_ms,
+                audio_duration_ms=audio_duration_ms,
             )
+            return
 
-    def _on_stt_error(self, event: STTErrorEvent) -> None:
-        """Handle STT error event."""
-        attrs = self._base_attributes(event)
-        if event.error:
-            attrs["error_type"] = type(event.error).__name__
-        if event.error_code:
-            attrs["error_code"] = event.error_code
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        if model:
+            attrs["model"] = model
+        if language:
+            attrs["language"] = language
+        if processing_time_ms is not None:
+            metrics.stt_latency_ms.record(processing_time_ms, attrs)
+        if audio_duration_ms is not None:
+            metrics.stt_audio_duration_ms.record(audio_duration_ms, attrs)
 
+    def on_stt_error(
+        self,
+        *,
+        provider: str | None = None,
+        error_type: str | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        """Record an STT error."""
+        if self.parent is not None:
+            self.parent.on_stt_error(
+                provider=provider, error_type=error_type, error_code=error_code
+            )
+            return
+
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        if error_type:
+            attrs["error_type"] = error_type
+        if error_code:
+            attrs["error_code"] = error_code
         metrics.stt_errors.add(1, attrs)
 
     # =========================================================================
-    # TTS Event Handlers
+    # TTS
     # =========================================================================
 
-    def _on_tts_synthesis_complete(self, event: TTSSynthesisCompleteEvent) -> None:
-        """Handle TTS synthesis complete event."""
-        attrs = self._base_attributes(event)
+    def on_tts_synthesis(
+        self,
+        *,
+        provider: str | None = None,
+        synthesis_time_ms: float | None = None,
+        audio_duration_ms: float | None = None,
+        character_count: int | None = None,
+    ) -> None:
+        """Record a completed TTS synthesis."""
+        if synthesis_time_ms is not None:
+            self.agent_metrics.tts_latency_ms__avg.update(synthesis_time_ms)
+        if audio_duration_ms is not None:
+            self.agent_metrics.tts_audio_duration_ms__total.inc(int(audio_duration_ms))
+        if character_count is not None:
+            self.agent_metrics.tts_characters__total.inc(character_count)
 
-        # Record synthesis latency
-        if event.synthesis_time_ms is not None:
-            metrics.tts_latency_ms.record(event.synthesis_time_ms, attrs)
-            self._agent_metrics.tts_latency_ms__avg.update(event.synthesis_time_ms)
-
-        # Record audio duration
-        if event.audio_duration_ms is not None:
-            metrics.tts_audio_duration_ms.record(event.audio_duration_ms, attrs)
-            self._agent_metrics.tts_audio_duration_ms__total.inc(
-                int(event.audio_duration_ms)
+        if self.parent is not None:
+            self.parent.on_tts_synthesis(
+                provider=provider,
+                synthesis_time_ms=synthesis_time_ms,
+                audio_duration_ms=audio_duration_ms,
+                character_count=character_count,
             )
+            return
 
-        # Record characters synthesized
-        if event.text:
-            metrics.tts_characters.add(len(event.text), attrs)
-            self._agent_metrics.tts_characters__total.inc(len(event.text))
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        if synthesis_time_ms is not None:
+            metrics.tts_latency_ms.record(synthesis_time_ms, attrs)
+        if audio_duration_ms is not None:
+            metrics.tts_audio_duration_ms.record(audio_duration_ms, attrs)
+        if character_count is not None:
+            metrics.tts_characters.add(character_count, attrs)
 
-    def _on_tts_error(self, event: TTSErrorEvent) -> None:
-        """Handle TTS error event."""
-        attrs = self._base_attributes(event)
-        if event.error:
-            attrs["error_type"] = type(event.error).__name__
-        if event.error_code:
-            attrs["error_code"] = event.error_code
+    def on_tts_error(
+        self,
+        *,
+        provider: str | None = None,
+        error_type: str | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        """Record a TTS error."""
+        if self.parent is not None:
+            self.parent.on_tts_error(
+                provider=provider, error_type=error_type, error_code=error_code
+            )
+            return
 
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        if error_type:
+            attrs["error_type"] = error_type
+        if error_code:
+            attrs["error_code"] = error_code
         metrics.tts_errors.add(1, attrs)
 
     # =========================================================================
-    # Turn Detection Event Handlers
+    # Turn Detection
     # =========================================================================
 
-    def _on_turn_ended(self, event: TurnEndedEvent) -> None:
-        """Handle turn ended event."""
-        attrs = self._base_attributes(event)
+    def on_turn_ended(
+        self,
+        *,
+        provider: str | None = None,
+        duration_ms: float | None = None,
+        trailing_silence_ms: float | None = None,
+    ) -> None:
+        """Record a completed conversational turn."""
+        if duration_ms is not None:
+            self.agent_metrics.turn_duration_ms__avg.update(duration_ms)
+        if trailing_silence_ms is not None:
+            self.agent_metrics.turn_trailing_silence_ms__avg.update(trailing_silence_ms)
 
-        if event.duration_ms is not None:
-            metrics.turn_duration_ms.record(event.duration_ms, attrs)
-            self._agent_metrics.turn_duration_ms__avg.update(event.duration_ms)
-
-        if event.trailing_silence_ms is not None:
-            metrics.turn_trailing_silence_ms.record(event.trailing_silence_ms, attrs)
-            self._agent_metrics.turn_trailing_silence_ms__avg.update(
-                event.trailing_silence_ms
+        if self.parent is not None:
+            self.parent.on_turn_ended(
+                provider=provider,
+                duration_ms=duration_ms,
+                trailing_silence_ms=trailing_silence_ms,
             )
-
-    # =========================================================================
-    # VLM Event Handlers
-    # =========================================================================
-
-    def _subscribe_to_vlm_events(self) -> None:
-        """Subscribe to VLM events from VideoLLM instances."""
-        if not self.agent.llm:
             return
 
-        @self.agent.llm.events.subscribe
-        async def on_vlm_inference_completed(event: VLMInferenceCompletedEvent):
-            self._on_vlm_inference_completed(event)
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        if duration_ms is not None:
+            metrics.turn_duration_ms.record(duration_ms, attrs)
+        if trailing_silence_ms is not None:
+            metrics.turn_trailing_silence_ms.record(trailing_silence_ms, attrs)
 
-        @self.agent.llm.events.subscribe
-        async def on_vlm_error(event: VLMErrorEvent):
-            self._on_vlm_error(event)
+    # =========================================================================
+    # VLM
+    # =========================================================================
 
-    def _on_vlm_inference_completed(self, event: VLMInferenceCompletedEvent) -> None:
-        """Handle VLM inference completed event."""
-        attrs = self._base_attributes(event)
-        if event.model:
-            attrs["model"] = event.model
+    def on_vlm_inference(
+        self,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        latency_ms: float | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        frames_processed: int = 0,
+        detections: int = 0,
+    ) -> None:
+        """Record a completed VLM inference."""
+        self.agent_metrics.vlm_inferences__total.inc(1)
+        if latency_ms is not None:
+            self.agent_metrics.vlm_inference_latency_ms__avg.update(latency_ms)
+        if input_tokens is not None:
+            self.agent_metrics.vlm_input_tokens__total.inc(input_tokens)
+        if output_tokens is not None:
+            self.agent_metrics.vlm_output_tokens__total.inc(output_tokens)
+        if frames_processed > 0:
+            self.agent_metrics.video_frames_processed__total.inc(frames_processed)
 
-        # Record inference count
-        metrics.vlm_inferences.add(1, attrs)
-        self._agent_metrics.vlm_inferences__total.inc(1)
-
-        # Record latency
-        if event.latency_ms is not None:
-            metrics.vlm_inference_latency_ms.record(event.latency_ms, attrs)
-            self._agent_metrics.vlm_inference_latency_ms__avg.update(event.latency_ms)
-
-        # Record token usage
-        if event.input_tokens is not None:
-            metrics.vlm_input_tokens.add(event.input_tokens, attrs)
-            self._agent_metrics.vlm_input_tokens__total.inc(event.input_tokens)
-        if event.output_tokens is not None:
-            metrics.vlm_output_tokens.add(event.output_tokens, attrs)
-            self._agent_metrics.vlm_output_tokens__total.inc(event.output_tokens)
-
-        # Record video-specific metrics
-        if event.frames_processed > 0:
-            metrics.video_frames_processed.add(event.frames_processed, attrs)
-            self._agent_metrics.video_frames_processed__total.inc(
-                event.frames_processed
+        if self.parent is not None:
+            self.parent.on_vlm_inference(
+                provider=provider,
+                model=model,
+                latency_ms=latency_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                frames_processed=frames_processed,
+                detections=detections,
             )
-        if event.detections > 0:
-            metrics.video_detections.add(event.detections, attrs)
+            return
 
-    def _on_vlm_error(self, event: VLMErrorEvent) -> None:
-        """Handle VLM error event."""
-        attrs = self._base_attributes(event)
-        if event.error:
-            attrs["error_type"] = type(event.error).__name__
-        if event.error_code:
-            attrs["error_code"] = event.error_code
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        if model:
+            attrs["model"] = model
+        metrics.vlm_inferences.add(1, attrs)
+        if latency_ms is not None:
+            metrics.vlm_inference_latency_ms.record(latency_ms, attrs)
+        if input_tokens is not None:
+            metrics.vlm_input_tokens.add(input_tokens, attrs)
+        if output_tokens is not None:
+            metrics.vlm_output_tokens.add(output_tokens, attrs)
+        if frames_processed > 0:
+            metrics.video_frames_processed.add(frames_processed, attrs)
+        if detections > 0:
+            metrics.video_detections.add(detections, attrs)
 
+    def on_vlm_error(
+        self,
+        *,
+        provider: str | None = None,
+        error_type: str | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        """Record a VLM error."""
+        if self.parent is not None:
+            self.parent.on_vlm_error(
+                provider=provider, error_type=error_type, error_code=error_code
+            )
+            return
+
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        if error_type:
+            attrs["error_type"] = error_type
+        if error_code:
+            attrs["error_code"] = error_code
         metrics.vlm_errors.add(1, attrs)
 
     # =========================================================================
-    # Video Processor Event Handlers
+    # Video Processor
     # =========================================================================
 
-    def _subscribe_to_processor_events(self) -> None:
-        """Subscribe to video processor events from any registered processors."""
-
-        # Subscribe to agent-level events for processor events
-        # Processors emit events through the agent's event system
-        @self.agent.events.subscribe
-        async def on_detection_completed(event: VideoProcessorDetectionEvent):
-            self._on_detection_completed(event)
-
-    def _on_detection_completed(self, event: VideoProcessorDetectionEvent) -> None:
-        """Handle video detection completed event."""
-        attrs = self._base_attributes(event)
-
-        # Add model info if available
-        if event.model_id:
-            attrs["model"] = event.model_id
-
-        # Record detection count
-        if event.detection_count > 0:
-            metrics.video_detections.add(event.detection_count, attrs)
-
-        # Record frame processed
-        metrics.video_frames_processed.add(1, attrs)
-        self._agent_metrics.video_frames_processed__total.inc(1)
-
-        # Record inference latency if available
-        if event.inference_time_ms is not None:
-            metrics.video_processing_latency_ms.record(event.inference_time_ms, attrs)
-            self._agent_metrics.video_processing_latency_ms__avg.update(
-                event.inference_time_ms
+    def on_video_detection(
+        self,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        detection_count: int = 0,
+        inference_time_ms: float | None = None,
+    ) -> None:
+        """Record a video frame processed by a detection processor."""
+        self.agent_metrics.video_frames_processed__total.inc(1)
+        if inference_time_ms is not None:
+            self.agent_metrics.video_processing_latency_ms__avg.update(
+                inference_time_ms
             )
 
-    # =========================================================================
-    # Helpers
-    # =========================================================================
+        if self.parent is not None:
+            self.parent.on_video_detection(
+                provider=provider,
+                model=model,
+                detection_count=detection_count,
+                inference_time_ms=inference_time_ms,
+            )
+            return
 
-    def _base_attributes(self, event: PluginBaseEvent) -> dict:
-        """Extract base attributes from an event.
-
-        Args:
-            event: The event to extract attributes from.
-
-        Returns:
-            Dictionary of base attributes.
-        """
-        attrs = {}
-        if event.plugin_name:
-            attrs["provider"] = event.plugin_name
-        return attrs
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        if model:
+            attrs["model"] = model
+        if detection_count > 0:
+            metrics.video_detections.add(detection_count, attrs)
+        metrics.video_frames_processed.add(1, attrs)
+        if inference_time_ms is not None:
+            metrics.video_processing_latency_ms.record(inference_time_ms, attrs)

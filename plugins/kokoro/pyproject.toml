@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Kokoro TTS integration for Vision Agents"
 readme = "README.md"
 keywords = ["kokoro", "TTS", "text-to-speech", "AI", "voice agents", "agents"]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "MIT"
 dependencies = [
     "vision-agents",
@@ -27,7 +27,7 @@ source = "vcs"
 raw-options = { root = "..", search_parent_directories = true, fallback_version = "0.0.0" }
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["vision_agents"]
 
 [tool.hatch.build.targets.sdist]
 include = ["/vision_agents"]

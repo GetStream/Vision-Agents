@@ -10,14 +10,18 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import NamedTuple, Optional
 
 import click
 import setuptools
 import toml
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
-CORE_EXTRAS_ALL_SECTION = "all-plugins"
 CORE_EXTRAS_DEV_SECTION = "dev"
 CORE_PACKAGE_NAME = "agents-core"
 PLUGINS_DIR = "plugins"
@@ -59,21 +63,21 @@ def cli(ctx):
 def test_integration():
     """Run integration tests (requires secrets in place)."""
     click.echo("Running integration tests...")
-    run("uv run py.test -m integration")
+    run("uv run pytest -m integration")
 
 
 @cli.command()
 def test():
     """Run all tests except integration tests."""
     click.echo("Running unit tests...")
-    run("uv run py.test -m 'not integration'")
+    run("uv run pytest -m 'not integration'")
 
 
 @cli.command()
 def test_plugins():
     """Run plugin tests (TODO: not quite right. uv env is different for each plugin)."""
     click.echo("Running plugin tests...")
-    run("uv run py.test plugins/*/tests/*.py -m 'not integration'")
+    run("uv run pytest plugins/*/tests/*.py -m 'not integration'")
 
 
 @cli.command()
@@ -107,7 +111,6 @@ def mypy_plugins():
 
 
 class CoreDependencies(NamedTuple):
-    all: list[str]
     plugins: dict[str, list[str]]
 
 
@@ -119,7 +122,18 @@ def _cwd_is_root():
 def _get_plugin_package_name(plugin: str) -> str:
     with open(Path(PLUGINS_DIR) / Path(plugin) / "pyproject.toml", "r") as f:
         pyproject = toml.load(f)
-    return pyproject["project"]["name"]
+    return canonicalize_name(pyproject["project"]["name"])
+
+
+def _requirement_name(req: str) -> str:
+    """Canonical bare package name from a PEP 508 requirement string.
+
+    Strips version specifiers, extras, and environment markers, then
+    applies PEP 503 normalisation so ``Vision_Agents_Plugins_Tencent``
+    compares equal to ``vision-agents-plugins-tencent`` regardless of
+    case or `_` vs `-`.
+    """
+    return canonicalize_name(Requirement(req).name)
 
 
 def _get_core_optional_dependencies() -> CoreDependencies:
@@ -129,13 +143,12 @@ def _get_core_optional_dependencies() -> CoreDependencies:
     optionals: dict[str, list[str]] = pyproject.get("project", {}).get(
         "optional-dependencies", {}
     )
-    optionals_all = optionals.get(CORE_EXTRAS_ALL_SECTION, [])
     optionals_plugins = {
-        k: v
+        k: [_requirement_name(r) for r in v]
         for k, v in optionals.items()
-        if k not in (CORE_EXTRAS_ALL_SECTION, CORE_EXTRAS_DEV_SECTION)
+        if k not in (CORE_EXTRAS_DEV_SECTION,)
     }
-    return CoreDependencies(all=optionals_all, plugins=optionals_plugins)
+    return CoreDependencies(plugins=optionals_plugins)
 
 
 @cli.command(name="validate-extras")
@@ -156,20 +169,6 @@ def validate_extra_dependencies():
     # Get optional dependencies for "agents-core" package.
     core_optional_dependencies = _get_core_optional_dependencies()
 
-    # Validate that "agents-core" has "all-plugins" section in optional dependencies
-    if not core_optional_dependencies.all:
-        raise click.ClickException(
-            f'Optional dependencies for "{CORE_PACKAGE_NAME}" are missing the "{CORE_EXTRAS_ALL_SECTION}" section.'
-        )
-
-    # Validate that all available plugins are listed in "all-plugins"
-    not_included_in_all = set(plugins_packages) - set(core_optional_dependencies.all)
-    if not_included_in_all:
-        raise click.ClickException(
-            f'The following plugins are not included in the "{CORE_EXTRAS_ALL_SECTION}" '
-            f'section in "{CORE_PACKAGE_NAME}" package: {", ".join(not_included_in_all)}"'
-        )
-
     # Validate that every plugin has a dedicated section in core's optional dependencies
     plugins_sections_reversed = {
         tuple(v): k for k, v in core_optional_dependencies.plugins.items()
@@ -187,6 +186,70 @@ def validate_extra_dependencies():
             f'plugin_name = ["vision-agents-plugins-plugin-name"]'
         )
     return None
+
+
+def _workspace_members() -> list[Path]:
+    repo = Path(__file__).resolve().parent
+    with open(repo / "pyproject.toml", "r") as f:
+        data = toml.load(f)
+    members = data.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])
+    return [repo / m for m in members]
+
+
+def _requires_python(pyproj: Path) -> str:
+    with open(pyproj, "r") as f:
+        data = toml.load(f)
+    return data.get("project", {}).get("requires-python", "")
+
+
+@cli.command(name="check-python-versions")
+@click.argument("python_version")
+def check_python_versions(python_version: str):
+    """Verify every workspace member resolves on a target Python version.
+
+    For each workspace member (agents-core + every plugins/*), skip if its
+    `requires-python` excludes the target, otherwise call `uv pip compile`
+    against its pyproject.toml. Runs from a tmp dir so workspace-level
+    `[tool.uv]` overrides are bypassed; `[tool.uv.sources]` from the parent
+    workspace still applies because uv walks up from the package path.
+    """
+    target = Version(python_version)
+    ok: list[str] = []
+    skipped: list[tuple[str, str]] = []
+    failed: list[str] = []
+
+    with tempfile.TemporaryDirectory(prefix="py-compat-") as td:
+        cwd = Path(td)
+        for member in _workspace_members():
+            pyproj = member / "pyproject.toml"
+            req = _requires_python(pyproj)
+            if req and not SpecifierSet(req).contains(target, prereleases=True):
+                skipped.append((member.name, req))
+                continue
+            click.echo(f"::group::{member.name} on Python {python_version}")
+            result = subprocess.run(
+                ["uv", "pip", "compile", str(pyproj), "-p", python_version, "--quiet"],
+                cwd=cwd,
+                text=True,
+                capture_output=True,
+            )
+            sys.stdout.write(result.stdout)
+            sys.stderr.write(result.stderr)
+            click.echo("::endgroup::")
+            if result.returncode == 0:
+                ok.append(member.name)
+            else:
+                failed.append(member.name)
+
+    click.echo(f"\n=== Python {python_version} summary ===")
+    click.echo(f"OK ({len(ok)}): {', '.join(ok) or '-'}")
+    if skipped:
+        click.echo(f"Skipped ({len(skipped)}):")
+        for name, req in skipped:
+            click.echo(f"  {name} (requires {req})")
+    if failed:
+        click.echo(f"\nFAILED ({len(failed)}): {', '.join(failed)}")
+        sys.exit(1)
 
 
 @cli.command()
@@ -213,7 +276,7 @@ def check():
 
     # Run unit tests
     click.echo("\n=== 5. Unit Tests ===")
-    run("uv run py.test -m 'not integration' -n auto")
+    run("uv run pytest -m 'not integration'")
 
     click.echo("\n✅ All checks passed!")
 

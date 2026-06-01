@@ -91,4 +91,4 @@ class TTS(tts.TTS):
         Returns:
             None
         """
-        logger.info("🎤 Cartesia TTS stop requested (no-op)")
+        logger.debug("🎤 Cartesia TTS stop requested (no-op)")

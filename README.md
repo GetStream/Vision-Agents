@@ -72,7 +72,7 @@ agent = Agent(
 | **Turn Detection**       | Natural conversation flow with VAD, diarization, and smart turn-taking.                                 |
 | **Tool Calling & MCP**   | Execute code and APIs mid-conversation — Linear issues, weather, telephony, or any MCP server.          |
 | **Phone Integration**    | Inbound and outbound voice calls via Twilio with bidirectional audio streaming.                         |
-| **RAG**                  | Retrieval-augmented generation with TurboPuffer vector search or Gemini FileSearch.                     |
+| **RAG**                  | Retrieval-augmented generation with TurboPuffer/Qdrant vector search or Gemini FileSearch.                     |
 | **Memory**               | Agents recall context across turns and sessions via Stream Chat.                                        |
 | **Text Back-channel**    | Message the agent silently during a call — coaching overlays, silent instructions, etc.                 |
 | **Production Ready**     | Built-in HTTP server, Prometheus metrics, horizontal scaling, and Kubernetes deployment.                |
@@ -114,6 +114,16 @@ Check out the full docs at [VisionAgents.ai](https://visionagents.ai/).
 | <br><h3>Video Restyling and Avatars</h3>Use models like Decart Lucy to build virtual try-ons, stylized scenes, or give your agents a visual identity.<br><br>• Real-time video restyling<br>• Virtual try-on experiences<br>• Avatar-like visual presence<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/plugins/decart/example)                                                                                                    | <img src="assets/demo_gifs/mirage.gif" width="320" alt="Video Restyling Demo">           |
 | <br><h3>Custom Video Models (Roboflow, YOLO, and More)</h3>Train and run custom computer vision models for security monitoring, moderation, and other domain-specific workflows.<br><br>• Bring your own CV models<br>• Real-time moderation pipelines<br>• Security and detection use cases<br><br> [>Source Code and tutorial](https://github.com/GetStream/Vision-Agents/tree/main/examples/11_moderation_example) | <img src="assets/demo_gifs/security_camera.gif" width="320" alt="Custom Video Models Demo">          |
 | <br><h3>Tools, MCP, and Phone Calling</h3>Connect external APIs and services so agents can validate data and take real-world actions during live conversations.<br><br>• MCP and function calling support<br>• Twilio-based phone workflows<br>• Real-time fraud response automation<br><br> [>Phone + RAG example](https://github.com/GetStream/Vision-Agents/tree/main/examples/03_phone_and_rag_example) · [>Fraud workflow example](https://github.com/GetStream/Vision-Agents/tree/main/plugins/openai/examples/nemotron_example) | <img src="assets/demo_gifs/fraud_detection.gif" width="320" alt="Tools and Phone Demo"> |
+
+## Community Highlights
+
+More involved demos built by the community and the Stream team - full applications that go beyond the in-repo examples and show what's possible with Vision Agents in production.
+
+Got a demo you'd like featured? Open a PR or reach out on [Discord](https://discord.gg/RkhX9PxMS6).
+
+- [Sales Assistant Demo](https://github.com/GetStream/vision-agents-sales-assistant-demo) - a real-time AI meeting coach that lives on your desktop as a translucent macOS overlay. Built on Vision Agents and Flutter.
+- [Crashout Buddy](https://github.com/GetStream/crashout-buddy) - an emotionally aware voice agent demo built on Vision Agents and Stream Video.
+
 
 ## Development
 
