@@ -46,3 +46,31 @@ class TestDeepgramSTT:
         assert httpx_client.is_closed is False
         await stt.close()
         assert httpx_client.is_closed is True
+
+    async def test_on_message_handles_dict_turn_info(self, participant):
+        # The v2 listen socket delivers messages as plain dicts, not typed objects.
+        stt = deepgram.STT(api_key="fake")
+        stt._current_participant = participant
+
+        stt._on_message(
+            {
+                "type": "TurnInfo",
+                "event": "EndOfTurn",
+                "transcript": "hello world",
+                "end_of_turn_confidence": 0.9,
+                "audio_window_end": 1.23,
+                "words": [
+                    {"word": "hello", "confidence": 0.9},
+                    {"word": "world", "confidence": 0.8},
+                ],
+            }
+        )
+
+        items = await stt.output.collect(timeout=0)
+        await stt.close()
+
+        transcripts = [i for i in items if isinstance(i, Transcript)]
+        assert [t.text for t in transcripts] == ["hello world"]
+        assert transcripts[0].final
+        assert transcripts[0].participant == participant
+        assert any(isinstance(i, TurnEnded) for i in items)
