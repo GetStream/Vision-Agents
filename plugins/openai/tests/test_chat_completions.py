@@ -90,7 +90,7 @@ class TestChatCompletionsVLM:
         self, vlm, conversation, openai_client_mock
     ):
         openai_client_mock.chat.completions.create = AsyncMock(
-            side_effect=ValueError("test")
+            side_effect=openai.OpenAIError("test")
         )
 
         _, final = await collect_simple_response(vlm.simple_response(text="prompt"))
