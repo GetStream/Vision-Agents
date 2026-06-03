@@ -29,6 +29,7 @@ members = [
     "vision-agents-plugins-lemonslice",
     "vision-agents-plugins-liveavatar",
     "vision-agents-plugins-local",
+    "vision-agents-plugins-minimax",
     "vision-agents-plugins-mistral",
     "vision-agents-plugins-moondream",
     "vision-agents-plugins-nvidia",
@@ -6523,6 +6524,9 @@ liveavatar = [
 local = [
     { name = "vision-agents-plugins-local" },
 ]
+minimax = [
+    { name = "vision-agents-plugins-minimax" },
+]
 mistral = [
     { name = "vision-agents-plugins-mistral" },
 ]
@@ -6623,6 +6627,7 @@ requires-dist = [
     { name = "vision-agents-plugins-lemonslice", marker = "extra == 'lemonslice'", editable = "plugins/lemonslice" },
     { name = "vision-agents-plugins-liveavatar", marker = "extra == 'liveavatar'", editable = "plugins/liveavatar" },
     { name = "vision-agents-plugins-local", marker = "extra == 'local'", editable = "plugins/local" },
+    { name = "vision-agents-plugins-minimax", marker = "extra == 'minimax'", editable = "plugins/minimax" },
     { name = "vision-agents-plugins-mistral", marker = "extra == 'mistral'", editable = "plugins/mistral" },
     { name = "vision-agents-plugins-moondream", marker = "extra == 'moondream'", editable = "plugins/moondream" },
     { name = "vision-agents-plugins-moonshine", marker = "extra == 'moonshine'" },
@@ -6643,7 +6648,7 @@ requires-dist = [
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "tencent", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "tencent", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -7165,6 +7170,32 @@ requires-dist = [
     { name = "aiortc", specifier = ">=1.14.0,<1.15.0" },
     { name = "av", specifier = ">=14.2.0,<17" },
     { name = "sounddevice", specifier = ">=0.5.0" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-minimax"
+source = { editable = "plugins/minimax" }
+dependencies = [
+    { name = "openai" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "openai", specifier = ">=2.26.0,<3" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 
