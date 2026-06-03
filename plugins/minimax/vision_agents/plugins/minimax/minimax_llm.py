@@ -70,18 +70,24 @@ class MiniMaxLLM(LLM):
         super().__init__()
         self.model = model
         self._max_tokens = max_tokens
-        self._tools_max_rounds = max(tools_max_rounds, 1)
+        if tools_max_rounds < 1:
+            raise ValueError(
+                f"tools_max_rounds must be >= 1, got {tools_max_rounds}"
+            )
+        self._tools_max_rounds = tools_max_rounds
         # For tracking streaming tool calls in Chat Completions mode
         self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
 
         if client is not None:
             self._client = client
+            self._owns_client = False
         else:
             if api_key is None:
                 api_key = os.environ.get("MINIMAX_API_KEY")
             if base_url is None:
                 base_url = os.environ.get("MINIMAX_BASE_URL", DEFAULT_BASE_URL)
             self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+            self._owns_client = True
 
     async def simple_response(
         self,
@@ -128,7 +134,8 @@ class MiniMaxLLM(LLM):
             yield item
 
     async def close(self) -> None:
-        await self._client.close()
+        if self._owns_client:
+            await self._client.close()
 
     async def _build_model_request(self) -> list[dict]:
         messages: list[dict] = []
