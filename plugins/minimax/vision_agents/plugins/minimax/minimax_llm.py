@@ -71,9 +71,7 @@ class MiniMaxLLM(LLM):
         self.model = model
         self._max_tokens = max_tokens
         if tools_max_rounds < 1:
-            raise ValueError(
-                f"tools_max_rounds must be >= 1, got {tools_max_rounds}"
-            )
+            raise ValueError(f"tools_max_rounds must be >= 1, got {tools_max_rounds}")
         self._tools_max_rounds = tools_max_rounds
         # For tracking streaming tool calls in Chat Completions mode
         self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
