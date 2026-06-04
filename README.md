@@ -125,10 +125,6 @@ Got a demo you'd like featured? Open a PR or reach out on [Discord](https://disc
 - [Crashout Buddy](https://github.com/GetStream/crashout-buddy) - an emotionally aware voice agent demo built on Vision Agents and Stream Video.
 - [Cricket DRS AI](https://github.com/jaya6400/cricket-drs-ai) — AI-powered Decision Review System for 🏏 Women's Cricket using Gemini Live vision, YOLO pose detection, and real-time voice verdicts by [@jaya6400](https://github.com/jaya6400).
 
-    
-
-
-
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md)
