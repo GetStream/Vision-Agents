@@ -71,7 +71,7 @@ agent = Agent(
 | **Video Processing**     | Pluggable processor pipeline for YOLO, Roboflow, or custom PyTorch/ONNX models before/after LLM calls. |
 | **Turn Detection**       | Natural conversation flow with VAD, diarization, and smart turn-taking.                                 |
 | **Tool Calling & MCP**   | Execute code and APIs mid-conversation — Linear issues, weather, telephony, or any MCP server.          |
-| **Phone Integration**    | Inbound and outbound voice calls via Twilio with bidirectional audio streaming.                         |
+| **Phone Integration**    | Inbound and outbound voice calls via Twilio or Telnyx with bidirectional audio streaming.               |
 | **RAG**                  | Retrieval-augmented generation with TurboPuffer/Qdrant vector search or Gemini FileSearch.                     |
 | **Memory**               | Agents recall context across turns and sessions via Stream Chat.                                        |
 | **Text Back-channel**    | Message the agent silently during a call — coaching overlays, silent instructions, etc.                 |
