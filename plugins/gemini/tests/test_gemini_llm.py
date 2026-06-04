@@ -34,9 +34,7 @@ class TestGeminiLLM:
         messages2 = GeminiLLM._normalize_message(advanced)
         assert messages2[0].original is not None
 
-    async def test_convert_tools_routes_mcp_schema_to_parameters_json_schema(
-        self, llm: GeminiLLM
-    ):
+    async def test_convert_tools_routes_mcp_schema_to_parameters_json_schema(self):
         tools = [
             {
                 "name": "search_docs",
@@ -63,7 +61,7 @@ class TestGeminiLLM:
         assert schema["required"] == ["query"]
         assert schema["properties"]["query"]["type"] == "string"
 
-    async def test_convert_tools_strips_nested_schema_meta(self, llm: GeminiLLM):
+    async def test_convert_tools_strips_nested_schema_meta(self):
         tools = [
             {
                 "name": "nested",
@@ -87,6 +85,13 @@ class TestGeminiLLM:
         assert "$schema" not in schema
         assert "$schema" not in schema["properties"]["inner"]
 
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")),
+    reason="GOOGLE_API_KEY or GEMINI_API_KEY not set; skipping live integration test",
+)
+class TestGeminiLLMIntegration:
     async def test_duplicate_tool_calls_in_followup_do_not_send_empty_parts(
         self, llm: GeminiLLM
     ):
@@ -147,13 +152,6 @@ class TestGeminiLLM:
         follow_up_args, _ = fake.received[1]
         assert follow_up_args and follow_up_args[0], "follow-up parts must be non-empty"
 
-
-@pytest.mark.integration
-@pytest.mark.skipif(
-    not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")),
-    reason="GOOGLE_API_KEY or GEMINI_API_KEY not set; skipping live integration test",
-)
-class TestGeminiLLMIntegration:
     async def test_simple_response(self, llm: GeminiLLM):
         deltas, final = await collect_simple_response(
             llm.simple_response("Greet the user")
