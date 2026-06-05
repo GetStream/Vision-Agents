@@ -7185,6 +7185,7 @@ source = { editable = "plugins/minimax" }
 dependencies = [
     { name = "openai" },
     { name = "vision-agents" },
+    { name = "vision-agents-plugins-openai" },
 ]
 
 [package.dev-dependencies]
@@ -7197,6 +7198,7 @@ dev = [
 requires-dist = [
     { name = "openai", specifier = ">=2.26.0,<3" },
     { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
 ]
 
 [package.metadata.requires-dev]
