@@ -35,6 +35,7 @@ vision-agents-plugins-turbopuffer = { workspace = true }
 vision-agents-plugins-qdrant = { workspace = true }
 vision-agents-plugins-nvidia = { workspace = true }
 vision-agents-plugins-mistral = { workspace = true }
+vision-agents-plugins-minimax = { workspace = true }
 vision-agents-plugins-assemblyai = { workspace = true }
 vision-agents-plugins-local = { workspace = true }
 vision-agents-plugins-anam = { workspace = true }
@@ -83,6 +84,7 @@ members = [
     "plugins/qdrant",
     "plugins/nvidia",
     "plugins/mistral",
+    "plugins/minimax",
     "plugins/assemblyai",
     "plugins/local",
     "plugins/anam",
