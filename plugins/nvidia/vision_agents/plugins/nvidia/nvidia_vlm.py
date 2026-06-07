@@ -429,7 +429,20 @@ class NvidiaVLM(VideoLLM):
             )
             return messages, asset_ids
 
+        media_content, asset_ids = await self._upload_frame_assets(frames_bytes)
+        self._attach_frames_to_messages(messages, media_content)
+        return messages, asset_ids
+
+    async def _upload_frame_assets(
+        self, frames_bytes: list[bytes]
+    ) -> tuple[str, list[str]]:
+        """Upload frames to NVCF and return the ``<img>`` html and asset ids.
+
+        Also mirrors the ids into ``self._current_asset_ids`` so a partial
+        upload failure can still be cleaned up by the caller's ``finally``.
+        """
         logger.debug(f"Uploading {len(frames_bytes)} frames as assets")
+        asset_ids: list[str] = []
         media_content = ""
         try:
             for frame_bytes in frames_bytes:
@@ -442,9 +455,7 @@ class NvidiaVLM(VideoLLM):
                 f"Failed to upload all frames. {len(asset_ids)} assets were uploaded before failure."
             )
             raise
-
-        self._attach_frames_to_messages(messages, media_content)
-        return messages, asset_ids
+        return media_content, asset_ids
 
     @staticmethod
     def _build_inline_image_parts(encoded_frames: list[str]) -> list[dict]:
