@@ -424,14 +424,9 @@ class NvidiaVLM(VideoLLM):
 
         encoded = [base64.b64encode(b).decode("ascii") for b in frames_bytes]
         if sum(len(b) for b in encoded) < INLINE_IMAGE_SIZE_LIMIT:
-            image_parts: list[dict] = [
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                }
-                for b64 in encoded
-            ]
-            self._attach_frames_to_messages(messages, image_parts)
+            self._attach_frames_to_messages(
+                messages, self._build_inline_image_parts(encoded)
+            )
             return messages, asset_ids
 
         logger.debug(f"Uploading {len(frames_bytes)} frames as assets")
@@ -450,6 +445,17 @@ class NvidiaVLM(VideoLLM):
 
         self._attach_frames_to_messages(messages, media_content)
         return messages, asset_ids
+
+    @staticmethod
+    def _build_inline_image_parts(encoded_frames: list[str]) -> list[dict]:
+        """Build OpenAI-style ``image_url`` content parts from base64 frames."""
+        return [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+            }
+            for b64 in encoded_frames
+        ]
 
     @staticmethod
     def _attach_frames_to_messages(
