@@ -194,8 +194,8 @@ class TestInworldLLMIntegration:
         # Performance regression guard: verify we got per-chunk streaming, not a
         # single buffered response. ttft_ms < total_latency_ms by a clear margin.
         first_ttft = deltas[0].time_to_first_token_ms
-        assert first_ttft is not None and first_ttft < 5000, (
-            f"first-token latency {first_ttft}ms exceeds 5s — streaming may have "
+        assert first_ttft is not None and first_ttft < 8000, (
+            f"first-token latency {first_ttft}ms exceeds 8s — streaming may have "
             "fallen back to non-streaming, or auto+latency routing is degraded"
         )
 

@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import os
@@ -20,6 +21,10 @@ PLUGIN_NAME = "nvidia_vlm"
 
 INVOKE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVCF_ASSET_URL = "https://api.nvcf.nvidia.com/v2/nvcf/assets"
+
+# NVIDIA's documented limit for inline base64 image payloads on
+# integrate.api.nvidia.com. Above this, frames must be uploaded as NVCF assets.
+INLINE_IMAGE_SIZE_LIMIT = 180_000
 
 SUPPORTED_FORMATS = {
     "png": {"mime": "image/png", "media": "img"},
@@ -412,37 +417,52 @@ class NvidiaVLM(VideoLLM):
         frames_bytes = self._get_frames_bytes()
         asset_ids: list[str] = []
         self._current_asset_ids = []
-        media_content = ""
 
-        if frames_bytes:
-            logger.debug(f"Uploading {len(frames_bytes)} frames as assets")
-            try:
-                for frame_bytes in frames_bytes:
-                    asset_id = await self._upload_asset(frame_bytes)
-                    asset_ids.append(asset_id)
-                    self._current_asset_ids.append(asset_id)
-                    media_content += (
-                        f'<img src="data:image/jpeg;asset_id,{asset_id}" />'
-                    )
-            except Exception:
-                logger.warning(
-                    f"Failed to upload all frames. {len(asset_ids)} assets were uploaded before failure."
+        if not frames_bytes:
+            return messages, asset_ids
+
+        total_size = sum(len(b) for b in frames_bytes)
+        if total_size < INLINE_IMAGE_SIZE_LIMIT:
+            image_parts: list[dict] = []
+            for frame_bytes in frames_bytes:
+                b64 = base64.b64encode(frame_bytes).decode("ascii")
+                image_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                    }
                 )
-                raise
+            last_message = messages[-1] if messages else None
+            if last_message and last_message.get("role") == "user":
+                last_message["content"] = [
+                    {"type": "text", "text": last_message["content"]},
+                    *image_parts,
+                ]
+            else:
+                messages.append({"role": "user", "content": image_parts})
+            return messages, asset_ids
 
-            if media_content:
-                last_message = messages[-1] if messages else None
-                if last_message and last_message.get("role") == "user":
-                    last_message["content"] = (
-                        f"{last_message['content']} {media_content}".strip()
-                    )
-                else:
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": media_content.strip(),
-                        }
-                    )
+        logger.debug(f"Uploading {len(frames_bytes)} frames as assets")
+        media_content = ""
+        try:
+            for frame_bytes in frames_bytes:
+                asset_id = await self._upload_asset(frame_bytes)
+                asset_ids.append(asset_id)
+                self._current_asset_ids.append(asset_id)
+                media_content += f'<img src="data:image/jpeg;asset_id,{asset_id}" />'
+        except Exception:
+            logger.warning(
+                f"Failed to upload all frames. {len(asset_ids)} assets were uploaded before failure."
+            )
+            raise
+
+        last_message = messages[-1] if messages else None
+        if last_message and last_message.get("role") == "user":
+            last_message["content"] = (
+                f"{last_message['content']} {media_content}".strip()
+            )
+        else:
+            messages.append({"role": "user", "content": media_content.strip()})
 
         return messages, asset_ids
 
