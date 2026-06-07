@@ -423,14 +423,13 @@ class NvidiaVLM(VideoLLM):
             return messages, asset_ids
 
         encoded = [base64.b64encode(b).decode("ascii") for b in frames_bytes]
+        frames_content: list[dict] | str
         if all(len(b) < INLINE_IMAGE_SIZE_LIMIT for b in encoded):
-            self._attach_frames_to_messages(
-                messages, self._build_inline_image_parts(encoded)
-            )
-            return messages, asset_ids
+            frames_content = self._build_inline_image_parts(encoded)
+        else:
+            frames_content, asset_ids = await self._upload_frame_assets(frames_bytes)
 
-        media_content, asset_ids = await self._upload_frame_assets(frames_bytes)
-        self._attach_frames_to_messages(messages, media_content)
+        self._attach_frames_to_messages(messages, frames_content)
         return messages, asset_ids
 
     async def _upload_frame_assets(
