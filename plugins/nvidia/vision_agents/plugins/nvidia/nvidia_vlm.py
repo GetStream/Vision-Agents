@@ -22,9 +22,9 @@ PLUGIN_NAME = "nvidia_vlm"
 INVOKE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVCF_ASSET_URL = "https://api.nvcf.nvidia.com/v2/nvcf/assets"
 
-# NVIDIA's documented limit for inline base64 image payloads on
+# NVIDIA's documented per-image limit for inline base64 payloads on
 # integrate.api.nvidia.com — measured against the length of the base64-encoded
-# string. Above this, frames must be uploaded as NVCF assets.
+# string. Any frame above this must be uploaded as an NVCF asset instead.
 INLINE_IMAGE_SIZE_LIMIT = 180_000
 
 SUPPORTED_FORMATS = {
@@ -423,7 +423,7 @@ class NvidiaVLM(VideoLLM):
             return messages, asset_ids
 
         encoded = [base64.b64encode(b).decode("ascii") for b in frames_bytes]
-        if sum(len(b) for b in encoded) < INLINE_IMAGE_SIZE_LIMIT:
+        if all(len(b) < INLINE_IMAGE_SIZE_LIMIT for b in encoded):
             self._attach_frames_to_messages(
                 messages, self._build_inline_image_parts(encoded)
             )
