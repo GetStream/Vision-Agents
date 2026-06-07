@@ -23,7 +23,8 @@ INVOKE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVCF_ASSET_URL = "https://api.nvcf.nvidia.com/v2/nvcf/assets"
 
 # NVIDIA's documented limit for inline base64 image payloads on
-# integrate.api.nvidia.com. Above this, frames must be uploaded as NVCF assets.
+# integrate.api.nvidia.com — measured against the length of the base64-encoded
+# string. Above this, frames must be uploaded as NVCF assets.
 INLINE_IMAGE_SIZE_LIMIT = 180_000
 
 SUPPORTED_FORMATS = {
@@ -421,17 +422,15 @@ class NvidiaVLM(VideoLLM):
         if not frames_bytes:
             return messages, asset_ids
 
-        total_size = sum(len(b) for b in frames_bytes)
-        if total_size < INLINE_IMAGE_SIZE_LIMIT:
-            image_parts: list[dict] = []
-            for frame_bytes in frames_bytes:
-                b64 = base64.b64encode(frame_bytes).decode("ascii")
-                image_parts.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                    }
-                )
+        encoded = [base64.b64encode(b).decode("ascii") for b in frames_bytes]
+        if sum(len(b) for b in encoded) < INLINE_IMAGE_SIZE_LIMIT:
+            image_parts: list[dict] = [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                }
+                for b64 in encoded
+            ]
             last_message = messages[-1] if messages else None
             if last_message and last_message.get("role") == "user":
                 last_message["content"] = [
