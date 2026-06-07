@@ -431,14 +431,7 @@ class NvidiaVLM(VideoLLM):
                 }
                 for b64 in encoded
             ]
-            last_message = messages[-1] if messages else None
-            if last_message and last_message.get("role") == "user":
-                last_message["content"] = [
-                    {"type": "text", "text": last_message["content"]},
-                    *image_parts,
-                ]
-            else:
-                messages.append({"role": "user", "content": image_parts})
+            self._attach_frames_to_messages(messages, image_parts)
             return messages, asset_ids
 
         logger.debug(f"Uploading {len(frames_bytes)} frames as assets")
@@ -455,15 +448,33 @@ class NvidiaVLM(VideoLLM):
             )
             raise
 
+        self._attach_frames_to_messages(messages, media_content)
+        return messages, asset_ids
+
+    @staticmethod
+    def _attach_frames_to_messages(
+        messages: list[dict], frames_content: list[dict] | str
+    ) -> None:
+        """Attach frame content to the latest user message, or append a new one.
+
+        ``frames_content`` is either a list of OpenAI-style image parts (inline
+        path) or an html string of ``<img>`` tags referencing NVCF assets.
+        """
         last_message = messages[-1] if messages else None
         if last_message and last_message.get("role") == "user":
-            last_message["content"] = (
-                f"{last_message['content']} {media_content}".strip()
-            )
+            existing_text = last_message["content"]
+            if isinstance(frames_content, list):
+                last_message["content"] = [
+                    {"type": "text", "text": existing_text},
+                    *frames_content,
+                ]
+            else:
+                last_message["content"] = f"{existing_text} {frames_content}".strip()
         else:
-            messages.append({"role": "user", "content": media_content.strip()})
-
-        return messages, asset_ids
+            if isinstance(frames_content, str):
+                messages.append({"role": "user", "content": frames_content.strip()})
+            else:
+                messages.append({"role": "user", "content": frames_content})
 
     async def close(self) -> None:
         """Close the HTTP client if we own it."""
