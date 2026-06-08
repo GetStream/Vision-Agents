@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import os
@@ -20,6 +21,11 @@ PLUGIN_NAME = "nvidia_vlm"
 
 INVOKE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVCF_ASSET_URL = "https://api.nvcf.nvidia.com/v2/nvcf/assets"
+
+# NVIDIA's documented per-image limit for inline base64 payloads on
+# integrate.api.nvidia.com — measured against the length of the base64-encoded
+# string. Any frame above this must be uploaded as an NVCF asset instead.
+INLINE_IMAGE_SIZE_LIMIT = 180_000
 
 SUPPORTED_FORMATS = {
     "png": {"mime": "image/png", "media": "img"},
@@ -412,39 +418,80 @@ class NvidiaVLM(VideoLLM):
         frames_bytes = self._get_frames_bytes()
         asset_ids: list[str] = []
         self._current_asset_ids = []
-        media_content = ""
 
-        if frames_bytes:
-            logger.debug(f"Uploading {len(frames_bytes)} frames as assets")
-            try:
-                for frame_bytes in frames_bytes:
-                    asset_id = await self._upload_asset(frame_bytes)
-                    asset_ids.append(asset_id)
-                    self._current_asset_ids.append(asset_id)
-                    media_content += (
-                        f'<img src="data:image/jpeg;asset_id,{asset_id}" />'
-                    )
-            except Exception:
-                logger.warning(
-                    f"Failed to upload all frames. {len(asset_ids)} assets were uploaded before failure."
-                )
-                raise
+        if not frames_bytes:
+            return messages, asset_ids
 
-            if media_content:
-                last_message = messages[-1] if messages else None
-                if last_message and last_message.get("role") == "user":
-                    last_message["content"] = (
-                        f"{last_message['content']} {media_content}".strip()
-                    )
-                else:
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": media_content.strip(),
-                        }
-                    )
+        encoded = [base64.b64encode(b).decode("ascii") for b in frames_bytes]
+        every_frame_fits_inline = all(len(b) < INLINE_IMAGE_SIZE_LIMIT for b in encoded)
+        frames_content: list[dict] | str
+        if every_frame_fits_inline:
+            frames_content = self._build_inline_image_parts(encoded)
+        else:
+            frames_content, asset_ids = await self._upload_frame_assets(frames_bytes)
 
+        self._attach_frames_to_messages(messages, frames_content)
         return messages, asset_ids
+
+    async def _upload_frame_assets(
+        self, frames_bytes: list[bytes]
+    ) -> tuple[str, list[str]]:
+        """Upload frames to NVCF and return the ``<img>`` html and asset ids.
+
+        Also mirrors the ids into ``self._current_asset_ids`` so a partial
+        upload failure can still be cleaned up by the caller's ``finally``.
+        """
+        logger.debug(f"Uploading {len(frames_bytes)} frames as assets")
+        asset_ids: list[str] = []
+        media_content = ""
+        try:
+            for frame_bytes in frames_bytes:
+                asset_id = await self._upload_asset(frame_bytes)
+                asset_ids.append(asset_id)
+                self._current_asset_ids.append(asset_id)
+                media_content += f'<img src="data:image/jpeg;asset_id,{asset_id}" />'
+        except Exception:
+            logger.warning(
+                f"Failed to upload all frames. {len(asset_ids)} assets were uploaded before failure."
+            )
+            raise
+        return media_content, asset_ids
+
+    @staticmethod
+    def _build_inline_image_parts(encoded_frames: list[str]) -> list[dict]:
+        """Build OpenAI-style ``image_url`` content parts from base64 frames."""
+        return [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+            }
+            for b64 in encoded_frames
+        ]
+
+    @staticmethod
+    def _attach_frames_to_messages(
+        messages: list[dict], frames_content: list[dict] | str
+    ) -> None:
+        """Attach frame content to the latest user message, or append a new one.
+
+        ``frames_content`` is either a list of OpenAI-style image parts (inline
+        path) or an html string of ``<img>`` tags referencing NVCF assets.
+        """
+        last_message = messages[-1] if messages else None
+        if last_message and last_message.get("role") == "user":
+            existing_text = last_message["content"]
+            if isinstance(frames_content, list):
+                last_message["content"] = [
+                    {"type": "text", "text": existing_text},
+                    *frames_content,
+                ]
+            else:
+                last_message["content"] = f"{existing_text} {frames_content}".strip()
+        else:
+            if isinstance(frames_content, str):
+                messages.append({"role": "user", "content": frames_content.strip()})
+            else:
+                messages.append({"role": "user", "content": frames_content})
 
     async def close(self) -> None:
         """Close the HTTP client if we own it."""
