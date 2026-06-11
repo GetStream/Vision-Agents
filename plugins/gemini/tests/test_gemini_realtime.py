@@ -29,7 +29,11 @@ from vision_agents.core.llm.realtime import (
     RealtimeUserTranscript,
 )
 from vision_agents.plugins.gemini import Realtime
-from vision_agents.plugins.gemini.gemini_realtime import GeminiRealtime
+from vision_agents.plugins.gemini.gemini_realtime import (
+    DEFAULT_MODEL,
+    LIVE_TRANSLATE_MODEL,
+    GeminiRealtime,
+)
 from websockets.frames import Close
 
 # Load environment variables
@@ -53,6 +57,29 @@ def _make_realtime() -> GeminiRealtime:
     with patch("vision_agents.plugins.gemini.gemini_realtime.genai"):
         rt = GeminiRealtime(api_key="fake-key")
     return rt
+
+
+class TestGeminiRealtimeInputPacing:
+    def test_default_model_and_live_translate_pacing_policy(self):
+        with patch("vision_agents.plugins.gemini.gemini_realtime.genai"):
+            default_rt = GeminiRealtime(api_key="fake-key")
+            translate_rt = GeminiRealtime(
+                model=LIVE_TRANSLATE_MODEL,
+                api_key="fake-key",
+            )
+            translate_opt_out = GeminiRealtime(
+                model=LIVE_TRANSLATE_MODEL,
+                api_key="fake-key",
+                input_audio_pacing=None,
+            )
+
+        assert DEFAULT_MODEL == "gemini-3.1-flash-live-preview"
+        assert LIVE_TRANSLATE_MODEL == "gemini-3.5-live-translate-preview"
+        assert default_rt._input_audio_pacer is None
+        assert translate_rt._input_audio_pacer is not None
+        assert translate_rt._input_audio_pacer.config.silence_when_empty
+        assert translate_rt._input_audio_pacer.config.startup_buffer_ms == 500
+        assert translate_opt_out._input_audio_pacer is None
 
 
 class TestGeminiRealtimeProcessEvents:
