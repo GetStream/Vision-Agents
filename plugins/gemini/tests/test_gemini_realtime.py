@@ -1,6 +1,6 @@
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 import websockets
@@ -52,26 +52,27 @@ def _make_session(messages: list[LiveServerMessage]) -> AsyncMock:
     return session
 
 
+def _fake_client() -> Any:
+    return object()
+
+
 def _make_realtime() -> GeminiRealtime:
     """Create a GeminiRealtime instance without connecting."""
-    with patch("vision_agents.plugins.gemini.gemini_realtime.genai"):
-        rt = GeminiRealtime(api_key="fake-key")
-    return rt
+    return GeminiRealtime(client=_fake_client())
 
 
 class TestGeminiRealtimeInputPacing:
     def test_default_model_and_live_translate_pacing_policy(self):
-        with patch("vision_agents.plugins.gemini.gemini_realtime.genai"):
-            default_rt = GeminiRealtime(api_key="fake-key")
-            translate_rt = GeminiRealtime(
-                model=LIVE_TRANSLATE_MODEL,
-                api_key="fake-key",
-            )
-            translate_opt_out = GeminiRealtime(
-                model=LIVE_TRANSLATE_MODEL,
-                api_key="fake-key",
-                input_audio_pacing=None,
-            )
+        default_rt = GeminiRealtime(client=_fake_client())
+        translate_rt = GeminiRealtime(
+            model=LIVE_TRANSLATE_MODEL,
+            client=_fake_client(),
+        )
+        translate_opt_out = GeminiRealtime(
+            model=LIVE_TRANSLATE_MODEL,
+            client=_fake_client(),
+            input_audio_pacing=None,
+        )
 
         assert DEFAULT_MODEL == "gemini-3.1-flash-live-preview"
         assert LIVE_TRANSLATE_MODEL == "gemini-3.5-live-translate-preview"

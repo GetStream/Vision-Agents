@@ -60,6 +60,7 @@ class AudioInputPacer:
         self.chunks_sent = 0
         self.silence_chunks_sent = 0
         self.pauses = 0
+        self._generation = 0
 
     async def push(self, pcm: PcmData, participant: Participant | None) -> None:
         """Add audio to the pacing buffer, resampling to the configured format."""
@@ -79,6 +80,7 @@ class AudioInputPacer:
             self._task = asyncio.create_task(self._run())
 
     def clear(self) -> None:
+        self._generation += 1
         self._streaming = False
         self._participant = None
         self._queue.clear()
@@ -113,8 +115,11 @@ class AudioInputPacer:
                 if not self._ready_to_send():
                     continue
 
+                generation = self._generation
                 chunk = await self._next_chunk()
                 if chunk is None:
+                    continue
+                if generation != self._generation:
                     continue
 
                 try:

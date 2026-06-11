@@ -10,6 +10,7 @@ from vision_agents.core.utils.audio_input_pacer import (
     AudioInputPacer,
     AudioInputPacingConfig,
 )
+from vision_agents.core.utils.audio_queue import AudioQueue
 
 from tests.base_test import BaseTest
 
@@ -63,6 +64,24 @@ class _RealtimeForPacingTest(Realtime):
         self._on_disconnected()
 
 
+class _ClearingAudioQueue(AudioQueue):
+    def __init__(self, pacer: AudioInputPacer, chunk: PcmData) -> None:
+        super().__init__(buffer_limit_ms=100)
+        self._pacer = pacer
+        self._chunk = chunk
+        self.was_cleared = False
+
+    def clear(self) -> None:
+        self.was_cleared = True
+
+    def get_buffer_info(self) -> dict:
+        return {"current_duration_ms": 0 if self.was_cleared else 10}
+
+    async def get_duration(self, duration_ms: float) -> PcmData:
+        self._pacer.clear()
+        return self._chunk
+
+
 class TestAudioInputPacer(BaseTest):
     async def test_realtime_process_audio_uses_configured_pacer(self):
         participant = Participant(original=None, user_id="u", id="u")
@@ -114,5 +133,31 @@ class TestAudioInputPacer(BaseTest):
             sent_after_clear = len(sent)
             await asyncio.sleep(0.02)
             assert len(sent) == sent_after_clear
+        finally:
+            await pacer.close()
+
+    async def test_clear_during_chunk_fetch_drops_stale_chunk(self):
+        sent: list[PcmData] = []
+
+        async def send(pcm: PcmData, participant):
+            sent.append(pcm)
+
+        pacer = AudioInputPacer(
+            AudioInputPacingConfig(
+                chunk_ms=5,
+                startup_buffer_ms=5,
+                max_buffer_ms=100,
+            ),
+            send,
+        )
+        queue = _ClearingAudioQueue(pacer, _pcm(4, 5))
+        pacer._queue = queue
+
+        try:
+            pacer.start()
+            await _wait_until(lambda: queue.was_cleared)
+            await asyncio.sleep(0.02)
+            assert sent == []
+            assert pacer.chunks_sent == 0
         finally:
             await pacer.close()
