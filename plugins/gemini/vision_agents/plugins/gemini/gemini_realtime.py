@@ -50,7 +50,8 @@ from .file_search import FileSearchStore
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
+DEFAULT_MODEL = "gemini-3.1-flash-live-preview"
+LIVE_TRANSLATE_MODEL = "gemini-3.5-live-translate-preview"
 
 DEFAULT_CONFIG = LiveConnectConfigDict(
     response_modalities=[Modality.AUDIO],
@@ -72,7 +73,6 @@ DEFAULT_CONFIG = LiveConnectConfigDict(
             prefix_padding_ms=50,
         ),
     ),
-    enable_affective_dialog=False,
     context_window_compression=ContextWindowCompressionConfigDict(
         trigger_tokens=25600,
         sliding_window=SlidingWindowDict(target_tokens=12800),
@@ -117,6 +117,10 @@ def _classify_loop_error(exc: Exception) -> tuple[str, str, bool]:
             return STOP, f"API error code {code}", False
 
     return RETRY, str(exc), False
+
+
+def _needs_input_audio_pacing(model: str) -> bool:
+    return model.lower() == LIVE_TRANSLATE_MODEL
 
 
 class GeminiRealtime(realtime.Realtime):
@@ -170,6 +174,11 @@ class GeminiRealtime(realtime.Realtime):
                 See: https://ai.google.dev/gemini-api/docs/file-search
             **kwargs: Additional arguments passed to parent class.
         """
+        if "input_audio_pacing" not in kwargs and _needs_input_audio_pacing(model):
+            kwargs["input_audio_pacing"] = (
+                realtime.AudioInputPacingConfig.virtual_microphone()
+            )
+
         super().__init__(**kwargs)
         self.model = model
         self.connected: bool = False
@@ -358,6 +367,7 @@ class GeminiRealtime(realtime.Realtime):
 
         """
         self._on_disconnected()
+        await self._close_input_audio_pacer()
 
         await self.stop_watching_video_track()
 

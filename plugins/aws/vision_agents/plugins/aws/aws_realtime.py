@@ -824,6 +824,7 @@ class Realtime(realtime.Realtime, Warmable[SileroVADSessionPool]):
         await self.content_end(content_name)
 
     async def close(self):
+        await self._close_input_audio_pacer()
         if not self.connected:
             return
 
