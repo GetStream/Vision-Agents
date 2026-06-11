@@ -1,5 +1,5 @@
 from .llm import LLM, AudioLLM, VideoLLM, OmniLLM
-from .realtime import Realtime
+from .realtime import Realtime, AudioInputPacingConfig
 from .function_registry import FunctionRegistry, function_registry
 
 __all__ = [
@@ -8,6 +8,7 @@ __all__ = [
     "VideoLLM",
     "OmniLLM",
     "Realtime",
+    "AudioInputPacingConfig",
     "FunctionRegistry",
     "function_registry",
 ]
