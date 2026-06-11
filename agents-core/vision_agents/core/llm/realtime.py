@@ -202,6 +202,9 @@ class Realtime(OmniLLM):
     ) -> None:
         if not self.connected:
             return
+        participant = participant or self._current_participant
+        if participant is None:
+            return
         await self.simple_audio_response(pcm, participant)
 
     def _clear_input_audio_pacer(self) -> None:
