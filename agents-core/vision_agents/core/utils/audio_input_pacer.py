@@ -45,11 +45,11 @@ class AudioInputPacer(DirectInput):
 
     def __init__(
         self,
-        host: AudioLLM,
+        audio_llm: AudioLLM,
         config: AudioInputPacingConfig,
         name: str = "audio_input_pacer",
     ) -> None:
-        super().__init__(host)
+        super().__init__(audio_llm)
         self.config = config
         self._name = name
         self._queue = AudioQueue(buffer_limit_ms=int(config.max_buffer_ms))
