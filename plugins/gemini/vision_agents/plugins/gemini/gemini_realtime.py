@@ -367,7 +367,7 @@ class GeminiRealtime(realtime.Realtime):
 
         """
         self._on_disconnected()
-        await self._close_input_audio()
+        await self._close_audio_input()
 
         await self.stop_watching_video_track()
 

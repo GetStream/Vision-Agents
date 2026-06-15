@@ -6,7 +6,7 @@ from getstream.video.rtc.track_util import PcmData
 
 from ..edge.types import Participant
 from ..llm.llm import AudioLLM
-from .audio_input_direct import DirectInput
+from .audio_input_direct import AudioInputDirect
 from .audio_queue import AudioQueue
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ class AudioInputPacingConfig:
             raise ValueError("max_buffer_ms must be at least startup_buffer_ms")
 
 
-class AudioInputPacer(DirectInput):
+class AudioInputPacer(AudioInputDirect):
     """Buffers input audio and forwards it at a stable wall-clock cadence."""
 
     def __init__(

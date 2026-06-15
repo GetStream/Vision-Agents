@@ -20,7 +20,7 @@ from vision_agents.core.utils.audio_input_pacer import (
     AudioInputPacingConfig,
 )
 from vision_agents.core.utils.audio_input_processor import AudioInputProcessor
-from vision_agents.core.utils.audio_input_direct import DirectInput
+from vision_agents.core.utils.audio_input_direct import AudioInputDirect
 from vision_agents.core.utils.stream import Stream
 
 logger = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ class Realtime(OmniLLM):
                 name=f"{self.provider_name}_input_pacer",
             )
             if input_audio_pacing is not None
-            else DirectInput(self)
+            else AudioInputDirect(self)
         )
 
         # Background tool tasks — tracked to prevent GC and awaited on close
@@ -193,7 +193,7 @@ class Realtime(OmniLLM):
         self._current_participant = participant
         await self._audio_input_processor.process_audio(pcm, participant)
 
-    async def _close_input_audio(self) -> None:
+    async def _close_audio_input(self) -> None:
         await self._audio_input_processor.close()
 
     async def stop_watching_video_track(self) -> None:

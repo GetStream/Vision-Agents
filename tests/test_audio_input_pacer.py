@@ -60,7 +60,7 @@ class _RealtimeForPacingTest(Realtime):
         pass
 
     async def close(self) -> None:
-        await self._close_input_audio()
+        await self._close_audio_input()
         self._on_disconnected()
 
 

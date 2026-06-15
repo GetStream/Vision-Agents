@@ -5,7 +5,7 @@ from ..llm.llm import AudioLLM
 from .audio_input_processor import AudioInputProcessor
 
 
-class DirectInput(AudioInputProcessor):
+class AudioInputDirect(AudioInputProcessor):
     """Forward every PCM chunk straight to the audio LLM's provider.
 
     Subclasses may override `process_audio` to add buffering/pacing and call
