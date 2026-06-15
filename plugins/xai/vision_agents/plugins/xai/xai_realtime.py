@@ -324,6 +324,7 @@ class XAIRealtime(realtime.Realtime):
     async def close(self):
         """Close the connection and clean up resources."""
         self._on_disconnected()
+        await self._close_audio_input()
 
         await self._await_pending_tools()
 
