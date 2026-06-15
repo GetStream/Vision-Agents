@@ -87,6 +87,7 @@ anam = ["vision-agents-plugins-anam"]
 sarvam = ["vision-agents-plugins-sarvam"]
 liveavatar = ["vision-agents-plugins-liveavatar"]
 tencent = ["vision-agents-plugins-tencent; sys_platform == 'linux'"]
+minimax = ["vision-agents-plugins-minimax"]
 
 
 [tool.hatch.metadata]

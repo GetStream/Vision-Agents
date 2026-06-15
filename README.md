@@ -79,7 +79,7 @@ agent = Agent(
 
 ## Out-of-the-Box Integrations
 
-**LLMs:** [OpenAI](https://visionagents.ai/integrations/openai) · [Gemini](https://visionagents.ai/integrations/gemini) · [xAI](https://visionagents.ai/integrations/xai) · [OpenRouter](https://visionagents.ai/integrations/openrouter) · [Hugging Face](https://visionagents.ai/integrations/huggingface) · [Kimi AI](https://visionagents.ai/integrations/kimi)
+**LLMs:** [OpenAI](https://visionagents.ai/integrations/openai) · [Gemini](https://visionagents.ai/integrations/gemini) · [xAI](https://visionagents.ai/integrations/xai) · [OpenRouter](https://visionagents.ai/integrations/openrouter) · [Hugging Face](https://visionagents.ai/integrations/huggingface) · [Kimi AI](https://visionagents.ai/integrations/kimi) · [MiniMax](https://visionagents.ai/integrations/minimax)
 
 **Realtime:** [OpenAI Realtime](https://visionagents.ai/integrations/openai) · [Gemini Live](https://visionagents.ai/integrations/gemini) · [AWS Nova Sonic](https://visionagents.ai/integrations/aws-bedrock) · [Qwen](https://visionagents.ai/integrations/qwen) · [Inworld](https://visionagents.ai/integrations/inworld)
 
@@ -123,7 +123,7 @@ Got a demo you'd like featured? Open a PR or reach out on [Discord](https://disc
 
 - [Sales Assistant Demo](https://github.com/GetStream/vision-agents-sales-assistant-demo) - a real-time AI meeting coach that lives on your desktop as a translucent macOS overlay. Built on Vision Agents and Flutter.
 - [Crashout Buddy](https://github.com/GetStream/crashout-buddy) - an emotionally aware voice agent demo built on Vision Agents and Stream Video.
-
+- [Cricket DRS AI](https://github.com/jaya6400/cricket-drs-ai) — AI-powered Decision Review System for 🏏 Women's Cricket using Gemini Live vision, YOLO pose detection, and real-time voice verdicts by [@jaya6400](https://github.com/jaya6400).
 
 ## Development
 
