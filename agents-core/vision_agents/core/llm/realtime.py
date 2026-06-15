@@ -103,8 +103,6 @@ class Realtime(OmniLLM):
         input_audio_pacing: AudioInputPacingConfig | None = None,
     ):
         super().__init__()
-        self.connected = False
-
         self.session_id = str(uuid.uuid4())
         self.fps = fps
         # Store current participant for user speech transcription events

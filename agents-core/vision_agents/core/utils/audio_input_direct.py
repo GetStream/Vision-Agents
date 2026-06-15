@@ -1,7 +1,8 @@
 from getstream.video.rtc.track_util import PcmData
 
 from ..edge.types import Participant
-from .audio_input_sender import AudioInputHost, AudioInputSender
+from ..llm.llm import AudioLLM
+from .audio_input_sender import AudioInputSender
 
 
 class DirectInput(AudioInputSender):
@@ -11,7 +12,7 @@ class DirectInput(AudioInputSender):
     `super().send(...)` to deliver each chunk through the default path.
     """
 
-    def __init__(self, host: AudioInputHost) -> None:
+    def __init__(self, host: AudioLLM) -> None:
         self._host = host
 
     async def send(self, pcm: PcmData, participant: Participant | None) -> None:

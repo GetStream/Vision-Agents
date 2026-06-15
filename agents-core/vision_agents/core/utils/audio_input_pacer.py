@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from getstream.video.rtc.track_util import PcmData
 
 from ..edge.types import Participant
-from .audio_input_sender import AudioInputHost
+from ..llm.llm import AudioLLM
 from .audio_input_direct import DirectInput
 from .audio_queue import AudioQueue
 
@@ -45,7 +45,7 @@ class AudioInputPacer(DirectInput):
 
     def __init__(
         self,
-        host: AudioInputHost,
+        host: AudioLLM,
         config: AudioInputPacingConfig,
         name: str = "audio_input_pacer",
     ) -> None:
