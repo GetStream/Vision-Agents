@@ -29,7 +29,7 @@ from vision_agents.core.llm.realtime import (
     RealtimeUserTranscript,
 )
 from vision_agents.core.utils.audio_input_pacer import AudioInputPacer
-from vision_agents.core.utils.audio_input_sender import DirectInput
+from vision_agents.core.utils.audio_input_direct import DirectInput
 from vision_agents.plugins.gemini import Realtime
 from vision_agents.plugins.gemini.gemini_realtime import (
     DEFAULT_MODEL,

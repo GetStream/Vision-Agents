@@ -19,10 +19,8 @@ from vision_agents.core.utils.audio_input_pacer import (
     AudioInputPacer,
     AudioInputPacingConfig,
 )
-from vision_agents.core.utils.audio_input_sender import (
-    AudioInputSender,
-    DirectInput,
-)
+from vision_agents.core.utils.audio_input_sender import AudioInputSender
+from vision_agents.core.utils.audio_input_direct import DirectInput
 from vision_agents.core.utils.stream import Stream
 
 logger = logging.getLogger(__name__)

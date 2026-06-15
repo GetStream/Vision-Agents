@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from getstream.video.rtc.track_util import PcmData
 
 from ..edge.types import Participant
-from .audio_input_sender import AudioInputHost, DirectInput
+from .audio_input_sender import AudioInputHost
+from .audio_input_direct import DirectInput
 from .audio_queue import AudioQueue
 
 logger = logging.getLogger(__name__)
