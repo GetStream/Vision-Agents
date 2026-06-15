@@ -19,6 +19,8 @@ from vision_agents.core.utils.audio_input_pacer import (
     AudioInputPacer,
     AudioInputPacingConfig,
 )
+from vision_agents.core.utils.audio_input_processor import AudioInputProcessor
+from vision_agents.core.utils.audio_input_direct import AudioInputDirect
 from vision_agents.core.utils.stream import Stream
 
 logger = logging.getLogger(__name__)
@@ -101,21 +103,20 @@ class Realtime(OmniLLM):
         input_audio_pacing: AudioInputPacingConfig | None = None,
     ):
         super().__init__()
-        self.connected = False
-
         self.session_id = str(uuid.uuid4())
         self.fps = fps
-        self._input_audio_pacer: AudioInputPacer | None = (
+        # Store current participant for user speech transcription events
+        self._current_participant: Participant | None = None
+
+        self._audio_input_processor: AudioInputProcessor = (
             AudioInputPacer(
+                self,
                 input_audio_pacing,
-                self._send_paced_audio,
                 name=f"{self.provider_name}_input_pacer",
             )
             if input_audio_pacing is not None
-            else None
+            else AudioInputDirect(self)
         )
-        # Store current participant for user speech transcription events
-        self._current_participant: Participant | None = None
 
         # Background tool tasks — tracked to prevent GC and awaited on close
         self._tool_tasks: set[asyncio.Task[None]] = set()
@@ -167,7 +168,7 @@ class Realtime(OmniLLM):
         """Increment epoch so stale audio output events are discarded."""
         self._epoch += 1
         self._current_participant = None
-        self._clear_input_audio_pacer()
+        self._audio_input_processor.clear()
         self._output.clear()
 
     def _run_tool_in_background(self, coro: Coroutine[None, None, None]) -> None:
@@ -190,30 +191,10 @@ class Realtime(OmniLLM):
 
     async def process_audio(self, pcm: PcmData, participant: Participant) -> None:
         self._current_participant = participant
-        if self._input_audio_pacer is not None:
-            if not self.connected:
-                return
-            await self._input_audio_pacer.push(pcm, participant)
-            return
-        await self.simple_audio_response(pcm, participant)
+        await self._audio_input_processor.process_audio(pcm, participant)
 
-    async def _send_paced_audio(
-        self, pcm: PcmData, participant: Participant | None
-    ) -> None:
-        if not self.connected:
-            return
-        participant = participant or self._current_participant
-        if participant is None:
-            return
-        await self.simple_audio_response(pcm, participant)
-
-    def _clear_input_audio_pacer(self) -> None:
-        if self._input_audio_pacer is not None:
-            self._input_audio_pacer.clear()
-
-    async def _close_input_audio_pacer(self) -> None:
-        if self._input_audio_pacer is not None:
-            await self._input_audio_pacer.close()
+    async def _close_audio_input(self) -> None:
+        await self._audio_input_processor.close()
 
     async def stop_watching_video_track(self) -> None:
         """Optionally overridden by providers that support video input."""
@@ -238,7 +219,7 @@ class Realtime(OmniLLM):
     def _on_disconnected(self, reason: str | None = None, clean: bool = True):
         """Mark the session disconnected and emit RealtimeDisconnectedEvent."""
         self.connected = False
-        self._clear_input_audio_pacer()
+        self._audio_input_processor.clear()
         self.events.send(
             RealtimeDisconnectedEvent(
                 plugin_name=self.provider_name,

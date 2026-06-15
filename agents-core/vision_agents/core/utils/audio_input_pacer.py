@@ -1,16 +1,15 @@
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from getstream.video.rtc.track_util import PcmData
 
 from ..edge.types import Participant
+from ..llm.llm import AudioLLM
+from .audio_input_direct import AudioInputDirect
 from .audio_queue import AudioQueue
 
 logger = logging.getLogger(__name__)
-
-AudioInputSender = Callable[[PcmData, Participant | None], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -41,17 +40,17 @@ class AudioInputPacingConfig:
             raise ValueError("max_buffer_ms must be at least startup_buffer_ms")
 
 
-class AudioInputPacer:
+class AudioInputPacer(AudioInputDirect):
     """Buffers input audio and forwards it at a stable wall-clock cadence."""
 
     def __init__(
         self,
+        audio_llm: AudioLLM,
         config: AudioInputPacingConfig,
-        send: AudioInputSender,
         name: str = "audio_input_pacer",
     ) -> None:
+        super().__init__(audio_llm)
         self.config = config
-        self._send = send
         self._name = name
         self._queue = AudioQueue(buffer_limit_ms=int(config.max_buffer_ms))
         self._task: asyncio.Task[None] | None = None
@@ -62,7 +61,9 @@ class AudioInputPacer:
         self.pauses = 0
         self._generation = 0
 
-    async def push(self, pcm: PcmData, participant: Participant | None) -> None:
+    async def process_audio(
+        self, pcm: PcmData, participant: Participant | None
+    ) -> None:
         """Add audio to the pacing buffer, resampling to the configured format."""
         self.start()
         self._participant = participant
@@ -122,8 +123,10 @@ class AudioInputPacer:
                 if generation != self._generation:
                     continue
 
+                if not self._audio_llm.connected:
+                    continue
                 try:
-                    await self._send(chunk, chunk.participant)
+                    await super().process_audio(chunk, chunk.participant)
                 except Exception:
                     logger.exception("%s send failed", self._name)
                     continue
@@ -139,8 +142,6 @@ class AudioInputPacer:
                         self.pauses,
                         self.buffered_ms(),
                     )
-        except asyncio.CancelledError:
-            raise
         except Exception:
             logger.exception("%s stopped unexpectedly", self._name)
 

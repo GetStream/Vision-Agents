@@ -225,6 +225,7 @@ class AudioQueue:
                         sample_rate=item.sample_rate,
                         format=item.format,
                         channels=item.channels,
+                        participant=item.participant,
                     )
                     self._buffer.appendleft(remainder)
                     self._total_samples += len(remainder.samples)
