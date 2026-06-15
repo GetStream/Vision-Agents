@@ -109,7 +109,6 @@ class TestAudioInputPacer(BaseTest):
         participant = Participant(original=None, user_id="u", id="u")
         realtime = _RealtimeForPacingTest()
         await realtime.connect()
-        realtime._current_participant = participant
         pacer = AudioInputPacer(
             realtime,
             AudioInputPacingConfig(
@@ -139,7 +138,6 @@ class TestAudioInputPacer(BaseTest):
         participant = Participant(original=None, user_id="u", id="u")
         realtime = _RealtimeForPacingTest()
         await realtime.connect()
-        realtime._current_participant = participant
         pacer = AudioInputPacer(
             realtime,
             AudioInputPacingConfig(

@@ -3,38 +3,43 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from getstream.video.rtc.track_util import PcmData
 
 from ..edge.types import Participant
 from .audio_queue import AudioQueue
 
-if TYPE_CHECKING:
-    from ..llm.realtime import Realtime
-
 logger = logging.getLogger(__name__)
 
 AudioInputSender = Callable[[PcmData, Participant | None], Awaitable[None]]
 
 
+class AudioInputHost(Protocol):
+    """Structural contract that InputAudioStrategy needs from its host."""
+
+    connected: bool
+
+    async def simple_audio_response(
+        self, pcm: PcmData, participant: Participant
+    ) -> None: ...
+
+
 class InputAudioStrategy(ABC):
     """Handler for the input-audio path between Realtime.process_audio and the provider."""
 
-    def __init__(self, realtime: "Realtime") -> None:
-        self._realtime = realtime
+    def __init__(self, host: AudioInputHost) -> None:
+        self._host = host
 
     @abstractmethod
     async def send(self, pcm: PcmData, participant: Participant | None) -> None: ...
 
     async def _send(self, pcm: PcmData, participant: Participant | None) -> None:
-        rt = self._realtime
-        if not rt.connected:
+        if not self._host.connected:
             return
-        participant = participant or rt._current_participant
         if participant is None:
             return
-        await rt.simple_audio_response(pcm, participant)
+        await self._host.simple_audio_response(pcm, participant)
 
     def clear(self) -> None:
         pass
@@ -85,11 +90,11 @@ class AudioInputPacer(InputAudioStrategy):
 
     def __init__(
         self,
-        realtime: "Realtime",
+        host: AudioInputHost,
         config: AudioInputPacingConfig,
         name: str = "audio_input_pacer",
     ) -> None:
-        super().__init__(realtime)
+        super().__init__(host)
         self.config = config
         self._name = name
         self._queue = AudioQueue(buffer_limit_ms=int(config.max_buffer_ms))
