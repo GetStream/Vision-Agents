@@ -19,7 +19,7 @@ from vision_agents.core.utils.audio_input_pacer import (
     AudioInputPacer,
     AudioInputPacingConfig,
 )
-from vision_agents.core.utils.audio_input_sender import AudioInputSender
+from vision_agents.core.utils.audio_input_processor import AudioInputProcessor
 from vision_agents.core.utils.audio_input_direct import DirectInput
 from vision_agents.core.utils.stream import Stream
 
@@ -108,7 +108,7 @@ class Realtime(OmniLLM):
         # Store current participant for user speech transcription events
         self._current_participant: Participant | None = None
 
-        self._audio_input_sender: AudioInputSender = (
+        self._audio_input_processor: AudioInputProcessor = (
             AudioInputPacer(
                 self,
                 input_audio_pacing,
@@ -168,7 +168,7 @@ class Realtime(OmniLLM):
         """Increment epoch so stale audio output events are discarded."""
         self._epoch += 1
         self._current_participant = None
-        self._audio_input_sender.clear()
+        self._audio_input_processor.clear()
         self._output.clear()
 
     def _run_tool_in_background(self, coro: Coroutine[None, None, None]) -> None:
@@ -191,10 +191,10 @@ class Realtime(OmniLLM):
 
     async def process_audio(self, pcm: PcmData, participant: Participant) -> None:
         self._current_participant = participant
-        await self._audio_input_sender.send(pcm, participant)
+        await self._audio_input_processor.process_audio(pcm, participant)
 
     async def _close_input_audio(self) -> None:
-        await self._audio_input_sender.close()
+        await self._audio_input_processor.close()
 
     async def stop_watching_video_track(self) -> None:
         """Optionally overridden by providers that support video input."""
@@ -219,7 +219,7 @@ class Realtime(OmniLLM):
     def _on_disconnected(self, reason: str | None = None, clean: bool = True):
         """Mark the session disconnected and emit RealtimeDisconnectedEvent."""
         self.connected = False
-        self._audio_input_sender.clear()
+        self._audio_input_processor.clear()
         self.events.send(
             RealtimeDisconnectedEvent(
                 plugin_name=self.provider_name,

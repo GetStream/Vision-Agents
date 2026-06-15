@@ -120,7 +120,7 @@ class TestAudioInputPacer(BaseTest):
         )
 
         try:
-            await pacer.send(_pcm(3, 10), participant)
+            await pacer.process_audio(_pcm(3, 10), participant)
             await _wait_until(lambda: len(realtime.sent) >= 3)
             assert np.all(realtime.sent[0].samples == 3)
             assert np.all(realtime.sent[1].samples == 3)
@@ -150,7 +150,7 @@ class TestAudioInputPacer(BaseTest):
         pacer._queue = queue
 
         try:
-            await pacer.send(_pcm(4, 5), participant)
+            await pacer.process_audio(_pcm(4, 5), participant)
             await _wait_until(lambda: queue.was_cleared)
             await asyncio.sleep(0.02)
             assert realtime.sent == []

@@ -61,7 +61,9 @@ class AudioInputPacer(DirectInput):
         self.pauses = 0
         self._generation = 0
 
-    async def send(self, pcm: PcmData, participant: Participant | None) -> None:
+    async def process_audio(
+        self, pcm: PcmData, participant: Participant | None
+    ) -> None:
         """Add audio to the pacing buffer, resampling to the configured format."""
         self.start()
         self._participant = participant
@@ -124,7 +126,7 @@ class AudioInputPacer(DirectInput):
                 if not self._audio_llm.connected:
                     continue
                 try:
-                    await super().send(chunk, chunk.participant)
+                    await super().process_audio(chunk, chunk.participant)
                 except Exception:
                     logger.exception("%s send failed", self._name)
                     continue

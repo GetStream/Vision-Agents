@@ -78,11 +78,11 @@ class TestGeminiRealtimeInputPacing:
 
         assert DEFAULT_MODEL == "gemini-3.1-flash-live-preview"
         assert LIVE_TRANSLATE_MODEL == "gemini-3.5-live-translate-preview"
-        assert type(default_rt._audio_input_sender) is DirectInput
-        assert isinstance(translate_rt._audio_input_sender, AudioInputPacer)
-        assert translate_rt._audio_input_sender.config.silence_when_empty
-        assert translate_rt._audio_input_sender.config.startup_buffer_ms == 500
-        assert type(translate_opt_out._audio_input_sender) is DirectInput
+        assert type(default_rt._audio_input_processor) is DirectInput
+        assert isinstance(translate_rt._audio_input_processor, AudioInputPacer)
+        assert translate_rt._audio_input_processor.config.silence_when_empty
+        assert translate_rt._audio_input_processor.config.startup_buffer_ms == 500
+        assert type(translate_opt_out._audio_input_processor) is DirectInput
 
 
 class TestGeminiRealtimeProcessEvents:
