@@ -137,8 +137,6 @@ class AudioInputPacer(DirectInput):
                         self.pauses,
                         self.buffered_ms(),
                     )
-        except asyncio.CancelledError:
-            raise
         except Exception:
             logger.exception("%s stopped unexpectedly", self._name)
 
