@@ -28,6 +28,7 @@ from vision_agents.core.llm.realtime import (
     RealtimeUserSpeechStarted,
     RealtimeUserTranscript,
 )
+from vision_agents.core.utils.audio_input_pacer import AudioInputPacer, DirectInput
 from vision_agents.plugins.gemini import Realtime
 from vision_agents.plugins.gemini.gemini_realtime import (
     DEFAULT_MODEL,
@@ -76,11 +77,11 @@ class TestGeminiRealtimeInputPacing:
 
         assert DEFAULT_MODEL == "gemini-3.1-flash-live-preview"
         assert LIVE_TRANSLATE_MODEL == "gemini-3.5-live-translate-preview"
-        assert default_rt._input_audio_pacer is None
-        assert translate_rt._input_audio_pacer is not None
-        assert translate_rt._input_audio_pacer.config.silence_when_empty
-        assert translate_rt._input_audio_pacer.config.startup_buffer_ms == 500
-        assert translate_opt_out._input_audio_pacer is None
+        assert isinstance(default_rt._input_audio, DirectInput)
+        assert isinstance(translate_rt._input_audio, AudioInputPacer)
+        assert translate_rt._input_audio.config.silence_when_empty
+        assert translate_rt._input_audio.config.startup_buffer_ms == 500
+        assert isinstance(translate_opt_out._input_audio, DirectInput)
 
 
 class TestGeminiRealtimeProcessEvents:

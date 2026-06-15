@@ -126,7 +126,7 @@ class Qwen3Realtime(Realtime):
 
     async def close(self):
         self._on_disconnected()
-        await self._close_input_audio_pacer()
+        await self._close_input_audio()
         await self.stop_watching_video_track()
         if self._processing_task is not None:
             self._processing_task.cancel()

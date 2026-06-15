@@ -60,7 +60,7 @@ class _RealtimeForPacingTest(Realtime):
         pass
 
     async def close(self) -> None:
-        await self._close_input_audio_pacer()
+        await self._close_input_audio()
         self._on_disconnected()
 
 
@@ -106,58 +106,56 @@ class TestAudioInputPacer(BaseTest):
             await realtime.close()
 
     async def test_virtual_microphone_fills_silence_after_prime(self):
-        sent: list[PcmData] = []
-
-        async def send(pcm: PcmData, participant):
-            sent.append(pcm)
-
+        participant = Participant(original=None, user_id="u", id="u")
+        realtime = _RealtimeForPacingTest()
+        await realtime.connect()
+        realtime._current_participant = participant
         pacer = AudioInputPacer(
+            realtime,
             AudioInputPacingConfig(
                 chunk_ms=5,
                 startup_buffer_ms=10,
                 max_buffer_ms=100,
                 silence_when_empty=True,
             ),
-            send,
         )
 
         try:
-            await pacer.push(_pcm(3, 10), None)
-            await _wait_until(lambda: len(sent) >= 3)
-            assert np.all(sent[0].samples == 3)
-            assert np.all(sent[1].samples == 3)
-            assert any(np.all(chunk.samples == 0) for chunk in sent[2:])
+            await pacer.send(_pcm(3, 10), participant)
+            await _wait_until(lambda: len(realtime.sent) >= 3)
+            assert np.all(realtime.sent[0].samples == 3)
+            assert np.all(realtime.sent[1].samples == 3)
+            assert any(np.all(chunk.samples == 0) for chunk in realtime.sent[2:])
             assert pacer.silence_chunks_sent > 0
 
             pacer.clear()
-            sent_after_clear = len(sent)
+            sent_after_clear = len(realtime.sent)
             await asyncio.sleep(0.02)
-            assert len(sent) == sent_after_clear
+            assert len(realtime.sent) == sent_after_clear
         finally:
             await pacer.close()
 
     async def test_clear_during_chunk_fetch_drops_stale_chunk(self):
-        sent: list[PcmData] = []
-
-        async def send(pcm: PcmData, participant):
-            sent.append(pcm)
-
+        participant = Participant(original=None, user_id="u", id="u")
+        realtime = _RealtimeForPacingTest()
+        await realtime.connect()
+        realtime._current_participant = participant
         pacer = AudioInputPacer(
+            realtime,
             AudioInputPacingConfig(
                 chunk_ms=5,
                 startup_buffer_ms=5,
                 max_buffer_ms=100,
             ),
-            send,
         )
         queue = _ClearingAudioQueue(pacer, _pcm(4, 5))
         pacer._queue = queue
 
         try:
-            pacer.start()
+            await pacer.send(_pcm(4, 5), participant)
             await _wait_until(lambda: queue.was_cleared)
             await asyncio.sleep(0.02)
-            assert sent == []
+            assert realtime.sent == []
             assert pacer.chunks_sent == 0
         finally:
             await pacer.close()

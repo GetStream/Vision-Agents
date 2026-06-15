@@ -236,7 +236,7 @@ class Realtime(realtime.Realtime):
         await self.rtc.send_audio_pcm(audio)
 
     async def close(self) -> None:
-        await self._close_input_audio_pacer()
+        await self._close_input_audio()
         await self._await_pending_tools()
         self._pending_tool_calls.clear()
         await self.rtc.close()

@@ -1,16 +1,55 @@
 import asyncio
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from getstream.video.rtc.track_util import PcmData
 
 from ..edge.types import Participant
 from .audio_queue import AudioQueue
 
+if TYPE_CHECKING:
+    from ..llm.realtime import Realtime
+
 logger = logging.getLogger(__name__)
 
 AudioInputSender = Callable[[PcmData, Participant | None], Awaitable[None]]
+
+
+class InputAudioStrategy(ABC):
+    """Handler for the input-audio path between Realtime.process_audio and the provider."""
+
+    def __init__(self, realtime: "Realtime") -> None:
+        self._realtime = realtime
+
+    @abstractmethod
+    async def send(self, pcm: PcmData, participant: Participant | None) -> None: ...
+
+    async def _send(self, pcm: PcmData, participant: Participant | None) -> None:
+        rt = self._realtime
+        if not rt.connected:
+            return
+        participant = participant or rt._current_participant
+        if participant is None:
+            return
+        await rt.simple_audio_response(pcm, participant)
+
+    def clear(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+
+class DirectInput(InputAudioStrategy):
+    """Forward every PCM chunk to the provider as it arrives, without buffering."""
+
+    async def send(self, pcm: PcmData, participant: Participant | None) -> None:
+        await self._send(pcm, participant)
+
+
 
 
 @dataclass(slots=True)
@@ -41,17 +80,17 @@ class AudioInputPacingConfig:
             raise ValueError("max_buffer_ms must be at least startup_buffer_ms")
 
 
-class AudioInputPacer:
+class AudioInputPacer(InputAudioStrategy):
     """Buffers input audio and forwards it at a stable wall-clock cadence."""
 
     def __init__(
         self,
+        realtime: "Realtime",
         config: AudioInputPacingConfig,
-        send: AudioInputSender,
         name: str = "audio_input_pacer",
     ) -> None:
+        super().__init__(realtime)
         self.config = config
-        self._send = send
         self._name = name
         self._queue = AudioQueue(buffer_limit_ms=int(config.max_buffer_ms))
         self._task: asyncio.Task[None] | None = None
@@ -62,7 +101,7 @@ class AudioInputPacer:
         self.pauses = 0
         self._generation = 0
 
-    async def push(self, pcm: PcmData, participant: Participant | None) -> None:
+    async def send(self, pcm: PcmData, participant: Participant | None) -> None:
         """Add audio to the pacing buffer, resampling to the configured format."""
         self.start()
         self._participant = participant
