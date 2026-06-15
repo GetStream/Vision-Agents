@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from getstream.video import rtc
 from getstream.video.rtc.audio_track import AudioStreamTrack
@@ -64,12 +64,12 @@ class TelnyxMediaStream:
         self.stream_id: str | None = None
         self.call_control_id: str | None = None
         self.media_format = media_format or TelnyxMediaFormat()
-        self.audio_track = AudioStreamTrack(
-            sample_rate=self.media_format.sample_rate,
-            channels=1,
-            format="s16",
-        )
+        self.audio_track = self._create_audio_track()
         self._connected = False
+        self._started = False
+        self._start_callbacks: list[Callable[[], Awaitable[None]]] = []
+        self._cleanup_callbacks: list[Callable[[], Awaitable[None]]] = []
+        self._cleanup_done = False
 
     async def accept(self) -> None:
         await self.websocket.accept()
@@ -96,7 +96,9 @@ class TelnyxMediaStream:
                         self.call_control_id = data.get("start", {}).get(
                             "call_control_id"
                         )
-                        self.media_format = TelnyxMediaFormat.from_start_event(data)
+                        await self._handle_start(
+                            TelnyxMediaFormat.from_start_event(data)
+                        )
                         logger.info(
                             "TelnyxMediaStream: Stream started, stream_id=%s, encoding=%s",
                             self.stream_id,
@@ -131,10 +133,10 @@ class TelnyxMediaStream:
                         logger.debug("TelnyxMediaStream: Event: %s", data)
 
                 message_count += 1
-        except Exception as e:
-            logger.info("TelnyxMediaStream: WebSocket closed: %s", e)
+        except Exception:
+            logger.exception("TelnyxMediaStream: WebSocket processing failed")
         finally:
-            self._connected = False
+            await self.close()
 
         logger.info(
             "TelnyxMediaStream: Connection closed. Received %s messages",
@@ -145,7 +147,7 @@ class TelnyxMediaStream:
         """
         Send PCM audio back to Telnyx as a bidirectional RTP media frame.
         """
-        if not self._connected:
+        if not self._connected or not self._started or self.stream_id is None:
             return
 
         payload = pcm_to_telnyx_payload(
@@ -164,12 +166,56 @@ class TelnyxMediaStream:
     def is_connected(self) -> bool:
         return self._connected
 
+    @property
+    def has_started(self) -> bool:
+        return self._started
+
+    def add_start_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
+        self._start_callbacks.append(callback)
+
+    def add_cleanup_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
+        self._cleanup_callbacks.append(callback)
+
+    async def close(self) -> None:
+        self._connected = False
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
+
+        callbacks = self._cleanup_callbacks
+        self._cleanup_callbacks = []
+        for callback in callbacks:
+            try:
+                await callback()
+            except Exception:
+                logger.exception("TelnyxMediaStream: Cleanup callback failed")
+
     def _track_matches(self, received: str) -> bool:
         if self.track == "both":
             return True
         if received.endswith("_track"):
             received = received[: -len("_track")]
         return received == self.track
+
+    async def _handle_start(self, media_format: TelnyxMediaFormat) -> None:
+        if media_format != self.media_format:
+            self.media_format = media_format
+            self.audio_track = self._create_audio_track()
+        else:
+            self.media_format = media_format
+
+        self._started = True
+        callbacks = self._start_callbacks
+        self._start_callbacks = []
+        for callback in callbacks:
+            await callback()
+
+    def _create_audio_track(self) -> AudioStreamTrack:
+        return AudioStreamTrack(
+            sample_rate=self.media_format.sample_rate,
+            channels=self.media_format.channels,
+            format="s16",
+        )
 
 
 async def attach_phone_to_call(
@@ -188,7 +234,14 @@ async def attach_phone_to_call(
     async def on_audio_received(pcm: PcmData):
         await telnyx_stream.send_audio(pcm)
 
+    async def add_telnyx_track() -> None:
+        await connection.add_tracks(audio=telnyx_stream.audio_track, video=None)
+
     await connection.__aenter__()
-    await connection.add_tracks(audio=telnyx_stream.audio_track, video=None)
+    telnyx_stream.add_cleanup_callback(lambda: connection.__aexit__(None, None, None))
+    if telnyx_stream.has_started:
+        await add_telnyx_track()
+    else:
+        telnyx_stream.add_start_callback(add_telnyx_track)
 
     logger.info("Phone user %s attached to call", user_id)

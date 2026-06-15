@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 
 from vision_agents.plugins import telnyx
+from vision_agents.plugins.telnyx import media_stream as telnyx_media_stream
 
 
 class FakeWebSocket:
@@ -153,5 +154,108 @@ def test_media_stream_send_audio():
     asyncio.run(stream.accept())
     asyncio.run(stream.send_audio(pcm))
 
+    assert websocket.sent == []
+
+    stream.stream_id = "stream-1"
+    stream._started = True
+    asyncio.run(stream.send_audio(pcm))
+
     assert websocket.sent[0]["event"] == "media"
     assert "payload" in websocket.sent[0]["media"]
+
+
+def test_media_stream_start_recreates_audio_track_for_negotiated_format():
+    websocket = FakeWebSocket(
+        [
+            json.dumps(
+                {
+                    "event": "start",
+                    "stream_id": "stream-1",
+                    "start": {
+                        "call_control_id": "v2:abc123",
+                        "media_format": {
+                            "encoding": "L16",
+                            "sample_rate": 16000,
+                            "channels": 1,
+                        },
+                    },
+                }
+            ),
+            json.dumps({"event": "stop", "stream_id": "stream-1"}),
+        ]
+    )
+    stream = telnyx.TelnyxMediaStream(websocket)
+    original_track = stream.audio_track
+
+    asyncio.run(stream.accept())
+    asyncio.run(stream.run())
+
+    assert stream.media_format.encoding == "L16"
+    assert stream.media_format.sample_rate == 16000
+    assert stream.audio_track is not original_track
+
+
+def test_attach_phone_to_call_cleans_up_rtc_connection(monkeypatch):
+    class DummyConnection:
+        def __init__(self):
+            self.entered = False
+            self.exited = False
+            self.added_audio_track = None
+
+        def on(self, _event):
+            def decorator(callback):
+                return callback
+
+            return decorator
+
+        async def __aenter__(self):
+            self.entered = True
+            return self
+
+        async def __aexit__(self, *_args):
+            self.exited = True
+
+        async def add_tracks(self, audio, video):
+            self.added_audio_track = audio
+            assert video is None
+
+    connection = DummyConnection()
+
+    async def fake_join(*_args, **_kwargs):
+        return connection
+
+    monkeypatch.setattr(telnyx_media_stream.rtc, "join", fake_join)
+    websocket = FakeWebSocket(
+        [
+            json.dumps(
+                {
+                    "event": "start",
+                    "stream_id": "stream-1",
+                    "start": {
+                        "call_control_id": "v2:abc123",
+                        "media_format": {
+                            "encoding": "L16",
+                            "sample_rate": 16000,
+                            "channels": 1,
+                        },
+                    },
+                }
+            ),
+            json.dumps({"event": "stop", "stream_id": "stream-1"}),
+        ]
+    )
+    stream = telnyx.TelnyxMediaStream(websocket)
+
+    async def scenario():
+        await stream.accept()
+        await telnyx.attach_phone_to_call(object(), stream, "phone-user")
+
+        assert connection.entered is True
+        assert connection.added_audio_track is None
+
+        await stream.run()
+
+    asyncio.run(scenario())
+
+    assert connection.added_audio_track is stream.audio_track
+    assert connection.exited is True

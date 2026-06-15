@@ -89,10 +89,8 @@ class TelnyxCallRegistry:
 
         self._calls[call_control_id] = call
         logger.info(
-            "TelnyxCallRegistry: Created call %s from %s to %s",
+            "TelnyxCallRegistry: Created call %s",
             call.call_control_id,
-            call.from_number,
-            call.to_number,
         )
         return call
 
