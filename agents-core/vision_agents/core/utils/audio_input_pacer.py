@@ -1,60 +1,14 @@
 import asyncio
 import logging
-from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Protocol
 
 from getstream.video.rtc.track_util import PcmData
 
 from ..edge.types import Participant
+from .audio_input_sender import AudioInputHost, DirectInput
 from .audio_queue import AudioQueue
 
 logger = logging.getLogger(__name__)
-
-AudioInputSender = Callable[[PcmData, Participant | None], Awaitable[None]]
-
-
-class AudioInputHost(Protocol):
-    """Structural contract that InputAudioStrategy needs from its host."""
-
-    connected: bool
-
-    async def simple_audio_response(
-        self, pcm: PcmData, participant: Participant
-    ) -> None: ...
-
-
-class InputAudioStrategy(ABC):
-    """Handler for the input-audio path between Realtime.process_audio and the provider."""
-
-    def __init__(self, host: AudioInputHost) -> None:
-        self._host = host
-
-    @abstractmethod
-    async def send(self, pcm: PcmData, participant: Participant | None) -> None: ...
-
-    async def _send(self, pcm: PcmData, participant: Participant | None) -> None:
-        if not self._host.connected:
-            return
-        if participant is None:
-            return
-        await self._host.simple_audio_response(pcm, participant)
-
-    def clear(self) -> None:
-        pass
-
-    async def close(self) -> None:
-        pass
-
-
-class DirectInput(InputAudioStrategy):
-    """Forward every PCM chunk to the provider as it arrives, without buffering."""
-
-    async def send(self, pcm: PcmData, participant: Participant | None) -> None:
-        await self._send(pcm, participant)
-
-
 
 
 @dataclass(slots=True)
@@ -85,7 +39,7 @@ class AudioInputPacingConfig:
             raise ValueError("max_buffer_ms must be at least startup_buffer_ms")
 
 
-class AudioInputPacer(InputAudioStrategy):
+class AudioInputPacer(DirectInput):
     """Buffers input audio and forwards it at a stable wall-clock cadence."""
 
     def __init__(
@@ -167,7 +121,7 @@ class AudioInputPacer(InputAudioStrategy):
                     continue
 
                 try:
-                    await self._send(chunk, chunk.participant)
+                    await super().send(chunk, chunk.participant)
                 except Exception:
                     logger.exception("%s send failed", self._name)
                     continue
