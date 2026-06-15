@@ -16,8 +16,6 @@ class DirectInput(AudioInputSender):
         self._audio_llm = audio_llm
 
     async def send(self, pcm: PcmData, participant: Participant | None) -> None:
-        if not self._audio_llm.connected:
-            return
         if participant is None:
             return
         await self._audio_llm.simple_audio_response(pcm, participant)

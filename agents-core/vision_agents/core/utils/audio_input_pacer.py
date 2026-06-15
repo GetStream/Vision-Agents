@@ -121,6 +121,8 @@ class AudioInputPacer(DirectInput):
                 if generation != self._generation:
                     continue
 
+                if not self._audio_llm.connected:
+                    continue
                 try:
                     await super().send(chunk, chunk.participant)
                 except Exception:
