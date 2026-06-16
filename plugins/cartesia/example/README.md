@@ -1,20 +1,20 @@
-# Stream + Cartesia TTS Bot Example
+# Stream + Cartesia Voice Bot Example
 
-This example demonstrates how to build a text-to-speech bot that joins a Stream video call and greets participants
-using [Cartesia's](https://cartesia.ai/?utm_medium=partner&utm_source=getstream) Sonic voices.
+This example demonstrates how to build a voice bot that joins a Stream video call, transcribes participants with Cartesia STT, and speaks responses with Cartesia TTS.
 
 ## What it does
 
-- 🤖 Creates a TTS bot that joins a Stream video call
-- 🌐 Opens a browser interface for users to join the call
-- 🔊 Greets users when they join using Cartesia TTS
-- 🎙️ Sends audio directly to the call in real-time
+- Creates a voice bot that joins a Stream video call
+- Uses Cartesia Ink for realtime STT and turn detection
+- Uses Cartesia Sonic for TTS responses
+- Uses OpenAI for the LLM response
 
 ## Prerequisites
 
 1. **Stream Account**: Get your API credentials from [Stream Dashboard](https://getstream.io/try-for-free/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents)
 2. **Cartesia Account**: Get your API key from [Cartesia](https://cartesia.ai/?utm_medium=partner&utm_source=getstream)
-3. **Python 3.10+**: Required for running the example
+3. **OpenAI Account**: Set an `OPENAI_API_KEY` for the example LLM.
+4. **Python 3.10+**: Required for running the example
 
 ## Installation
 
@@ -31,7 +31,7 @@ You can use your preferred package manager, but we recommend [`uv`](https://docs
    ```
 
 3. **Set up environment variables:**
-   Rename `env.example` to `.env` and fill in your actual credentials.
+   Create a `.env` file with `STREAM_API_KEY`, `STREAM_API_SECRET`, `CARTESIA_API_KEY`, and `OPENAI_API_KEY`.
 
 ## Usage
 
@@ -40,3 +40,5 @@ Run the example:
 ```bash
 uv run main.py run
 ```
+
+Join the generated call, speak into your microphone, and the bot should answer out loud.

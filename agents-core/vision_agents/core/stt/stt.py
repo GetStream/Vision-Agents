@@ -87,6 +87,7 @@ class STT(Component):
         self.provider_name = provider_name or self.__class__.__name__
 
         self.events = EventManager()
+        self.events.register(STTConnectedEvent, STTDisconnectedEvent, STTErrorEvent)
         self.metrics = MetricsCollector()
 
         self._output: Stream[Transcript | TurnEnded | TurnStarted] = Stream()
