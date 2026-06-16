@@ -1,0 +1,22 @@
+[project]
+name = "funasr-example"
+version = "0.1.0"
+description = "FunASR STT example"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "vision-agents",
+    "vision-agents-plugins-funasr",
+    "vision-agents-plugins-elevenlabs",
+    "vision-agents-plugins-gemini",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-vogent",
+    "python-dotenv",
+]
+
+[tool.uv.sources]
+vision-agents = { editable = true }
+vision-agents-plugins-funasr = { editable = true }
+vision-agents-plugins-elevenlabs = { editable = true }
+vision-agents-plugins-gemini = { editable = true }
+vision-agents-plugins-getstream = { editable = true }
+vision-agents-plugins-vogent = { editable = true }

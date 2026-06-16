@@ -42,6 +42,7 @@ vision-agents-plugins-anam = { workspace = true }
 vision-agents-plugins-sarvam = { workspace = true }
 vision-agents-plugins-liveavatar = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
+vision-agents-plugins-funasr = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -91,6 +92,7 @@ members = [
     "plugins/sarvam",
     "plugins/liveavatar",
     "plugins/tencent",
+    "plugins/funasr",
 ]
 exclude = [
     "**/__pycache__",

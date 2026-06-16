@@ -2,6 +2,10 @@
 
 ## New Features
 
+### `funasr` plugin: self-hosted SenseVoice STT
+
+Adds a `funasr` plugin providing self-hosted speech-to-text via [FunASR](https://github.com/modelscope/FunASR)'s SenseVoice model. `funasr.STT(model="iic/SenseVoiceSmall", language="auto", device="cpu")` runs in-process (no external API or per-minute cost), supports 50+ languages with auto-detection, and surfaces SenseVoice's emotion tag on each transcript via `response.other["emotion"]`.
+
 ### Realtime input audio pacing (#599)
 
 Realtime LLMs that need a steady upstream audio cadence can now opt into framework-level pacing. Pass `input_audio_pacing=AudioInputPacingConfig(...)` to a `Realtime` subclass and the framework buffers the irregular PCM the WebRTC uplink delivers and forwards fixed-size chunks (default 20 ms) at a stable wall-clock rate. `AudioInputPacingConfig.virtual_microphone()` is a preset for speech-to-speech models that interpret gaps in the input as end-of-turn — it primes a 500 ms buffer and fills digital silence on a dry buffer so the model never sees an interruption.
