@@ -2,7 +2,7 @@
 
 ## New Features
 
-### `funasr` plugin: self-hosted SenseVoice STT
+### `funasr` plugin: self-hosted SenseVoice STT (#603)
 
 Adds a `funasr` plugin providing self-hosted speech-to-text via [FunASR](https://github.com/modelscope/FunASR)'s SenseVoice model. `funasr.STT(model="iic/SenseVoiceSmall", language="auto", device="cpu")` runs in-process (no external API or per-minute cost), supports 50+ languages with auto-detection, and surfaces SenseVoice's emotion tag on each transcript via `response.other["emotion"]`.
 
