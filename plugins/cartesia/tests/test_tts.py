@@ -8,6 +8,11 @@ from vision_agents.plugins import cartesia
 load_dotenv()
 
 
+def test_cartesia_tts_defaults_to_sonic_35():
+    tts = cartesia.TTS(api_key="fake")
+    assert tts.model_id == "sonic-3.5"
+
+
 @pytest.mark.skipif(
     os.getenv("CARTESIA_API_KEY") is None, reason="CARTESIA_API_KEY not set"
 )
