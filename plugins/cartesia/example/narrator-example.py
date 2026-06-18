@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 from vision_agents.core import Runner
 from vision_agents.core.agents import Agent, AgentLauncher
 from vision_agents.core.edge.types import User
-from vision_agents.plugins import cartesia, deepgram, getstream, openai
+from vision_agents.plugins import cartesia, getstream, openai
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),
         agent_user=User(name="Narrator", id="agent"),
         instructions="You're the narrator of a story. When you're given a topic start narrating a story and make heavy use of the audio markup tags to customize the speech output that are described in @sonic3-info.md.",
-        stt=deepgram.STT(),
+        stt=cartesia.STT(),
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=cartesia.TTS(),
     )

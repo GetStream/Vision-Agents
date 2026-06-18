@@ -9,6 +9,7 @@ from vision_agents.core.agents.transcript import TranscriptMode
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.events.manager import EventManager
 from vision_agents.core.observability import MetricsCollector
+from vision_agents.core.stt import events
 from vision_agents.core.stt.events import (
     STTConnectedEvent,
     STTDisconnectedEvent,
@@ -87,6 +88,7 @@ class STT(Component):
         self.provider_name = provider_name or self.__class__.__name__
 
         self.events = EventManager()
+        self.events.register_events_from_module(events, ignore_not_compatible=True)
         self.metrics = MetricsCollector()
 
         self._output: Stream[Transcript | TurnEnded | TurnStarted] = Stream()
