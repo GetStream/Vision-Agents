@@ -2,9 +2,10 @@ import pytest
 from vision_agents.plugins import cartesia
 
 
-def test_cartesia_tts_defaults_to_sonic_35():
-    tts = cartesia.TTS(api_key="fake")
-    assert tts.model_id == "sonic-3.5"
+class TestCartesiaTTS:
+    def test_defaults_to_sonic_35(self) -> None:
+        tts = cartesia.TTS(api_key="fake")
+        assert tts.model_id == "sonic-3.5"
 
 
 @pytest.mark.integration
