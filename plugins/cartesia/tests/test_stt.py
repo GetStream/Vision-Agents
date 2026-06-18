@@ -52,6 +52,24 @@ class TestCartesiaSTT:
 
         assert len(connections) == 1
 
+    async def test_start_closed_guard_runs_before_websocket_connect(self, monkeypatch):
+        connect_calls = 0
+
+        async def fake_connect(*args, **kwargs):
+            nonlocal connect_calls
+            connect_calls += 1
+            raise AssertionError("websocket connect should not be called")
+
+        monkeypatch.setattr(cartesia_stt_module.websockets, "connect", fake_connect)
+
+        stt = cartesia.STT(api_key="fake")
+        await stt.close()
+
+        with pytest.raises(ValueError, match="closed"):
+            await stt.start()
+
+        assert connect_calls == 0
+
     async def test_process_audio_fails_fast_after_listener_error(
         self, silence_1s_16khz
     ):

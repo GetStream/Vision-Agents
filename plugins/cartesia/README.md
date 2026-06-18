@@ -16,10 +16,10 @@ uv add vision-agents-plugins-cartesia
 
 ## Examples
 
-Read on for some key details and check out our [Cartesia examples](https://github.com/GetStream/vision-agents/tree/main/examples/other_examples/plugins_examples/tts_cartesia) to see working code samples:
+Read on for some key details and check out our [Cartesia examples](https://github.com/GetStream/Vision-Agents/tree/main/plugins/cartesia/example) to see working code samples:
 
-- in [tts.py](https://github.com/GetStream/vision-agents/tree/main/examples/other_examples/plugins_examples/tts_cartesia/tts.py) we see a simple bot greeting users upon joining a call
-- in [narrator-example.py](https://github.com/GetStream/vision-agents/tree/main/examples/other_examples/plugins_examples/tts_cartesia/narrator-example.py) we see a well-prompted combination of an STT -> LLM -> TTS flow that leverages Cartesia's Ink and Sonic models to narrate a creative story from the user's input
+- in [main.py](https://github.com/GetStream/Vision-Agents/blob/main/plugins/cartesia/example/main.py) we see a voice bot that uses Cartesia STT and TTS in a Stream call
+- in [narrator-example.py](https://github.com/GetStream/Vision-Agents/blob/main/plugins/cartesia/example/narrator-example.py) we see a well-prompted combination of an STT -> LLM -> TTS flow that leverages Cartesia's Ink and Sonic models to narrate a creative story from the user's input
 
 ## Initialisation
 

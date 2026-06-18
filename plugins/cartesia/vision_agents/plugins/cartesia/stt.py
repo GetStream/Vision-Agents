@@ -71,6 +71,9 @@ class STT(stt.STT):
 
     async def start(self) -> None:
         """Open the Cartesia realtime STT websocket."""
+        if self.closed:
+            raise ValueError("STT is closed and cannot be started")
+
         await super().start()
         self._connection_error = None
 
