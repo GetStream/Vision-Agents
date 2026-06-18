@@ -1,6 +1,6 @@
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 import websockets
@@ -28,8 +28,14 @@ from vision_agents.core.llm.realtime import (
     RealtimeUserSpeechStarted,
     RealtimeUserTranscript,
 )
+from vision_agents.core.utils.audio_input_pacer import AudioInputPacer
+from vision_agents.core.utils.audio_input_direct import AudioInputDirect
 from vision_agents.plugins.gemini import Realtime
-from vision_agents.plugins.gemini.gemini_realtime import GeminiRealtime
+from vision_agents.plugins.gemini.gemini_realtime import (
+    DEFAULT_MODEL,
+    LIVE_TRANSLATE_MODEL,
+    GeminiRealtime,
+)
 from websockets.frames import Close
 
 # Load environment variables
@@ -48,11 +54,35 @@ def _make_session(messages: list[LiveServerMessage]) -> AsyncMock:
     return session
 
 
+def _fake_client() -> Any:
+    return object()
+
+
 def _make_realtime() -> GeminiRealtime:
     """Create a GeminiRealtime instance without connecting."""
-    with patch("vision_agents.plugins.gemini.gemini_realtime.genai"):
-        rt = GeminiRealtime(api_key="fake-key")
-    return rt
+    return GeminiRealtime(client=_fake_client())
+
+
+class TestGeminiRealtimeInputPacing:
+    def test_default_model_and_live_translate_pacing_policy(self):
+        default_rt = GeminiRealtime(client=_fake_client())
+        translate_rt = GeminiRealtime(
+            model=LIVE_TRANSLATE_MODEL,
+            client=_fake_client(),
+        )
+        translate_opt_out = GeminiRealtime(
+            model=LIVE_TRANSLATE_MODEL,
+            client=_fake_client(),
+            input_audio_pacing=None,
+        )
+
+        assert DEFAULT_MODEL == "gemini-3.1-flash-live-preview"
+        assert LIVE_TRANSLATE_MODEL == "gemini-3.5-live-translate-preview"
+        assert type(default_rt._audio_input_processor) is AudioInputDirect
+        assert isinstance(translate_rt._audio_input_processor, AudioInputPacer)
+        assert translate_rt._audio_input_processor.config.silence_when_empty
+        assert translate_rt._audio_input_processor.config.startup_buffer_ms == 500
+        assert type(translate_opt_out._audio_input_processor) is AudioInputDirect
 
 
 class TestGeminiRealtimeProcessEvents:

@@ -468,6 +468,8 @@ class AudioLLM(LLM, metaclass=abc.ABCMeta):
     These models do not require TTS and STT services to run.
     """
 
+    connected: bool = False
+
     @abc.abstractmethod
     async def simple_audio_response(self, pcm: PcmData, participant: Participant):
         """
