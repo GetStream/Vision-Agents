@@ -1,20 +1,86 @@
-import os
+import asyncio
 
 import pytest
-from dotenv import load_dotenv
+import vision_agents.plugins.cartesia.stt as cartesia_stt_module
 
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt import Transcript
 from vision_agents.core.turn_detection import TurnEnded, TurnStarted
 from vision_agents.plugins import cartesia
 
-load_dotenv()
-
 
 class TestCartesiaSTT:
     @pytest.fixture
     def participant(self) -> Participant:
         return Participant({}, user_id="test-user", id="test-user")
+
+    async def test_start_duplicate_guard_runs_before_websocket_connect(
+        self, monkeypatch
+    ):
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.closed = False
+                self._closed = asyncio.Event()
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                await self._closed.wait()
+                raise StopAsyncIteration
+
+            async def close(self) -> None:
+                self.closed = True
+                self._closed.set()
+
+        connections: list[FakeConnection] = []
+
+        async def fake_connect(*args, **kwargs) -> FakeConnection:
+            connection = FakeConnection()
+            connections.append(connection)
+            return connection
+
+        monkeypatch.setattr(cartesia_stt_module.websockets, "connect", fake_connect)
+
+        stt = cartesia.STT(api_key="fake")
+        await stt.start()
+        try:
+            with pytest.raises(ValueError, match="already started"):
+                await stt.start()
+        finally:
+            await stt.close()
+
+        assert len(connections) == 1
+
+    async def test_process_audio_fails_fast_after_listener_error(
+        self, silence_1s_16khz
+    ):
+        class FailingConnection:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise RuntimeError("socket broke")
+
+        stt = cartesia.STT(api_key="fake")
+        stt.started = True
+        stt.connection = FailingConnection()
+        stt._connection_ready.set()
+
+        await stt._listen()
+
+        assert stt.started is False
+        assert stt.connection is None
+        assert not stt._connection_ready.is_set()
+
+        with pytest.raises(RuntimeError, match="websocket connection failed") as exc:
+            await asyncio.wait_for(
+                stt.process_audio(silence_1s_16khz),
+                timeout=0.1,
+            )
+
+        assert isinstance(exc.value.__cause__, RuntimeError)
+        assert str(exc.value.__cause__) == "socket broke"
 
     def test_defaults_to_latest_model_and_turn_detection(self):
         stt = cartesia.STT(api_key="fake")
@@ -77,14 +143,15 @@ class TestCartesiaSTT:
         assert turns_ended[-1].duration_ms == 1200
         assert turns_ended[-1].trailing_silence_ms == 250
 
-    @pytest.mark.skipif(
-        os.getenv("CARTESIA_API_KEY") is None, reason="CARTESIA_API_KEY not set"
-    )
     @pytest.mark.integration
     async def test_transcribe_mia_audio_48khz(
-        self, mia_audio_48khz, silence_2s_48khz, participant
+        self,
+        mia_audio_48khz,
+        silence_2s_48khz,
+        participant,
+        cartesia_api_key_required,
     ):
-        stt = cartesia.STT()
+        stt = cartesia.STT(api_key=cartesia_api_key_required)
         await stt.start()
         try:
             await stt.process_audio(mia_audio_48khz, participant=participant)

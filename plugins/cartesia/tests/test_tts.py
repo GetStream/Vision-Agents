@@ -1,11 +1,5 @@
-import os
-
 import pytest
-from dotenv import load_dotenv
 from vision_agents.plugins import cartesia
-
-# Load environment variables
-load_dotenv()
 
 
 def test_cartesia_tts_defaults_to_sonic_35():
@@ -13,14 +7,11 @@ def test_cartesia_tts_defaults_to_sonic_35():
     assert tts.model_id == "sonic-3.5"
 
 
-@pytest.mark.skipif(
-    os.getenv("CARTESIA_API_KEY") is None, reason="CARTESIA_API_KEY not set"
-)
 @pytest.mark.integration
 class TestCartesiaTTSIntegration:
     @pytest.fixture
-    async def tts(self) -> cartesia.TTS:
-        return cartesia.TTS()
+    async def tts(self, cartesia_api_key_required) -> cartesia.TTS:
+        return cartesia.TTS(api_key=cartesia_api_key_required)
 
     async def test_cartesia_convert_text_to_audio(self, tts):
         out = []

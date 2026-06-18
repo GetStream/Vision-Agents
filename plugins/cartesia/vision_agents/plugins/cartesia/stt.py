@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -19,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_WEBSOCKET_URL = "wss://api.cartesia.ai/stt/turns/websocket"
 DEFAULT_CARTESIA_VERSION = "2026-03-01"
+CONNECTION_READY_TIMEOUT_SECONDS = 10.0
 
 
 class STT(stt.STT):
@@ -68,26 +67,32 @@ class STT(stt.STT):
         self._current_participant: Participant | None = None
         self._audio_start_time: float | None = None
         self._turn_in_progress = False
+        self._connection_error: Exception | None = None
 
     async def start(self) -> None:
         """Open the Cartesia realtime STT websocket."""
-        if self.connection is not None:
-            logger.warning("Cartesia STT connection already started")
-            return
-
-        url = self._build_websocket_url()
-        self.connection = await asyncio.wait_for(
-            websockets.connect(
-                url,
-                additional_headers={"X-API-Key": self.api_key},
-            ),
-            timeout=10.0,
-        )
-
-        self._listen_task = asyncio.create_task(self._listen())
-        self._connection_ready.set()
-        self._on_connected()
         await super().start()
+        self._connection_error = None
+
+        try:
+            url = self._build_websocket_url()
+            self.connection = await asyncio.wait_for(
+                websockets.connect(
+                    url,
+                    additional_headers={"X-API-Key": self.api_key},
+                ),
+                timeout=10.0,
+            )
+
+            self._listen_task = asyncio.create_task(self._listen())
+            self._connection_ready.set()
+            self._on_connected()
+        except Exception:
+            self.started = False
+            self.connection = None
+            self._connection_error = None
+            self._connection_ready.clear()
+            raise
 
     async def process_audio(
         self,
@@ -99,10 +104,30 @@ class STT(stt.STT):
             logger.warning("Cartesia STT is closed, ignoring audio")
             return
 
-        await self._connection_ready.wait()
-        if self.connection is None or not self._connection_ready.is_set():
-            logger.warning("Cartesia STT connection is not ready")
-            return
+        if self._connection_error is not None:
+            raise RuntimeError(
+                "Cartesia STT websocket connection failed; call start() to reconnect"
+            ) from self._connection_error
+
+        if not self.started:
+            raise RuntimeError("Cartesia STT is not started; call start() first")
+
+        try:
+            await asyncio.wait_for(
+                self._connection_ready.wait(),
+                timeout=CONNECTION_READY_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                "Timed out waiting for Cartesia STT websocket connection"
+            ) from exc
+
+        connection = self.connection
+        if connection is None or not self._connection_ready.is_set():
+            raise RuntimeError(
+                "Cartesia STT websocket connection is not ready; "
+                "call start() to reconnect"
+            )
 
         self._current_participant = participant
         if self._audio_start_time is None:
@@ -121,7 +146,7 @@ class STT(stt.STT):
             ),
         )
         for offset in range(0, len(audio_bytes), frame_size):
-            await self.connection.send(audio_bytes[offset : offset + frame_size])
+            await connection.send(audio_bytes[offset : offset + frame_size])
 
     async def clear(self) -> None:
         self._turn_in_progress = False
@@ -168,6 +193,9 @@ class STT(stt.STT):
             if not self.closed:
                 logger.exception("Cartesia STT websocket error")
                 self._emit_error_event(exc, context="listen")
+                self._connection_error = exc
+                self.started = False
+                self.connection = None
                 self._connection_ready.clear()
                 self._on_disconnected(reason=str(exc), clean=False)
 
