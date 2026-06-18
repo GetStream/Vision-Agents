@@ -1,5 +1,19 @@
+import os
+
 import pytest
 from vision_agents.plugins import cartesia
+
+
+def _require_cartesia_api_key() -> str:
+    api_key = os.getenv("CARTESIA_API_KEY")
+    if not api_key:
+        pytest.fail(
+            "Cartesia integration tests require CARTESIA_API_KEY. "
+            "Set CARTESIA_API_KEY in the environment or in a .env file before "
+            "running tests marked with @pytest.mark.integration.",
+            pytrace=False,
+        )
+    return api_key
 
 
 class TestCartesiaTTS:
@@ -11,8 +25,8 @@ class TestCartesiaTTS:
 @pytest.mark.integration
 class TestCartesiaTTSIntegration:
     @pytest.fixture
-    async def tts(self, cartesia_api_key_required) -> cartesia.TTS:
-        return cartesia.TTS(api_key=cartesia_api_key_required)
+    async def tts(self) -> cartesia.TTS:
+        return cartesia.TTS(api_key=_require_cartesia_api_key())
 
     async def test_cartesia_convert_text_to_audio(self, tts):
         out = []

@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import pytest
 import vision_agents.plugins.cartesia.stt as cartesia_stt_module
@@ -7,6 +8,18 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt import Transcript
 from vision_agents.core.turn_detection import TurnEnded, TurnStarted
 from vision_agents.plugins import cartesia
+
+
+def _require_cartesia_api_key() -> str:
+    api_key = os.getenv("CARTESIA_API_KEY")
+    if not api_key:
+        pytest.fail(
+            "Cartesia integration tests require CARTESIA_API_KEY. "
+            "Set CARTESIA_API_KEY in the environment or in a .env file before "
+            "running tests marked with @pytest.mark.integration.",
+            pytrace=False,
+        )
+    return api_key
 
 
 class TestCartesiaSTT:
@@ -167,9 +180,8 @@ class TestCartesiaSTT:
         mia_audio_48khz,
         silence_2s_48khz,
         participant,
-        cartesia_api_key_required,
     ):
-        stt = cartesia.STT(api_key=cartesia_api_key_required)
+        stt = cartesia.STT(api_key=_require_cartesia_api_key())
         await stt.start()
         try:
             await stt.process_audio(mia_audio_48khz, participant=participant)
