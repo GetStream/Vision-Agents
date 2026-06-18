@@ -4,6 +4,8 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt import Transcript
 from vision_agents.plugins import fast_whisper
 
+from conftest import skip_if_huggingface_model_unavailable
+
 load_dotenv()
 
 
@@ -17,7 +19,12 @@ class TestFastWhisperSTT:
     @pytest.fixture
     async def stt(self):
         stt = fast_whisper.STT(model_size="tiny")
-        await stt.warmup()
+        try:
+            await stt.warmup()
+        except Exception as exc:
+            await stt.close()
+            skip_if_huggingface_model_unavailable(exc, "faster-whisper tiny")
+            raise
         yield stt
         await stt.close()
 

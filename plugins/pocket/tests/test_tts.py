@@ -1,13 +1,20 @@
 import pytest
 from vision_agents.plugins import pocket
 
+from conftest import skip_if_huggingface_model_unavailable
+
 
 @pytest.mark.integration
 class TestPocketTTS:
     @pytest.fixture
     async def tts(self) -> pocket.TTS:
         tts_instance = pocket.TTS()
-        await tts_instance.warmup()
+        try:
+            await tts_instance.warmup()
+        except Exception as exc:
+            await tts_instance.close()
+            skip_if_huggingface_model_unavailable(exc, "Pocket TTS model")
+            raise
         return tts_instance
 
     @pytest.fixture
@@ -15,7 +22,12 @@ class TestPocketTTS:
         tts_instance = pocket.TTS(
             voice="hf://kyutai/tts-voices/alba-mackenna/casual.wav"
         )
-        await tts_instance.warmup()
+        try:
+            await tts_instance.warmup()
+        except Exception as exc:
+            await tts_instance.close()
+            skip_if_huggingface_model_unavailable(exc, "Pocket TTS voice")
+            raise
         return tts_instance
 
     async def test_pocket_tts_convert_text_to_audio(self, tts: pocket.TTS):

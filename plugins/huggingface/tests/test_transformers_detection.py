@@ -12,6 +12,7 @@ import PIL.Image
 import pytest
 import torch
 from av import VideoFrame
+from conftest import skip_blockbuster, skip_if_huggingface_model_unavailable
 from vision_agents.core import Agent
 from vision_agents.core.events import EventManager
 from vision_agents.core.utils.video_track import QueuedVideoTrack
@@ -20,8 +21,6 @@ from vision_agents.plugins.huggingface.transformers_detection import (
     DetectionResources,
     TransformersDetectionProcessor,
 )
-
-from conftest import skip_blockbuster
 
 
 @pytest.fixture()
@@ -103,6 +102,16 @@ MODEL_ID = os.getenv("TRANSFORMERS_TEST_DETECTION_MODEL", "PekingU/rtdetr_v2_r18
 @pytest.mark.integration
 @skip_blockbuster
 class TestTransformersDetectionProcessor:
+    async def _warmup_or_skip(
+        self, processor: TransformersDetectionProcessor
+    ) -> None:
+        try:
+            await processor.warmup()
+        except Exception as exc:
+            await processor.close()
+            skip_if_huggingface_model_unavailable(exc, processor.model_id)
+            raise
+
     @pytest.mark.parametrize("annotate", [True, False])
     async def test_process_video_objects_detected(
         self, cat_video_track, agent_mock, events_manager, annotate: bool
@@ -110,7 +119,7 @@ class TestTransformersDetectionProcessor:
         processor = TransformersDetectionProcessor(
             model=MODEL_ID, annotate=annotate, fps=10
         )
-        await processor.warmup()
+        await self._warmup_or_skip(processor)
         processor.attach_agent(agent_mock)
 
         future: asyncio.Future[DetectionCompletedEvent] = asyncio.Future()
@@ -162,7 +171,7 @@ class TestTransformersDetectionProcessor:
         processor = TransformersDetectionProcessor(
             model=MODEL_ID, classes=["nonexistent-class-xyz"], fps=10
         )
-        await processor.warmup()
+        await self._warmup_or_skip(processor)
         processor.attach_agent(agent_mock)
 
         future: asyncio.Future[DetectionCompletedEvent] = asyncio.Future()
@@ -202,7 +211,7 @@ class TestTransformersDetectionProcessor:
             # does not hallucinate
             conf_threshold=0.99,
         )
-        await processor.warmup()
+        await self._warmup_or_skip(processor)
         processor.attach_agent(agent_mock)
 
         future: asyncio.Future[DetectionCompletedEvent] = asyncio.Future()
