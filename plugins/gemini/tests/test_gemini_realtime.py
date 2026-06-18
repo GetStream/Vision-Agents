@@ -678,7 +678,11 @@ class TestGeminiRealtimeIntegration:
 
         weather_calls = [c for c in function_calls if c["name"] == "get_weather"]
         assert len(weather_calls) > 0, "get_weather was not called by Gemini"
-        assert weather_calls[0]["location"] == "New York"
+        location = weather_calls[0]["location"].strip().lower()
+        assert location == "nyc" or location.startswith("new york"), (
+            f"Expected get_weather location to refer to New York, got "
+            f"{weather_calls[0]['location']!r}"
+        )
 
     async def test_live_function_calling_error_handling(self, realtime_with_tools):
         rt, function_calls = realtime_with_tools
