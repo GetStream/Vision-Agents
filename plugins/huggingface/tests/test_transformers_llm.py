@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import torch
-from conftest import skip_blockbuster
+from conftest import skip_blockbuster, skip_if_huggingface_model_unavailable
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.testing import collect_simple_response
 from vision_agents.core.llm.llm import LLMResponseFinal
@@ -341,7 +341,12 @@ class TestTransformersLLMIntegration:
         llm = TransformersLLM(model=model_id, max_new_tokens=30)
         conversation = InMemoryConversation("", [])
         llm.set_conversation(conversation)
-        await llm.warmup()
+        try:
+            await llm.warmup()
+        except Exception as exc:
+            llm.unload()
+            skip_if_huggingface_model_unavailable(exc, model_id)
+            raise
 
         deltas, final = await collect_simple_response(
             llm.simple_response(text="Greet the user")
@@ -359,7 +364,12 @@ class TestTransformersLLMIntegration:
         llm = TransformersLLM(model=model_id, max_new_tokens=500)
         conversation = InMemoryConversation("", [])
         llm.set_conversation(conversation)
-        await llm.warmup()
+        try:
+            await llm.warmup()
+        except Exception as exc:
+            llm.unload()
+            skip_if_huggingface_model_unavailable(exc, model_id)
+            raise
 
         deltas = []
         final = None

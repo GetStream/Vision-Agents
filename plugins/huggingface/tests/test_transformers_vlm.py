@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import torch
 from av import VideoFrame
-from conftest import skip_blockbuster
+from conftest import skip_blockbuster, skip_if_huggingface_model_unavailable
 from vision_agents.testing import collect_simple_response
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.llm.llm import LLMResponseFinal
@@ -257,7 +257,12 @@ class TestTransformersVLMIntegration:
         conversation = InMemoryConversation("", [])
         vlm.set_conversation(conversation)
 
-        resources = await vlm.on_warmup()
+        try:
+            resources = await vlm.on_warmup()
+        except Exception as exc:
+            vlm.unload()
+            skip_if_huggingface_model_unavailable(exc, model_id)
+            raise
         vlm.on_warmed_up(resources)
 
         # Add a frame so the VLM has something to look at
@@ -282,7 +287,12 @@ class TestTransformersVLMIntegration:
         conversation = InMemoryConversation("", [])
         vlm.set_conversation(conversation)
 
-        resources = await vlm.on_warmup()
+        try:
+            resources = await vlm.on_warmup()
+        except Exception as exc:
+            vlm.unload()
+            skip_if_huggingface_model_unavailable(exc, model_id)
+            raise
         vlm.on_warmed_up(resources)
 
         vlm._frame_buffer.append(_random_video_frame())

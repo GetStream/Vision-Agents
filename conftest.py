@@ -40,6 +40,66 @@ def skip_blockbuster(func_or_class):
     return pytest.mark.skip_blockbuster(func_or_class)
 
 
+def _iter_exception_chain(exc: BaseException) -> Iterator[BaseException]:
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
+        if current.__context__ is not None:
+            stack.append(current.__context__)
+        if current.__cause__ is not None:
+            stack.append(current.__cause__)
+
+
+def is_huggingface_model_unavailable_error(exc: BaseException) -> bool:
+    """Return true for Hugging Face cache misses or hub connectivity failures."""
+    for current in _iter_exception_chain(exc):
+        error_name = type(current).__name__
+        message = str(current).lower()
+
+        if error_name in ("LocalEntryNotFoundError", "ConnectError"):
+            return True
+
+        if "failed to download" in message:
+            return True
+
+        if "cannot find the requested files in the disk cache" in message:
+            return True
+
+        if "outgoing traffic has been disabled" in message and (
+            "huggingface" in message or "requested files" in message
+        ):
+            return True
+
+        if "huggingface.co" in message and any(
+            fragment in message
+            for fragment in (
+                "connection",
+                "couldn't connect",
+                "failed to resolve",
+                "max retries",
+                "name resolution",
+                "timed out",
+            )
+        ):
+            return True
+
+    return False
+
+
+def skip_if_huggingface_model_unavailable(
+    exc: BaseException, model_id: str = "Hugging Face model"
+) -> None:
+    if is_huggingface_model_unavailable_error(exc):
+        pytest.skip(
+            f"{model_id} is unavailable locally and Hugging Face Hub cannot be reached"
+        )
+
+
 @pytest.fixture(autouse=True)
 def blockbuster(request) -> Iterator[BlockBuster | None]:
     """Blockbuster fixture that detects blocking calls in async code.
