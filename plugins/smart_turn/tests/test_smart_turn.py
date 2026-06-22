@@ -17,6 +17,7 @@ async def smart_turn():
     try:
         await td.warmup()
     except Exception as exc:
+        await td.close()
         skip_if_huggingface_model_unavailable(exc, "Smart Turn model")
         raise
     await td.start()
