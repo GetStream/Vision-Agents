@@ -42,11 +42,17 @@ def skip_blockbuster(func_or_class):
 
 def _iter_exception_chain(exc: BaseException) -> Iterator[BaseException]:
     seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
         seen.add(id(current))
         yield current
-        current = current.__cause__ or current.__context__
+        if current.__context__ is not None:
+            stack.append(current.__context__)
+        if current.__cause__ is not None:
+            stack.append(current.__cause__)
 
 
 def is_huggingface_model_unavailable_error(exc: BaseException) -> bool:
@@ -55,7 +61,10 @@ def is_huggingface_model_unavailable_error(exc: BaseException) -> bool:
         error_name = type(current).__name__
         message = str(current).lower()
 
-        if error_name == "LocalEntryNotFoundError":
+        if error_name in ("LocalEntryNotFoundError", "ConnectError"):
+            return True
+
+        if "failed to download" in message:
             return True
 
         if "cannot find the requested files in the disk cache" in message:

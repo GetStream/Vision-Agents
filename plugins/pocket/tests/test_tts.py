@@ -15,7 +15,10 @@ class TestPocketTTS:
             await tts_instance.close()
             skip_if_huggingface_model_unavailable(exc, "Pocket TTS model")
             raise
-        return tts_instance
+        try:
+            yield tts_instance
+        finally:
+            await tts_instance.close()
 
     @pytest.fixture
     async def tts_custom_voice(self) -> pocket.TTS:
@@ -28,7 +31,10 @@ class TestPocketTTS:
             await tts_instance.close()
             skip_if_huggingface_model_unavailable(exc, "Pocket TTS voice")
             raise
-        return tts_instance
+        try:
+            yield tts_instance
+        finally:
+            await tts_instance.close()
 
     async def test_pocket_tts_convert_text_to_audio(self, tts: pocket.TTS):
         text = "Hello from Pocket TTS."

@@ -102,9 +102,7 @@ MODEL_ID = os.getenv("TRANSFORMERS_TEST_DETECTION_MODEL", "PekingU/rtdetr_v2_r18
 @pytest.mark.integration
 @skip_blockbuster
 class TestTransformersDetectionProcessor:
-    async def _warmup_or_skip(
-        self, processor: TransformersDetectionProcessor
-    ) -> None:
+    async def _warmup_or_skip(self, processor: TransformersDetectionProcessor) -> None:
         try:
             await processor.warmup()
         except Exception as exc:

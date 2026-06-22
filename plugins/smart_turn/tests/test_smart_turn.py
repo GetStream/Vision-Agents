@@ -1,6 +1,7 @@
 import logging
 
 import pytest
+from conftest import skip_if_huggingface_model_unavailable
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.turn_detection import TurnEnded, TurnStarted
@@ -13,7 +14,11 @@ logger = logging.getLogger(__name__)
 @pytest.fixture
 async def smart_turn():
     td = SmartTurnDetection()
-    await td.warmup()
+    try:
+        await td.warmup()
+    except Exception as exc:
+        skip_if_huggingface_model_unavailable(exc, "Smart Turn model")
+        raise
     await td.start()
     yield td
     await td.close()
