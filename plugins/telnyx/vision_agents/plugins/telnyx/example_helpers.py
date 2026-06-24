@@ -475,7 +475,9 @@ def verify_telnyx_webhook(
         key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key))
         signature_bytes = base64.b64decode(signature)
     except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
-        raise TelnyxWebhookVerificationError("Invalid Telnyx webhook signature") from exc
+        raise TelnyxWebhookVerificationError(
+            "Invalid Telnyx webhook signature"
+        ) from exc
 
     if abs(now - webhook_timestamp) > tolerance_seconds:
         raise TelnyxWebhookVerificationError(
@@ -509,7 +511,9 @@ async def parse_verified_telnyx_webhook(
     try:
         return json.loads(payload)
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Invalid Telnyx webhook payload") from exc
+        raise HTTPException(
+            status_code=400, detail="Invalid Telnyx webhook payload"
+        ) from exc
 
 
 def require_telnyx_public_key(env: Mapping[str, str] | None = None) -> str:
