@@ -12,7 +12,11 @@ STREAM_API_KEY=
 STREAM_API_SECRET=
 GOOGLE_API_KEY=
 TELNYX_API_KEY=
+TELNYX_PUBLIC_KEY=
 ```
+
+`TELNYX_PUBLIC_KEY` is the Base64 Ed25519 public key from the Telnyx Mission
+Control Portal. The examples verify webhook signatures before handling events.
 
 You also need a Telnyx phone number. You can pass it to the examples with
 `--from` or `--phone-number`, or set:

@@ -5,10 +5,9 @@ Run after starting ngrok and routing your Telnyx number to a Call Control App:
     NGROK_URL=example.ngrok-free.app uv run plugins/telnyx/examples/inbound_call.py
 """
 
-from __future__ import annotations
-
-import asyncio
 import argparse
+import asyncio
+import contextlib
 import logging
 import os
 import uuid
@@ -21,16 +20,17 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from vision_agents.core import Agent, User
 from vision_agents.plugins import gemini, getstream, telnyx
 from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
-
-from telnyx_helpers import (
-    cleanup_telnyx_example_setup,
-    prepare_telnyx_example_setup,
+from vision_agents.plugins.telnyx.example_helpers import (
     TelnyxClient,
     TelnyxConfig,
-    media_stream_url,
-    preflight_inbound,
-    require_env,
     TelnyxSetupError,
+    cleanup_telnyx_example_setup,
+    media_stream_url,
+    parse_verified_telnyx_webhook,
+    preflight_inbound,
+    prepare_telnyx_example_setup,
+    require_env,
+    require_telnyx_public_key,
 )
 
 
@@ -44,12 +44,13 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 call_registry = telnyx.TelnyxCallRegistry()
 telnyx_client: TelnyxClient | None = None
 telnyx_config: TelnyxConfig | None = None
+telnyx_public_key: str | None = None
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(_request: Request, exc: Exception):
     logger.exception("Unhandled exception: %s", exc)
-    return JSONResponse(status_code=500, content={"detail": str(exc)})
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 async def create_agent() -> tuple[Agent, StreamEdge]:
@@ -68,16 +69,15 @@ async def create_agent() -> tuple[Agent, StreamEdge]:
     return agent, edge
 
 
-async def prepare_call(call_id: str, from_number: str):
+async def prepare_call(call_id: str):
     agent, edge = await create_agent()
-    sanitized_number = "".join(ch for ch in from_number if ch.isalnum()) or call_id
     phone_user = User(
-        name=f"Inbound Telnyx call from {from_number}",
-        id=f"phone-{sanitized_number}",
+        name=f"Inbound Telnyx call {call_id[:8]}",
+        id=f"phone-{call_id}",
     )
     await edge.create_users([agent.agent_user, phone_user])
     stream_call = await agent.create_call("default", call_id)
-    logger.info("Prepared Stream call %s for %s", call_id, from_number)
+    logger.info("Prepared Stream call %s", call_id)
     return agent, phone_user, stream_call
 
 
@@ -93,34 +93,33 @@ async def wait_for_start(
 
 @app.post("/telnyx/events")
 async def telnyx_events(request: Request):
-    if telnyx_client is None or telnyx_config is None:
+    if telnyx_client is None or telnyx_config is None or telnyx_public_key is None:
         raise RuntimeError("Telnyx example was not initialized")
 
-    data = await request.json()
+    data = await parse_verified_telnyx_webhook(request, telnyx_public_key)
     event_type = data.get("data", {}).get("event_type")
     payload = data.get("data", {}).get("payload", {})
-    logger.info("Telnyx webhook event: %s", event_type or data)
+    logger.info("Telnyx webhook event: %s", event_type)
 
     if event_type == "call.initiated" and payload.get("direction") == "incoming":
         call_control_id = payload["call_control_id"]
-        from_number = payload.get("from", "unknown")
         call_id = str(uuid.uuid4())
         telnyx_call = call_registry.create(
             call_id,
             webhook_data=data,
-            prepare=lambda: prepare_call(call_id, from_number),
+            prepare=lambda: prepare_call(call_id),
         )
         stream_url = media_stream_url(
             telnyx_config.ngrok_url,
             call_id,
             telnyx_call.token,
         )
-        response = await asyncio.to_thread(
+        await asyncio.to_thread(
             telnyx_client.answer_call,
             call_control_id,
             stream_url=stream_url,
         )
-        logger.info("Answered inbound Telnyx call: %s", response.get("data", response))
+        logger.info("Answered inbound Telnyx call %s", call_id)
 
     return {"ok": True}
 
@@ -150,6 +149,8 @@ async def media_stream(websocket: WebSocket, call_id: str, token: str):
     finally:
         if not stream_task.done():
             stream_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stream_task
         call_registry.remove(call_id)
 
 
@@ -186,12 +187,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    global telnyx_client, telnyx_config
+    global telnyx_client, telnyx_config, telnyx_public_key
 
     args = parse_args()
     values = require_env(
         ["STREAM_API_KEY", "STREAM_API_SECRET", "GOOGLE_API_KEY", "TELNYX_API_KEY"]
     )
+    telnyx_public_key = require_telnyx_public_key()
     telnyx_client = TelnyxClient(values["TELNYX_API_KEY"])
     setup = prepare_telnyx_example_setup(
         telnyx_client,
@@ -224,7 +226,7 @@ def main() -> None:
             telnyx_phone_number_id=resolved_phone_number_id,
         )
 
-        logger.info("Inbound Telnyx runner ready. Call %s.", telnyx_config.phone_number)
+        logger.info("Inbound Telnyx runner ready for call %s", resolved_phone_number_id)
         uvicorn.run(app, host=args.host, port=args.port)
     finally:
         cleanup_telnyx_example_setup(telnyx_client, setup)

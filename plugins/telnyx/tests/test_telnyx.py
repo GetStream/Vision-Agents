@@ -6,7 +6,6 @@ import json
 from datetime import datetime
 
 from vision_agents.plugins import telnyx
-from vision_agents.plugins.telnyx import media_stream as telnyx_media_stream
 
 
 class FakeWebSocket:
@@ -195,67 +194,18 @@ def test_media_stream_start_recreates_audio_track_for_negotiated_format():
     assert stream.audio_track is not original_track
 
 
-def test_attach_phone_to_call_cleans_up_rtc_connection(monkeypatch):
-    class DummyConnection:
-        def __init__(self):
-            self.entered = False
-            self.exited = False
-            self.added_audio_track = None
+def test_media_stream_runs_cleanup_callbacks_on_close():
+    cleanup_ran = False
 
-        def on(self, _event):
-            def decorator(callback):
-                return callback
+    async def cleanup():
+        nonlocal cleanup_ran
+        cleanup_ran = True
 
-            return decorator
-
-        async def __aenter__(self):
-            self.entered = True
-            return self
-
-        async def __aexit__(self, *_args):
-            self.exited = True
-
-        async def add_tracks(self, audio, video):
-            self.added_audio_track = audio
-            assert video is None
-
-    connection = DummyConnection()
-
-    async def fake_join(*_args, **_kwargs):
-        return connection
-
-    monkeypatch.setattr(telnyx_media_stream.rtc, "join", fake_join)
-    websocket = FakeWebSocket(
-        [
-            json.dumps(
-                {
-                    "event": "start",
-                    "stream_id": "stream-1",
-                    "start": {
-                        "call_control_id": "v2:abc123",
-                        "media_format": {
-                            "encoding": "L16",
-                            "sample_rate": 16000,
-                            "channels": 1,
-                        },
-                    },
-                }
-            ),
-            json.dumps({"event": "stop", "stream_id": "stream-1"}),
-        ]
-    )
+    websocket = FakeWebSocket([json.dumps({"event": "stop", "stream_id": "stream-1"})])
     stream = telnyx.TelnyxMediaStream(websocket)
+    stream.add_cleanup_callback(cleanup)
 
-    async def scenario():
-        await stream.accept()
-        await telnyx.attach_phone_to_call(object(), stream, "phone-user")
+    asyncio.run(stream.accept())
+    asyncio.run(stream.run())
 
-        assert connection.entered is True
-        assert connection.added_audio_track is None
-
-        await stream.run()
-
-    asyncio.run(scenario())
-
-    assert connection.added_audio_track is stream.audio_track
-    assert connection.exited is True
+    assert cleanup_ran

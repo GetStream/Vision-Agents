@@ -1,7 +1,7 @@
 """Helpers shared by the minimal Telnyx phone examples."""
 
-from __future__ import annotations
-
+import base64
+import binascii
 import json
 import os
 import signal
@@ -12,6 +12,10 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from fastapi import HTTPException, Request
+
 
 TELNYX_API_BASE_URL = "https://api.telnyx.com/v2"
 TELNYX_MEDIA_PATH = "/telnyx/media"
@@ -20,6 +24,10 @@ TELNYX_EVENTS_PATH = "/telnyx/events"
 
 class TelnyxSetupError(RuntimeError):
     """Raised when local or Telnyx account setup is not ready for the example."""
+
+
+class TelnyxWebhookVerificationError(ValueError):
+    """Raised when a Telnyx webhook signature fails verification."""
 
 
 class TelnyxAPIError(RuntimeError):
@@ -210,7 +218,12 @@ def detect_ngrok_url() -> str | None:
             "http://127.0.0.1:4040/api/tunnels", timeout=2
         ) as response:
             data = json.loads(response.read().decode("utf-8"))
-    except Exception:
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ):
         return None
 
     for tunnel in data.get("tunnels", []):
@@ -308,7 +321,7 @@ def prepare_telnyx_example_setup(
                     resolved_phone_number_id,
                     resolved_app_id,
                 )
-        except Exception:
+        except (TelnyxAPIError, TelnyxSetupError, urllib.error.URLError, TimeoutError):
             if created_app_id:
                 client.delete_call_control_app(created_app_id)
             raise
@@ -351,13 +364,13 @@ def cleanup_telnyx_example_setup(
                     setup.phone_number_id,
                     setup.original_connection_id,
                 )
-            except Exception as exc:
+            except (TelnyxAPIError, urllib.error.URLError, TimeoutError) as exc:
                 errors.append(f"restore phone number routing failed: {exc}")
 
         if setup.created_call_control_app_id:
             try:
                 client.delete_call_control_app(setup.created_call_control_app_id)
-            except Exception as exc:
+            except (TelnyxAPIError, urllib.error.URLError, TimeoutError) as exc:
                 errors.append(f"delete temporary Call Control App failed: {exc}")
 
         if errors:
@@ -441,6 +454,59 @@ def preflight_outbound(
             client.get_verified_number(to_number),
             to_number=to_number,
         )
+
+
+def verify_telnyx_webhook(
+    payload: bytes,
+    signature: str | None,
+    timestamp: str | None,
+    public_key: str,
+    *,
+    tolerance_seconds: int = 300,
+) -> None:
+    """Verify a Telnyx webhook using Ed25519 signature headers."""
+    if not signature or not timestamp:
+        raise TelnyxWebhookVerificationError("Missing Telnyx webhook signature headers")
+
+    now = int(time.time())
+    webhook_timestamp = int(timestamp)
+    if abs(now - webhook_timestamp) > tolerance_seconds:
+        raise TelnyxWebhookVerificationError(
+            "Telnyx webhook timestamp outside tolerance window"
+        )
+
+    signed_payload = f"{timestamp}|{payload.decode('utf-8')}".encode("utf-8")
+    key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key))
+    try:
+        signature_bytes = base64.b64decode(signature)
+        key.verify(signature_bytes, signed_payload)
+    except (InvalidSignature, ValueError, binascii.Error) as exc:
+        raise TelnyxWebhookVerificationError(
+            "Invalid Telnyx webhook signature"
+        ) from exc
+
+
+async def parse_verified_telnyx_webhook(
+    request: Request,
+    public_key: str,
+) -> dict[str, Any]:
+    """Read and verify a Telnyx webhook request body."""
+    payload = await request.body()
+    try:
+        verify_telnyx_webhook(
+            payload,
+            request.headers.get("telnyx-signature-ed25519"),
+            request.headers.get("telnyx-timestamp"),
+            public_key,
+        )
+    except TelnyxWebhookVerificationError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return json.loads(payload)
+
+
+def require_telnyx_public_key(env: Mapping[str, str] | None = None) -> str:
+    values = require_env(["TELNYX_PUBLIC_KEY"], env)
+    return values["TELNYX_PUBLIC_KEY"]
 
 
 def preflight_inbound(

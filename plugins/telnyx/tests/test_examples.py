@@ -1,18 +1,15 @@
 """Tests for the minimal Telnyx example helpers."""
 
-import sys
-from pathlib import Path
+import base64
+import time
 
 import pytest
-
-
-EXAMPLES_DIR = Path(__file__).resolve().parents[1] / "examples"
-sys.path.insert(0, str(EXAMPLES_DIR))
-
-from telnyx_helpers import (  # noqa: E402
-    cleanup_telnyx_example_setup,
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from vision_agents.plugins.telnyx.example_helpers import (
     TelnyxConfig,
     TelnyxSetupError,
+    TelnyxWebhookVerificationError,
+    cleanup_telnyx_example_setup,
     load_config,
     media_stream_url,
     prepare_telnyx_example_setup,
@@ -22,6 +19,7 @@ from telnyx_helpers import (  # noqa: E402
     validate_call_control_app,
     validate_phone_number_routing,
     validate_verified_destination,
+    verify_telnyx_webhook,
     webhook_url,
 )
 
@@ -39,9 +37,11 @@ class FakeTelnyxClient:
         self.phone_number = phone_number
         self.verified_number = verified_number
         self.outbound_voice_profile_id = outbound_voice_profile_id
-        self.created_apps = []
-        self.deleted_apps = []
-        self.updated_connections = []
+        self.call_control_apps: dict[str, dict] = {}
+        self.deleted_app_ids: list[str] = []
+        self.phone_connection_id = (
+            phone_number.get("connection_id") if phone_number else None
+        )
 
     def retrieve_call_control_app(self, _app_id):
         return self.app
@@ -68,14 +68,18 @@ class FakeTelnyxClient:
             "webhook_event_url": webhook_event_url,
             "outbound": {"outbound_voice_profile_id": outbound_voice_profile_id},
         }
-        self.created_apps.append(app)
+        self.call_control_apps[app["id"]] = app
         return {"data": app}
 
     def delete_call_control_app(self, app_id):
-        self.deleted_apps.append(app_id)
+        self.deleted_app_ids.append(app_id)
+        self.call_control_apps.pop(app_id, None)
 
     def update_phone_number_connection(self, phone_number_id, connection_id):
-        self.updated_connections.append((phone_number_id, connection_id))
+        self.phone_connection_id = connection_id
+        if self.phone_number is not None:
+            self.phone_number["connection_id"] = connection_id
+            self.phone_number["id"] = phone_number_id
 
     def get_verified_number(self, _phone_number):
         return self.verified_number
@@ -163,6 +167,31 @@ def test_validate_verified_destination_rejects_missing_number():
         validate_verified_destination(None, to_number="+15557654321")
 
 
+def test_verify_telnyx_webhook_accepts_valid_signature():
+    private_key = Ed25519PrivateKey.generate()
+    public_key = base64.b64encode(private_key.public_key().public_bytes_raw()).decode(
+        "ascii"
+    )
+    payload = b'{"data":{"event_type":"call.initiated"}}'
+    timestamp = str(int(time.time()))
+    signed_payload = f"{timestamp}|{payload.decode('utf-8')}".encode("utf-8")
+    signature = base64.b64encode(private_key.sign(signed_payload)).decode("ascii")
+
+    verify_telnyx_webhook(payload, signature, timestamp, public_key)
+
+
+def test_verify_telnyx_webhook_rejects_invalid_signature():
+    private_key = Ed25519PrivateKey.generate()
+    public_key = base64.b64encode(private_key.public_key().public_bytes_raw()).decode(
+        "ascii"
+    )
+    payload = b'{"data":{"event_type":"call.initiated"}}'
+    timestamp = str(int(time.time()))
+
+    with pytest.raises(TelnyxWebhookVerificationError, match="Invalid Telnyx"):
+        verify_telnyx_webhook(payload, "invalid", timestamp, public_key)
+
+
 def test_prepare_telnyx_example_setup_requires_app_or_setup_flag():
     client = FakeTelnyxClient()
 
@@ -196,14 +225,15 @@ def test_prepare_telnyx_example_setup_creates_temp_outbound_app():
     assert setup.created_call_control_app_id == "created-app-id"
     assert setup.phone_number_id == "phone-id"
     assert setup.original_connection_id is None
-    assert client.created_apps[0]["webhook_event_url"] == (
+    assert client.call_control_apps["created-app-id"]["webhook_event_url"] == (
         "https://example.ngrok-free.app/telnyx/events"
     )
-    assert client.updated_connections == []
+    assert client.phone_connection_id == "original-app-id"
 
     cleanup_telnyx_example_setup(client, setup)
 
-    assert client.deleted_apps == ["created-app-id"]
+    assert client.deleted_app_ids == ["created-app-id"]
+    assert "created-app-id" not in client.call_control_apps
 
 
 def test_prepare_telnyx_example_setup_routes_and_restores_inbound_number():
@@ -226,12 +256,12 @@ def test_prepare_telnyx_example_setup_routes_and_restores_inbound_number():
 
     assert setup.phone_number_id == "phone-id"
     assert setup.original_connection_id == "original-app-id"
-    assert client.updated_connections == [("phone-id", "created-app-id")]
+    assert client.phone_connection_id == "created-app-id"
 
     cleanup_telnyx_example_setup(client, setup)
 
-    assert client.updated_connections[-1] == ("phone-id", "original-app-id")
-    assert client.deleted_apps == ["created-app-id"]
+    assert client.phone_connection_id == "original-app-id"
+    assert client.deleted_app_ids == ["created-app-id"]
 
 
 def test_preflight_outbound_passes_with_matching_app_and_verified_destination():

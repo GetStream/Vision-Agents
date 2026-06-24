@@ -12,6 +12,7 @@ license = "MIT"
 dependencies = [
     "vision-agents",
     "numpy>=1.24.0", # capped at <2.0 via workspace override in root pyproject.toml
+    "cryptography>=44.0.0",
     "fastapi>=0.135.1",
 ]
 

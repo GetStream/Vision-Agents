@@ -5,10 +5,9 @@ Run from the repository root or this directory after starting ngrok:
     NGROK_URL=example.ngrok-free.app uv run plugins/telnyx/examples/outbound_call.py --to +15551234567
 """
 
-from __future__ import annotations
-
-import asyncio
 import argparse
+import asyncio
+import contextlib
 import logging
 import os
 import uuid
@@ -19,15 +18,16 @@ from fastapi import FastAPI, Request, WebSocket
 from vision_agents.core import Agent, User
 from vision_agents.plugins import gemini, getstream, telnyx
 from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
-
-from telnyx_helpers import (
-    cleanup_telnyx_example_setup,
-    prepare_telnyx_example_setup,
+from vision_agents.plugins.telnyx.example_helpers import (
     TelnyxClient,
     TelnyxConfig,
+    cleanup_telnyx_example_setup,
     media_stream_url,
+    parse_verified_telnyx_webhook,
     preflight_outbound,
+    prepare_telnyx_example_setup,
     require_env,
+    require_telnyx_public_key,
 )
 
 
@@ -39,13 +39,17 @@ load_dotenv()
 app = FastAPI()
 call_registry = telnyx.TelnyxCallRegistry()
 call_done: asyncio.Event | None = None
+telnyx_public_key: str | None = None
 
 
 @app.post("/telnyx/events")
 async def telnyx_events(request: Request):
-    data = await request.json()
+    if telnyx_public_key is None:
+        raise RuntimeError("Telnyx example was not initialized")
+
+    data = await parse_verified_telnyx_webhook(request, telnyx_public_key)
     event_type = data.get("data", {}).get("event_type")
-    logger.info("Telnyx webhook event: %s", event_type or data)
+    logger.info("Telnyx webhook event: %s", event_type)
     return {"ok": True}
 
 
@@ -108,6 +112,8 @@ async def media_stream(websocket: WebSocket, call_id: str, token: str):
     finally:
         if not stream_task.done():
             stream_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stream_task
         call_registry.remove(call_id)
         if call_done is not None:
             call_done.set()
@@ -131,21 +137,28 @@ async def run_with_server(
 
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
     server_task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.1)
+    try:
+        deadline = asyncio.get_running_loop().time() + 30.0
+        while not server.started:
+            if server_task.done():
+                raise RuntimeError("Uvicorn server failed to start")
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError("Uvicorn server did not start in time")
+            await asyncio.sleep(0.1)
 
-    logger.info("Dialing %s from %s", to_number, from_number)
-    response = await asyncio.to_thread(
-        client.dial_call,
-        connection_id=config.call_control_app_id,
-        from_number=from_number,
-        to_number=to_number,
-        stream_url=stream_url,
-    )
-    logger.info("Telnyx dial accepted: %s", response.get("data", response))
-    await call_done.wait()
-    server.should_exit = True
-    await server_task
+        logger.info("Dialing outbound call %s", call_id)
+        await asyncio.to_thread(
+            client.dial_call,
+            connection_id=config.call_control_app_id,
+            from_number=from_number,
+            to_number=to_number,
+            stream_url=stream_url,
+        )
+        logger.info("Telnyx dial accepted for call %s", call_id)
+        await call_done.wait()
+    finally:
+        server.should_exit = True
+        await server_task
 
 
 def parse_args() -> argparse.Namespace:
@@ -183,10 +196,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    global telnyx_public_key
+
     args = parse_args()
     values = require_env(
         ["STREAM_API_KEY", "STREAM_API_SECRET", "GOOGLE_API_KEY", "TELNYX_API_KEY"]
     )
+    telnyx_public_key = require_telnyx_public_key()
     client = TelnyxClient(values["TELNYX_API_KEY"])
     setup = prepare_telnyx_example_setup(
         client,
