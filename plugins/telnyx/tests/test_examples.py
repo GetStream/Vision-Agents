@@ -192,6 +192,17 @@ def test_verify_telnyx_webhook_rejects_invalid_signature():
         verify_telnyx_webhook(payload, "invalid", timestamp, public_key)
 
 
+def test_verify_telnyx_webhook_rejects_malformed_timestamp():
+    private_key = Ed25519PrivateKey.generate()
+    public_key = base64.b64encode(
+        private_key.public_key().public_bytes_raw()
+    ).decode("ascii")
+    payload = b'{"data":{"event_type":"call.initiated"}}'
+
+    with pytest.raises(TelnyxWebhookVerificationError, match="Invalid Telnyx"):
+        verify_telnyx_webhook(payload, "invalid", "not-a-timestamp", public_key)
+
+
 def test_prepare_telnyx_example_setup_requires_app_or_setup_flag():
     client = FakeTelnyxClient()
 

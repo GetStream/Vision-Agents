@@ -468,19 +468,24 @@ def verify_telnyx_webhook(
     if not signature or not timestamp:
         raise TelnyxWebhookVerificationError("Missing Telnyx webhook signature headers")
 
-    now = int(time.time())
-    webhook_timestamp = int(timestamp)
+    try:
+        now = int(time.time())
+        webhook_timestamp = int(timestamp)
+        payload_text = payload.decode("utf-8")
+        key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key))
+        signature_bytes = base64.b64decode(signature)
+    except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
+        raise TelnyxWebhookVerificationError("Invalid Telnyx webhook signature") from exc
+
     if abs(now - webhook_timestamp) > tolerance_seconds:
         raise TelnyxWebhookVerificationError(
             "Telnyx webhook timestamp outside tolerance window"
         )
 
-    signed_payload = f"{timestamp}|{payload.decode('utf-8')}".encode("utf-8")
-    key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key))
+    signed_payload = f"{timestamp}|{payload_text}".encode("utf-8")
     try:
-        signature_bytes = base64.b64decode(signature)
         key.verify(signature_bytes, signed_payload)
-    except (InvalidSignature, ValueError, binascii.Error) as exc:
+    except InvalidSignature as exc:
         raise TelnyxWebhookVerificationError(
             "Invalid Telnyx webhook signature"
         ) from exc
@@ -489,7 +494,7 @@ def verify_telnyx_webhook(
 async def parse_verified_telnyx_webhook(
     request: Request,
     public_key: str,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Read and verify a Telnyx webhook request body."""
     payload = await request.body()
     try:
@@ -501,7 +506,10 @@ async def parse_verified_telnyx_webhook(
         )
     except TelnyxWebhookVerificationError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    return json.loads(payload)
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid Telnyx webhook payload") from exc
 
 
 def require_telnyx_public_key(env: Mapping[str, str] | None = None) -> str:
