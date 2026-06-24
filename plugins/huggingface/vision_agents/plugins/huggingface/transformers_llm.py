@@ -20,6 +20,7 @@ import gc
 import json
 import logging
 import re
+import threading
 import time
 import uuid
 from threading import Thread
@@ -49,8 +50,29 @@ logger = logging.getLogger(__name__)
 PLUGIN_NAME = "transformers_llm"
 
 DeviceType = Literal["auto", "cuda", "mps", "cpu"]
+
+# Guard concurrent from_pretrained calls which are not thread-safe
+# and can produce meta tensors when run in parallel threads.
+_model_load_lock = threading.Lock()
 QuantizationType = Literal["none", "4bit", "8bit"]
 TorchDtypeType = Literal["auto", "float16", "bfloat16", "float32"]
+
+
+def resolve_device(config: DeviceType) -> torch.device:
+    """Map a string device config to a concrete ``torch.device``.
+
+    ``"auto"`` picks CUDA, then MPS, then CPU based on availability.
+    """
+    if config == "cuda":
+        return torch.device("cuda")
+    if config == "mps":
+        return torch.device("mps")
+    if config == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+    return torch.device("cpu")
 
 
 def resolve_torch_dtype(config: TorchDtypeType) -> torch.dtype:
