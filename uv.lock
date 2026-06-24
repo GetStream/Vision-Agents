@@ -6771,6 +6771,7 @@ source = { editable = "plugins/cartesia" }
 dependencies = [
     { name = "cartesia" },
     { name = "vision-agents" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -6783,6 +6784,7 @@ dev = [
 requires-dist = [
     { name = "cartesia", specifier = ">=3.0.2,<3.1" },
     { name = "vision-agents", editable = "agents-core" },
+    { name = "websockets", specifier = ">=15.0.1,<16" },
 ]
 
 [package.metadata.requires-dev]

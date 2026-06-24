@@ -2,6 +2,8 @@
 
 # Open Vision Agents by Stream
 
+[![Listed on TakoAPI](https://img.shields.io/badge/Listed%20on-TakoAPI-7c3aed)](https://takoapi.com/agents/getstream-vision-agents)
+
 [![build](https://github.com/GetStream/Vision-Agents/actions/workflows/ci.yml/badge.svg)](https://github.com/GetStream/Vision-Agents/actions)
 [![PyPI version](https://badge.fury.io/py/vision-agents.svg)](http://badge.fury.io/py/vision-agents)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/vision-agents.svg)

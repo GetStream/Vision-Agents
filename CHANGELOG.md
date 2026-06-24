@@ -2,6 +2,14 @@
 
 ## New Features
 
+### Realtime input audio pacing (#599)
+
+Realtime LLMs that need a steady upstream audio cadence can now opt into framework-level pacing. Pass `input_audio_pacing=AudioInputPacingConfig(...)` to a `Realtime` subclass and the framework buffers the irregular PCM the WebRTC uplink delivers and forwards fixed-size chunks (default 20 ms) at a stable wall-clock rate. `AudioInputPacingConfig.virtual_microphone()` is a preset for speech-to-speech models that interpret gaps in the input as end-of-turn — it primes a 500 ms buffer and fills digital silence on a dry buffer so the model never sees an interruption.
+
+### `gemini` plugin: Live Translate model with auto-enabled input pacing (#599)
+
+Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and bumps the default Gemini Realtime model to `gemini-3.1-flash-live-preview` (was `gemini-2.5-flash-native-audio-preview-12-2025`). The Live Translate model is sensitive to uneven input audio — irregular upstream chunks produce audible jitter and word-cutoffs in its output. `GeminiRealtime` automatically installs `AudioInputPacingConfig.virtual_microphone()` whenever the model is `gemini-3.5-live-translate-preview`, so the framework feeds it a steady 20 ms stream by default. Opt out with `input_audio_pacing=None`.
+
 ### `getstream` plugin: non-blocking StreamConversation persistence (#589)
 
 `StreamConversation` now persists messages to Stream Chat in the background instead of awaiting each REST round-trip inline. Voice pipelines call `upsert_message` on the critical path (per transcript and per LLM delta), where the inline ~150–300 ms round-trip compounded into audible response latency. Writes are dispatched as fire-and-forget tasks serialized behind a per-channel lock, so ordering is preserved and the final persisted message always matches the final content. Adds `Conversation.wait_for_pending_syncs()`, drained on agent shutdown so in-flight writes are not dropped.

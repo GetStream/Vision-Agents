@@ -9,12 +9,10 @@ dependencies = [
     "vision-agents-plugins-cartesia",
     "vision-agents-plugins-getstream",
     "vision-agents-plugins-openai",
-    "vision-agents-plugins-deepgram",
 ]
 
 [tool.uv.sources]
-vision-agents = { editable = true }
-vision-agents-plugins-cartesia = { editable = true }
-vision-agents-plugins-getstream = { editable = true }
-vision-agents-plugins-openai = { editable = true }
-vision-agents-plugins-deepgram = {  editable = true }
+"vision-agents" = { path = "../../../agents-core", editable = true }
+"vision-agents-plugins-cartesia" = { path = "..", editable = true }
+"vision-agents-plugins-getstream" = { path = "../../getstream", editable = true }
+"vision-agents-plugins-openai" = { path = "../../openai", editable = true }

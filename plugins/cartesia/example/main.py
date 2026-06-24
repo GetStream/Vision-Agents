@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 """
-Example: Text-to-Speech with Cartesia using Agent class
+Example: Speech-to-Text and Text-to-Speech with Cartesia using Agent class
 
 This minimal example shows how to:
-1. Create an Agent with TTS capabilities
+1. Create an Agent with Cartesia STT and TTS
 2. Join a Stream video call
-3. Greet users when they join
+3. Greet users and respond to spoken input
 
-Run it, join the call in your browser, and hear the bot greet you 🗣️
+Run it, join the call in your browser, and speak to the bot.
 
 Usage::
-    python main.py
+    uv run main.py run
 
 The script looks for the following env vars (see `env.example`):
     STREAM_API_KEY / STREAM_API_SECRET
     CARTESIA_API_KEY
+    OPENAI_API_KEY
 """
 
+import asyncio
 import logging
 
 from dotenv import load_dotenv
@@ -31,11 +33,15 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    # Create agent with TTS
+    """Create an agent with Cartesia STT and TTS."""
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="TTS Bot", id="agent"),
-        instructions="I'm a TTS bot that greets users when they join.",
+        agent_user=User(name="Cartesia Voice Bot", id="agent"),
+        instructions=(
+            "You're a helpful voice AI assistant. "
+            "Keep replies short and conversational."
+        ),
+        stt=cartesia.STT(),
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=cartesia.TTS(),
     )
@@ -44,12 +50,16 @@ async def create_agent(**kwargs) -> Agent:
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    # Create a call
     call = await agent.create_call(call_type, call_id)
 
-    # Join call and wait
+    logger.info("Starting Cartesia STT/TTS voice bot")
+
     async with agent.join(call):
-        await agent.simple_response("tell me something interesting in a short sentence")
+        logger.info("Joined call")
+        await asyncio.sleep(3)
+        await agent.simple_response(
+            "Hello! I'm listening. What would you like to talk about?"
+        )
         await agent.finish()
 
 

@@ -1,9 +1,12 @@
+import copy
 import os
 
 import pytest
 from dotenv import load_dotenv
 from vision_agents.core.agents.conversation import InMemoryConversation, Message
+from vision_agents.core.llm import FunctionRegistry
 from vision_agents.plugins.openai.openai_llm import OpenAILLM
+from vision_agents.plugins.openai.tool_utils import convert_tools_to_openai_format
 from vision_agents.testing import collect_simple_response
 
 load_dotenv()
@@ -41,6 +44,104 @@ class TestOpenAILLM:
         ]
         messages2 = OpenAILLM._normalize_message(advanced)
         assert messages2[0].original is not None
+
+
+class TestOpenAIToolConversion:
+    """Unit tests for OpenAI function tool schema conversion."""
+
+    def test_required_only_schema_uses_strict_mode(self):
+        tools = [
+            {
+                "name": "get_weather",
+                "description": "Get weather",
+                "parameters_schema": {
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string"},
+                    },
+                    "required": ["location"],
+                },
+            }
+        ]
+
+        converted = convert_tools_to_openai_format(tools)
+        parameters = converted[0]["parameters"]
+
+        assert converted[0]["strict"] is True
+        assert parameters["additionalProperties"] is False
+        assert parameters["required"] == ["location"]
+
+    def test_optional_property_schema_disables_strict_mode(self):
+        tools = [
+            {
+                "name": "check_inventory_tool",
+                "description": "Check fake demo inventory for a medication.",
+                "parameters_schema": {
+                    "type": "object",
+                    "properties": {
+                        "medication_name": {"type": "string"},
+                        "strength": {"type": "string"},
+                    },
+                    "required": ["medication_name"],
+                },
+            }
+        ]
+
+        converted = convert_tools_to_openai_format(tools)
+        parameters = converted[0]["parameters"]
+
+        assert converted[0]["strict"] is False
+        assert parameters["required"] == ["medication_name"]
+        assert "strength" in parameters["properties"]
+
+    def test_realtime_schema_omits_strict_mode(self):
+        tools = [
+            {
+                "name": "get_weather",
+                "parameters_schema": {
+                    "type": "object",
+                    "properties": {"location": {"type": "string"}},
+                    "required": ["location"],
+                },
+            }
+        ]
+
+        converted = convert_tools_to_openai_format(tools, for_realtime=True)
+
+        assert "strict" not in converted[0]
+
+    def test_converter_does_not_mutate_original_schema(self):
+        tools = [
+            {
+                "name": "get_weather",
+                "parameters_schema": {
+                    "type": "object",
+                    "properties": {"location": {"type": "string"}},
+                    "required": ["location"],
+                },
+            }
+        ]
+        original = copy.deepcopy(tools)
+
+        convert_tools_to_openai_format(tools)
+
+        assert tools == original
+
+    def test_registered_optional_parameter_is_openai_compatible(self):
+        registry = FunctionRegistry()
+
+        @registry.register(description="Check fake demo inventory for a medication.")
+        async def check_inventory_tool(
+            medication_name: str, strength: str | None = None
+        ):
+            return {"medication_name": medication_name, "strength": strength}
+
+        converted = convert_tools_to_openai_format(registry.get_tool_schemas())
+        parameters = converted[0]["parameters"]
+
+        assert converted[0]["strict"] is False
+        assert parameters["required"] == ["medication_name"]
+        assert "strength" in parameters["properties"]
 
 
 @pytest.mark.integration

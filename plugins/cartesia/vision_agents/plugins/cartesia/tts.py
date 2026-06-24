@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 import os
 from typing import AsyncIterator, Iterator, Literal, Optional
@@ -19,7 +17,7 @@ class TTS(tts.TTS):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model_id: str = "sonic-3",
+        model_id: str = "sonic-3.5",
         voice_id: str | None = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
         sample_rate: Literal[8000, 16000, 22050, 24000, 44100, 48000] = 16000,
         client: Optional[AsyncCartesia] = None,
@@ -28,7 +26,7 @@ class TTS(tts.TTS):
 
         Args:
             api_key: Cartesia API key – falls back to ``CARTESIA_API_KEY`` env var.
-            model_id: Which model to use (default ``sonic-3``).
+            model_id: Which model to use (default ``sonic-3.5``).
             voice_id: Cartesia voice ID. When ``None`` the model default is used.
             sample_rate: PCM sample-rate you want back (must match output track).
         """
