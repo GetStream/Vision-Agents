@@ -136,8 +136,10 @@ class STT(stt.STT, Warmable[Optional[AutoModel]]):
             if should_process:
                 await self._process_buffer(participant)
 
-        except Exception:
-            logger.exception("Error buffering audio for FunASR")
+        except ValueError:
+            logger.exception("Invalid PCM audio while buffering for FunASR")
+        except RuntimeError:
+            logger.exception("Audio buffering/runtime error for FunASR")
 
     async def _process_buffer(self, participant: Participant):
         """Process the current audio buffer through FunASR."""
@@ -158,7 +160,7 @@ class STT(stt.STT, Warmable[Optional[AutoModel]]):
 
         try:
             text = await self._transcribe(audio_array=audio_array)
-        except Exception:
+        except (RuntimeError, ValueError, KeyError, IndexError, TypeError):
             logger.exception("Error processing audio buffer with FunASR")
             return
 
