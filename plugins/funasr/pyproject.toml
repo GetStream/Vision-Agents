@@ -28,7 +28,7 @@ raw-options = { root = "..", search_parent_directories = true, fallback_version 
 packages = ["vision_agents"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/vision_agents"]
+include = ["vision_agents"]
 
 [tool.uv.sources]
 vision-agents = { workspace = true }
