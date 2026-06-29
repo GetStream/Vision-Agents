@@ -5,6 +5,21 @@ import pytest
 from vision_agents.plugins import funasr
 
 
+@pytest.fixture
+def stt_factory():
+    instances = []
+
+    def create_stt(*args, **kwargs):
+        stt = funasr.STT(*args, **kwargs)
+        instances.append(stt)
+        return stt
+
+    yield create_stt
+
+    for stt in instances:
+        asyncio.run(stt.close())
+
+
 class _FakeAutoModel:
     pass
 
@@ -56,17 +71,17 @@ class _ExplodingPcmData:
 class TestSTT:
     """Unit tests for the FunASR STT plugin (no model loaded)."""
 
-    def test_construct(self):
+    def test_construct(self, stt_factory):
         """The plugin constructs and exposes the expected defaults without loading a model."""
-        stt = funasr.STT()
+        stt = stt_factory()
         assert stt.provider_name == "funasr"
         assert stt.model_id == "iic/SenseVoiceSmall"
         assert stt.language == "auto"
         assert stt.device == "cpu"
         assert stt.use_itn is True
 
-    def test_custom_params(self):
-        stt = funasr.STT(
+    def test_custom_params(self, stt_factory):
+        stt = stt_factory(
             model="FunAudioLLM/Fun-ASR-Nano-2512",
             language="zh",
             device="cuda",
@@ -77,14 +92,14 @@ class TestSTT:
         assert stt.device == "cuda"
         assert stt.use_itn is False
 
-    def test_process_audio_raises_unexpected_buffer_errors(self):
-        stt = funasr.STT(client=_FakeAutoModel())
+    def test_process_audio_raises_unexpected_buffer_errors(self, stt_factory):
+        stt = stt_factory(client=_FakeAutoModel())
 
         with pytest.raises(AssertionError, match="unexpected audio bug"):
             asyncio.run(stt.process_audio(_ExplodingPcmData(), participant=object()))
 
-    def test_process_buffer_raises_unexpected_transcription_errors(self):
-        stt = funasr.STT(client=_ExplodingAutoModel())
+    def test_process_buffer_raises_unexpected_transcription_errors(self, stt_factory):
+        stt = stt_factory(client=_ExplodingAutoModel())
         pcm_data = _FakePcmData(
             samples=_FakeSamples(size=16000),
             duration_ms=8000,
