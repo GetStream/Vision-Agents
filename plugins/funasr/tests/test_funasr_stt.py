@@ -9,6 +9,11 @@ class _FakeAutoModel:
     pass
 
 
+class _ExplodingAutoModel:
+    def generate(self, **kwargs):
+        raise AssertionError("unexpected transcription bug")
+
+
 class _FakeSamples:
     def __init__(self, size=0):
         self.size = size
@@ -79,16 +84,11 @@ class TestSTT:
             asyncio.run(stt.process_audio(_ExplodingPcmData(), participant=object()))
 
     def test_process_buffer_raises_unexpected_transcription_errors(self):
-        stt = funasr.STT(client=_FakeAutoModel())
-        stt._audio_buffer = _FakePcmData(
+        stt = funasr.STT(client=_ExplodingAutoModel())
+        pcm_data = _FakePcmData(
             samples=_FakeSamples(size=16000),
-            duration_ms=1000,
+            duration_ms=8000,
         )
 
-        async def raise_unexpected_error(*, audio_array):
-            raise AssertionError("unexpected transcription bug")
-
-        stt._transcribe = raise_unexpected_error
-
         with pytest.raises(AssertionError, match="unexpected transcription bug"):
-            asyncio.run(stt._process_buffer(participant=object()))
+            asyncio.run(stt.process_audio(pcm_data, participant=object()))
