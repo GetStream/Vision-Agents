@@ -28,7 +28,7 @@ describe what it sees out loud.
 
 2. Create a `.env` file in the workspace root with your keys (see
    [`.env.example`](./.env.example)):
-   ```
+   ```bash
    TWELVELABS_API_KEY=your_twelvelabs_key
    STREAM_API_KEY=your_stream_key
    STREAM_API_SECRET=your_stream_secret
