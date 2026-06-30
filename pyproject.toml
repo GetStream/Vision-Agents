@@ -43,6 +43,7 @@ vision-agents-plugins-anam = { workspace = true }
 vision-agents-plugins-sarvam = { workspace = true }
 vision-agents-plugins-liveavatar = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
+vision-agents-plugins-twelvelabs = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -93,6 +94,7 @@ members = [
     "plugins/sarvam",
     "plugins/liveavatar",
     "plugins/tencent",
+    "plugins/twelvelabs",
 ]
 exclude = [
     "**/__pycache__",
@@ -141,6 +143,12 @@ ignore_missing_imports = true
 check_untyped_defs = true
 namespace_packages = true
 explicit_package_bases = true
+
+# The twelvelabs SDK ships py.typed but has type errors in its own code; we
+# import its types so we can't skip it, but we ignore errors inside the package.
+[[tool.mypy.overrides]]
+module = "twelvelabs.*"
+ignore_errors = true
 
 [tool.hatch.version]
 source = "vcs"

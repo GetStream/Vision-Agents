@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'win32'",
@@ -44,6 +44,7 @@ members = [
     "vision-agents-plugins-telnyx",
     "vision-agents-plugins-tencent",
     "vision-agents-plugins-turbopuffer",
+    "vision-agents-plugins-twelvelabs",
     "vision-agents-plugins-twilio",
     "vision-agents-plugins-ultralytics",
     "vision-agents-plugins-vogent",
@@ -6167,6 +6168,21 @@ wheels = [
 ]
 
 [[package]]
+name = "twelvelabs"
+version = "1.2.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5f/24/2604563f5a528bf5f12f9bbb7e3102e91c0e4f9bfd7aeb9963dced3a0b0f/twelvelabs-1.2.8.tar.gz", hash = "sha256:bb0846cc839845c800de8061bb7b99212a472e24bf20770d569f6f620b845e3c", size = 178449, upload-time = "2026-06-18T06:38:48.135Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/a6/6380129c65222bb2497cbef27334a496a1a31f4f38973fac46b62b9224fc/twelvelabs-1.2.8-py3-none-any.whl", hash = "sha256:c0487dd892b03728ac2afe3e4ebd4ea5e30ff404b61896667eb5a39264db282b", size = 372073, upload-time = "2026-06-18T06:38:46.747Z" },
+]
+
+[[package]]
 name = "twilio"
 version = "9.10.9"
 source = { registry = "https://pypi.org/simple" }
@@ -6576,6 +6592,9 @@ tencent = [
 turbopuffer = [
     { name = "vision-agents-plugins-turbopuffer" },
 ]
+twelvelabs = [
+    { name = "vision-agents-plugins-twelvelabs" },
+]
 twilio = [
     { name = "vision-agents-plugins-twilio" },
 ]
@@ -6647,13 +6666,14 @@ requires-dist = [
     { name = "vision-agents-plugins-telnyx", marker = "extra == 'telnyx'", editable = "plugins/telnyx" },
     { name = "vision-agents-plugins-tencent", marker = "sys_platform == 'linux' and extra == 'tencent'", editable = "plugins/tencent" },
     { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'turbopuffer'", editable = "plugins/turbopuffer" },
+    { name = "vision-agents-plugins-twelvelabs", marker = "extra == 'twelvelabs'", editable = "plugins/twelvelabs" },
     { name = "vision-agents-plugins-twilio", marker = "extra == 'twilio'", editable = "plugins/twilio" },
     { name = "vision-agents-plugins-ultralytics", marker = "extra == 'ultralytics'", editable = "plugins/ultralytics" },
     { name = "vision-agents-plugins-vogent", marker = "extra == 'vogent'", editable = "plugins/vogent" },
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "telnyx", "tencent", "turbopuffer", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -7632,6 +7652,36 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-twelvelabs"
+source = { editable = "plugins/twelvelabs" }
+dependencies = [
+    { name = "av" },
+    { name = "twelvelabs" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "numpy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "av", specifier = ">=12.0.0" },
+    { name = "twelvelabs", specifier = ">=1.2.8,<2" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "numpy", specifier = ">=1.26.0" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]
