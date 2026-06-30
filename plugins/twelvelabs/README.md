@@ -1,7 +1,7 @@
 # TwelveLabs Plugin
 
 This plugin brings [TwelveLabs](https://twelvelabs.io) **Pegasus** video
-understanding to vision-agents as a first-class `VideoLLM`.
+understanding to Vision Agents as a first-class `VideoLLM`.
 
 Unlike frame-by-frame VLMs, Pegasus analyzes a short **video clip**, so it can
 reason about motion and events over time ("what just happened?") rather than a
