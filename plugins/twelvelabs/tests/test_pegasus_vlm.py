@@ -68,12 +68,17 @@ class TestPegasusVLM:
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(
-    not os.getenv("TWELVELABS_API_KEY"), reason="TWELVELABS_API_KEY not set"
-)
 class TestPegasusVLMIntegration:
     async def test_analyzes_buffered_clip(self):
-        """Buffer a few real frames and run a live Pegasus analysis."""
+        """Buffer a few real frames and run a live Pegasus analysis.
+
+        This is an opt-in integration test: it is only collected when the
+        ``integration`` marker is selected. If ``TWELVELABS_API_KEY`` is missing
+        ``PegasusVLM()`` raises a clear, actionable error rather than skipping.
+        """
+        assert os.getenv("TWELVELABS_API_KEY"), (
+            "TWELVELABS_API_KEY must be set to run the Pegasus integration tests"
+        )
         vlm = PegasusVLM(fps=1.0, clip_seconds=5)
         try:
             for _ in range(5):
