@@ -86,6 +86,7 @@ jobs:
       MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
       SARVAM_API_KEY: ${{ secrets.SARVAM_API_KEY }}
       INWORLD_API_KEY: ${{ secrets.INWORLD_API_KEY }}
+      TWELVELABS_API_KEY: ${{ secrets.TWELVELABS_API_KEY }}
     timeout-minutes: 30
     steps:
       - name: Checkout
