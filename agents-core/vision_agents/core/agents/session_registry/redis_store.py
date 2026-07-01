@@ -102,14 +102,18 @@ class RedisSessionKVStore(SessionKVStore):
 
     async def get(self, key: str) -> bytes | None:
         """Retrieve a value by key via GET."""
-        return await self._redis.get(self._prefixed(key))
+        value = await self._redis.get(self._prefixed(key))
+        if isinstance(value, str):
+            return value.encode()
+        return value
 
     async def mget(self, keys: list[str]) -> list[bytes | None]:
         """Retrieve multiple values by key via MGET, preserving order."""
         if not keys:
             return []
         prefixed = [self._prefixed(k) for k in keys]
-        return await self._redis.mget(prefixed)
+        values = await self._redis.mget(prefixed)
+        return [v.encode() if isinstance(v, str) else v for v in values]
 
     async def keys(self, prefix: str) -> list[str]:
         """Return all keys matching a prefix via SCAN (non-blocking)."""
