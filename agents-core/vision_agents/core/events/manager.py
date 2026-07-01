@@ -220,8 +220,11 @@ class EventManager:
                 for incompatible classes. Defaults to True.
         """
         for name, class_ in module.__dict__.items():
+            # Make sure the "type" is a string as expected
+            class_type = getattr(class_, "type", None)
             if name.endswith("Event") and (
-                not prefix or getattr(class_, "type", "").startswith(prefix)
+                not prefix
+                or (isinstance(class_type, str) and class_type.startswith(prefix))
             ):
                 self.register(class_, ignore_not_compatible=ignore_not_compatible)
                 self._modules.setdefault(module.__name__, []).append(class_)

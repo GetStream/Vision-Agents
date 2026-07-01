@@ -65,6 +65,39 @@ class TestEventManager:
         await manager.wait()
         assert my_handler.value == 2
 
+    async def test_register_events_from_module_skips_non_string_type(self):
+        class BoolTypeEvent:
+            type = True
+
+        class IntTypeEvent:
+            type = 5
+
+        class ObjectTypeEvent:
+            type = object()
+
+        class NoneTypeEvent:
+            type = None
+
+        manager = EventManager()
+        dummy_module = types.SimpleNamespace(
+            BoolTypeEvent=BoolTypeEvent,
+            IntTypeEvent=IntTypeEvent,
+            ObjectTypeEvent=ObjectTypeEvent,
+            NoneTypeEvent=NoneTypeEvent,
+            ValidEvent=ValidEvent,
+        )
+        dummy_module.__name__ = "dummy_module"
+
+        manager.register_events_from_module(dummy_module, prefix="custom.")
+
+        # The valid, string-typed event is registered; non-string types are skipped
+        registered = set(manager._events.values())
+        assert ValidEvent in registered
+        assert BoolTypeEvent not in registered
+        assert IntTypeEvent not in registered
+        assert ObjectTypeEvent not in registered
+        assert NoneTypeEvent not in registered
+
     async def test_subscribe_success(self):
         manager = EventManager()
         manager.register(ValidEvent)
