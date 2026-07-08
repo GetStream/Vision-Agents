@@ -5,6 +5,9 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch: { }
 
+permissions:
+  contents: read
+
 jobs:
   integration:
     uses: ./.github/workflows/run_tests.yml
