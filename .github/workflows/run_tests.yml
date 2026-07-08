@@ -24,6 +24,10 @@ env:
   # If set, uv will run without updating the uv.lock file. Equivalent to the `uv run --frozen`.
   UV_FROZEN: "1"
 
+permissions:
+  actions: write
+  contents: read
+
 jobs:
   # Run linters in one step to reduce checkout & dependencies setup overhead
   lint:
