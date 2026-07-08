@@ -19,6 +19,10 @@ concurrency:
   group: python-compatibility-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   resolve:
     name: Resolve on Python ${{ matrix.python }}
