@@ -42,6 +42,7 @@ on:
       - '.idea/**'
 
 permissions:
+  actions: write
   contents: read
   pull-requests: read
 
