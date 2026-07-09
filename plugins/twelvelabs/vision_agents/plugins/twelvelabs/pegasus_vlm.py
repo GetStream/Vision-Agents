@@ -287,8 +287,11 @@ class PegasusVLM(llm.VideoLLM):
             stream.width = width
             stream.height = height
             stream.pix_fmt = "yuv420p"
-            for frame in frames:
+            frame_time_base = Fraction(rate.denominator, rate.numerator)
+            for index, frame in enumerate(frames):
                 reformatted = frame.reformat(width=width, height=height, format="rgb24")
+                reformatted.pts = index
+                reformatted.time_base = frame_time_base
                 for packet in stream.encode(reformatted):
                     container.mux(packet)
             for packet in stream.encode():

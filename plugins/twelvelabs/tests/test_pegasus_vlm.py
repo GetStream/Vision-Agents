@@ -13,6 +13,7 @@ To run only unit tests (no API key needed):
 
 import io
 import os
+from fractions import Fraction
 
 import av
 import numpy as np
@@ -22,10 +23,13 @@ from vision_agents.core.llm.llm import LLMResponseFinal
 from vision_agents.plugins.twelvelabs import PegasusVLM
 
 
-def _solid_frame(width: int, height: int) -> av.VideoFrame:
+def _solid_frame(width: int, height: int, pts: int = 0) -> av.VideoFrame:
     """Build a solid-color RGB frame of the given size."""
     array = np.zeros((height, width, 3), dtype=np.uint8)
-    return av.VideoFrame.from_ndarray(array, format="rgb24")
+    frame = av.VideoFrame.from_ndarray(array, format="rgb24")
+    frame.pts = pts
+    frame.time_base = Fraction(1, 1)
+    return frame
 
 
 class TestPegasusVLM:
@@ -51,7 +55,7 @@ class TestPegasusVLM:
     def test_encode_clip_upscales_to_minimum_and_is_decodable(self):
         """A tiny 64x64 frame must be encoded into a decodable >=360x360 MP4."""
         vlm = PegasusVLM(api_key="x", fps=1.0, clip_seconds=4)
-        frames = [_solid_frame(64, 64), _solid_frame(64, 64)]
+        frames = [_solid_frame(64, 64, pts=0), _solid_frame(64, 64, pts=1)]
 
         clip = vlm._encode_clip(frames)
 
@@ -63,6 +67,9 @@ class TestPegasusVLM:
             assert stream.codec_context.height >= 360
             decoded = [f for f in container.decode(video=0)]
             assert len(decoded) >= 1
+            assert stream.duration is not None
+            duration_s = float(stream.duration * stream.time_base)
+            assert duration_s >= 4.0
         finally:
             container.close()
 
