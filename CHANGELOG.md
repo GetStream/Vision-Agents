@@ -16,6 +16,10 @@ Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and
 
 ## Bug Fixes
 
+### `twelvelabs` plugin: asset ready wait and clip duration for Pegasus
+
+`PegasusVLM` now polls the TwelveLabs Assets API until an uploaded clip is `ready` before `analyze_stream` — direct uploads return `processing` and must not be analyzed early. Encoded MP4 clips also set PTS/`time_base` so padded buffers report at least 4 seconds of duration (Pegasus's minimum). Uploaded assets are still deleted if ready-wait fails or times out.
+
 ### `openai` plugin: `ChatCompletionsLLM` ignored injected/eager turn text and leaked `<think>` reasoning
 
 `ChatCompletionsLLM.simple_response` rebuilt the request purely from the conversation and ignored its `text` argument unless `participant` was `None`. Because the agent always supplies a participant, injected `agent.simple_response()` instructions produced an empty request (`400 chat content is empty`), and eager turns answered the *previous* transcript. The current `text` is now appended as the trailing user message when the conversation does not already end with it. Additionally, `<think>...</think>` reasoning spans emitted by reasoning models (e.g. MiniMax-M3) are now stripped from streamed deltas and final text so they no longer reach chat or TTS.
