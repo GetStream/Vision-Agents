@@ -16,7 +16,7 @@ Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and
 
 ## Bug Fixes
 
-### `twelvelabs` plugin: asset ready wait and clip duration for Pegasus
+### `twelvelabs` plugin: asset ready wait and clip duration for Pegasus (#610)
 
 `PegasusVLM` now polls the TwelveLabs Assets API until an uploaded clip is `ready` before `analyze_stream` — direct uploads return `processing` and must not be analyzed early. Encoded MP4 clips also set PTS/`time_base` so padded buffers report at least 4 seconds of duration (Pegasus's minimum). Uploaded assets are still deleted if ready-wait fails or times out.
 
