@@ -31,6 +31,9 @@ _MIN_DIMENSION = 360
 # Pegasus rejects clips shorter than this many seconds.
 _MIN_CLIP_SECONDS = 4
 
+_ASSET_POLL_INTERVAL_S = 1.0
+_ASSET_READY_TIMEOUT_S = 120.0
+
 
 class PegasusVLM(llm.VideoLLM):
     """Video understanding VLM backed by TwelveLabs Pegasus.
@@ -161,6 +164,11 @@ class PegasusVLM(llm.VideoLLM):
             asset_id = asset.id
 
             try:
+                # Wait and analyze inside this try so a failed/timed-out ready
+                # poll still cleans up the uploaded asset.
+                if asset.status != "ready":
+                    await self._wait_for_asset_ready(asset_id)
+
                 stream = await asyncio.to_thread(
                     self.client.analyze_stream,
                     model_name=self.model,
@@ -245,6 +253,20 @@ class PegasusVLM(llm.VideoLLM):
     async def _on_frame_received(self, frame: av.VideoFrame) -> None:
         """Buffer the latest sampled frame."""
         self._frame_buffer.append(frame)
+
+    async def _wait_for_asset_ready(self, asset_id: str) -> None:
+        """Poll TwelveLabs until the uploaded asset can be analyzed."""
+        deadline = time.perf_counter() + _ASSET_READY_TIMEOUT_S
+        while time.perf_counter() < deadline:
+            asset = await asyncio.to_thread(self.client.assets.retrieve, asset_id)
+            if asset.status == "ready":
+                return
+            if asset.status == "failed":
+                raise RuntimeError(f"TwelveLabs asset processing failed: id={asset_id}")
+            await asyncio.sleep(_ASSET_POLL_INTERVAL_S)
+        raise TimeoutError(
+            f"TwelveLabs asset not ready after {_ASSET_READY_TIMEOUT_S}s: id={asset_id}"
+        )
 
     def _delete_asset(self, asset_id: str) -> None:
         """Best-effort delete of an uploaded TwelveLabs asset.
