@@ -58,7 +58,7 @@ The agent will:
 
 1. Connect to the GetStream edge network
 2. Initialize Kokoro TTS (downloads model on first run)
-3. Join a call and greet participants when they join
+3. Join a call and greet the user
 
 ## Customization
 
@@ -83,9 +83,7 @@ presets.
 ## Architecture
 
 ```
-User Joins Call
-    ↓
-Event Handler (CallSessionParticipantJoinedEvent)
+Agent Joins Call
     ↓
 LLM generates greeting
     ↓

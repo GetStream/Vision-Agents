@@ -21,7 +21,7 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import getstream, kokoro, openai
+from vision_agents.plugins import getstream, kokoro, openai, deepgram
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ async def create_agent(**kwargs) -> Agent:
         instructions="I'm a TTS bot that greets users when they join.",
         llm=openai.LLM(model="gpt-4o-mini"),
         tts=kokoro.TTS(),
+        stt=deepgram.STT(eager_turn_detection=True),
     )
 
     return agent
@@ -46,6 +47,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     call = await agent.create_call(call_type, call_id)
 
     async with agent.join(call):
+        await agent.simple_response("Greet the user briefly.")
         await agent.finish()
 
 
