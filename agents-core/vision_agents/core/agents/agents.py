@@ -74,6 +74,11 @@ from .transcript import TranscriptStore
 
 logger = logging.getLogger(__name__)
 
+# Empty PCM used to drain a track's resampler tail on a bare end-of-turn marker
+# (an AudioOutputChunk with final=True but no data). With no samples nothing is
+# resampled — write(..., final=True) only flushes the tail — so the rate is inert.
+_DRAIN_MARKER = PcmData(sample_rate=48000, format="s16", channels=1)
+
 tracer: Tracer = trace.get_tracer("agents")
 
 
@@ -934,8 +939,12 @@ class Agent:
         try:
             async for audio_output in stream:
                 match audio_output:
-                    case AudioOutputChunk(data=data) if data is not None:
-                        await self._audio_track.write(data)
+                    case AudioOutputChunk(data=data, final=final) if data is not None:
+                        await self._audio_track.write(data, final=final)
+                    case AudioOutputChunk(final=True):
+                        # Bare end-of-turn marker (no audio): drain the track's
+                        # resampler tail so the last samples play out.
+                        await self._audio_track.write(_DRAIN_MARKER, final=True)
                     case AudioOutputFlush():
                         await self._audio_track.flush()
 

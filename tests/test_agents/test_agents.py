@@ -4,11 +4,12 @@ from typing import Any, Optional
 from uuid import uuid4
 
 import aiortc
+import numpy as np
 import pytest
 from getstream.video.rtc import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import Agent, User
-from vision_agents.core.agents.inference import AudioOutputStream
+from vision_agents.core.agents.inference import AudioOutputChunk, AudioOutputStream
 from vision_agents.core.avatars import Avatar
 from vision_agents.core.edge import Call, EdgeTransport
 from vision_agents.core.events import EventManager
@@ -246,6 +247,40 @@ class DummyAvatar(Avatar):
 
 
 class TestAgent:
+    async def test_bare_final_marker_drains_output_track(self):
+        # A bare end-of-turn marker (AudioOutputChunk with final=True but no data)
+        # must drain the output track's resampler tail, so the utterance plays out
+        # further than when no marker follows the audio.
+        wave = (10000 * np.sin(2 * np.pi * 1000 * np.arange(4800) / 24000)).astype(
+            np.int16
+        )
+        pcm = PcmData(samples=wave, sample_rate=24000, format="s16", channels=1)
+
+        ends = []
+        for send_marker in (False, True):
+            agent = Agent(
+                llm=DummyLLM(),
+                tts=DummyTTS(),
+                edge=DummyEdge(),
+                agent_user=User(name="test"),
+            )
+            track = agent.audio_track
+            producer = asyncio.create_task(agent._produce_audio_output())
+
+            await agent._audio_output_stream.send(AudioOutputChunk(data=pcm))
+            if send_marker:
+                await agent._audio_output_stream.send(AudioOutputChunk(final=True))
+            agent._audio_output_stream.close()
+            await producer
+
+            out = np.concatenate(
+                [(await track.recv()).to_ndarray().reshape(-1) for _ in range(14)]
+            )
+            nonzero = np.nonzero(np.abs(out) > 1)[0]
+            ends.append(int(nonzero[-1] + 1) if len(nonzero) else 0)
+
+        assert ends[1] > ends[0]
+
     @pytest.mark.parametrize(
         "edge_params",
         [

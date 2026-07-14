@@ -2,8 +2,7 @@ FROM python:3.12-slim
 
 # Pick up Debian security patches that aren't baked into the base tag yet.
 RUN apt-get update \
-    && apt-get upgrade -y \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get upgrade -y && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 

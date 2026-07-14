@@ -33,7 +33,7 @@ class TestLocalOutputAudioTrack:
         track = LocalOutputAudioTrack(audio_output=output)
         track.start()
 
-        samples = np.array([100, 200, 300, 400], dtype=np.int16)
+        samples = np.array([[100, 200], [300, 400]], dtype=np.int16)
         pcm = PcmData(
             samples=samples,
             sample_rate=48000,
@@ -62,7 +62,7 @@ class TestLocalOutputAudioTrack:
         track = LocalOutputAudioTrack(audio_output=output)
         track.start()
 
-        samples = np.array([100, 200, 300, 400], dtype=np.int16)
+        samples = np.array([[100, 200], [300, 400]], dtype=np.int16)
         pcm = PcmData(
             samples=samples,
             sample_rate=48000,
@@ -84,7 +84,7 @@ class TestLocalOutputAudioTrack:
         track = LocalOutputAudioTrack(audio_output=output)
         track.start()
 
-        samples = np.array([100, 200, 300, 400], dtype=np.int16)
+        samples = np.array([[100, 200], [300, 400]], dtype=np.int16)
         pcm = PcmData(
             samples=samples,
             sample_rate=48000,
@@ -110,7 +110,9 @@ class TestLocalOutputAudioTrack:
         track = LocalOutputAudioTrack(audio_output=output)
         track.start()
 
-        samples = np.array([100, 200, 300, 400], dtype=np.int16)
+        # 320 samples ≈ 20ms @16k; the stateful resampler buffers sub-filter-length
+        # input, so a realistic chunk is needed for it to emit any output.
+        samples = np.tile(np.array([100, 200, 300, 400], dtype=np.int16), 80)
         pcm = PcmData(
             samples=samples,
             sample_rate=16000,
@@ -123,3 +125,40 @@ class TestLocalOutputAudioTrack:
         assert len(output.written) == 1
 
         track.stop()
+
+    async def test_final_drains_resampler_tail(self) -> None:
+        # 16k -> 48k leaves a small tail buffered in the resampler; final=True must
+        # drain it, so the utterance plays out longer than without it.
+        samples = np.tile(np.array([100, 200, 300, 400], dtype=np.int16), 80)
+
+        out_open = _FakeAudioOutput(sample_rate=48000, channels=1)
+        track_open = LocalOutputAudioTrack(audio_output=out_open)
+        track_open.start()
+        await track_open.write(
+            PcmData(
+                samples=samples,
+                sample_rate=16000,
+                format=AudioFormat.S16,
+                channels=1,
+            ),
+            final=False,
+        )
+        await out_open.wait_consumed()
+        track_open.stop()
+
+        out_final = _FakeAudioOutput(sample_rate=48000, channels=1)
+        track_final = LocalOutputAudioTrack(audio_output=out_final)
+        track_final.start()
+        await track_final.write(
+            PcmData(
+                samples=samples,
+                sample_rate=16000,
+                format=AudioFormat.S16,
+                channels=1,
+            ),
+            final=True,
+        )
+        await out_final.wait_consumed()
+        track_final.stop()
+
+        assert len(out_final.written[0]) > len(out_open.written[0])
