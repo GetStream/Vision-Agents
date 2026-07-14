@@ -14,6 +14,10 @@ Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and
 
 `StreamConversation` now persists messages to Stream Chat in the background instead of awaiting each REST round-trip inline. Voice pipelines call `upsert_message` on the critical path (per transcript and per LLM delta), where the inline ~150–300 ms round-trip compounded into audible response latency. Writes are dispatched as fire-and-forget tasks serialized behind a per-channel lock, so ordering is preserved and the final persisted message always matches the final content. Adds `Conversation.wait_for_pending_syncs()`, drained on agent shutdown so in-flight writes are not dropped.
 
+### `anam` plugin: Anam SDK 0.6.0
+
+The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). Sessions use the SDK's direct API-key path and default `video_quality="high"`; the plugin API is unchanged.
+
 ## Bug Fixes
 
 ### `twelvelabs` plugin: asset ready wait and clip duration for Pegasus (#610)
