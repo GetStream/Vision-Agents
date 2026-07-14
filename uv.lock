@@ -6486,9 +6486,6 @@ mistral = [
 moondream = [
     { name = "vision-agents-plugins-moondream" },
 ]
-moonshine = [
-    { name = "vision-agents-plugins-moonshine" },
-]
 nvidia = [
     { name = "vision-agents-plugins-nvidia" },
 ]
@@ -6589,7 +6586,6 @@ requires-dist = [
     { name = "vision-agents-plugins-minimax", marker = "extra == 'minimax'", editable = "plugins/minimax" },
     { name = "vision-agents-plugins-mistral", marker = "extra == 'mistral'", editable = "plugins/mistral" },
     { name = "vision-agents-plugins-moondream", marker = "extra == 'moondream'", editable = "plugins/moondream" },
-    { name = "vision-agents-plugins-moonshine", marker = "extra == 'moonshine'" },
     { name = "vision-agents-plugins-nvidia", marker = "extra == 'nvidia'", editable = "plugins/nvidia" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "plugins/openai" },
     { name = "vision-agents-plugins-openrouter", marker = "extra == 'openrouter'", editable = "plugins/openrouter" },
@@ -6609,7 +6605,7 @@ requires-dist = [
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "moonshine", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -7233,21 +7229,6 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
-]
-
-[[package]]
-name = "vision-agents-plugins-moonshine"
-version = "0.1.11"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "onnxruntime" },
-    { name = "soundfile" },
-    { name = "vision-agents" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/ba/8ce852bd136c6818f251e9d2f052318cd906cefcb5ae1a78803e8941fdab/vision_agents_plugins_moonshine-0.1.11.tar.gz", hash = "sha256:8b17736fdad5cf0e5fddeb3556c076143b1c48a3e7b3aa591767aa354701ed05", size = 6756, upload-time = "2025-10-28T19:41:35.258Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/a5/465963af3b5bf41ad8ec9e09ee00c28c9f03e62e0f0a1a6adf83acc55bfa/vision_agents_plugins_moonshine-0.1.11-py3-none-any.whl", hash = "sha256:c3aceb6913d592cca434723534f9ae6076111da2eac4738667866de7d906d159", size = 13586, upload-time = "2025-10-28T19:41:34.502Z" },
 ]
 
 [[package]]
