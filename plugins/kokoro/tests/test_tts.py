@@ -10,16 +10,17 @@ class FakePipeline:
         yield None, None, np.array([0.0, 0.25, -0.25], dtype=np.float32)
 
 
-async def test_kokoro_tts_uses_injected_pipeline():
-    tts = kokoro.TTS(client=FakePipeline())
-    try:
-        out = [item async for item in tts.send_iter("Hello")]
-    finally:
-        await tts.close()
+class TestKokoroTTS:
+    async def test_kokoro_tts_uses_injected_pipeline(self):
+        tts = kokoro.TTS(client=FakePipeline())
+        try:
+            out = [item async for item in tts.send_iter("Hello")]
+        finally:
+            await tts.close()
 
-    assert tts.provider_name == "kokoro"
-    assert out[0].data
-    assert out[-1].final
+        assert tts.provider_name == "kokoro"
+        assert out[0].data
+        assert out[-1].final
 
 
 @pytest.mark.integration

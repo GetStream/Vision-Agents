@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import AsyncIterator, Iterator, List, Optional
+from typing import AsyncIterator, Iterator, Optional
 
 import numpy as np
 from getstream.video.rtc.track_util import AudioFormat, PcmData
@@ -76,12 +76,16 @@ class TTS(tts.TTS, Warmable[KPipeline]):
     ) -> PcmData | Iterator[PcmData] | AsyncIterator[PcmData]:  # noqa: D401
         pipeline = await self._ensure_loaded()
         loop = asyncio.get_running_loop()
-        chunks: List[bytes] = await loop.run_in_executor(
-            self._executor, lambda: list(self._generate_chunks(pipeline, text))
-        )
+        done = object()
 
         async def _aiter():
-            for chunk in chunks:
+            generator = self._generate_chunks(pipeline, text)
+            while True:
+                chunk = await loop.run_in_executor(
+                    self._executor, next, generator, done
+                )
+                if chunk is done:
+                    break
                 yield PcmData.from_bytes(
                     chunk,
                     sample_rate=self.sample_rate,
@@ -108,5 +112,7 @@ class TTS(tts.TTS, Warmable[KPipeline]):
             yield pcm16.tobytes()
 
     async def close(self) -> None:
-        await super().close()
-        self._executor.shutdown(wait=False)
+        try:
+            await super().close()
+        finally:
+            self._executor.shutdown(wait=False)

@@ -9,8 +9,8 @@ from vision_agents.plugins import kokoro
 
 tts = kokoro.TTS(lang_code="a", voice="af_heart")
 
-await tts.warmup()
 try:
+    await tts.warmup()
     audio_chunks = []
     async for chunk in tts.send_iter("Hello from Kokoro!"):
         if chunk.data:
