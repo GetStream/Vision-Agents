@@ -52,5 +52,5 @@ tts = pocket.TTS(voice="path/to/your/voice.wav")
 
 ## Dependencies
 
-- pocket-tts>=0.1.0
+- pocket-tts>=1.1.1
 - PyTorch 2.5+
