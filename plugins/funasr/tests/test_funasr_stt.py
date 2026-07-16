@@ -1,6 +1,8 @@
 import asyncio
 
+import numpy as np
 import pytest
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 
 from vision_agents.plugins import funasr
 
@@ -32,33 +34,6 @@ class _ExplodingAutoModel:
 class _FakeSamples:
     def __init__(self, size=0):
         self.size = size
-
-
-class _FakePcmData:
-    def __init__(
-        self,
-        *,
-        samples=None,
-        sample_rate=16000,
-        channels=1,
-        format=None,
-        duration_ms=0,
-    ):
-        self.samples = samples if samples is not None else _FakeSamples()
-        self.sample_rate = sample_rate
-        self.channels = channels
-        self.format = format
-        self.duration_ms = duration_ms
-
-    def resample(self, sample_rate):
-        self.sample_rate = sample_rate
-        return self
-
-    def to_float32(self):
-        return self
-
-    def append(self, audio_data):
-        return audio_data
 
 
 class _ExplodingPcmData:
@@ -100,9 +75,11 @@ class TestSTT:
 
     def test_process_buffer_raises_unexpected_transcription_errors(self, stt_factory):
         stt = stt_factory(client=_ExplodingAutoModel())
-        pcm_data = _FakePcmData(
-            samples=_FakeSamples(size=16000),
-            duration_ms=8000,
+        pcm_data = PcmData(
+            samples=np.zeros(16000 * 8, dtype=np.float32),
+            sample_rate=16000,
+            channels=1,
+            format=AudioFormat.F32,
         )
 
         with pytest.raises(AssertionError, match="unexpected transcription bug"):
