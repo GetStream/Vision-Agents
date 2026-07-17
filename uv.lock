@@ -41,6 +41,7 @@ members = [
     "vision-agents-plugins-roboflow",
     "vision-agents-plugins-sarvam",
     "vision-agents-plugins-smart-turn",
+    "vision-agents-plugins-speechify",
     "vision-agents-plugins-telnyx",
     "vision-agents-plugins-tencent",
     "vision-agents-plugins-turbopuffer",
@@ -5628,6 +5629,21 @@ wheels = [
 ]
 
 [[package]]
+name = "speechify-api"
+version = "1.2.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/92/fd/ced23ab87dcca75882fb79580275c44ec636764213947d6fe327446fcd95/speechify_api-1.2.4.tar.gz", hash = "sha256:400b84f989e6da216cdc5810b0f3e56d82365e31fbf4f7ba31b0676b00090f12", size = 44594, upload-time = "2026-06-22T17:44:06.761Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ba/c6/fcb75271e5eb300f9fb6b42c9c927fb17335bd9eaf39edfe3d179c55faf2/speechify_api-1.2.4-py3-none-any.whl", hash = "sha256:986b426351055a1257f5970441712106e883050c38b0af718a600b3be1502dd7", size = 70492, upload-time = "2026-06-22T17:44:05.823Z" },
+]
+
+[[package]]
 name = "srsly"
 version = "2.5.3"
 source = { registry = "https://pypi.org/simple" }
@@ -6516,6 +6532,9 @@ sarvam = [
 smart-turn = [
     { name = "vision-agents-plugins-smart-turn" },
 ]
+speechify = [
+    { name = "vision-agents-plugins-speechify" },
+]
 telnyx = [
     { name = "vision-agents-plugins-telnyx" },
 ]
@@ -6595,6 +6614,7 @@ requires-dist = [
     { name = "vision-agents-plugins-roboflow", marker = "extra == 'roboflow'", editable = "plugins/roboflow" },
     { name = "vision-agents-plugins-sarvam", marker = "extra == 'sarvam'", editable = "plugins/sarvam" },
     { name = "vision-agents-plugins-smart-turn", marker = "extra == 'smart-turn'", editable = "plugins/smart_turn" },
+    { name = "vision-agents-plugins-speechify", marker = "extra == 'speechify'", editable = "plugins/speechify" },
     { name = "vision-agents-plugins-telnyx", marker = "extra == 'telnyx'", editable = "plugins/telnyx" },
     { name = "vision-agents-plugins-tencent", marker = "sys_platform == 'linux' and extra == 'tencent'", editable = "plugins/tencent" },
     { name = "vision-agents-plugins-turbopuffer", marker = "extra == 'turbopuffer'", editable = "plugins/turbopuffer" },
@@ -6605,7 +6625,7 @@ requires-dist = [
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -7476,6 +7496,32 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "onnxruntime", specifier = ">=1.24.3,<2" },
     { name = "transformers", specifier = ">=4.57.6,<5" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-speechify"
+source = { editable = "plugins/speechify" }
+dependencies = [
+    { name = "speechify-api" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "speechify-api", specifier = ">=1.2.3,<2" },
     { name = "vision-agents", editable = "agents-core" },
 ]
 

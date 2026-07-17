@@ -2,6 +2,10 @@
 
 ## New Features
 
+### `speechify` plugin: Speechify TTS
+
+Adds a new `speechify` plugin exposing `speechify.TTS`, backed by Speechify's streaming API. It streams raw PCM audio, defaults to the `simba-3.2` model with the `geffen_32` voice, and reads `SPEECHIFY_API_KEY` from the environment. Install with `vision-agents[speechify]`.
+
 ### Realtime input audio pacing (#599)
 
 Realtime LLMs that need a steady upstream audio cadence can now opt into framework-level pacing. Pass `input_audio_pacing=AudioInputPacingConfig(...)` to a `Realtime` subclass and the framework buffers the irregular PCM the WebRTC uplink delivers and forwards fixed-size chunks (default 20 ms) at a stable wall-clock rate. `AudioInputPacingConfig.virtual_microphone()` is a preset for speech-to-speech models that interpret gaps in the input as end-of-turn — it primes a 500 ms buffer and fills digital silence on a dry buffer so the model never sees an interruption.
