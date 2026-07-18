@@ -249,7 +249,9 @@ class AnamAvatar(Avatar):
             return
         # Flush the resampler tail so the last partial frame isn't dropped.
         for frame in self._resampler.flush():
-            await self._audio_input_stream.send_audio_chunk(frame.to_ndarray().tobytes())
+            await self._audio_input_stream.send_audio_chunk(
+                frame.to_ndarray().tobytes()
+            )
         await self._audio_input_stream.end_sequence()
 
     async def _connect(self) -> None:
