@@ -130,7 +130,9 @@ class TencentAudioTrack:
 
     async def flush(self) -> None:
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._flush_sync)
+        # Route through the write executor so the stateful, non-thread-safe
+        # resampler is only ever touched from one thread (serialised with writes).
+        await loop.run_in_executor(self._write_executor, self._flush_sync)
 
     def _flush_sync(self) -> None:
         # Discard the resampler tail so it doesn't bleed into the next turn.
