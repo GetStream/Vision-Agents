@@ -12,7 +12,7 @@ from anam import (
     PersonaConfig,
     Session,
 )
-from getstream.video.rtc.track_util import PcmData
+from getstream.video.rtc.track_util import FrameResampler, PcmData
 from vision_agents.core.agents.inference import (
     AudioOutputChunk,
     AudioOutputFlush,
@@ -24,6 +24,11 @@ from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
 logger = logging.getLogger(__name__)
+
+# Sample rate Anam expects for agent audio input.
+AVATAR_SAMPLE_RATE = 24000
+
+CLOSE_TIMEOUT = 5.0
 
 
 def _task_done_callback(task: asyncio.Task[None]) -> None:
@@ -116,6 +121,9 @@ class AnamAvatar(Avatar):
         self._exit_stack = contextlib.AsyncExitStack()
         self._real_session: Session | None = None
         self._audio_input_stream: AgentAudioInputStream | None = None
+        self._resampler = FrameResampler(
+            rate=AVATAR_SAMPLE_RATE, layout="mono", format="s16", frame_size=0
+        )
         self._audio_receiver_task: asyncio.Task[None] | None = None
         self._video_receiver_task: asyncio.Task[None] | None = None
         self._audio_input_task: asyncio.Task[None] | None = None
@@ -148,11 +156,18 @@ class AnamAvatar(Avatar):
 
         self._sync.close()
         try:
-            await self._exit_stack.aclose()
-            await self._client.close()
+            # aiortc/websocket teardown blocks forever when the call is already
+            # gone (no peer to ack the DTLS/ICE and WS close), so bound it.
+            await asyncio.wait_for(self._exit_stack.aclose(), timeout=CLOSE_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning("Timed out closing Anam session")
         except Exception:
             logger.warning("Failed to close Anam avatar publisher", exc_info=True)
         finally:
+            # Close the client even if the session teardown above timed out or
+            # failed, so its HTTP/WS resources don't leak in that scenario.
+            with contextlib.suppress(Exception):
+                await self._client.close()
             logger.debug("Anam avatar publisher closed")
 
     @property
@@ -170,7 +185,7 @@ class AnamAvatar(Avatar):
         self._init_avatar_input_stream()
         async for item in self.input_audio_stream:
             if isinstance(item, AudioOutputChunk):
-                # Received normal audio, send it to the avatar
+                # Received normal audio, send it to the avatar.
                 if item.data is not None:
                     await self._send_audio(item.data)
                 # Received final audio chunk (end-of-utterance), flush avatar's audio
@@ -178,7 +193,9 @@ class AnamAvatar(Avatar):
                     await self._end_turn()
 
             elif isinstance(item, AudioOutputFlush):
-                # Audio was interrupted
+                # Audio was interrupted: discard the resampler tail so it doesn't
+                # bleed into the next turn.
+                self._resampler.flush()
                 await self._end_turn()
                 await self._sync.flush()
                 await self._session.interrupt()
@@ -209,25 +226,33 @@ class AnamAvatar(Avatar):
         if self._audio_input_stream is None:
             self._audio_input_stream = self._session.create_agent_audio_input_stream(
                 AgentAudioInputConfig(
-                    encoding="pcm_s16le", sample_rate=24000, channels=1
+                    encoding="pcm_s16le",
+                    sample_rate=AVATAR_SAMPLE_RATE,
+                    channels=1,
                 )
             )
         return self._audio_input_stream
 
     async def _send_audio(self, pcm: PcmData) -> None:
         """
-        Send audio to the avatar.
+        Resample agent audio to the avatar's rate and send it.
         """
         stream = self._init_avatar_input_stream()
-        pcm = pcm.resample(target_channels=1, target_sample_rate=24000)
-        await stream.send_audio_chunk(pcm.to_bytes())
+        for frame in self._resampler.resample(pcm):
+            await stream.send_audio_chunk(frame.to_ndarray().tobytes())
 
     async def _end_turn(self) -> None:
         """
-        Signal end of the turn to the avatar.
+        Drain the resampler tail and signal end of the turn to the avatar.
         """
-        if self._audio_input_stream is not None:
-            await self._audio_input_stream.end_sequence()
+        if self._audio_input_stream is None:
+            return
+        # Flush the resampler tail so the last partial frame isn't dropped.
+        for frame in self._resampler.flush():
+            await self._audio_input_stream.send_audio_chunk(
+                frame.to_ndarray().tobytes()
+            )
+        await self._audio_input_stream.end_sequence()
 
     async def _connect(self) -> None:
         if self._real_session is None:

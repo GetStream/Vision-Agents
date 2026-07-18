@@ -12,14 +12,14 @@ from typing import TYPE_CHECKING, Any, Optional, cast
 
 import av
 from aiortc.mediastreams import MediaStreamError
-from getstream.video.rtc.track_util import PcmData
+from getstream.video.rtc.track_util import FrameResampler, PcmData
 from vision_agents.plugins.tencent.bindings import (
     AUDIO_CODEC_TYPE_PCM,
     STREAM_TYPE_VIDEO_HIGH,
-    VIDEO_PIXEL_FORMAT_YUV420p,
     VIDEO_ROTATION_0,
     AudioFrame,
     PixelFrame,
+    VIDEO_PIXEL_FORMAT_YUV420p,
 )
 from vision_agents.plugins.tencent.video_utils import (
     av_frame_to_yuv420p,
@@ -77,6 +77,9 @@ class TencentAudioTrack:
         self._write_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="trtc-audio-write"
         )
+        self._resampler = FrameResampler(
+            rate=SAMPLE_RATE, layout="mono", format="s16", frame_size=0
+        )
 
     def set_cloud(self, cloud: Any) -> None:
         self._cloud = cloud
@@ -84,32 +87,34 @@ class TencentAudioTrack:
             self._sender_thread = threading.Thread(target=self._send_loop, daemon=True)
             self._sender_thread.start()
 
-    async def write(self, pcm: PcmData) -> None:
+    async def write(self, pcm: PcmData, final: bool = False) -> None:
         if not self._running or pcm is None:
             return
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(self._write_executor, self._write_sync, pcm)
+        await loop.run_in_executor(self._write_executor, self._write_sync, pcm, final)
 
-    def _write_sync(self, pcm: PcmData) -> None:
-        if pcm.sample_rate != SAMPLE_RATE or pcm.channels != CHANNELS:
-            pcm = pcm.resample(target_sample_rate=SAMPLE_RATE, target_channels=CHANNELS)
-        if pcm.samples is not None and pcm.samples.size > 0:
-            data = pcm.samples.tobytes()
-        else:
-            data = pcm.to_bytes()
-        if not data:
+    def _write_sync(self, pcm: PcmData, flush: bool = False) -> None:
+        # Resample to 16 kHz mono; on the final chunk, flush the resampler tail
+        # so the utterance plays out completely.
+        frames = self._resampler.resample(pcm, flush=flush)
+        if not frames:
             return
         with self._lock:
-            if self._remainder:
-                data = bytes(self._remainder) + data
-                self._remainder.clear()
-            offset = 0
-            while offset + BYTES_PER_20MS <= len(data):
-                self._queue.append(data[offset : offset + BYTES_PER_20MS])
-                offset += BYTES_PER_20MS
-            if offset < len(data):
-                self._remainder.extend(data[offset:])
+            for frame in frames:
+                self._chunk_into_queue(frame.to_ndarray().tobytes())
             self._last_write_at = time.monotonic()
+
+    def _chunk_into_queue(self, data: bytes) -> None:
+        """Split resampled bytes into 20 ms frames; caller holds the lock."""
+        if self._remainder:
+            data = bytes(self._remainder) + data
+            self._remainder.clear()
+        offset = 0
+        while offset + BYTES_PER_20MS <= len(data):
+            self._queue.append(data[offset : offset + BYTES_PER_20MS])
+            offset += BYTES_PER_20MS
+        if offset < len(data):
+            self._remainder.extend(data[offset:])
 
     def stop(self) -> None:
         self._running = False
@@ -125,9 +130,13 @@ class TencentAudioTrack:
 
     async def flush(self) -> None:
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._flush_sync)
+        # Route through the write executor so the stateful, non-thread-safe
+        # resampler is only ever touched from one thread (serialised with writes).
+        await loop.run_in_executor(self._write_executor, self._flush_sync)
 
     def _flush_sync(self) -> None:
+        # Discard the resampler tail so it doesn't bleed into the next turn.
+        self._resampler.flush()
         with self._lock:
             self._queue.clear()
             self._remainder.clear()

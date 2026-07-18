@@ -2,7 +2,6 @@
 
 import numpy as np
 from getstream.video.rtc.track_util import AudioFormat, PcmData
-
 from vision_agents.plugins.tencent.tracks import (
     BYTES_PER_20MS,
     CHANNELS,
@@ -54,9 +53,12 @@ class TestTencentAudioTrackWriteSync:
 
     def test_offsample_pcm_is_resampled_before_chunking(self) -> None:
         track = TencentAudioTrack()
-        # 48 kHz input is 3x the target rate, so 3 * 640 input bytes of
-        # silence should resample down to 640 bytes after the downmix.
-        track._write_sync(_pcm_of_size(BYTES_PER_20MS * 3, sample_rate=48000))
+        # 48 kHz input is 3x the target rate, so 3 * 640 input bytes of silence
+        # resample down to 640 bytes at 16 kHz. flush=True flushes the stateful
+        # resampler's filter tail so the full 20 ms frame lands (end of utterance).
+        track._write_sync(
+            _pcm_of_size(BYTES_PER_20MS * 3, sample_rate=48000), flush=True
+        )
         # After resample we have exactly one 20 ms frame's worth of audio
         # at 16 kHz — no remainder, one chunk.
         assert len(track._queue) == 1

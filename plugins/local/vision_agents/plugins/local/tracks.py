@@ -18,7 +18,7 @@ import av
 import numpy as np
 import sounddevice as sd
 from aiortc import AudioStreamTrack, VideoStreamTrack
-from getstream.video.rtc.track_util import PcmData
+from getstream.video.rtc.track_util import FrameResampler, PcmData
 
 from .devices import AudioOutputDevice
 
@@ -57,6 +57,12 @@ class LocalOutputAudioTrack(AudioStreamTrack):
         self._running = False
         self._playback_task: asyncio.Task[None] | None = None
         self._write_lock = asyncio.Lock()
+        self._resampler = FrameResampler(
+            rate=audio_output.sample_rate,
+            layout="stereo" if audio_output.channels == 2 else "mono",
+            format="s16",
+            frame_size=0,
+        )
 
     async def recv(self) -> av.AudioFrame:
         """Not supported — this is a write-only playback track."""
@@ -73,14 +79,18 @@ class LocalOutputAudioTrack(AudioStreamTrack):
         self._running = True
         self._playback_task = asyncio.create_task(self._playback_loop())
 
-    async def write(self, data: PcmData) -> None:
-        """Write PCM data to be played on the speaker."""
+    async def write(self, data: PcmData, final: bool = False) -> None:
+        """Write PCM data to be played on the speaker.
+
+        When final is True, flush the resampler tail so the utterance plays out.
+        """
         if not self._running:
             return
 
         async with self._write_lock:
-            samples = self._process_audio(data)
-            await self._queue.put(samples)
+            samples = self._process_audio(data, flush=final)
+            if samples.size:
+                await self._queue.put(samples)
 
     async def flush(self) -> None:
         """Clear any pending audio data and abort OS-level playback."""
@@ -90,6 +100,7 @@ class LocalOutputAudioTrack(AudioStreamTrack):
                     self._queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
+            self._resampler.flush()
             self._audio_output.flush()
 
     def stop(self) -> None:
@@ -110,7 +121,7 @@ class LocalOutputAudioTrack(AudioStreamTrack):
         self._audio_output.stop()
 
     async def _playback_loop(self) -> None:
-        """Async task that drains the queue into the AudioOutput backend."""
+        """Async task that flushes the queue into the AudioOutput backend."""
         try:
             while True:
                 data = await self._queue.get()
@@ -126,20 +137,12 @@ class LocalOutputAudioTrack(AudioStreamTrack):
         except OSError:
             logger.exception("Audio playback device error")
 
-    def _process_audio(self, data: PcmData) -> np.ndarray:
-        """Resample and convert PcmData to flat int16 numpy for the backend."""
-        target_rate = self._audio_output.sample_rate
-        target_channels = self._audio_output.channels
-
-        if data.sample_rate != target_rate or data.channels != target_channels:
-            data = data.resample(target_rate, target_channels)
-
-        samples = data.to_int16().samples
-
-        if samples.ndim == 2:
-            samples = samples.T.flatten()
-
-        return samples
+    def _process_audio(self, data: PcmData, flush: bool = False) -> np.ndarray:
+        """Resample PcmData to the backend rate and flatten to int16 for the device."""
+        frames = self._resampler.resample(data, flush=flush)
+        if not frames:
+            return np.empty(0, dtype=np.int16)
+        return np.concatenate([f.to_ndarray().reshape(-1) for f in frames])
 
 
 class LocalVideoTrack(VideoStreamTrack):

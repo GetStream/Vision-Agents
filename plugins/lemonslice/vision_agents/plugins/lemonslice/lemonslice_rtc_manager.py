@@ -6,7 +6,7 @@ from typing import Callable, Coroutine
 from uuid import uuid4
 
 import av
-from getstream.video.rtc.track_util import AudioFormat, PcmData
+from getstream.video.rtc.track_util import AudioFormat, FrameResampler, PcmData
 from livekit import api, rtc
 from PIL import Image
 from vision_agents.core.utils.utils import cancel_and_wait
@@ -69,6 +69,9 @@ class LemonSliceRTCManager:
 
         self._room: rtc.Room | None = None
         self._stream_writer: rtc.ByteStreamWriter | None = None
+        self._resampler = FrameResampler(
+            rate=_SAMPLE_RATE, layout="mono", format="s16", frame_size=0
+        )
         self._connected = False
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -161,19 +164,14 @@ class LemonSliceRTCManager:
         self._connected = True
 
     async def send_audio(self, pcm: PcmData) -> None:
-        """Send a PCM audio chunk to LemonSlice via a LiveKit byte stream.
+        """Resample a PCM audio chunk to 16 kHz mono and send it to LemonSlice."""
+        for frame in self._resampler.resample(pcm):
+            await self._write_frame(frame)
 
-        Args:
-            pcm: Audio data to send. Resampled to 16 kHz mono automatically.
-        """
+    async def _write_frame(self, frame: av.AudioFrame) -> None:
+        """Write one resampled audio frame to the LemonSlice byte stream."""
         if self._room is None or not self._room.isconnected():
             return
-
-        if pcm.sample_rate != _SAMPLE_RATE or pcm.channels != _NUM_CHANNELS:
-            pcm = pcm.resample(
-                target_sample_rate=_SAMPLE_RATE,
-                target_channels=_NUM_CHANNELS,
-            )
 
         if self._stream_writer is None:
             self._stream_writer = await self._room.local_participant.stream_bytes(
@@ -181,16 +179,18 @@ class LemonSliceRTCManager:
                 topic=_AUDIO_STREAM_TOPIC,
                 destination_identities=[_AVATAR_IDENTITY],
                 attributes={
-                    "sample_rate": str(pcm.sample_rate),
-                    "num_channels": str(pcm.channels),
+                    "sample_rate": str(_SAMPLE_RATE),
+                    "num_channels": str(_NUM_CHANNELS),
                 },
             )
             logger.debug("Opened audio byte stream to LemonSlice")
 
-        await self._stream_writer.write(pcm.to_bytes())
+        await self._stream_writer.write(frame.to_ndarray().tobytes())
 
     async def flush(self) -> None:
-        """Close the current byte stream, signalling end of a TTS segment."""
+        """Flush the resampler tail and close the byte stream (segment end)."""
+        for frame in self._resampler.flush():
+            await self._write_frame(frame)
         if self._stream_writer is not None:
             await self._stream_writer.aclose()
             self._stream_writer = None

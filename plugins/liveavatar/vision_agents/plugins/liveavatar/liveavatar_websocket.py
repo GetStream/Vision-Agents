@@ -4,8 +4,9 @@ import json
 import logging
 import uuid
 
+import av
 import websockets
-from getstream.video.rtc.track_util import PcmData
+from getstream.video.rtc.track_util import FrameResampler, PcmData
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
@@ -27,6 +28,12 @@ class LiveAvatarWebSocket:
         self._ws: ClientConnection | None = None
         self._closed = False
         self._reconnect_lock = asyncio.Lock()
+        self._resampler = FrameResampler(
+            rate=sample_rate,
+            layout="stereo" if num_channels == 2 else "mono",
+            format="s16",
+            frame_size=0,
+        )
 
     @property
     def connected(self) -> bool:
@@ -65,20 +72,25 @@ class LiveAvatarWebSocket:
             self._ws = None
 
     async def send_audio_frame(self, pcm: PcmData) -> None:
-        pcm = pcm.resample(
-            target_sample_rate=self._sample_rate,
-            target_channels=self._num_channels,
-        )
-        b64 = base64.b64encode(pcm.to_bytes()).decode("ascii")
-        await self._send_json({"type": "agent.speak", "audio": b64})
+        for frame in self._resampler.resample(pcm):
+            await self._send_frame(frame)
 
     async def end_turn(self) -> None:
+        # Flush the resampler tail so the utterance plays out, then end the turn.
+        for frame in self._resampler.flush():
+            await self._send_frame(frame)
         await self._send_json({"type": "agent.speak_end"})
 
     async def interrupt(self) -> None:
+        # Discard the resampler tail so it doesn't bleed into the next turn.
+        self._resampler.flush()
         await self._send_json(
             {"type": "agent.interrupt", "event_id": str(uuid.uuid4())}
         )
+
+    async def _send_frame(self, frame: av.AudioFrame) -> None:
+        b64 = base64.b64encode(frame.to_ndarray().tobytes()).decode("ascii")
+        await self._send_json({"type": "agent.speak", "audio": b64})
 
     async def _send_json(self, msg: dict[str, object]) -> None:
         if self._closed:
