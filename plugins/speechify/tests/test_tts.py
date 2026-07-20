@@ -28,6 +28,13 @@ class TestSpeechifyTTS:
         with pytest.raises(ValueError):
             speechify.TTS()
 
+    async def test_close_closes_http_client(self) -> None:
+        tts = speechify.TTS(api_key="fake")
+        httpx_client = tts.client._client_wrapper.httpx_client.httpx_client
+        assert httpx_client.is_closed is False
+        await tts.close()
+        assert httpx_client.is_closed is True
+
 
 @pytest.mark.integration
 class TestSpeechifyTTSIntegration:

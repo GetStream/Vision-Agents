@@ -74,3 +74,10 @@ class TTS(tts.TTS):
         response to turn events.
         """
         logger.debug("🎤 Speechify TTS stop requested (no-op)")
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client and release resources."""
+        try:
+            await self.client._client_wrapper.httpx_client.httpx_client.aclose()
+        finally:
+            await super().close()

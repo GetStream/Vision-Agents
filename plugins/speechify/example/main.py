@@ -3,7 +3,7 @@
 Example: Text-to-Speech with Speechify using the Agent class
 
 This minimal example shows how to:
-1. Create an Agent with Deepgram STT, an OpenAI LLM and Speechify TTS
+1. Create an Agent with Deepgram STT, a Gemini LLM and Speechify TTS
 2. Join a Stream video call
 3. Greet users and respond to spoken input
 
@@ -16,7 +16,7 @@ The script looks for the following env vars (see `.env.example`):
     STREAM_API_KEY / STREAM_API_SECRET
     SPEECHIFY_API_KEY
     DEEPGRAM_API_KEY
-    OPENAI_API_KEY
+    GOOGLE_API_KEY
 """
 
 import asyncio
@@ -34,7 +34,7 @@ load_dotenv()
 
 
 async def create_agent(**kwargs) -> Agent:
-    """Create an agent with Deepgram STT, an OpenAI LLM and Speechify TTS."""
+    """Create an agent with Deepgram STT, a Gemini LLM and Speechify TTS."""
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="Speechify Voice Bot", id="agent"),
@@ -44,7 +44,9 @@ async def create_agent(**kwargs) -> Agent:
         ),
         stt=deepgram.STT(),
         llm=gemini.LLM(),
-        tts=speechify.TTS(model="simba-multilingual", language="de-DE"),
+        tts=speechify.TTS(),
+        # speechify.TTS(voice_id="beatrice_32", model="simba-3.2")
+        # speechify.TTS(model="simba-multilingual", language="de-DE")
     )
 
     return agent
