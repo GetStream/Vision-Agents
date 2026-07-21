@@ -28,7 +28,11 @@ OUTPUT_PATH = "speechify_smoke.wav"
 
 
 async def main() -> None:
-    text = sys.argv[1] if len(sys.argv) > 1 else "Hello from Speechify running in Vision Agents."
+    text = (
+        sys.argv[1]
+        if len(sys.argv) > 1
+        else "Hello from Speechify running in Vision Agents."
+    )
 
     tts = speechify.TTS()
     pcm = bytearray()
