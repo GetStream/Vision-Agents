@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "speechify-api>=1.2.4,<2",
+    "speechify-api>=3.0.1",
 ]
 
 [project.urls]

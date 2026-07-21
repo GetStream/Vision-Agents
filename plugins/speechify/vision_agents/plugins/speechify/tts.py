@@ -3,8 +3,9 @@ import os
 from typing import AsyncIterator, Iterator, Optional
 
 from getstream.video.rtc.track_util import AudioFormat, PcmData
-from speechify import AsyncSpeechify
 from vision_agents.core import tts
+
+from speechify import AsyncSpeechify
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class TTS(tts.TTS):
             raise ValueError("SPEECHIFY_API_KEY env var or api_key parameter required")
 
         self.client = (
-            client if client is not None else AsyncSpeechify(api_key=self.api_key)
+            client if client is not None else AsyncSpeechify(token=self.api_key)
         )
         self.voice_id = voice_id
         self.model = model
@@ -56,7 +57,7 @@ class TTS(tts.TTS):
             input=text,
             voice_id=self.voice_id,
             model=self.model,
-            **({"language": self.language} if self.language else {}),
+            language=self.language,
         )
 
         return PcmData.from_response(

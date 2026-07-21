@@ -44,9 +44,9 @@ async def create_agent(**kwargs) -> Agent:
         ),
         stt=deepgram.STT(),
         llm=gemini.LLM(),
-        tts=speechify.TTS(),
-        # speechify.TTS(voice_id="beatrice_32", model="simba-3.2")
-        # speechify.TTS(model="simba-multilingual", language="de-DE")
+        # tts=speechify.TTS(),
+        # tts=speechify.TTS(voice_id="beatrice_32", model="simba-3.2")
+        tts=speechify.TTS(model="simba-multilingual", language="de-DE"),
     )
 
     return agent
