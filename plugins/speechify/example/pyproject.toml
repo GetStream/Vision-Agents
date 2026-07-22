@@ -1,0 +1,20 @@
+[project]
+name = "speechify-example"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+dependencies = [
+    "vision-agents",
+    "python-dotenv>=1.0",
+    "vision-agents-plugins-speechify",
+    "vision-agents-plugins-deepgram",
+    "vision-agents-plugins-getstream",
+    "vision-agents-plugins-gemini",
+]
+
+[tool.uv.sources]
+"vision-agents" = { path = "../../../agents-core", editable = true }
+"vision-agents-plugins-speechify" = { path = "..", editable = true }
+"vision-agents-plugins-deepgram" = { path = "../../deepgram", editable = true }
+"vision-agents-plugins-getstream" = { path = "../../getstream", editable = true }
+"vision-agents-plugins-gemini" = { path = "../../gemini", editable = true }
