@@ -403,6 +403,45 @@ class TestAgent:
 
         assert edge.last_custom_event == test_data
 
+    async def test_authenticate_attaches_agent_metadata(self):
+        """authenticate() records provider and model metadata on the agent user."""
+        llm = DummyLLM()
+        llm.model = "dummy-llm-model"
+        stt = DummySTT()
+        stt.model = "dummy-stt-model"
+        agent = Agent(
+            llm=llm,
+            stt=stt,
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        await agent.authenticate()
+
+        custom = agent.agent_user.custom
+        assert custom["is_agent"] is True
+        assert custom["llm"] == {"provider": "DummyLLM", "model": "dummy-llm-model"}
+        assert custom["stt"] == {"provider": "DummySTT", "model": "dummy-stt-model"}
+        # No model set on the TTS -> provider only.
+        assert custom["tts"] == {"provider": "DummyTTS"}
+
+    async def test_authenticate_preserves_user_supplied_custom(self):
+        """User-provided custom keys survive the metadata merge."""
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test", custom={"is_agent": False, "team": "red"}),
+        )
+
+        await agent.authenticate()
+
+        custom = agent.agent_user.custom
+        assert custom["is_agent"] is False
+        assert custom["team"] == "red"
+        assert custom["llm"]["provider"] == "DummyLLM"
+
     async def test_send_metrics_event(self):
         """Test that metrics are sent as custom events."""
         edge = DummyEdge()
