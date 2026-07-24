@@ -1,6 +1,6 @@
 import abc
 import enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 
@@ -9,6 +9,7 @@ class User:
     id: Optional[str] = ""
     name: Optional[str] = ""
     image: Optional[str] = ""
+    custom: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

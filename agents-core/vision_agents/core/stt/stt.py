@@ -79,6 +79,8 @@ class STT(Component):
     started: bool = False
     turn_detection: bool = False  # if the STT supports turn detection
     eager_turn_detection: bool = False  # if the STT supports turn detection
+    # The model identifier this STT is configured to use.
+    model: str = ""
 
     def __init__(
         self,

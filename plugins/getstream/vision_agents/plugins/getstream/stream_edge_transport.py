@@ -337,13 +337,19 @@ class StreamEdge(EdgeTransport[StreamCall]):
             )
 
     async def authenticate(self, user: User) -> None:
-        await self.client.create_user(name=user.name, id=user.id, image=user.image)
+        await self.client.upsert_users(
+            UserRequest(
+                id=user.id, name=user.name, image=user.image, custom=user.custom
+            )
+        )
         self._agent_user_id = user.id
 
     async def create_users(self, users: list[User]):
         """Create multiple users in a single API call."""
 
-        users_map = {u.id: UserRequest(name=u.name, id=u.id) for u in users}
+        users_map = {
+            u.id: UserRequest(name=u.name, id=u.id, custom=u.custom) for u in users
+        }
         response = await self.client.update_users(users_map)
         return [response.data.users[u.id] for u in users]
 
