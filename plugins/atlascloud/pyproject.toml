@@ -13,6 +13,7 @@ license = "MIT"
 dependencies = [
     "vision-agents",
     "vision-agents-plugins-openai",
+    "openai>=2.26.0,<3",
 ]
 
 [project.urls]

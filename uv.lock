@@ -6714,6 +6714,7 @@ dev = [
 name = "vision-agents-plugins-atlascloud"
 source = { editable = "plugins/atlascloud" }
 dependencies = [
+    { name = "openai" },
     { name = "vision-agents" },
     { name = "vision-agents-plugins-openai" },
 ]
@@ -6726,6 +6727,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "openai", specifier = ">=2.26.0,<3" },
     { name = "vision-agents", editable = "agents-core" },
     { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
 ]

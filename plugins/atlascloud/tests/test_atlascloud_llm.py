@@ -6,7 +6,7 @@ from vision_agents.plugins.atlascloud import LLM
 class TestAtlasCloudLLM:
     """Unit tests for Atlas Cloud LLM configuration."""
 
-    def test_requires_api_key(self, monkeypatch):
+    def test_requires_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ATLASCLOUD_API_KEY", raising=False)
         monkeypatch.delenv("ATLAS_CLOUD_API_KEY", raising=False)
 
@@ -14,7 +14,9 @@ class TestAtlasCloudLLM:
             LLM()
 
     @pytest.mark.parametrize("env_name", ["ATLASCLOUD_API_KEY", "ATLAS_CLOUD_API_KEY"])
-    async def test_api_key_env_aliases(self, monkeypatch, env_name):
+    async def test_api_key_env_aliases(
+        self, monkeypatch: pytest.MonkeyPatch, env_name: str
+    ) -> None:
         monkeypatch.delenv("ATLASCLOUD_API_KEY", raising=False)
         monkeypatch.delenv("ATLAS_CLOUD_API_KEY", raising=False)
         monkeypatch.setenv(env_name, "test-key")
@@ -25,7 +27,9 @@ class TestAtlasCloudLLM:
         assert str(llm._client.base_url) == "https://api.atlascloud.ai/v1/"
         await llm.close()
 
-    async def test_explicit_configuration(self, monkeypatch):
+    async def test_explicit_configuration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("ATLASCLOUD_API_KEY", "env-key")
 
         llm = LLM(
@@ -39,7 +43,9 @@ class TestAtlasCloudLLM:
         assert str(llm._client.base_url) == "https://example.com/v1/"
         await llm.close()
 
-    async def test_preconfigured_client_does_not_require_env_key(self, monkeypatch):
+    async def test_preconfigured_client_does_not_require_env_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("ATLASCLOUD_API_KEY", raising=False)
         monkeypatch.delenv("ATLAS_CLOUD_API_KEY", raising=False)
         client = AsyncOpenAI(

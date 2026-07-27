@@ -1,23 +1,26 @@
 import os
+from typing import TYPE_CHECKING
 
-from openai import AsyncOpenAI
 from vision_agents.plugins.openai import ChatCompletionsLLM
 
-ATLAS_CLOUD_BASE_URL = "https://api.atlascloud.ai/v1"
-DEFAULT_MODEL = "deepseek-ai/deepseek-v4-pro"
+if TYPE_CHECKING:
+    from openai import AsyncOpenAI
+
+ATLAS_CLOUD_BASE_URL: str = "https://api.atlascloud.ai/v1"
+DEFAULT_MODEL: str = "deepseek-ai/deepseek-v4-pro"
 
 
 class AtlasCloudLLM(ChatCompletionsLLM):
     """Atlas Cloud LLM using the OpenAI-compatible Chat Completions API."""
 
-    provider_name = "atlascloud"
+    provider_name: str = "atlascloud"
 
     def __init__(
         self,
         model: str = DEFAULT_MODEL,
         api_key: str | None = None,
         base_url: str = ATLAS_CLOUD_BASE_URL,
-        client: AsyncOpenAI | None = None,
+        client: "AsyncOpenAI | None" = None,
         tools_max_rounds: int = 3,
     ) -> None:
         """Initialize the Atlas Cloud LLM."""
