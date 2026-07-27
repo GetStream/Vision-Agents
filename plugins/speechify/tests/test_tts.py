@@ -28,9 +28,12 @@ class TestSpeechifyTTS:
         with pytest.raises(ValueError):
             speechify.TTS()
 
-    def test_sets_caller_attribution_header(self) -> None:
+    async def test_sets_caller_attribution_header(self) -> None:
         tts = speechify.TTS(api_key="fake")
-        assert tts.client._client_wrapper.get_headers()["Speechify-Caller"] == "vision-agents"
+        try:
+            assert tts.client._client_wrapper.get_headers()["Speechify-Caller"] == "vision-agents"
+        finally:
+            await tts.close()
 
     async def test_close_closes_http_client(self) -> None:
         tts = speechify.TTS(api_key="fake")
