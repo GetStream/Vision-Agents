@@ -40,6 +40,7 @@ vision-agents-plugins-minimax = { workspace = true }
 vision-agents-plugins-assemblyai = { workspace = true }
 vision-agents-plugins-local = { workspace = true }
 vision-agents-plugins-anam = { workspace = true }
+vision-agents-plugins-atlascloud = { workspace = true }
 vision-agents-plugins-sarvam = { workspace = true }
 vision-agents-plugins-liveavatar = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
@@ -92,6 +93,7 @@ members = [
     "plugins/assemblyai",
     "plugins/local",
     "plugins/anam",
+    "plugins/atlascloud",
     "plugins/sarvam",
     "plugins/liveavatar",
     "plugins/tencent",
