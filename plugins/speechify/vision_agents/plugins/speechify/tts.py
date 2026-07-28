@@ -41,7 +41,12 @@ class TTS(tts.TTS):
             raise ValueError("SPEECHIFY_API_KEY env var or api_key parameter required")
 
         self.client = (
-            client if client is not None else AsyncSpeechify(token=self.api_key)
+            client
+            if client is not None
+            else AsyncSpeechify(
+                token=self.api_key,
+                headers={"Speechify-Caller": "vision-agents"},
+            )
         )
         self.voice_id = voice_id
         self.model = model
