@@ -31,10 +31,10 @@ class TestSpeechifyTTS:
     async def test_sets_caller_attribution_header(self) -> None:
         tts = speechify.TTS(api_key="fake")
         try:
-             assert (
+            assert (
                 tts.client._client_wrapper.get_headers()["Speechify-Caller"]
-                 == "vision-agents"
-             )
+                == "vision-agents"
+            )
         finally:
             await tts.close()
 
