@@ -4,7 +4,6 @@ import time
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import (
-    Any,
     AsyncIterator,
     Iterator,
     Optional,
@@ -28,7 +27,7 @@ from ..edge.events import (
     TrackAddedEvent,
     TrackRemovedEvent,
 )
-from ..edge.types import Connection, Participant, TrackType, User
+from ..edge.types import Connection, MetadataValue, Participant, TrackType, User
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
@@ -851,7 +850,7 @@ class Agent:
 
         return None
 
-    def _build_metadata(self) -> dict[str, Any]:
+    def _build_metadata(self) -> dict[str, MetadataValue]:
         """Build the agent-user metadata describing its configured providers."""
         category = (
             "realtime"
@@ -860,7 +859,10 @@ class Agent:
             if _is_video_llm(self.llm)
             else "llm"
         )
-        meta: dict[str, Any] = {"is_agent": True, category: _provider_info(self.llm)}
+        meta: dict[str, MetadataValue] = {
+            "is_agent": True,
+            category: _provider_info(self.llm),
+        }
         if self.stt:
             meta["stt"] = _provider_info(self.stt)
         if self.tts:
@@ -1355,8 +1357,8 @@ def _provider_slug(obj: object) -> str:
     return type(obj).__name__
 
 
-def _provider_info(component: LLM | STT | TTS) -> dict[str, Any]:
-    info: dict[str, Any] = {"provider": _provider_slug(component)}
+def _provider_info(component: LLM | STT | TTS) -> dict[str, MetadataValue]:
+    info: dict[str, MetadataValue] = {"provider": _provider_slug(component)}
     if component.model:
         info["model"] = component.model
     return info

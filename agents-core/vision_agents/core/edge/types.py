@@ -1,7 +1,19 @@
 import abc
 import enum
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, Union
+
+MetadataValue = Union[
+    str,
+    int,
+    float,
+    bool,
+    None,
+    Sequence["MetadataValue"],
+    Mapping[str, "MetadataValue"],
+]
+"""A JSON-compatible value that can be stored in metadata sent to the edge provider."""
 
 
 @dataclass
@@ -9,7 +21,7 @@ class User:
     id: Optional[str] = ""
     name: Optional[str] = ""
     image: Optional[str] = ""
-    custom: dict[str, Any] = field(default_factory=dict)
+    custom: dict[str, MetadataValue] = field(default_factory=dict)
 
 
 @dataclass
