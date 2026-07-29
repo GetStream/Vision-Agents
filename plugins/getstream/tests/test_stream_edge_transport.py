@@ -123,7 +123,7 @@ class TestStreamEdge:
         real_connection.leave.assert_called_once()
 
     @pytest.mark.integration
-    async def test_authenticate_keeps_custom_fields_set_elsewhere(self):
+    async def test_authenticate_keeps_custom_fields_set_elsewhere(self) -> None:
         """Metadata is merged into the stored user instead of replacing it."""
         edge = StreamEdge()
         user_id = f"test-authenticate-{uuid4()}"
@@ -148,7 +148,7 @@ class TestStreamEdge:
             await edge.close()
 
     @pytest.mark.integration
-    async def test_create_users_creates_users_that_do_not_exist_yet(self):
+    async def test_create_users_creates_users_that_do_not_exist_yet(self) -> None:
         edge = StreamEdge()
         user_id = f"test-create-users-{uuid4()}"
         try:
