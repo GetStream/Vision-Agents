@@ -4,8 +4,10 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
+from getstream.models import QueryUsersPayload, UserRequest
 from getstream.video.rtc import ConnectionManager
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
+from vision_agents.core.edge.types import User
 from vision_agents.plugins.getstream.stream_edge_transport import (
     StreamConnection,
     StreamEdge,
@@ -119,3 +121,43 @@ class TestStreamEdge:
         assert stream_edge.client.client.is_closed is True
         assert stream_edge._real_connection is None
         real_connection.leave.assert_called_once()
+
+    @pytest.mark.integration
+    async def test_authenticate_keeps_custom_fields_set_elsewhere(self):
+        """Metadata is merged into the stored user instead of replacing it."""
+        edge = StreamEdge()
+        user_id = f"test-authenticate-{uuid4()}"
+        try:
+            await edge.client.upsert_users(
+                UserRequest(
+                    id=user_id, name="Stored name", custom={"set_elsewhere": "keep me"}
+                )
+            )
+
+            await edge.authenticate(
+                User(id=user_id, name="Agent", custom={"is_agent": True})
+            )
+
+            response = await edge.client.query_users(
+                QueryUsersPayload(filter_conditions={"id": {"$eq": user_id}})
+            )
+            stored = response.data.users[0]
+            assert stored.custom == {"set_elsewhere": "keep me", "is_agent": True}
+            assert stored.name == "Agent"
+        finally:
+            await edge.close()
+
+    @pytest.mark.integration
+    async def test_create_users_creates_users_that_do_not_exist_yet(self):
+        edge = StreamEdge()
+        user_id = f"test-create-users-{uuid4()}"
+        try:
+            created = await edge.create_users(
+                [User(id=user_id, name="New user", custom={"is_agent": False})]
+            )
+
+            assert [u.id for u in created] == [user_id]
+            assert created[0].name == "New user"
+            assert created[0].custom == {"is_agent": False}
+        finally:
+            await edge.close()
