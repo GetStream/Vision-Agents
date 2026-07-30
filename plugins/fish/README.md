@@ -24,6 +24,10 @@ tts = TTS()
 # Or specify API key directly
 tts = TTS(api_key="your_fish_audio_api_key")
 
+# S2.1 Pro is the default and recommended production model.
+# For testing and prototyping, use the free variant:
+tts = TTS(model="s2.1-pro-free")
+
 # Create an audio track to output speech
 track = AudioStreamTrack(framerate=16000)
 tts.set_output_track(track)
@@ -68,6 +72,8 @@ await stt.process_audio(pcm_data)
 - `reference_id`: Optional reference voice ID to use for synthesis
 - `base_url`: Optional custom API endpoint (default: uses Fish Audio's default endpoint)
 - `client`: Optionally pass in your own instance of the Fish Audio Session
+- `model`: Fish Audio model ID (default: `s2.1-pro`; use `s2.1-pro-free` for
+  testing without production latency or availability guarantees)
 
 ### STT Options
 
@@ -119,7 +125,7 @@ The STT implementation accepts PCM audio data and converts it to WAV format inte
 ## Requirements
 
 - Python 3.10+
-- fish-audio-sdk>=2025.4.2
+- fish-audio-sdk>=1.3.0,<2
 
 ## Getting Your API Key
 
