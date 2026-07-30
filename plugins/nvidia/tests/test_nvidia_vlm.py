@@ -45,7 +45,7 @@ async def vlm() -> VLM:
     if not api_key:
         pytest.skip("NVIDIA_API_KEY not set")
 
-    vlm_instance = VLM(model="meta/llama-3.2-11b-vision-instruct")
+    vlm_instance = VLM()
     vlm_instance.set_conversation(InMemoryConversation("be friendly", []))
     try:
         yield vlm_instance

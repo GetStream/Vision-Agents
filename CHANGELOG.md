@@ -24,6 +24,10 @@ The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). S
 
 ## Bug Fixes
 
+### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct`
+
+`nvidia/cosmos-reason2-8b` is no longer available on the NVIDIA Chat Completions API for typical API Catalog keys. The plugin default, README, and example now use `meta/llama-3.2-11b-vision-instruct`.
+
 ### `twelvelabs` plugin: asset ready wait and clip duration for Pegasus (#610)
 
 `PegasusVLM` now polls the TwelveLabs Assets API until an uploaded clip is `ready` before `analyze_stream` — direct uploads return `processing` and must not be analyzed early. Encoded MP4 clips also set PTS/`time_base` so padded buffers report at least 4 seconds of duration (Pegasus's minimum). Uploaded assets are still deleted if ready-wait fails or times out.
