@@ -88,11 +88,18 @@ class TestOrcaRouterLLM:
         assert body["models"], "Fallback list must not be empty"
 
 
-@pytest.mark.skipif(
-    not os.getenv("ORCAROUTER_API_KEY"), reason="ORCAROUTER_API_KEY not set"
-)
 @pytest.mark.integration
 class TestOrcaRouterLLMIntegration:
+    @pytest.fixture(autouse=True)
+    def require_api_key(self):
+        """Fail loudly rather than skip when the opted-in secret is missing."""
+        if not os.environ.get("ORCAROUTER_API_KEY"):
+            pytest.fail(
+                "ORCAROUTER_API_KEY is required to run the OrcaRouter integration "
+                "tests. Get a key at https://www.orcarouter.ai/console and export it, "
+                "or deselect these tests with -m 'not integration'."
+            )
+
     async def test_simple_response(self, llm_factory):
         """Test simple response yields deltas and a final."""
         llm = llm_factory()

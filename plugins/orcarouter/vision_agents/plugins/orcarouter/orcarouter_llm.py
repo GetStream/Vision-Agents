@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, AsyncIterator, Dict, List, Optional, cast
+from typing import Any, AsyncIterator, Optional
 
 from openai import AsyncOpenAI, AsyncStream
 from openai.types.chat.chat_completion_chunk import (
@@ -74,7 +74,7 @@ class OrcaRouterLLM(LLM):
         super().__init__()
         self.model = model
         # For tracking streaming tool calls in Chat Completions mode
-        self._pending_tool_calls: Dict[int, Dict[str, Any]] = {}
+        self._pending_tool_calls: dict[int, dict[str, Any]] = {}
         self._max_tokens = max_tokens
         self._tools_max_rounds = max(tools_max_rounds, 1)
 
@@ -98,7 +98,7 @@ class OrcaRouterLLM(LLM):
         model = model or self.model
         return model.startswith("openai/")
 
-    def _tool_fallback_body(self) -> Dict[str, Any]:
+    def _tool_fallback_body(self) -> dict[str, Any]:
         """Routing preference that keeps tool calls working behind the auto router."""
         return {"models": TOOL_SUPPORTING_MODELS, "route": "fallback"}
 
@@ -162,8 +162,8 @@ class OrcaRouterLLM(LLM):
         return messages
 
     def _convert_tools_to_provider_format(
-        self, tools: List[ToolSchema]
-    ) -> List[Dict[str, Any]]:
+        self, tools: list[ToolSchema]
+    ) -> list[dict[str, Any]]:
         """Convert ToolSchema to Chat Completions API format.
 
         For non-OpenAI models: Adds strict mode to help models understand
@@ -184,7 +184,7 @@ class OrcaRouterLLM(LLM):
             params.setdefault("type", "object")
             params.setdefault("properties", {})
 
-            func_spec: Dict[str, Any] = {
+            func_spec: dict[str, Any] = {
                 "name": name,
                 "description": description,
                 "parameters": params,
@@ -241,7 +241,7 @@ class OrcaRouterLLM(LLM):
 
     async def _process_streaming_response(
         self,
-        response: Any,
+        response: AsyncStream[ChatCompletionChunk],
         messages: list[dict[str, Any]],
         tools: Optional[list[dict[str, Any]]],
         model: Optional[str],
@@ -258,7 +258,7 @@ class OrcaRouterLLM(LLM):
         # ("Let me check...") and not yielded as deltas.
         has_tool_call_delta_seen = False
 
-        async for chunk in cast(AsyncStream[ChatCompletionChunk], response):
+        async for chunk in response:
             last_chunk = chunk
             if not chunk.choices:
                 continue
@@ -355,9 +355,9 @@ class OrcaRouterLLM(LLM):
             if tc_chunk.function.arguments:
                 pending["arguments_parts"].append(tc_chunk.function.arguments)
 
-    def _finalize_pending_tool_calls(self) -> List[NormalizedToolCallItem]:
+    def _finalize_pending_tool_calls(self) -> list[NormalizedToolCallItem]:
         """Convert accumulated tool call chunks to normalized format."""
-        tool_calls: List[NormalizedToolCallItem] = []
+        tool_calls: list[NormalizedToolCallItem] = []
         for pending in self._pending_tool_calls.values():
             args_str = "".join(pending["arguments_parts"]).strip() or "{}"
             try:
@@ -481,7 +481,7 @@ class OrcaRouterLLM(LLM):
             next_tool_calls: list[NormalizedToolCallItem] = []
             has_tool_call_delta_seen = False
 
-            async for chunk in cast(AsyncStream[ChatCompletionChunk], follow_up):
+            async for chunk in follow_up:
                 last_chunk = chunk
                 if not chunk.choices:
                     continue
