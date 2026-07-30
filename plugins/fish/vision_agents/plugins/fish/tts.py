@@ -1,18 +1,10 @@
 import logging
 import os
-from typing import (
-    Any,
-    AsyncIterator,
-    Iterator,
-    Literal,
-    Optional,
-    Protocol,
-    cast,
-)
+from typing import Any, AsyncIterator, Iterator, Literal, Optional, Protocol, cast
 
 from fish_audio_sdk import Session, TTSRequest
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core import tts
-from getstream.video.rtc.track_util import PcmData, AudioFormat
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +47,7 @@ class TTS(tts.TTS):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        reference_id: Optional[str] = "03397b4c4be74759b72533b663fbd001",
+        reference_id: Optional[str] = "9a9cf47702da476aa4629e2506d4a857",
         base_url: Optional[str] = None,
         client: Optional[Session] = None,
         model: FishTTSModel = "s2.1-pro",
