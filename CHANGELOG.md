@@ -24,7 +24,7 @@ The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). S
 
 ## Bug Fixes
 
-### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct`
+### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct` (#625)
 
 `nvidia/cosmos-reason2-8b` is no longer available on the NVIDIA Chat Completions API for typical API Catalog keys. The plugin default, README, and example now use `meta/llama-3.2-11b-vision-instruct`.
 
