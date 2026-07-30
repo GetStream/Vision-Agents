@@ -12,6 +12,7 @@ real-time bidirectional media streaming.
 - **Audio Conversion**: PCMU, PCMA, and L16 RTP payload conversion
 - **WebSocket Management**: Handle Telnyx WebSocket media events
 - **Stream Bridge**: Attach a Telnyx phone participant to a Stream call
+- **LLM**: Telnyx Inference via the OpenAI-compatible Chat Completions API
 
 ## Installation
 
@@ -45,6 +46,23 @@ call.telnyx_stream = stream
 # Run the stream until Telnyx sends a stop event
 await stream.run()
 ```
+
+## LLM
+
+Telnyx Inference is OpenAI-compatible, so the LLM is a thin wrapper over
+`ChatCompletionsLLM` pointed at `https://api.telnyx.com/v2/ai`. Streaming and
+tool calling work the same as any other Chat Completions provider.
+
+```python
+from vision_agents.plugins import telnyx
+
+llm = telnyx.LLM(model="openai/gpt-4o")
+```
+
+Requires `TELNYX_API_KEY` in the environment, or an `api_key` argument.
+
+Model ids come from the Telnyx catalogue at `GET /v2/ai/models` and are not
+validated locally. The default is `meta-llama/Llama-3.3-70B-Instruct`.
 
 ## Examples
 
@@ -189,5 +207,6 @@ payload = pcm_to_pcmu(pcm)
 ## Dependencies
 
 - vision-agents
+- vision-agents-plugins-openai
 - numpy
 - fastapi
