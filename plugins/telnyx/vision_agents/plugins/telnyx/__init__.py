@@ -13,18 +13,22 @@ from .audio import (
     telnyx_payload_to_pcm,
 )
 from .call_registry import TelnyxCall, TelnyxCallRegistry
+from .llm import TelnyxLLM
 from .media_stream import TelnyxMediaFormat, TelnyxMediaStream, attach_phone_to_call
 
+LLM = TelnyxLLM
 CallRegistry = TelnyxCallRegistry
 MediaStream = TelnyxMediaStream
 
 __all__ = [
     "CallRegistry",
+    "LLM",
     "MediaStream",
     "TELNYX_DEFAULT_SAMPLE_RATE",
     "TELNYX_L16_SAMPLE_RATE",
     "TelnyxCall",
     "TelnyxCallRegistry",
+    "TelnyxLLM",
     "TelnyxMediaFormat",
     "TelnyxMediaStream",
     "attach_phone_to_call",
