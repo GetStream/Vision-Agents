@@ -12,6 +12,7 @@ real-time bidirectional media streaming.
 - **Audio Conversion**: PCMU, PCMA, and L16 RTP payload conversion
 - **WebSocket Management**: Handle Telnyx WebSocket media events
 - **Stream Bridge**: Attach a Telnyx phone participant to a Stream call
+- **STT**: Streaming speech to text over WebSocket
 
 ## Installation
 
@@ -45,6 +46,24 @@ call.telnyx_stream = stream
 # Run the stream until Telnyx sends a stop event
 await stream.run()
 ```
+
+## STT
+
+```python
+from vision_agents.plugins import telnyx
+
+# 8000 matches the PCMU telephony audio that TelnyxMediaStream decodes,
+# so nothing is upsampled on the way to the transcriber.
+stt = telnyx.STT(sample_rate=8000)
+```
+
+Requires `TELNYX_API_KEY` in the environment, or an `api_key` argument.
+
+Audio is resampled to `sample_rate` and sent as raw `linear16` frames. Pick the
+engine with `transcription_engine`; the default is `Telnyx`.
+
+Telnyx does not send VAD signals on this endpoint, so the plugin emits
+transcripts only and leaves turn detection to the agent.
 
 ## Examples
 
@@ -189,5 +208,6 @@ payload = pcm_to_pcmu(pcm)
 ## Dependencies
 
 - vision-agents
+- aiohttp
 - numpy
 - fastapi

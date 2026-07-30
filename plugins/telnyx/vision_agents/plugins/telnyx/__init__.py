@@ -14,6 +14,7 @@ from .audio import (
 )
 from .call_registry import TelnyxCall, TelnyxCallRegistry
 from .media_stream import TelnyxMediaFormat, TelnyxMediaStream, attach_phone_to_call
+from .stt import STT
 
 CallRegistry = TelnyxCallRegistry
 MediaStream = TelnyxMediaStream
@@ -21,6 +22,7 @@ MediaStream = TelnyxMediaStream
 __all__ = [
     "CallRegistry",
     "MediaStream",
+    "STT",
     "TELNYX_DEFAULT_SAMPLE_RATE",
     "TELNYX_L16_SAMPLE_RATE",
     "TelnyxCall",
