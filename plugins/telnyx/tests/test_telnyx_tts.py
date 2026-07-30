@@ -1,7 +1,10 @@
 """Tests for the Telnyx TTS plugin."""
 
 import os
+from types import SimpleNamespace
 
+import aiohttp
+import av
 import pytest
 from dotenv import load_dotenv
 from vision_agents.plugins.telnyx import TTS
@@ -83,6 +86,49 @@ class TestTelnyxTTS:
     async def test_custom_voice(self):
         tts = TTS(api_key="KEY_test", voice="AWS.Polly.Danielle-Neural")
         assert tts.voice == "AWS.Polly.Danielle-Neural"
+
+
+class TestTelnyxTTSMalformedPayloads:
+    """The receive loop tolerates junk from the server without aborting."""
+
+    @staticmethod
+    def fake_ws(payloads: list[str]) -> object:
+        messages = [
+            SimpleNamespace(type=aiohttp.WSMsgType.TEXT, data=payload)
+            for payload in payloads
+        ] + [SimpleNamespace(type=aiohttp.WSMsgType.CLOSED, data=None)]
+
+        class FakeWS:
+            def __init__(self) -> None:
+                self._queue = list(messages)
+
+            async def receive(self):
+                return self._queue.pop(0)
+
+        return FakeWS()
+
+    async def test_non_dict_payload_is_skipped(self):
+        tts = TTS(api_key="KEY_test")
+        ws = self.fake_ws(['["not", "a", "dict"]'])
+
+        assert [chunk async for chunk in tts._receive_audio(ws)] == []
+
+    async def test_invalid_base64_audio_is_skipped(self):
+        tts = TTS(api_key="KEY_test")
+        ws = self.fake_ws(['{"audio": "!!!not base64!!!"}'])
+
+        assert [chunk async for chunk in tts._receive_audio(ws)] == []
+
+    async def test_undecodable_audio_is_dropped(self):
+        tts = TTS(api_key="KEY_test")
+
+        class FailingDecoder:
+            def parse(self, data: bytes):
+                raise av.InvalidDataError(1094995529, "Invalid data")
+
+        assert (
+            tts._decode(b"\xff\xf3junk", FailingDecoder(), None, _Id3Stripper()) == []
+        )
 
 
 @pytest.mark.skipif(not os.getenv("TELNYX_API_KEY"), reason="TELNYX_API_KEY not set")

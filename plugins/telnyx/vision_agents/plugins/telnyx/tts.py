@@ -20,6 +20,7 @@ than a configured one.
 
 import asyncio
 import base64
+import binascii
 import json
 import logging
 import os
@@ -148,8 +149,11 @@ class TTS(tts.TTS):
         """
 
         async def _stream() -> AsyncIterator[PcmData]:
-            self._stop_event.clear()
             async with self._lock:
+                # Cleared under the lock so a stop_audio() aimed at an
+                # in-flight synthesis cannot leave the event set for a call
+                # queued behind it.
+                self._stop_event.clear()
                 ws = await self._connect()
                 try:
                     # Telnyx rejects a text frame that is not preceded by an
@@ -174,8 +178,13 @@ class TTS(tts.TTS):
             self._session = aiohttp.ClientSession()
 
         url = f"{WS_TTS_URL}?{urlencode({'voice': self.voice})}"
-        ws = await self._session.ws_connect(
-            url, headers={"Authorization": f"Bearer {self._api_key}"}
+        # aiohttp's default client timeout for the handshake is 300s, far past
+        # the point where a caller waiting on speech should give up.
+        ws = await asyncio.wait_for(
+            self._session.ws_connect(
+                url, headers={"Authorization": f"Bearer {self._api_key}"}
+            ),
+            timeout=self._idle_timeout,
         )
         self._ws = ws
         self._on_connected()
@@ -187,7 +196,7 @@ class TTS(tts.TTS):
             try:
                 await self._ws.close()
             except (aiohttp.ClientError, ConnectionError):
-                logger.debug("Error closing Telnyx TTS websocket")
+                logger.debug("Error closing Telnyx TTS websocket", exc_info=True)
         self._ws = None
 
     async def _receive_audio(
@@ -222,14 +231,21 @@ class TTS(tts.TTS):
                 logger.warning("Telnyx TTS sent non-JSON text: %s", msg.data)
                 continue
 
+            if not isinstance(data, dict):
+                logger.warning("Telnyx TTS sent unexpected payload: %r", data)
+                continue
+
             if data.get("error"):
                 raise TelnyxTTSError(str(data["error"]))
 
             encoded = data.get("audio")
             if encoded:
-                for pcm in self._decode(
-                    base64.b64decode(encoded), decoder, resampler, stripper
-                ):
+                try:
+                    raw = base64.b64decode(encoded)
+                except (binascii.Error, ValueError):
+                    logger.warning("Telnyx TTS sent audio that is not valid base64")
+                    continue
+                for pcm in self._decode(raw, decoder, resampler, stripper):
                     yield pcm
 
             if data.get("isFinal"):
@@ -242,17 +258,24 @@ class TTS(tts.TTS):
         resampler: av.AudioResampler,
         stripper: _Id3Stripper,
     ) -> list[PcmData]:
-        """Decode one WebSocket audio payload into PcmData chunks."""
+        """Decode one WebSocket audio payload into PcmData chunks.
+
+        A corrupt payload is dropped rather than allowed to abort the
+        synthesis; the decoder recovers on the next packet boundary.
+        """
         chunks: list[PcmData] = []
-        for packet in decoder.parse(stripper.feed(audio)):
-            for frame in decoder.decode(packet):
-                for resampled in resampler.resample(frame):
-                    chunks.append(
-                        PcmData(
-                            samples=resampled.to_ndarray().reshape(-1),
-                            sample_rate=resampled.sample_rate,
-                            channels=1,
-                            format=AudioFormat.S16,
+        try:
+            for packet in decoder.parse(stripper.feed(audio)):
+                for frame in decoder.decode(packet):
+                    for resampled in resampler.resample(frame):
+                        chunks.append(
+                            PcmData(
+                                samples=resampled.to_ndarray().reshape(-1),
+                                sample_rate=resampled.sample_rate,
+                                channels=1,
+                                format=AudioFormat.S16,
+                            )
                         )
-                    )
+        except av.FFmpegError:
+            logger.warning("Telnyx TTS sent undecodable audio, dropping payload")
         return chunks
