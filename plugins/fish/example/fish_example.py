@@ -20,7 +20,7 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import deepgram, fish, gemini, getstream
+from vision_agents.plugins import fish, gemini, getstream
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ async def create_agent(**kwargs) -> Agent:
         emphasis, and expressiveness. Keep your responses very short. Use @emotion-control.md 
         extensively, avoid filler words like 'gasp' or 'sigh', no markdown code in your responses.""",
         tts=fish.TTS(model="s2.1-pro-free"),
-        stt=deepgram.STT(),
+        stt=fish.STT(),
         llm=gemini.LLM(),
     )
     return agent

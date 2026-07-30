@@ -8,7 +8,6 @@ dependencies = [
   "vision-agents-plugins-fish",
   "vision-agents-plugins-getstream",
   "vision-agents-plugins-gemini",
-  "vision-agents[deepgram]",
 ]
 
 [tool.uv.sources]
