@@ -145,6 +145,34 @@ Create a response with full control over parameters.
 
 - `XAI_API_KEY`: Your xAI API key (required if not provided in constructor)
 
+## Realtime Speech-to-Speech
+
+The plugin provides an `xai.Realtime` class for bidirectional voice conversations
+using xAI's [Speech-to-Speech API](https://docs.x.ai/developers/model-capabilities/audio/speech-to-speech).
+The API returns both synthesized speech and transcriptions of the user's input;
+it is not a standalone speech-to-text integration.
+
+```python
+from vision_agents.plugins import xai
+
+realtime = xai.Realtime(
+    model="grok-voice-think-fast-2.0",
+    voice="ara",
+)
+```
+
+### Realtime models
+
+| Model | Description |
+|-------|-------------|
+| `grok-voice-think-fast-2.0` | Current flagship voice model and plugin default |
+| `grok-voice-latest` | Rolling alias; scheduled to point to Think Fast 2.0 on August 5, 2026 |
+| `grok-voice-think-fast-1.0` | Previous generation; pin this model to retain 1.0 behavior |
+
+The `model` argument accepts model IDs directly, so applications can choose a
+pinned release for reproducible behavior or the `grok-voice-latest` alias for
+automatic upgrades.
+
 ## Text-to-Speech (TTS)
 
 The plugin also ships an `xai.TTS` class powered by [xAI's Grok Voice API](https://docs.x.ai/docs/guides/voice/tts). It provides five expressive voices with inline speech tags for fine-grained delivery control.
