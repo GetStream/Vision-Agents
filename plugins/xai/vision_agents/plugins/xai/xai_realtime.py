@@ -5,7 +5,7 @@ but ships no WebSocket wrapper for the realtime voice API. This implementation u
 the `websockets` library directly for the realtime connection while leveraging the
 SDK's AsyncClient for ephemeral token generation and configuration.
 
-See: https://docs.x.ai/developers/model-capabilities/audio/voice-agent
+See: https://docs.x.ai/developers/model-capabilities/audio/speech-to-speech
 """
 
 import asyncio
@@ -30,7 +30,7 @@ from xai_sdk import AsyncClient
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "grok-voice-think-fast-1.0"
+DEFAULT_MODEL = "grok-voice-think-fast-2.0"
 DEFAULT_VOICE = "ara"
 WEBSOCKET_URL = "wss://api.x.ai/v1/realtime"
 EPHEMERAL_TOKEN_URL = "https://api.x.ai/v1/realtime/client_secrets"
@@ -119,7 +119,7 @@ class XAIRealtime(realtime.Realtime):
 
         Args:
             model: Model to use. Sent as the `model` query parameter on the
-                   WebSocket URL. Defaults to "grok-voice-think-fast-1.0".
+                   WebSocket URL. Defaults to "grok-voice-think-fast-2.0".
             voice: Voice to use for responses. Options: ara, rex, sal, eve, leo.
             api_key: Optional API key. Defaults to XAI_API_KEY environment variable.
             client: Optional AsyncClient instance. If not provided, one is created.
