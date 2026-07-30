@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
+    "vision-agents-plugins-openai",
     "numpy>=1.24.0", # capped at <2.0 via workspace override in root pyproject.toml
     "cryptography>=44.0.0",
     "fastapi>=0.135.1",
@@ -33,6 +34,7 @@ include = ["/vision_agents"]
 
 [tool.uv.sources]
 vision-agents = { workspace = true }
+vision-agents-plugins-openai = { workspace = true }
 
 [dependency-groups]
 dev = [
