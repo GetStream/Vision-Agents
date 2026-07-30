@@ -1,13 +1,18 @@
 import logging
 import os
-from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator, Literal, Optional, cast
+from typing import (
+    Any,
+    AsyncIterator,
+    Iterator,
+    Literal,
+    Optional,
+    Protocol,
+    cast,
+)
 
 from fish_audio_sdk import Session, TTSRequest
 from vision_agents.core import tts
 from getstream.video.rtc.track_util import PcmData, AudioFormat
-
-if TYPE_CHECKING:
-    from fish_audio_sdk.schemas import Backends
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +25,12 @@ FishTTSModel = Literal[
     "speech-1.5",
     "speech-1.6",
 ]
+
+
+class _TTSAwaitable(Protocol):
+    def __call__(
+        self, request: TTSRequest, *, backend: FishTTSModel
+    ) -> AsyncIterator[bytes]: ...
 
 
 class TTS(tts.TTS):
@@ -82,7 +93,7 @@ class TTS(tts.TTS):
             self.client = Session(api_key)
 
         self.reference_id = reference_id
-        self.model = model
+        self.model: FishTTSModel = model
 
     async def stream_audio(
         self, text: str, *_, **kwargs: Any
@@ -116,12 +127,11 @@ class TTS(tts.TTS):
             **tts_request_kwargs,
         )
 
-        # Stream audio from Fish Audio with the configured model
-        # fish-audio-sdk 1.3.0 sends this value directly as the model header, but
-        # its Backends type has not yet been updated with the S2.1 model IDs.
-        stream = self.client.tts.awaitable(
-            tts_request, backend=cast("Backends", self.model)
-        )
+        # The SDK sends backend directly as the model header, but its model
+        # literal currently lags the public API. Keep that compatibility
+        # assertion at the third-party boundary instead of weakening our model type.
+        tts_awaitable = cast(_TTSAwaitable, self.client.tts.awaitable)
+        stream = tts_awaitable(tts_request, backend=self.model)
         return PcmData.from_response(
             stream, sample_rate=16000, channels=1, format=AudioFormat.S16
         )
