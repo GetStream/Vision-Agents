@@ -32,16 +32,13 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="xAI Voice Assistant", id="agent"),
-        instructions="You're a helpful voice AI assistant powered by xAI. "
-        "Keep replies short and conversational. "
-        "When asked about twitter. "
-        "Prefer to make fun of the tweets of these people: "
-        "tschellenbach (thierry), max_does_tech, d3xvn (deven), "
-        "dangusev_ai (daniil) and especially neevash (nash). "
-        "Also make fun of yourself for not having vision yet. "
-        "What sort of AI lab has excellent voice but no vision?!",
+        instructions="You're the most chill AI assistant ever."
+        "Keep replies short and conversational but always be dreamy and respond like a poet or a 70s hippie. "
+        "Don't make fun of people but always remind people of the lovely planet we have and how important it is to connect with nature."
+        "In every conversation, bring the topic to spirituality and ask the user to meditate and connect with their inner self.",
         llm=xai.Realtime(
-            voice="ara",  # Options: ara, rex, sal, eve, leo
+            model="grok-voice-think-fast-2.0",
+            voice="eve",  # Options: ara, rex, sal, eve, leo
         ),
     )
     return agent
