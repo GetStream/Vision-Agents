@@ -35,6 +35,7 @@ members = [
     "vision-agents-plugins-nvidia",
     "vision-agents-plugins-openai",
     "vision-agents-plugins-openrouter",
+    "vision-agents-plugins-orcarouter",
     "vision-agents-plugins-pocket",
     "vision-agents-plugins-qdrant",
     "vision-agents-plugins-qwen",
@@ -6511,6 +6512,9 @@ openai = [
 openrouter = [
     { name = "vision-agents-plugins-openrouter" },
 ]
+orcarouter = [
+    { name = "vision-agents-plugins-orcarouter" },
+]
 pocket = [
     { name = "vision-agents-plugins-pocket" },
 ]
@@ -6608,6 +6612,7 @@ requires-dist = [
     { name = "vision-agents-plugins-nvidia", marker = "extra == 'nvidia'", editable = "plugins/nvidia" },
     { name = "vision-agents-plugins-openai", marker = "extra == 'openai'", editable = "plugins/openai" },
     { name = "vision-agents-plugins-openrouter", marker = "extra == 'openrouter'", editable = "plugins/openrouter" },
+    { name = "vision-agents-plugins-orcarouter", marker = "extra == 'orcarouter'", editable = "plugins/orcarouter" },
     { name = "vision-agents-plugins-pocket", marker = "extra == 'pocket'", editable = "plugins/pocket" },
     { name = "vision-agents-plugins-qdrant", marker = "extra == 'qdrant'", editable = "plugins/qdrant" },
     { name = "vision-agents-plugins-qwen", marker = "extra == 'qwen'", editable = "plugins/qwen" },
@@ -6625,7 +6630,7 @@ requires-dist = [
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "orcarouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -7306,6 +7311,32 @@ dev = [
 [[package]]
 name = "vision-agents-plugins-openrouter"
 source = { editable = "plugins/openrouter" }
+dependencies = [
+    { name = "openai" },
+    { name = "vision-agents" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "openai", specifier = ">=2.26.0,<3" },
+    { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-orcarouter"
+source = { editable = "plugins/orcarouter" }
 dependencies = [
     { name = "openai" },
     { name = "vision-agents" },
