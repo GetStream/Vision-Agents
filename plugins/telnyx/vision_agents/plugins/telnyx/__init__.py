@@ -15,6 +15,7 @@ from .audio import (
 from .call_registry import TelnyxCall, TelnyxCallRegistry
 from .llm import TelnyxLLM
 from .media_stream import TelnyxMediaFormat, TelnyxMediaStream, attach_phone_to_call
+from .stt import STT
 from .tts import TTS, TelnyxTTSError
 
 LLM = TelnyxLLM
@@ -25,6 +26,7 @@ __all__ = [
     "CallRegistry",
     "LLM",
     "MediaStream",
+    "STT",
     "TTS",
     "TELNYX_DEFAULT_SAMPLE_RATE",
     "TELNYX_L16_SAMPLE_RATE",

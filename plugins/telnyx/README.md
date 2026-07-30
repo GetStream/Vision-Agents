@@ -13,6 +13,7 @@ real-time bidirectional media streaming.
 - **WebSocket Management**: Handle Telnyx WebSocket media events
 - **Stream Bridge**: Attach a Telnyx phone participant to a Stream call
 - **LLM**: Telnyx Inference via the OpenAI-compatible Chat Completions API
+- **STT**: Streaming speech to text over WebSocket
 - **TTS**: Streaming text to speech over WebSocket
 
 ## Installation
@@ -64,6 +65,24 @@ Requires `TELNYX_API_KEY` in the environment, or an `api_key` argument.
 
 Model ids come from the Telnyx catalogue at `GET /v2/ai/models` and are not
 validated locally. The default is `meta-llama/Llama-3.3-70B-Instruct`.
+
+## STT
+
+```python
+from vision_agents.plugins import telnyx
+
+# 8000 matches the PCMU telephony audio that TelnyxMediaStream decodes,
+# so nothing is upsampled on the way to the transcriber.
+stt = telnyx.STT(sample_rate=8000)
+```
+
+Requires `TELNYX_API_KEY` in the environment, or an `api_key` argument.
+
+Audio is resampled to `sample_rate` and sent as raw `linear16` frames. Pick the
+engine with `transcription_engine`; the default is `Telnyx`.
+
+Telnyx does not send VAD signals on this endpoint, so the plugin emits
+transcripts only and leaves turn detection to the agent.
 
 ## TTS
 
