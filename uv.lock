@@ -7535,6 +7535,7 @@ dev = [
 name = "vision-agents-plugins-telnyx"
 source = { editable = "plugins/telnyx" }
 dependencies = [
+    { name = "aiohttp" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "numpy" },
@@ -7550,6 +7551,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "cryptography", specifier = ">=44.0.0" },
     { name = "fastapi", specifier = ">=0.135.1" },
     { name = "numpy", specifier = ">=1.24.0" },
