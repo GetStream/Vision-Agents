@@ -118,10 +118,15 @@ class STT(stt.STT):
         # that do have to suppress it, because the Telnyx edge rejects a
         # WebSocket handshake that carries one.
         self._session = aiohttp.ClientSession()
-        self._ws = await self._session.ws_connect(
-            self._build_ws_url(),
-            headers={"Authorization": f"Bearer {self._api_key}"},
-        )
+        try:
+            self._ws = await self._session.ws_connect(
+                self._build_ws_url(),
+                headers={"Authorization": f"Bearer {self._api_key}"},
+            )
+        except BaseException:
+            await self._session.close()
+            self._session = None
+            raise
 
         self._receive_task = asyncio.create_task(self._receive_loop())
         self._connection_ready.set()
@@ -149,31 +154,39 @@ class STT(stt.STT):
         if self._audio_start_time is None:
             self._audio_start_time = time.perf_counter()
 
-        await self._ws.send_bytes(resampled.samples.tobytes())
+        try:
+            await self._ws.send_bytes(resampled.samples.tobytes())
+        except (aiohttp.ClientError, ConnectionError) as exc:
+            self._emit_error_event(exc, context="telnyx_send_audio")
 
     async def close(self) -> None:
         """Close the WebSocket and clean up."""
         await super().close()
 
-        if self._ws is not None and not self._ws.closed:
-            await self._ws.close()
-        self._ws = None
-
-        if self._receive_task is not None:
-            self._receive_task.cancel()
+        try:
+            if self._ws is not None and not self._ws.closed:
+                await self._ws.close()
+        finally:
+            self._ws = None
             try:
-                await self._receive_task
-            except asyncio.CancelledError:
-                pass
-            self._receive_task = None
-
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
-        self._session = None
-
-        self._connection_ready.clear()
-        self._on_disconnected()
-        self._audio_start_time = None
+                if self._receive_task is not None:
+                    self._receive_task.cancel()
+                    try:
+                        await self._receive_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        logger.exception("Telnyx STT receive task failed on close")
+            finally:
+                self._receive_task = None
+                try:
+                    if self._session is not None and not self._session.closed:
+                        await self._session.close()
+                finally:
+                    self._session = None
+                    self._connection_ready.clear()
+                    self._on_disconnected()
+                    self._audio_start_time = None
 
     def _build_ws_url(self) -> str:
         params: dict[str, str] = {
@@ -198,6 +211,9 @@ class STT(stt.STT):
                         parsed = json.loads(msg.data)
                     except json.JSONDecodeError:
                         logger.warning("Telnyx STT sent non-JSON text: %s", msg.data)
+                        continue
+                    if not isinstance(parsed, dict):
+                        logger.warning("Telnyx STT sent unexpected payload: %r", parsed)
                         continue
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug("Telnyx STT message: %s", parsed)
@@ -254,10 +270,12 @@ class STT(stt.STT):
             processing_time_ms = (time.perf_counter() - self._audio_start_time) * 1000
 
         confidence = data.get("confidence")
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+            confidence = None
         is_final = bool(data.get("is_final", True))
 
         response = TranscriptResponse(
-            confidence=confidence if isinstance(confidence, float) else None,
+            confidence=float(confidence) if confidence is not None else None,
             language=self.language,
             model_name=self.model or self.transcription_engine,
             processing_time_ms=processing_time_ms,

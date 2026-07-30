@@ -2,8 +2,11 @@
 
 import os
 
+import aiohttp
+import numpy as np
 import pytest
 from dotenv import load_dotenv
+from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt import Transcript
 from vision_agents.plugins.telnyx import STT
@@ -94,6 +97,33 @@ class TestTelnyxSTT:
         stt._handle_message({"transcript": "   ", "confidence": None, "is_final": True})
 
         assert await stt.output.collect(timeout=0) == []
+
+    async def test_send_failure_does_not_propagate(self, participant):
+        stt = STT(api_key="KEY_test")
+
+        class FailingWS:
+            closed = False
+
+            async def send_bytes(self, data: bytes) -> None:
+                raise aiohttp.ClientError("connection reset")
+
+        stt._ws = FailingWS()
+        stt._connection_ready.set()
+
+        pcm = PcmData(
+            samples=np.zeros(160, dtype=np.int16), sample_rate=16000, format="s16"
+        )
+        await stt.process_audio(pcm, participant=participant)
+
+    async def test_integer_confidence_is_kept(self, participant):
+        stt = STT(api_key="KEY_test")
+        stt._current_participant = participant
+
+        stt._handle_message({"transcript": "hello", "confidence": 1, "is_final": True})
+        items = await stt.output.collect(timeout=0)
+
+        transcripts = [i for i in items if isinstance(i, Transcript)]
+        assert transcripts[0].confidence == 1.0
 
     async def test_error_payload_emits_no_transcript(self, participant):
         stt = STT(api_key="KEY_test")
