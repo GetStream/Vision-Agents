@@ -12,6 +12,7 @@ real-time bidirectional media streaming.
 - **Audio Conversion**: PCMU, PCMA, and L16 RTP payload conversion
 - **WebSocket Management**: Handle Telnyx WebSocket media events
 - **Stream Bridge**: Attach a Telnyx phone participant to a Stream call
+- **TTS**: Streaming text to speech over WebSocket
 
 ## Installation
 
@@ -45,6 +46,24 @@ call.telnyx_stream = stream
 # Run the stream until Telnyx sends a stop event
 await stream.run()
 ```
+
+## TTS
+
+```python
+from vision_agents.plugins import telnyx
+
+tts = telnyx.TTS(voice="AWS.Polly.Danielle-Neural")
+```
+
+Requires `TELNYX_API_KEY` in the environment, or an `api_key` argument.
+
+Voice ids come from `GET /v2/text-to-speech/voices`. The default is
+`Telnyx.KokoroTTS.af_heart`.
+
+Telnyx serves each synthesis on its own WebSocket and closes the socket after
+the stop frame, so the plugin reconnects per `stream_audio` call. Audio arrives
+as MP3 and is decoded to `PcmData` as it streams. The output sample rate follows
+the voice, so it is taken from the decoder rather than configured.
 
 ## Examples
 
@@ -189,5 +208,6 @@ payload = pcm_to_pcmu(pcm)
 ## Dependencies
 
 - vision-agents
+- aiohttp
 - numpy
 - fastapi
