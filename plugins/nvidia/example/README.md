@@ -61,7 +61,7 @@ You can customize the VLM settings in `main.py`:
 
 ```python
 llm = nvidia.VLM(
-    model="nvidia/cosmos-reason2-8b",
+    model="meta/llama-3.2-11b-vision-instruct",
     fps=1,  # Frames per second to buffer
     frame_buffer_seconds=10,  # Seconds of video to buffer
     frame_width=800,  # Frame width

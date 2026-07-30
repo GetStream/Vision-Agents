@@ -50,13 +50,13 @@ class NvidiaVLM(VideoLLM):
     Examples:
 
         from vision_agents.plugins import nvidia
-        vlm = nvidia.VLM(model="nvidia/cosmos-reason2-8b")
+        vlm = nvidia.VLM(model="meta/llama-3.2-11b-vision-instruct")
 
     """
 
     def __init__(
         self,
-        model: str = "nvidia/cosmos-reason2-8b",
+        model: str = "meta/llama-3.2-11b-vision-instruct",
         api_key: Optional[str] = None,
         fps: int = 1,
         frame_buffer_seconds: int = 10,
@@ -72,7 +72,7 @@ class NvidiaVLM(VideoLLM):
         Initialize the NvidiaVLM class.
 
         Args:
-            model: The NVIDIA model ID to use. Defaults to "nvidia/cosmos-reason2-8b".
+            model: The NVIDIA model ID to use. Defaults to "meta/llama-3.2-11b-vision-instruct".
             api_key: NVIDIA API token. Defaults to NVIDIA_API_KEY environment variable.
             fps: Number of video frames per second to handle.
             frame_buffer_seconds: Number of seconds to buffer for the model's input.
