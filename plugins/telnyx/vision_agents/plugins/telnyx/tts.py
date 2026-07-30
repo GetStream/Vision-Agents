@@ -154,8 +154,8 @@ class TTS(tts.TTS):
                 # in-flight synthesis cannot leave the event set for a call
                 # queued behind it.
                 self._stop_event.clear()
-                ws = await self._connect()
                 try:
+                    ws = await self._connect()
                     # Telnyx rejects a text frame that is not preceded by an
                     # init frame with "Invalid message".
                     await ws.send_str(json.dumps({"text": " "}))
@@ -163,6 +163,11 @@ class TTS(tts.TTS):
                     await ws.send_str(json.dumps({"text": ""}))
                     async for chunk in self._receive_audio(ws):
                         yield chunk
+                except aiohttp.ClientConnectionError:
+                    # stop_audio() closes the socket underneath us, which is a
+                    # normal barge-in rather than a synthesis failure.
+                    if not self._stop_event.is_set():
+                        raise
                 finally:
                     await self._close_ws()
 
@@ -241,8 +246,8 @@ class TTS(tts.TTS):
             encoded = data.get("audio")
             if encoded:
                 try:
-                    raw = base64.b64decode(encoded)
-                except (binascii.Error, ValueError):
+                    raw = base64.b64decode(encoded, validate=True)
+                except (binascii.Error, TypeError, ValueError):
                     logger.warning("Telnyx TTS sent audio that is not valid base64")
                     continue
                 for pcm in self._decode(raw, decoder, resampler, stripper):
