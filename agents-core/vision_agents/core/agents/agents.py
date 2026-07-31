@@ -842,8 +842,8 @@ class Agent:
 
             with self.span("edge.authenticate"):
                 self.agent_user.custom = {
-                    **self._build_metadata(),
                     **self.agent_user.custom,
+                    **self._build_metadata(),
                 }
                 await self.edge.authenticate(self.agent_user)
                 self._agent_user_initialized = True

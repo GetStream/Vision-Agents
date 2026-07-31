@@ -1,35 +1,61 @@
-from unittest.mock import MagicMock, patch
+from collections.abc import AsyncIterator
+from typing import cast
 
 import pytest
 from dotenv import load_dotenv
+from fish_audio_sdk import Session, TTSRequest
+from getstream.video.rtc.track_util import PcmData
 from vision_agents.plugins import fish
 
 # Load environment variables
 load_dotenv()
 
 
-def test_fish_tts_uses_s2_1_pro_by_default():
-    tts = fish.TTS(client=MagicMock())
+class FakeTTSResource:
+    def __init__(self) -> None:
+        self.request: TTSRequest | None = None
+        self.backend: fish.FishTTSModel | None = None
 
-    assert tts.model == "s2.1-pro"
+    def awaitable(
+        self, request: TTSRequest, *, backend: fish.FishTTSModel
+    ) -> AsyncIterator[bytes]:
+        self.request = request
+        self.backend = backend
+
+        async def stream() -> AsyncIterator[bytes]:
+            yield b"\x01\x00\x02\x00"
+
+        return stream()
 
 
-@pytest.mark.asyncio
-async def test_fish_tts_forwards_s2_1_model_to_sdk():
-    client = MagicMock()
-    stream = object()
-    client.tts.awaitable.return_value = stream
-    tts = fish.TTS(client=client, model="s2.1-pro-free")
+class FakeSession:
+    def __init__(self) -> None:
+        self.tts = FakeTTSResource()
 
-    with patch(
-        "vision_agents.plugins.fish.tts.PcmData.from_response",
-        return_value=MagicMock(),
-    ):
-        await tts.stream_audio("Hello from Fish Audio S2.1!")
 
-    request = client.tts.awaitable.call_args.args[0]
-    assert request.text == "Hello from Fish Audio S2.1!"
-    client.tts.awaitable.assert_called_once_with(request, backend="s2.1-pro-free")
+@pytest.mark.parametrize(
+    ("configured_model", "expected_model"),
+    [(None, "s2.1-pro"), ("s2.1-pro-free", "s2.1-pro-free")],
+)
+async def test_fish_tts_streams_s2_1_audio(
+    configured_model: fish.FishTTSModel | None,
+    expected_model: fish.FishTTSModel,
+):
+    client = FakeSession()
+    kwargs = {"model": configured_model} if configured_model else {}
+    tts = fish.TTS(client=cast(Session, client), **kwargs)
+
+    response = await tts.stream_audio("Hello from Fish Audio S2.1!")
+    chunks = [chunk async for chunk in cast(AsyncIterator[PcmData], response)]
+
+    assert tts.model == expected_model
+    assert client.tts.backend == expected_model
+    assert client.tts.request is not None
+    assert client.tts.request.text == "Hello from Fish Audio S2.1!"
+    assert len(chunks) == 1
+    assert chunks[0].sample_rate == 16000
+    assert chunks[0].channels == 1
+    assert chunks[0].samples.tolist() == [1, 2]
 
 
 @pytest.mark.integration

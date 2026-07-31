@@ -7,12 +7,6 @@ from typing import TYPE_CHECKING, Optional, cast
 from urllib.parse import urlencode
 
 import aiortc
-from vision_agents.core.agents.agents import tracer
-from vision_agents.core.edge import Call, EdgeTransport, events
-from vision_agents.core.edge.types import Connection, Participant, TrackType, User
-from vision_agents.core.utils import get_vision_agents_version
-from vision_agents.plugins.getstream.stream_conversation import StreamConversation
-
 import getstream.models
 from getstream import AsyncStream
 from getstream.exceptions import StreamApiException
@@ -35,6 +29,11 @@ from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
 )
 from getstream.video.rtc.track_util import PcmData
 from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
+from vision_agents.core.agents.agents import tracer
+from vision_agents.core.edge import Call, EdgeTransport, events
+from vision_agents.core.edge.types import Connection, Participant, TrackType, User
+from vision_agents.core.utils import get_vision_agents_version
+from vision_agents.plugins.getstream.stream_conversation import StreamConversation
 
 from . import sfu_events
 from ._track_resolver import TrackResolver
@@ -43,6 +42,8 @@ if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
 
 logger = logging.getLogger(__name__)
+
+_MAX_CONCURRENT_USER_MERGES = 10
 
 
 # Conversion maps and functions for getstream -> core types
@@ -345,9 +346,14 @@ class StreamEdge(EdgeTransport[StreamCall]):
         self._agent_user_id = user.id
 
     async def create_users(self, users: list[User]) -> list[FullUserResponse]:
-        """Create multiple users, one API call per user."""
+        """Create multiple users with bounded concurrency and stable result order."""
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENT_USER_MERGES)
 
-        return await asyncio.gather(*(self._merge_user(u) for u in users))
+        async def merge(user: User) -> FullUserResponse:
+            async with semaphore:
+                return await self._merge_user(user)
+
+        return await asyncio.gather(*(merge(user) for user in users))
 
     async def _merge_user(self, user: User) -> FullUserResponse:
         """Create the user, or merge the locally set fields into an existing one.

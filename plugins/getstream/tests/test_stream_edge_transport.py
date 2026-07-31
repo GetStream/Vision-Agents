@@ -1,14 +1,16 @@
 import asyncio
 import time
+from typing import cast
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
-from getstream.models import QueryUsersPayload, UserRequest
+from getstream.models import FullUserResponse, QueryUsersPayload, UserRequest
 from getstream.video.rtc import ConnectionManager
 from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import Participant
 from vision_agents.core.edge.types import User
 from vision_agents.plugins.getstream.stream_edge_transport import (
+    _MAX_CONCURRENT_USER_MERGES,
     StreamConnection,
     StreamEdge,
 )
@@ -18,7 +20,21 @@ from vision_agents.plugins.getstream.stream_edge_transport import (
 async def stream_edge(monkeypatch):
     monkeypatch.setenv("STREAM_API_KEY", "test-key")
     monkeypatch.setenv("STREAM_API_SECRET", "test-secret")
-    return StreamEdge()
+    edge = StreamEdge()
+    try:
+        yield edge
+    finally:
+        if not edge.client.client.is_closed:
+            await edge.close()
+
+
+@pytest.fixture
+async def integration_stream_edge():
+    edge = StreamEdge()
+    try:
+        yield edge
+    finally:
+        await edge.close()
 
 
 @pytest.fixture
@@ -122,42 +138,60 @@ class TestStreamEdge:
         assert stream_edge._real_connection is None
         real_connection.leave.assert_called_once()
 
+    async def test_create_users_bounds_concurrency_and_preserves_order(
+        self, stream_edge: StreamEdge, monkeypatch
+    ) -> None:
+        active = 0
+        max_active = 0
+
+        async def merge_user(user: User) -> FullUserResponse:
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return cast(FullUserResponse, user.id)
+
+        monkeypatch.setattr(stream_edge, "_merge_user", merge_user)
+        users = [User(id=f"user-{index}") for index in range(25)]
+
+        created = await stream_edge.create_users(users)
+
+        assert created == [user.id for user in users]
+        assert max_active == _MAX_CONCURRENT_USER_MERGES
+
     @pytest.mark.integration
-    async def test_authenticate_keeps_custom_fields_set_elsewhere(self) -> None:
+    async def test_authenticate_keeps_custom_fields_set_elsewhere(
+        self, integration_stream_edge: StreamEdge
+    ) -> None:
         """Metadata is merged into the stored user instead of replacing it."""
-        edge = StreamEdge()
         user_id = f"test-authenticate-{uuid4()}"
-        try:
-            await edge.client.upsert_users(
-                UserRequest(
-                    id=user_id, name="Stored name", custom={"set_elsewhere": "keep me"}
-                )
+        await integration_stream_edge.client.upsert_users(
+            UserRequest(
+                id=user_id, name="Stored name", custom={"set_elsewhere": "keep me"}
             )
+        )
 
-            await edge.authenticate(
-                User(id=user_id, name="Agent", custom={"is_agent": True})
-            )
+        await integration_stream_edge.authenticate(
+            User(id=user_id, name="Agent", custom={"is_agent": True})
+        )
 
-            response = await edge.client.query_users(
-                QueryUsersPayload(filter_conditions={"id": {"$eq": user_id}})
-            )
-            stored = response.data.users[0]
-            assert stored.custom == {"set_elsewhere": "keep me", "is_agent": True}
-            assert stored.name == "Agent"
-        finally:
-            await edge.close()
+        response = await integration_stream_edge.client.query_users(
+            QueryUsersPayload(filter_conditions={"id": {"$eq": user_id}})
+        )
+        stored = response.data.users[0]
+        assert stored.custom == {"set_elsewhere": "keep me", "is_agent": True}
+        assert stored.name == "Agent"
 
     @pytest.mark.integration
-    async def test_create_users_creates_users_that_do_not_exist_yet(self) -> None:
-        edge = StreamEdge()
+    async def test_create_users_creates_users_that_do_not_exist_yet(
+        self, integration_stream_edge: StreamEdge
+    ) -> None:
         user_id = f"test-create-users-{uuid4()}"
-        try:
-            created = await edge.create_users(
-                [User(id=user_id, name="New user", custom={"is_agent": False})]
-            )
+        created = await integration_stream_edge.create_users(
+            [User(id=user_id, name="New user", custom={"is_agent": False})]
+        )
 
-            assert [u.id for u in created] == [user_id]
-            assert created[0].name == "New user"
-            assert created[0].custom == {"is_agent": False}
-        finally:
-            await edge.close()
+        assert [u.id for u in created] == [user_id]
+        assert created[0].name == "New user"
+        assert created[0].custom == {"is_agent": False}

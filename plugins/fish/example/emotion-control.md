@@ -297,7 +297,7 @@ All 13 supported languages can use emotion markers. For sentence-level control, 
 
 ## S1 (legacy) syntax
 
-The default **S2-Pro** model uses `[bracket]` cues with free-form natural language. The previous-generation **S1** model uses the same emotion names but requires `(parentheses)` and a fixed tag set:
+The default **S2.1-Pro** model uses `[bracket]` cues with free-form natural language. The previous-generation **S1** model uses the same emotion names but requires `(parentheses)` and a fixed tag set:
 
 ```text
 (happy) What a beautiful day!

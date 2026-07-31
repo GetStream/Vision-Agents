@@ -427,20 +427,29 @@ class TestAgent:
         assert custom["tts"] == {"provider": "DummyTTS"}
 
     async def test_authenticate_preserves_user_supplied_custom(self):
-        """User-provided custom keys survive the metadata merge."""
+        """Custom keys survive without overriding agent-owned metadata."""
         agent = Agent(
             llm=DummyLLM(),
             tts=DummyTTS(),
             edge=DummyEdge(),
-            agent_user=User(name="test", custom={"is_agent": False, "team": "red"}),
+            agent_user=User(
+                name="test",
+                custom={
+                    "is_agent": False,
+                    "team": "red",
+                    "llm": {"provider": "spoofed"},
+                    "tts": {"provider": "spoofed"},
+                },
+            ),
         )
 
         await agent.authenticate()
 
         custom = agent.agent_user.custom
-        assert custom["is_agent"] is False
+        assert custom["is_agent"] is True
         assert custom["team"] == "red"
         assert custom["llm"] == {"provider": "DummyLLM"}
+        assert custom["tts"] == {"provider": "DummyTTS"}
 
     async def test_send_metrics_event(self):
         """Test that metrics are sent as custom events."""
