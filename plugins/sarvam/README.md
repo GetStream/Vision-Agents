@@ -28,7 +28,7 @@ agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="Sarvam AI"),
     instructions="Reply in Hindi or English, whichever the user speaks",
-    llm=sarvam.LLM(model="sarvam-30b"),
+    llm=sarvam.LLM(model="sarvam-105b"),
     stt=sarvam.STT(language="hi-IN"),
     tts=sarvam.TTS(speaker="shubh"),
     turn_detection=smart_turn.TurnDetection(),

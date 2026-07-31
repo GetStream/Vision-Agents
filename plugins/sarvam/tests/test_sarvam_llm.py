@@ -69,8 +69,8 @@ class TestSarvamLLM:
         assert llm.model == "sarvam-m"
 
     async def test_custom_model(self):
-        llm = LLM(api_key="sk_test", model="sarvam-30b")
-        assert llm.model == "sarvam-30b"
+        llm = LLM(api_key="sk_test", model="sarvam-105b")
+        assert llm.model == "sarvam-105b"
 
     async def test_base_url_points_to_sarvam(self):
         llm = LLM(api_key="sk_test")
@@ -89,7 +89,7 @@ class TestSarvamLLMIntegration:
 
     @pytest.fixture
     async def llm(self):
-        llm = LLM(model="sarvam-30b")
+        llm = LLM(model="sarvam-105b")
         llm.set_conversation(InMemoryConversation("be friendly", []))
         return llm
 

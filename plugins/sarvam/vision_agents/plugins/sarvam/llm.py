@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 SARVAM_BASE_URL = "https://api.sarvam.ai/v1"
 DEFAULT_MODEL = "sarvam-m"
-SUPPORTED_MODELS = {"sarvam-m", "sarvam-30b", "sarvam-105b"}
+SUPPORTED_MODELS = {"sarvam-m", "sarvam-105b"}
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
@@ -97,7 +97,7 @@ class SarvamLLM(ChatCompletionsLLM):
     Examples:
 
         from vision_agents.plugins import sarvam
-        llm = sarvam.LLM(model="sarvam-30b")
+        llm = sarvam.LLM(model="sarvam-105b")
     """
 
     provider_name = "sarvam"
@@ -113,7 +113,7 @@ class SarvamLLM(ChatCompletionsLLM):
 
         Args:
             model: The Sarvam model id. Defaults to ``sarvam-m``. Supported:
-                ``sarvam-m``, ``sarvam-30b``, ``sarvam-105b``.
+                ``sarvam-m``, ``sarvam-105b``.
             api_key: Sarvam API key. Defaults to ``SARVAM_API_KEY`` env var.
             base_url: API base URL. Defaults to ``https://api.sarvam.ai/v1``.
             client: Optional pre-configured ``AsyncOpenAI`` client. Takes
