@@ -27,7 +27,7 @@ from ..edge.events import (
     TrackAddedEvent,
     TrackRemovedEvent,
 )
-from ..edge.types import Connection, Participant, TrackType, User
+from ..edge.types import Connection, MetadataValue, Participant, TrackType, User
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
@@ -841,10 +841,39 @@ class Agent:
                 return None
 
             with self.span("edge.authenticate"):
+                self.agent_user.custom = {
+                    **self.agent_user.custom,
+                    **self._build_metadata(),
+                }
                 await self.edge.authenticate(self.agent_user)
                 self._agent_user_initialized = True
 
         return None
+
+    def _build_metadata(self) -> dict[str, MetadataValue]:
+        """Build the agent-user metadata describing its configured providers."""
+        category = (
+            "realtime"
+            if _is_realtime_llm(self.llm)
+            else "vlm"
+            if _is_video_llm(self.llm)
+            else "llm"
+        )
+        meta: dict[str, MetadataValue] = {
+            "is_agent": True,
+            category: _provider_info(self.llm),
+        }
+        if self.stt:
+            meta["stt"] = _provider_info(self.stt)
+        if self.tts:
+            meta["tts"] = _provider_info(self.tts)
+        if self.turn_detection:
+            meta["turn_detection"] = {"provider": _provider_slug(self.turn_detection)}
+        if self.avatar:
+            meta["avatar"] = {"provider": _provider_slug(self.avatar)}
+        if self.processors:
+            meta["processors"] = [_provider_slug(p) for p in self.processors]
+        return meta
 
     async def create_call(self, call_type: str, call_id: str) -> Call:
         """Create a call in the edge provider.
@@ -1319,6 +1348,20 @@ def _is_video_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[VideoLLM]:
 
 def _is_realtime_llm(llm: LLM | AudioLLM | VideoLLM | Realtime) -> TypeGuard[Realtime]:
     return isinstance(llm, Realtime)
+
+
+def _provider_slug(obj: object) -> str:
+    parts = type(obj).__module__.split(".")
+    if len(parts) >= 3 and parts[0] == "vision_agents" and parts[1] == "plugins":
+        return parts[2]
+    return type(obj).__name__
+
+
+def _provider_info(component: LLM | STT | TTS) -> dict[str, MetadataValue]:
+    info: dict[str, MetadataValue] = {"provider": _provider_slug(component)}
+    if component.model:
+        info["model"] = component.model
+    return info
 
 
 class _AgentLoggerAdapter(logging.LoggerAdapter):

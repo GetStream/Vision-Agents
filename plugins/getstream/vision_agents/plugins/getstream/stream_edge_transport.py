@@ -9,9 +9,12 @@ from urllib.parse import urlencode
 import aiortc
 import getstream.models
 from getstream import AsyncStream
+from getstream.exceptions import StreamApiException
 from getstream.models import (
     ChannelInput,
     ChannelMemberRequest,
+    FullUserResponse,
+    UpdateUserPartialRequest,
     UserRequest,
 )
 from getstream.video import rtc
@@ -39,6 +42,8 @@ if TYPE_CHECKING:
     from vision_agents.core.agents.agents import Agent
 
 logger = logging.getLogger(__name__)
+
+_MAX_CONCURRENT_USER_MERGES = 10
 
 
 # Conversion maps and functions for getstream -> core types
@@ -337,15 +342,45 @@ class StreamEdge(EdgeTransport[StreamCall]):
             )
 
     async def authenticate(self, user: User) -> None:
-        await self.client.create_user(name=user.name, id=user.id, image=user.image)
+        await self._merge_user(user)
         self._agent_user_id = user.id
 
-    async def create_users(self, users: list[User]):
-        """Create multiple users in a single API call."""
+    async def create_users(self, users: list[User]) -> list[FullUserResponse]:
+        """Create multiple users with bounded concurrency and stable result order."""
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENT_USER_MERGES)
 
-        users_map = {u.id: UserRequest(name=u.name, id=u.id) for u in users}
-        response = await self.client.update_users(users_map)
-        return [response.data.users[u.id] for u in users]
+        async def merge(user: User) -> FullUserResponse:
+            async with semaphore:
+                return await self._merge_user(user)
+
+        return await asyncio.gather(*(merge(user) for user in users))
+
+    async def _merge_user(self, user: User) -> FullUserResponse:
+        """Create the user, or merge the locally set fields into an existing one.
+
+        Upserting replaces the stored user, so custom data written by other
+        clients would be lost. A partial update merges instead; it only fails
+        when the user does not exist yet, in which case we create it.
+        """
+        set_fields: dict[str, object] = {
+            key: value
+            for key, value in (("name", user.name), ("image", user.image))
+            if value
+        }
+        set_fields.update(user.custom)
+        try:
+            response = await self.client.update_users_partial(
+                [UpdateUserPartialRequest(id=user.id, set=set_fields)]
+            )
+        except StreamApiException as e:
+            if e.status_code != 404:
+                raise
+            response = await self.client.upsert_users(
+                UserRequest(
+                    id=user.id, name=user.name, image=user.image, custom=user.custom
+                )
+            )
+        return response.data.users[user.id]
 
     async def create_call(self, call_id: str, **kwargs) -> StreamCall:
         """Shortcut for creating a call/room etc."""

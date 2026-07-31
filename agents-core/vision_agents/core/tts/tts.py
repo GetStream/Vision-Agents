@@ -82,6 +82,8 @@ class TTS(Component):
     # utterances. Callers use this to decide whether to feed partial text
     # as it arrives or wait for a full sentence.
     streaming: bool = False
+    # The model identifier this TTS is configured to use.
+    model: str = ""
 
     def __init__(self, provider_name: Optional[str] = None):
         """

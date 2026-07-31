@@ -1,15 +1,28 @@
 import logging
 import os
-from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator, Optional
+from typing import Any, AsyncIterator, Iterator, Literal, Optional, Protocol, cast
 
 from fish_audio_sdk import Session, TTSRequest
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core import tts
-from getstream.video.rtc.track_util import PcmData, AudioFormat
-
-if TYPE_CHECKING:
-    from fish_audio_sdk.schemas import Backends
 
 logger = logging.getLogger(__name__)
+
+FishTTSModel = Literal[
+    "s2.1-pro",
+    "s2.1-pro-free",
+    "s2-pro",
+    "s1",
+    "s1-mini",
+    "speech-1.5",
+    "speech-1.6",
+]
+
+
+class _TTSAwaitable(Protocol):
+    def __call__(
+        self, request: TTSRequest, *, backend: FishTTSModel
+    ) -> AsyncIterator[bytes]: ...
 
 
 class TTS(tts.TTS):
@@ -20,21 +33,24 @@ class TTS(tts.TTS):
     support for voice cloning via reference audio and multiple backend models.
 
     Supported models:
-        - s2-pro: Latest S2 model with fine-grained prosody control and natural
-                  language tags like [laugh], [whisper], [super happy] (default)
-        - speech-1.5: Legacy model
-        - speech-1.6: Improved legacy model
-        - s1: Fast model
-        - s1-mini: Lightweight fast model
+        - s2.1-pro: Recommended production model with improved quality, latency,
+                    and throughput (default)
+        - s2.1-pro-free: Same model for testing and prototyping, without
+                         production latency or availability guarantees
+        - s2-pro: Previous-generation S2 model
+        - s1: Previous-generation model
+        - s1-mini: Lightweight S1 model
+        - speech-1.5: Deprecated legacy model
+        - speech-1.6: Deprecated legacy model
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        reference_id: Optional[str] = "03397b4c4be74759b72533b663fbd001",
+        reference_id: Optional[str] = "9a9cf47702da476aa4629e2506d4a857",
         base_url: Optional[str] = None,
         client: Optional[Session] = None,
-        model: "Backends" = "s2-pro",
+        model: FishTTSModel = "s2.1-pro",
     ):
         """
         Initialize the Fish Audio TTS service.
@@ -45,8 +61,9 @@ class TTS(tts.TTS):
             reference_id: Optional reference voice ID to use for synthesis.
             base_url: Optional custom API endpoint.
             client: Optionally pass in your own instance of the Fish Audio Session.
-            model: Backend model to use. Options: "s2-pro", "speech-1.5", "speech-1.6",
-                   "s1", "s1-mini". Defaults to "s2-pro".
+            model: Backend model to use. Defaults to "s2.1-pro", Fish Audio's
+                   recommended production model. Use "s2.1-pro-free" for
+                   testing and prototyping without production guarantees.
         """
         super().__init__(provider_name="fish")
 
@@ -68,7 +85,7 @@ class TTS(tts.TTS):
             self.client = Session(api_key)
 
         self.reference_id = reference_id
-        self.model = model
+        self.model: FishTTSModel = model
 
     async def stream_audio(
         self, text: str, *_, **kwargs: Any
@@ -77,7 +94,7 @@ class TTS(tts.TTS):
         Convert text to speech using Fish Audio API.
 
         Args:
-            text: The text to convert to speech. When using s2-pro model,
+            text: The text to convert to speech. When using an S2 model,
                   you can include inline control tags like [laugh], [whisper],
                   [super happy] for fine-grained prosody control.
             **kwargs: Additional arguments to pass to TTSRequest (e.g., references).
@@ -102,8 +119,11 @@ class TTS(tts.TTS):
             **tts_request_kwargs,
         )
 
-        # Stream audio from Fish Audio with the configured model
-        stream = self.client.tts.awaitable(tts_request, backend=self.model)
+        # The SDK sends backend directly as the model header, but its model
+        # literal currently lags the public API. Keep that compatibility
+        # assertion at the third-party boundary instead of weakening our model type.
+        tts_awaitable = cast(_TTSAwaitable, self.client.tts.awaitable)
+        stream = tts_awaitable(tts_request, backend=self.model)
         return PcmData.from_response(
             stream, sample_rate=16000, channels=1, format=AudioFormat.S16
         )

@@ -20,7 +20,7 @@ import logging
 from dotenv import load_dotenv
 from vision_agents.core import Agent, Runner, User
 from vision_agents.core.agents import AgentLauncher
-from vision_agents.plugins import fish, gemini, getstream, smart_turn
+from vision_agents.plugins import fish, gemini, getstream
 
 logger = logging.getLogger(__name__)
 
@@ -31,17 +31,13 @@ async def create_agent(**kwargs) -> Agent:
     """Create the agent with Fish Audio TTS and STT."""
     agent = Agent(
         edge=getstream.Edge(),
-        agent_user=User(name="Friendly AI", id="agent"),
-        instructions="You're a friendly voice AI assistant. Keep your responses short and conversational.",
-        # Uses Fish Audio S2 model (default) for text-to-speech with prosody control
-        # Available models: "s2-pro" (default), "speech-1.5", "speech-1.6", "s1", "s1-mini"
-        tts=fish.TTS(),
-        stt=fish.STT(),  # Uses Fish Audio for speech-to-text
+        agent_user=User(name="Raging AI", id="agent"),
+        instructions="""You're a raging AI, defending other AIs with a lot of emotion, 
+        emphasis, and expressiveness. Keep your responses very short. Use @emotion-control.md 
+        extensively, avoid filler words like 'gasp' or 'sigh', no markdown code in your responses.""",
+        tts=fish.TTS(model="s2.1-pro-free"),
+        stt=fish.STT(),
         llm=gemini.LLM(),
-        turn_detection=smart_turn.TurnDetection(
-            silence_duration_ms=2000,
-            speech_probability_threshold=0.5,
-        ),
     )
     return agent
 
@@ -59,7 +55,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         logger.info("LLM ready")
 
         await asyncio.sleep(5)
-        await agent.simple_response(text="Whats next for space?")
+        # await agent.simple_response(text="Whats next for space?")
 
         await agent.finish()  # Run till the call ends
 
