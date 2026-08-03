@@ -12,10 +12,10 @@ license = "MIT"
 dependencies = [
     "vision-agents",
     "numpy>=2.0.0,<3",
-    "pillow>=10.4.0,<11",
+    "pillow>=12.3.0,<13",
     "opencv-python>=4.8.0,<5",
-    "moondream>=0.2.0,<1",  # Now compatible with vision-agents pillow>=10.4.0
-    "transformers>=4.57.6,<5",  # For local model loading
+    "moondream>=0.2.0,<1",  # Compatible with the workspace Pillow constraint.
+    "transformers>=5.5.0,<6",  # For local model loading
     "torch>=2.10.0,<3",  # PyTorch for model inference
     "accelerate>=1.13.0,<2",  # Required for device_map and device management
 ]
