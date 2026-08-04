@@ -75,6 +75,7 @@ class TTS(tts.TTS):
         speed: Optional[float] = None,
         deaccent_strength: Optional[float] = None,
         ws_url: str = WS_URL_EU,
+        idle_timeout: float = 5.0,
     ) -> None:
         """Initialize Palabra TTS.
 
@@ -90,6 +91,10 @@ class TTS(tts.TTS):
                 ``None`` uses the server default.
             ws_url: Palabra TTS endpoint. Defaults to the EU region; pass
                 ``WS_URL_US`` for the US region.
+            idle_timeout: Seconds to wait for the next frame of a generation
+                before giving up on it. Chunks normally arrive ~200 ms apart, so
+                this only trips when the server stops answering without sending
+                an error, which would otherwise stall the whole TTS pipeline.
         """
         super().__init__(provider_name="palabra")
 
@@ -114,6 +119,7 @@ class TTS(tts.TTS):
 
         self._api_key = api_key
         self._ws_url = ws_url
+        self._idle_timeout = idle_timeout
 
         voice_options: dict[str, object] = {"voice_id": voice_id}
         if speed is not None:
@@ -220,7 +226,7 @@ class TTS(tts.TTS):
             recv = asyncio.ensure_future(websocket.recv(decode=False))
             self._pending_recv = recv
             try:
-                message = await recv
+                message = await asyncio.wait_for(recv, self._idle_timeout)
             except asyncio.CancelledError:
                 # stop_audio() detaches the read before cancelling it; anything
                 # still attached means our own task is being cancelled, which
@@ -228,6 +234,15 @@ class TTS(tts.TTS):
                 if self._pending_recv is not recv:
                     return
                 raise
+            # Must precede OSError: asyncio.TimeoutError *is* builtin
+            # TimeoutError, which subclasses OSError.
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Palabra TTS sent no audio for %.1fs; abandoning generation %s",
+                    self._idle_timeout,
+                    generation_id,
+                )
+                return
             except (websockets.exceptions.ConnectionClosed, OSError):
                 await self._reset_connection()
                 raise

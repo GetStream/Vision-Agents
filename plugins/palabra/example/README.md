@@ -57,3 +57,17 @@ uv run tts_smoke.py "Anything else you would like to hear"
 ```
 
 Only `PALABRA_API_KEY` is needed for this one.
+
+## Cloning a voice
+
+`clone_voice.py` clones a voice and then speaks with it. Pass your own recording, or pass nothing and it reads a passage
+with Palabra's stock voice to produce the sample itself, so the script works with no extra files:
+
+```bash
+uv run clone_voice.py                    # synthesize a sample, then clone it
+uv run clone_voice.py my_recording.wav   # clone from your own recording
+uv run clone_voice.py --keep             # don't delete the voice afterwards
+```
+
+Palabra needs at least 30 seconds of clean, single-speaker audio. Cloned voices count against your quota, so the script
+deletes the voice on the way out unless you pass `--keep`. Only clone someone's voice with their explicit consent.

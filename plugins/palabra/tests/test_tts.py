@@ -156,6 +156,25 @@ class TestPalabraTTSIntegration:
         follow_up = [pcm async for pcm in await tts.stream_audio("Hello again.")]
         assert len(follow_up) > 0
 
+    async def test_idle_timeout_ends_a_generation_that_never_produces_audio(
+        self,
+    ) -> None:
+        """A wedged generation must not stall the pipeline forever.
+
+        Driven with an unreachably short idle timeout so the guard trips on the
+        first read instead of waiting on a real server fault.
+        """
+        tts = palabra.TTS(idle_timeout=0.001)
+        try:
+            chunks = [pcm async for pcm in await tts.stream_audio("Hello there.")]
+            assert chunks == []
+
+            tts._idle_timeout = 5.0
+            recovered = [pcm async for pcm in await tts.stream_audio("Hello again.")]
+            assert len(recovered) > 0
+        finally:
+            await tts.close()
+
     async def test_reuses_a_single_connection_across_utterances(
         self, tts: palabra.TTS
     ) -> None:

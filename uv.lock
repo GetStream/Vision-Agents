@@ -7338,6 +7338,7 @@ dev = [
 name = "vision-agents-plugins-palabra"
 source = { editable = "plugins/palabra" }
 dependencies = [
+    { name = "httpx" },
     { name = "vision-agents" },
     { name = "websockets" },
 ]
@@ -7350,6 +7351,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "vision-agents", editable = "agents-core" },
     { name = "websockets", specifier = ">=15.0,<16" },
 ]
