@@ -33,6 +33,14 @@ class TestPalabraTTS:
         with pytest.raises(ValueError):
             palabra.TTS(api_key="fake", speed=3.0)
 
+    def test_out_of_range_deaccent_strength_raises(self) -> None:
+        with pytest.raises(ValueError):
+            palabra.TTS(api_key="fake", deaccent_strength=1.5)
+
+    def test_non_positive_idle_timeout_raises(self) -> None:
+        with pytest.raises(ValueError):
+            palabra.TTS(api_key="fake", idle_timeout=0)
+
     def test_init_message_requests_pcm_with_configured_voice(self) -> None:
         tts = palabra.TTS(
             api_key="fake",

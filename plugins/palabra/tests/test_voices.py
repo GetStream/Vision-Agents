@@ -6,7 +6,11 @@ from typing import AsyncIterator
 import pytest
 from dotenv import load_dotenv
 from vision_agents.plugins import palabra
-from vision_agents.plugins.palabra.voices import MAX_SAMPLE_BYTES
+from vision_agents.plugins.palabra.voices import (
+    MAX_SAMPLE_BYTES,
+    PalabraVoiceError,
+    describe_problems,
+)
 
 load_dotenv()
 
@@ -56,6 +60,19 @@ class TestVoices:
         with pytest.raises(ValueError, match="at most"):
             await voices.clone("Too big", sample)
 
+    def test_problems_are_summarized_from_palabra_error_objects(self) -> None:
+        """Palabra reports errors as RFC 7807 objects, not strings."""
+        assert (
+            describe_problems(
+                [
+                    {"title": "Failed Dependency", "detail": "Depended action failed."},
+                    {"title": "Only a title"},
+                ]
+            )
+            == "Depended action failed.; Only a title"
+        )
+        assert describe_problems([]) == ""
+
     def test_ready_reflects_processing_status(self) -> None:
         pending = palabra.ClonedVoice(
             voice_id="v1", name="v", processing_status="pending", errors=[], warnings=[]
@@ -91,6 +108,28 @@ class TestVoicesIntegration:
 
         assert isinstance(listed, list)
         assert all(voice.voice_id for voice in listed)
+
+    @pytest.mark.timeout(300)
+    async def test_a_rejected_sample_does_not_strand_quota(
+        self, voices: palabra.Voices, tmp_path: Path
+    ) -> None:
+        """Palabra reserves the voice before the sample is judged.
+
+        A sample it cannot use must leave the quota exactly as it was, otherwise
+        repeated failures eventually block cloning altogether.
+        """
+        sample = tmp_path / "too_short.wav"
+        with wave.open(str(sample), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(24000)
+            wav.writeframes(b"\0" * 2 * 24000)  # 1s of silence, well under 30s
+
+        before = await voices.limits()
+        with pytest.raises(PalabraVoiceError):
+            await voices.clone("Rejected sample", sample, timeout=180, poll_interval=5)
+
+        assert (await voices.limits()).total == before.total
 
     @pytest.mark.timeout(300)
     async def test_clone_produces_a_voice_usable_for_synthesis(

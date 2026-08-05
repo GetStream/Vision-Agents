@@ -50,8 +50,9 @@ class ClonedVoice:
     voice_id: str
     name: str
     processing_status: str
-    errors: list[str]
-    warnings: list[str]
+    # Palabra reports these as RFC 7807 problem objects, not plain strings.
+    errors: list[dict]
+    warnings: list[dict]
 
     @property
     def ready(self) -> bool:
@@ -98,6 +99,11 @@ def _read_sample(path: Path) -> tuple[bytes, str]:
 
     mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     return path.read_bytes(), mime_type
+
+
+def describe_problems(problems: list[dict]) -> str:
+    """Summarize Palabra's problem objects into one human-readable line."""
+    return "; ".join(str(p.get("detail") or p.get("title") or p) for p in problems)
 
 
 def _parse_voice(data: dict) -> ClonedVoice:
@@ -213,12 +219,23 @@ class Voices:
             raise PalabraVoiceError(
                 f"Palabra returned no upload target for voice {voice.voice_id}"
             )
-        await self._upload_sample(samples[0], path.name, data, mime_type)
-        logger.debug("Uploaded sample for Palabra voice %s", voice.voice_id)
+        # The voice is reserved and counts against the account quota from here
+        # on, so anything that goes wrong has to release it again.
+        try:
+            await self._upload_sample(samples[0], path.name, data, mime_type)
+            logger.debug("Uploaded sample for Palabra voice %s", voice.voice_id)
 
-        if not wait:
-            return voice
-        return await self._wait_until_processed(voice.voice_id, timeout, poll_interval)
+            if not wait:
+                return voice
+            return await self._wait_until_processed(
+                voice.voice_id, timeout, poll_interval
+            )
+        except BaseException:
+            # Deliberately unfiltered: the quota is only 50 voices, and *any*
+            # escape from here - HTTP error, rejected sample, cancellation, or a
+            # bug in our own parsing - strands a reservation on the account.
+            await self._discard(voice.voice_id)
+            raise
 
     async def get(self, voice_id: str) -> ClonedVoice:
         """Fetch a single voice, including its processing status."""
@@ -301,7 +318,7 @@ class Voices:
             if voice.processing_status == FAILED:
                 raise PalabraVoiceError(
                     f"Palabra failed to clone voice {voice_id}: "
-                    f"{'; '.join(voice.errors) or 'no reason given'}"
+                    f"{describe_problems(voice.errors) or 'no reason given'}"
                 )
             if asyncio.get_running_loop().time() >= deadline:
                 raise PalabraVoiceError(
@@ -309,6 +326,13 @@ class Voices:
                     f"after {timeout:.0f}s"
                 )
             await asyncio.sleep(poll_interval)
+
+    async def _discard(self, voice_id: str) -> None:
+        """Release a voice that never finished cloning, best effort."""
+        try:
+            await self.delete(voice_id)
+        except (PalabraVoiceError, httpx.HTTPError):
+            logger.exception("Could not delete incomplete Palabra voice %s", voice_id)
 
     async def _request(
         self,
@@ -332,7 +356,21 @@ class Voices:
                 f"{response.text[:200]}"
             )
 
-        body = response.json()
+        # DELETE-style endpoints may answer with no body at all.
+        if not response.content.strip():
+            return {}
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise PalabraVoiceError(
+                f"Palabra {method} {path} returned a non-JSON body: "
+                f"{response.text[:200]}"
+            ) from exc
+
+        if not isinstance(body, dict):
+            raise PalabraVoiceError(
+                f"Palabra {method} {path} returned {type(body).__name__}, expected an object"
+            )
         if not body.get("ok", False):
             raise PalabraVoiceError(f"Palabra {method} {path} returned {body}")
         return body.get("data") or {}

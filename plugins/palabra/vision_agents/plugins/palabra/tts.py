@@ -111,6 +111,15 @@ class TTS(tts.TTS):
             raise ValueError(
                 f"Palabra TTS speed must be between 0.0 and 2.0; got {speed}"
             )
+        if deaccent_strength is not None and not 0.0 <= deaccent_strength <= 1.0:
+            raise ValueError(
+                "Palabra TTS deaccent_strength must be between 0.0 and 1.0; "
+                f"got {deaccent_strength}"
+            )
+        if idle_timeout <= 0:
+            raise ValueError(
+                f"Palabra TTS idle_timeout must be greater than 0; got {idle_timeout}"
+            )
 
         self.voice_id = voice_id
         self.language = language
@@ -294,7 +303,17 @@ class TTS(tts.TTS):
             # only adds CPU work and latency on the playback path.
             compression=None,
         )
-        await websocket.send(self._init_message)
+        # Until it is stored, _reset_connection() cannot reach this socket, so a
+        # failed init would leak it.
+        try:
+            await websocket.send(self._init_message)
+        except (
+            asyncio.CancelledError,
+            websockets.exceptions.WebSocketException,
+            OSError,
+        ):
+            await websocket.close()
+            raise
         self._websocket = websocket
         self._on_connected()
         logger.debug(

@@ -2,7 +2,7 @@
 
 ## New Features
 
-### `palabra` plugin: Palabra AI TTS and voice cloning
+### `palabra` plugin: Palabra AI TTS and voice cloning (#627)
 
 Adds a new `palabra` plugin exposing `palabra.TTS`, backed by Palabra's realtime text-to-speech WebSocket API. It is a streaming TTS plugin, so the agent speaks each sentence while the LLM is still writing, and it keeps one session open across utterances — `stop_audio()` cancels synthesis server-side instead of reconnecting. Defaults to the `default_low` voice at 24 kHz and reads `PALABRA_API_KEY` from the environment. Install with `vision-agents[palabra]`.
 
