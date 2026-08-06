@@ -1,6 +1,5 @@
 import asyncio
 import fractions
-import time
 
 import aiortc
 import av
@@ -19,57 +18,45 @@ class AvatarInputTrack(AudioStreamTrack):
       to reduce avatar latency.
     """
 
-    _timestamp: int | None
-    _start: float | None
-    _last_frame_time: float | None
+    # PTS of the last emitted frame; None until the first recv().
+    _timestamp: int | None = None
 
     async def pts(self) -> int:
-        async with self._buffer_lock:
-            # next-to-emit PTS + samples still queued = wire PTS of the last buffered sample
+        async with self._frame_lock:
+            # last emitted PTS + samples still queued = wire PTS of the last buffered sample
             ts = self._timestamp or 0
-            return ts + len(self._buffer) // self._bytes_per_sample
+            return ts + self._buffered_samples
 
     async def recv(self) -> av.AudioFrame:
         """Drain buffered audio without pacing; pace only when emitting silence."""
         if self.readyState != "live":
             raise aiortc.mediastreams.MediaStreamError
 
-        samples_per_frame = int(aiortc.mediastreams.AUDIO_PTIME * self.sample_rate)
-
         if self._timestamp is None:
-            self._start = time.time()
-            timestamp = 0
+            self._timestamp = 0
         else:
-            timestamp = self._timestamp + samples_per_frame
-        self._timestamp = timestamp
+            self._timestamp += self._samples_per_frame
 
-        async with self._buffer_lock:
-            if len(self._buffer) >= self._bytes_per_frame:
-                audio_bytes = bytes(self._buffer[: self._bytes_per_frame])
-                del self._buffer[: self._bytes_per_frame]
-                has_data = True
-            elif len(self._buffer) > 0:
-                audio_bytes = bytes(self._buffer)
-                audio_bytes += bytes(self._bytes_per_frame - len(audio_bytes))
-                self._buffer.clear()
-                has_data = True
-            else:
-                audio_bytes = bytes(self._bytes_per_frame)
-                has_data = False
+        async with self._frame_lock:
+            if not self._frame_buffer:
+                # Starved: emit the resampler's partial tail instead of waiting for a full frame.
+                for tail in self._resampler.flush():
+                    self._frame_buffer.append(tail)
+                    self._buffered_samples += tail.samples
+            frame = self._frame_buffer.popleft() if self._frame_buffer else None
+            if frame is not None:
+                self._buffered_samples -= frame.samples
 
-        if not has_data:
+        if frame is None:
             # Per-frame sleep keeps silence at the frame cadence even when PTS runs ahead of wall clock after a burst.
             await asyncio.sleep(aiortc.mediastreams.AUDIO_PTIME)
+            frame = av.AudioFrame.from_ndarray(
+                self._silence, format="s16", layout=self._layout
+            )
+        elif frame.samples < self._samples_per_frame:
+            frame = self._pad_to_full_frame(frame)
 
-        self._last_frame_time = time.time()
-
-        layout = "stereo" if self.channels == 2 else "mono"
-        av_format = "flt" if self.format == "f32" else "s16"
-        frame = av.AudioFrame(
-            format=av_format, layout=layout, samples=samples_per_frame
-        )
-        frame.planes[0].update(audio_bytes)
-        frame.pts = timestamp
+        frame.pts = self._timestamp
         frame.sample_rate = self.sample_rate
         frame.time_base = fractions.Fraction(1, self.sample_rate)
         return frame

@@ -5,13 +5,19 @@ from os import getenv
 from typing import Any, Callable, Coroutine
 from uuid import uuid4
 
+import aiortc
 import av
 from getstream import AsyncStream
 from getstream.models import CallRequest, MemberRequest
 from getstream.video import rtc
 from getstream.video.async_call import Call
 from getstream.video.rtc.connection_manager import ConnectionManager
-from getstream.video.rtc.track_util import AudioFormat, FrameResampler, PcmData
+from getstream.video.rtc.pb.stream.video.sfu.event import events_pb2
+from getstream.video.rtc.pb.stream.video.sfu.models.models_pb2 import (
+    TrackType as StreamTrackType,
+)
+from getstream.video.rtc.track_util import FrameResampler, PcmData
+from getstream.video.rtc.tracks import SubscriptionConfig, TrackSubscriptionConfig
 from vision_agents.core.utils.utils import cancel_and_wait, get_vision_agents_version
 
 from .track import AvatarInputTrack
@@ -108,7 +114,7 @@ class StreamRTCManager:
         self._connection: ConnectionManager | None = None
         self._input_track: AvatarInputTrack | None = None
         self._resampler = FrameResampler(
-            rate=_SAMPLE_RATE, layout="mono", format="s16", frame_size=0
+            rate=_AVATAR_AUDIO_SAMPLE_RATE, layout="mono", format="s16", frame_size=0
         )
         self._connected = False
         self._event_id = 0
