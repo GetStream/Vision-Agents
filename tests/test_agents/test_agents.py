@@ -413,6 +413,10 @@ class TestAgent:
         llm.model = "dummy-llm-model"
         stt = DummySTT()
         stt.model = "dummy-stt-model"
+
+        tts = DummyTTS()
+        tts.model = None
+
         agent = Agent(
             llm=llm,
             stt=stt,
