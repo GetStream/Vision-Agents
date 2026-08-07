@@ -63,21 +63,27 @@ class LemonSliceClient:
     def session_id(self) -> str | None:
         return self._session_id
 
-    async def create_session(self, livekit_url: str, livekit_token: str) -> str:
+    async def create_session(
+        self, call_id: str, call_type: str, token: str, api_key: str
+    ) -> str:
         """Create a new LemonSlice avatar session.
 
         Args:
-            livekit_url: LiveKit server URL for the avatar to connect to.
-            livekit_token: LiveKit access token for the avatar participant.
+            call_id: Stream call ID the avatar should join.
+            call_type: Stream call type (e.g. "default").
+            token: Stream access token for the avatar participant.
+            api_key: Stream API key.
 
         Returns:
             The created session ID.
         """
         payload: dict[str, object] = {
-            "transport_type": "livekit",
+            "transport_type": "stream",
             "properties": {
-                "livekit_url": livekit_url,
-                "livekit_token": livekit_token,
+                "call_id": call_id,
+                "call_type": call_type,
+                "token": token,
+                "api_key": api_key,
             },
         }
 
@@ -92,7 +98,7 @@ class LemonSliceClient:
 
         response = await self._http_client.post("/sessions", json=payload)
 
-        if response.status_code != 201:
+        if response.status_code >= 400:
             raise LemonSliceSessionError(
                 f"Failed to create session: {response.status_code} - {response.text}",
                 status_code=response.status_code,

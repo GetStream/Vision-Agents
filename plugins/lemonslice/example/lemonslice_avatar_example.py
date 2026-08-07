@@ -6,9 +6,6 @@ lip-synced video and audio from the TTS audio stream.
 Required environment variables:
     LEMONSLICE_API_KEY
     LEMONSLICE_AGENT_ID  (or LEMONSLICE_AGENT_IMAGE_URL)
-    LIVEKIT_URL
-    LIVEKIT_API_KEY
-    LIVEKIT_API_SECRET
     STREAM_API_KEY
     STREAM_API_SECRET
 """
