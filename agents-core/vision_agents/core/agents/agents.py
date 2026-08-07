@@ -20,6 +20,7 @@ from opentelemetry.trace import Tracer, set_span_in_context
 from opentelemetry.trace.propagation import Context, Span
 
 from ..avatars import Avatar
+from ..base import Component
 from ..edge import Call, EdgeTransport
 from ..edge.events import (
     AudioReceivedEvent,
@@ -49,11 +50,10 @@ from ..tts.tts import TTS
 from ..turn_detection import TurnDetector
 from ..utils.audio_filter import AudioFilter, FirstSpeakerWinsFilter
 from ..utils.audio_queue import AudioQueue
+from ..utils.exceptions import log_exceptions
 from ..utils.logging import (
     CallContextToken,
 )
-from ..base import Component
-from ..utils.exceptions import log_exceptions
 from ..utils.utils import cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
@@ -842,15 +842,17 @@ class Agent:
 
             with self.span("edge.authenticate"):
                 self.agent_user.custom = {
-                    **self._build_metadata(),
+                    **self.components_metadata,
                     **self.agent_user.custom,
+                    **{"is_agent": True},
                 }
                 await self.edge.authenticate(self.agent_user)
                 self._agent_user_initialized = True
 
         return None
 
-    def _build_metadata(self) -> dict[str, MetadataValue]:
+    @property
+    def components_metadata(self) -> dict[str, MetadataValue]:
         """Build the agent-user metadata describing its configured providers."""
         category = (
             "realtime"
@@ -859,20 +861,17 @@ class Agent:
             if _is_video_llm(self.llm)
             else "llm"
         )
-        meta: dict[str, MetadataValue] = {
-            "is_agent": True,
-            category: _provider_info(self.llm),
-        }
+        meta: dict[str, Any] = {category: _component_info(self.llm)}
         if self.stt:
-            meta["stt"] = _provider_info(self.stt)
+            meta["stt"] = _component_info(self.stt)
         if self.tts:
-            meta["tts"] = _provider_info(self.tts)
+            meta["tts"] = _component_info(self.tts)
         if self.turn_detection:
-            meta["turn_detection"] = {"provider": _provider_slug(self.turn_detection)}
+            meta["turn_detection"] = _component_info(self.turn_detection)
         if self.avatar:
-            meta["avatar"] = {"provider": _provider_slug(self.avatar)}
+            meta["avatar"] = _component_info(self.avatar)
         if self.processors:
-            meta["processors"] = [_provider_slug(p) for p in self.processors]
+            meta["processors"] = [_component_info(p) for p in self.processors]
         return meta
 
     async def create_call(self, call_type: str, call_id: str) -> Call:
@@ -1350,17 +1349,31 @@ def _is_realtime_llm(llm: LLM | AudioLLM | VideoLLM | Realtime) -> TypeGuard[Rea
     return isinstance(llm, Realtime)
 
 
-def _provider_slug(obj: object) -> str:
-    parts = type(obj).__module__.split(".")
+def _component_info(component: Component) -> dict[str, Any]:
+    """
+    Get Component's info.
+
+    Args:
+        component: component to look up
+
+    Returns:
+        dict in format {"provider": <plugin name>, "model": <str | None>}
+    """
+    info: dict[str, Any] = {}
+
+    # Parse the package name to use as "provider"
+    parts = type(component).__module__.split(".")
     if len(parts) >= 3 and parts[0] == "vision_agents" and parts[1] == "plugins":
-        return parts[2]
-    return type(obj).__name__
+        provider = parts[2]
+    else:
+        provider = type(component).__name__
 
+    info["provider"] = provider
 
-def _provider_info(component: LLM | STT | TTS) -> dict[str, MetadataValue]:
-    info: dict[str, MetadataValue] = {"provider": _provider_slug(component)}
-    if component.model:
-        info["model"] = component.model
+    model = getattr(component, "model", None)
+    # Return "model" only if it's a string and not some object.
+    if model and isinstance(model, str):
+        info["model"] = model
     return info
 
 

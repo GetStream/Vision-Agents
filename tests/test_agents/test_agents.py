@@ -42,6 +42,8 @@ class DummyTurnDetector(TurnDetector):
 
 
 class DummyTTS(TTS):
+    model = "tts"
+
     async def stream_audio(self, *_, **__):
         return b""
 
@@ -49,6 +51,8 @@ class DummyTTS(TTS):
 
 
 class DummyLLM(LLM, Warmable[bool]):
+    model = "llm"
+
     def __init__(self):
         super(DummyLLM, self).__init__()
         self.warmed_up = False
@@ -653,3 +657,36 @@ class TestAgent:
         )
         assert agent_with.publish_video is True
         assert agent_without.publish_video is False
+
+    async def test_agent_components_metadata_positive(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            avatar=DummyAvatar(),
+        )
+        assert agent.components_metadata == {
+            "llm": {"provider": "DummyLLM", "model": "llm"},
+            "tts": {"provider": "DummyTTS", "model": "tts"},
+            "avatar": {"provider": "DummyAvatar"},
+        }
+
+    async def test_agent_components_metadata_model_is_not_str(self):
+        class LLMWithModelObject(DummyLLM):
+            model = object()
+
+        agent = Agent(
+            llm=LLMWithModelObject(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            avatar=DummyAvatar(),
+        )
+        assert agent.components_metadata == {
+            "llm": {
+                "provider": "LLMWithModelObject",
+            },
+            "tts": {"provider": "DummyTTS", "model": "tts"},
+            "avatar": {"provider": "DummyAvatar"},
+        }
