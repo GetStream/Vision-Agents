@@ -2,6 +2,12 @@
 
 ## New Features
 
+### `palabra` plugin: Palabra AI TTS and voice cloning (#627)
+
+Adds a new `palabra` plugin exposing `palabra.TTS`, backed by Palabra's realtime text-to-speech WebSocket API. It is a streaming TTS plugin, so the agent speaks each sentence while the LLM is still writing, and it keeps one session open across utterances — `stop_audio()` cancels synthesis server-side instead of reconnecting. Defaults to the `default_low` voice at 24 kHz and reads `PALABRA_API_KEY` from the environment. Install with `vision-agents[palabra]`.
+
+`palabra.Voices` wraps Palabra's cloned-voice API: `clone()` runs the whole create → upload → poll sequence and returns a `voice_id` that drops straight into `TTS(voice_id=...)`, alongside `get()`, `list()`, `delete()` and `limits()`. `TTS` also gained `idle_timeout` (default 5 s), which abandons a generation the server stops answering so a wedged utterance can't stall the TTS pipeline.
+
 ### `speechify` plugin: Speechify TTS
 
 Adds a new `speechify` plugin exposing `speechify.TTS`, backed by Speechify's streaming API. It streams raw PCM audio, defaults to the `simba-3.2` model with the `geffen_32` voice, and reads `SPEECHIFY_API_KEY` from the environment. Install with `vision-agents[speechify]`.
