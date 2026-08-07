@@ -861,7 +861,7 @@ class Agent:
             if _is_video_llm(self.llm)
             else "llm"
         )
-        meta: dict[str, Any] = {category: _component_info(self.llm)}
+        meta: dict[str, MetadataValue] = {category: _component_info(self.llm)}
         if self.stt:
             meta["stt"] = _component_info(self.stt)
         if self.tts:
@@ -1349,7 +1349,7 @@ def _is_realtime_llm(llm: LLM | AudioLLM | VideoLLM | Realtime) -> TypeGuard[Rea
     return isinstance(llm, Realtime)
 
 
-def _component_info(component: Component) -> dict[str, Any]:
+def _component_info(component: Component) -> dict[str, MetadataValue]:
     """
     Get Component's info.
 
@@ -1359,7 +1359,7 @@ def _component_info(component: Component) -> dict[str, Any]:
     Returns:
         dict in format {"provider": <plugin name>, "model": <str | None>}
     """
-    info: dict[str, Any] = {}
+    info: dict[str, MetadataValue] = {}
 
     # Parse the package name to use as "provider"
     parts = type(component).__module__.split(".")
