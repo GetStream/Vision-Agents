@@ -420,7 +420,7 @@ class TestAgent:
         agent = Agent(
             llm=llm,
             stt=stt,
-            tts=DummyTTS(),
+            tts=tts,
             edge=DummyEdge(),
             agent_user=User(name="test"),
         )
@@ -448,7 +448,7 @@ class TestAgent:
         custom = agent.agent_user.custom
         assert custom["is_agent"] is False
         assert custom["team"] == "red"
-        assert custom["llm"] == {"provider": "DummyLLM"}
+        assert custom["llm"] == {"provider": "DummyLLM", "model": "llm"}
 
     async def test_send_metrics_event(self):
         """Test that metrics are sent as custom events."""
