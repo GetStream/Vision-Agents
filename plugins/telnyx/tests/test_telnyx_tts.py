@@ -70,73 +70,47 @@ class TestId3Stripper:
         assert stripper.feed(blob[50:]) == b"\xff\xf3audio"
 
 
-class TestTelnyxTTS:
-    """Unit tests for Telnyx TTS configuration."""
-
-    async def test_requires_api_key(self, monkeypatch):
-        monkeypatch.delenv("TELNYX_API_KEY", raising=False)
-        with pytest.raises(ValueError, match="TELNYX_API_KEY"):
-            TTS()
-
-    async def test_default_configuration(self):
-        tts = TTS(api_key="KEY_test")
-        assert tts.voice == "Telnyx.KokoroTTS.af_heart"
-        assert tts.provider_name == "telnyx"
-
-    async def test_custom_voice(self):
-        tts = TTS(api_key="KEY_test", voice="AWS.Polly.Danielle-Neural")
-        assert tts.voice == "AWS.Polly.Danielle-Neural"
+@pytest.fixture
+def tts() -> TTS:
+    return TTS(api_key="KEY_test")
 
 
-class TestTelnyxTTSBargeIn:
-    """A socket dropped by stop_audio() ends synthesis instead of raising."""
+@pytest.fixture
+def dropped_socket_tts(request) -> TTS:
+    """A TTS whose socket is dropped mid-send, as stop_audio() would.
 
-    @staticmethod
-    def tts_with_dropped_socket(stop_before_drop: bool) -> TTS:
-        instance = TTS(api_key="KEY_test")
+    Parametrised with ``stop_before_drop``: True models a concurrent
+    ``stop_audio()`` (barge-in), False a genuine connection failure.
+    """
+    stop_before_drop = request.param
+    instance = TTS(api_key="KEY_test")
 
-        class DroppedWS:
-            closed = True
+    class DroppedWS:
+        closed = True
 
-            async def send_str(self, data: str) -> None:
-                if stop_before_drop:
-                    instance._stop_event.set()
-                raise aiohttp.ClientConnectionResetError("Cannot write to closing")
+        async def send_str(self, data: str) -> None:
+            if stop_before_drop:
+                instance._stop_event.set()
+            raise aiohttp.ClientConnectionResetError("Cannot write to closing")
 
-            async def close(self) -> None:
-                return None
+        async def close(self) -> None:
+            return None
 
-        class FakeSession:
-            closed = False
+    class FakeSession:
+        closed = False
 
-            async def ws_connect(self, url: str, headers: dict[str, str]):
-                return DroppedWS()
+        async def ws_connect(self, url: str, headers: dict[str, str]):
+            return DroppedWS()
 
-        instance._session = FakeSession()
-        return instance
-
-    async def test_stop_during_synthesis_ends_quietly(self):
-        """A socket closed by a concurrent stop_audio() is a barge-in."""
-        tts = self.tts_with_dropped_socket(stop_before_drop=True)
-
-        stream = await tts.stream_audio("hello")
-        assert [chunk async for chunk in stream] == []
-
-    async def test_connection_drop_without_stop_propagates(self):
-        """A stale stop must not silence a genuine failure in a new synthesis."""
-        tts = self.tts_with_dropped_socket(stop_before_drop=False)
-        await tts.stop_audio()
-
-        stream = await tts.stream_audio("hello")
-        with pytest.raises(aiohttp.ClientConnectionError):
-            [chunk async for chunk in stream]
+    instance._session = FakeSession()
+    return instance
 
 
-class TestTelnyxTTSMalformedPayloads:
-    """The receive loop tolerates junk from the server without aborting."""
+@pytest.fixture
+def ws_serving():
+    """Build a websocket stand-in that replays ``payloads`` then closes."""
 
-    @staticmethod
-    def fake_ws(payloads: list[str]) -> object:
+    def build(payloads: list[str]) -> object:
         messages = [
             SimpleNamespace(type=aiohttp.WSMsgType.TEXT, data=payload)
             for payload in payloads
@@ -151,27 +125,61 @@ class TestTelnyxTTSMalformedPayloads:
 
         return FakeWS()
 
-    async def test_non_dict_payload_is_skipped(self):
-        tts = TTS(api_key="KEY_test")
-        ws = self.fake_ws(['["not", "a", "dict"]'])
+    return build
+
+
+class TestTelnyxTTS:
+    """Unit tests for Telnyx TTS configuration and the receive loop."""
+
+    async def test_requires_api_key(self, monkeypatch):
+        monkeypatch.delenv("TELNYX_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="TELNYX_API_KEY"):
+            TTS()
+
+    async def test_default_configuration(self, tts):
+        assert tts.voice == "Telnyx.KokoroTTS.af_heart"
+        assert tts.provider_name == "telnyx"
+
+    async def test_custom_voice(self):
+        tts = TTS(api_key="KEY_test", voice="AWS.Polly.Danielle-Neural")
+        assert tts.voice == "AWS.Polly.Danielle-Neural"
+
+    async def test_voice_is_reported_as_the_model(self):
+        """Agent metadata reads ``model`` off the component."""
+        tts = TTS(api_key="KEY_test", voice="AWS.Polly.Danielle-Neural")
+        assert tts.model == "AWS.Polly.Danielle-Neural"
+
+    @pytest.mark.parametrize("dropped_socket_tts", [True], indirect=True)
+    async def test_stop_during_synthesis_ends_quietly(self, dropped_socket_tts):
+        """A socket closed by a concurrent stop_audio() is a barge-in."""
+        stream = await dropped_socket_tts.stream_audio("hello")
+        assert [chunk async for chunk in stream] == []
+
+    @pytest.mark.parametrize("dropped_socket_tts", [False], indirect=True)
+    async def test_connection_drop_without_stop_propagates(self, dropped_socket_tts):
+        """A stale stop must not silence a genuine failure in a new synthesis."""
+        await dropped_socket_tts.stop_audio()
+
+        stream = await dropped_socket_tts.stream_audio("hello")
+        with pytest.raises(aiohttp.ClientConnectionError):
+            [chunk async for chunk in stream]
+
+    async def test_non_dict_payload_is_skipped(self, tts, ws_serving):
+        ws = ws_serving(['["not", "a", "dict"]'])
 
         assert [chunk async for chunk in tts._receive_audio(ws)] == []
 
-    async def test_invalid_base64_audio_is_skipped(self):
-        tts = TTS(api_key="KEY_test")
-        ws = self.fake_ws(['{"audio": "!!!not base64!!!"}'])
+    async def test_invalid_base64_audio_is_skipped(self, tts, ws_serving):
+        ws = ws_serving(['{"audio": "!!!not base64!!!"}'])
 
         assert [chunk async for chunk in tts._receive_audio(ws)] == []
 
-    async def test_non_string_audio_is_skipped(self):
-        tts = TTS(api_key="KEY_test")
-        ws = self.fake_ws(['{"audio": 12345}'])
+    async def test_non_string_audio_is_skipped(self, tts, ws_serving):
+        ws = ws_serving(['{"audio": 12345}'])
 
         assert [chunk async for chunk in tts._receive_audio(ws)] == []
 
-    async def test_undecodable_audio_is_dropped(self):
-        tts = TTS(api_key="KEY_test")
-
+    async def test_undecodable_audio_is_dropped(self, tts):
         class FailingDecoder:
             def parse(self, data: bytes):
                 raise av.InvalidDataError(1094995529, "Invalid data")

@@ -10,6 +10,11 @@ The default is ``linear16``, for which Telnyx requires an explicit
 The query parameter for partial transcripts is ``interim_results``.
 ``partial_results`` is accepted by the endpoint but ignored, which silently
 yields finals only.
+
+``interim_results`` itself is honoured per engine rather than per endpoint.
+Measured against the live API with the same audio: ``Speechmatics`` and
+``Soniox`` stream partials, while ``Telnyx`` and ``Deepgram`` accept the
+parameter and return finals only.
 """
 
 import asyncio
@@ -30,20 +35,6 @@ logger = logging.getLogger(__name__)
 
 WS_STT_URL = "wss://api.telnyx.com/v2/speech-to-text/transcription"
 
-SUPPORTED_ENGINES = {
-    "AssemblyAI",
-    "Azure",
-    "Deepgram",
-    "Google",
-    "Humain",
-    "Parakeet",
-    "Reson8",
-    "Soniox",
-    "Speechmatics",
-    "Telnyx",
-    "xAI",
-}
-
 
 class STT(stt.STT):
     """Telnyx streaming Speech-to-Text.
@@ -61,35 +52,39 @@ class STT(stt.STT):
         stt = telnyx.STT(sample_rate=8000)
     """
 
+    turn_detection: bool = False
+
     def __init__(
         self,
         api_key: Optional[str] = None,
         transcription_engine: str = "Telnyx",
         language: str = "en",
         sample_rate: int = 16000,
-        interim_results: bool = True,
-        model: Optional[str] = None,
+        interim_results: bool = False,
+        model: str = "",
     ) -> None:
         """Initialize Telnyx STT.
 
         Args:
             api_key: Telnyx API key. Falls back to the ``TELNYX_API_KEY`` env var.
-            transcription_engine: Engine to transcribe with. Defaults to
-                ``Telnyx``.
+            transcription_engine: Engine to transcribe with, for example
+                ``Telnyx``, ``Deepgram`` or ``Speechmatics``. The catalogue is
+                served by Telnyx and grows over time, so the value is not
+                validated locally; an unknown engine is rejected by the server
+                with an explicit error.
             language: Language code, for example ``en``.
             sample_rate: Rate in Hz that audio is resampled to before being
                 sent. Use 8000 to pass telephony audio from
                 :class:`TelnyxMediaStream` through without upsampling.
             interim_results: Emit partial transcripts as they are refined.
+                Honoured per engine, not per endpoint: ``Speechmatics`` and
+                ``Soniox`` stream partials, while the default ``Telnyx`` engine
+                accepts the parameter and returns finals only. Defaults to
+                ``False`` so the default configuration does not advertise
+                partials it will never emit.
             model: Optional engine-specific model id.
         """
         super().__init__(provider_name="telnyx")
-
-        if transcription_engine not in SUPPORTED_ENGINES:
-            raise ValueError(
-                f"Unsupported Telnyx transcription_engine '{transcription_engine}'. "
-                f"Expected one of: {sorted(SUPPORTED_ENGINES)}"
-            )
 
         self._api_key = api_key or os.environ.get("TELNYX_API_KEY")
         if not self._api_key:
@@ -109,6 +104,7 @@ class STT(stt.STT):
         self._connection_ready = asyncio.Event()
         self._current_participant: Optional[Participant] = None
         self._audio_start_time: Optional[float] = None
+        self._error_reported = False
 
     async def start(self) -> None:
         """Open the Telnyx WebSocket and start the receive loop."""
@@ -142,6 +138,10 @@ class STT(stt.STT):
             logger.warning("Telnyx STT is closed, ignoring audio")
             return
 
+        if not self.started:
+            logger.warning("Telnyx STT is not started, dropping audio")
+            return
+
         await self._connection_ready.wait()
 
         if self._ws is None or self._ws.closed:
@@ -163,30 +163,25 @@ class STT(stt.STT):
         """Close the WebSocket and clean up."""
         await super().close()
 
-        try:
-            if self._ws is not None and not self._ws.closed:
-                await self._ws.close()
-        finally:
-            self._ws = None
+        if self._ws is not None and not self._ws.closed:
+            await self._ws.close()
+        self._ws = None
+
+        if self._receive_task is not None:
+            self._receive_task.cancel()
             try:
-                if self._receive_task is not None:
-                    self._receive_task.cancel()
-                    try:
-                        await self._receive_task
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception:
-                        logger.exception("Telnyx STT receive task failed on close")
-            finally:
-                self._receive_task = None
-                try:
-                    if self._session is not None and not self._session.closed:
-                        await self._session.close()
-                finally:
-                    self._session = None
-                    self._connection_ready.clear()
-                    self._on_disconnected()
-                    self._audio_start_time = None
+                await self._receive_task
+            except asyncio.CancelledError:
+                pass
+            self._receive_task = None
+
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+        self._session = None
+
+        self._connection_ready.clear()
+        self._on_disconnected()
+        self._audio_start_time = None
 
     def _build_ws_url(self) -> str:
         params: dict[str, str] = {
@@ -196,7 +191,7 @@ class STT(stt.STT):
             "language": self.language,
             "interim_results": "true" if self.interim_results else "false",
         }
-        if self.model is not None:
+        if self.model:
             params["model"] = self.model
         return f"{WS_STT_URL}?{urlencode(params)}"
 
@@ -229,7 +224,9 @@ class STT(stt.STT):
         except aiohttp.ClientError:
             logger.exception("Telnyx STT receive loop error")
 
-        if not self.closed:
+        # The server closes the socket right after an error payload, so the
+        # close is that error's consequence rather than a separate failure.
+        if not self.closed and not self._error_reported:
             self._emit_error_event(
                 ConnectionError("Telnyx STT WebSocket closed unexpectedly"),
                 context="telnyx_ws_closed",
@@ -250,6 +247,7 @@ class STT(stt.STT):
                 for err in errors
                 if isinstance(err, dict)
             )
+            self._error_reported = True
             self._emit_error_event(
                 RuntimeError(details or "Telnyx STT error"),
                 context="telnyx_streaming",

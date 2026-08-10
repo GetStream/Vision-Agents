@@ -1,5 +1,6 @@
 """Tests for the Telnyx STT plugin."""
 
+import asyncio
 import os
 
 import aiohttp
@@ -21,6 +22,22 @@ class TestTelnyxSTT:
     def participant(self) -> Participant:
         return Participant({}, user_id="test-user", id="test-user")
 
+    @pytest.fixture
+    def stt_with_failing_socket(self) -> STT:
+        """An started STT whose socket rejects every send."""
+        instance = STT(api_key="KEY_test")
+
+        class FailingWS:
+            closed = False
+
+            async def send_bytes(self, data: bytes) -> None:
+                raise aiohttp.ClientError("connection reset")
+
+        instance.started = True
+        instance._ws = FailingWS()
+        instance._connection_ready.set()
+        return instance
+
     async def test_requires_api_key(self, monkeypatch):
         monkeypatch.delenv("TELNYX_API_KEY", raising=False)
         with pytest.raises(ValueError, match="TELNYX_API_KEY"):
@@ -31,12 +48,14 @@ class TestTelnyxSTT:
         assert stt.transcription_engine == "Telnyx"
         assert stt.language == "en"
         assert stt.sample_rate == 16000
-        assert stt.interim_results is True
+        assert stt.interim_results is False
         assert stt.provider_name == "telnyx"
+        assert stt.turn_detection is False
 
-    async def test_invalid_engine_rejected(self):
-        with pytest.raises(ValueError, match="Unsupported Telnyx transcription_engine"):
-            STT(api_key="KEY_test", transcription_engine="NotAnEngine")
+    async def test_unknown_engine_is_left_to_the_server(self):
+        """The engine catalogue is served by Telnyx, so it is not pinned here."""
+        stt = STT(api_key="KEY_test", transcription_engine="SomeNewEngine")
+        assert "transcription_engine=SomeNewEngine" in stt._build_ws_url()
 
     async def test_url_carries_stream_parameters(self):
         stt = STT(api_key="KEY_test", language="es", sample_rate=8000)
@@ -48,8 +67,8 @@ class TestTelnyxSTT:
         assert "transcription_engine=Telnyx" in url
 
     async def test_url_uses_interim_results_not_partial_results(self):
-        on = STT(api_key="KEY_test")._build_ws_url()
-        off = STT(api_key="KEY_test", interim_results=False)._build_ws_url()
+        on = STT(api_key="KEY_test", interim_results=True)._build_ws_url()
+        off = STT(api_key="KEY_test")._build_ws_url()
         assert "interim_results=true" in on
         assert "interim_results=false" in off
         assert "partial_results" not in on
@@ -98,22 +117,24 @@ class TestTelnyxSTT:
 
         assert await stt.output.collect(timeout=0) == []
 
-    async def test_send_failure_does_not_propagate(self, participant):
-        stt = STT(api_key="KEY_test")
-
-        class FailingWS:
-            closed = False
-
-            async def send_bytes(self, data: bytes) -> None:
-                raise aiohttp.ClientError("connection reset")
-
-        stt._ws = FailingWS()
-        stt._connection_ready.set()
-
+    async def test_send_failure_does_not_propagate(
+        self, stt_with_failing_socket, participant
+    ):
         pcm = PcmData(
             samples=np.zeros(160, dtype=np.int16), sample_rate=16000, format="s16"
         )
-        await stt.process_audio(pcm, participant=participant)
+        await stt_with_failing_socket.process_audio(pcm, participant=participant)
+
+    async def test_audio_before_start_is_dropped(self, participant):
+        """process_audio must not block forever when start() never ran."""
+        stt = STT(api_key="KEY_test")
+        pcm = PcmData(
+            samples=np.zeros(160, dtype=np.int16), sample_rate=16000, format="s16"
+        )
+
+        await asyncio.wait_for(
+            stt.process_audio(pcm, participant=participant), timeout=1.0
+        )
 
     async def test_integer_confidence_is_kept(self, participant):
         stt = STT(api_key="KEY_test")
@@ -192,3 +213,23 @@ class TestTelnyxSTTIntegration:
         finals = [i for i in items if isinstance(i, Transcript) and i.final]
         assert finals, "No final Transcript emitted at 8kHz"
         assert "forgotten treasures" in " ".join(t.text for t in finals).lower()
+
+    async def test_interim_results_stream_partial_transcripts(
+        self, mia_audio_16khz, participant
+    ):
+        """Covers the replacement-mode path, which finals-only engines never hit.
+
+        ``interim_results`` is honoured per engine: Speechmatics streams
+        partials, while the default Telnyx engine returns finals only.
+        """
+        stt = STT(transcription_engine="Speechmatics", interim_results=True)
+        await stt.start()
+        try:
+            await stt.process_audio(mia_audio_16khz, participant=participant)
+            items = await stt.output.collect(timeout=15.0)
+        finally:
+            await stt.close()
+
+        transcripts = [i for i in items if isinstance(i, Transcript)]
+        assert [t for t in transcripts if not t.final], "No interim Transcript emitted"
+        assert [t for t in transcripts if t.final], "No final Transcript emitted"

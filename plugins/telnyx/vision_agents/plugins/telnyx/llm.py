@@ -65,7 +65,10 @@ class TelnyxLLM(ChatCompletionsLLM):
                 "TELNYX_API_KEY env var or api_key parameter required for Telnyx LLM"
             )
 
-        if client is None:
-            client = AsyncOpenAI(api_key=resolved_key, base_url=base_url)
-
-        super().__init__(model=model, client=client, tools_max_rounds=tools_max_rounds)
+        super().__init__(
+            model=model,
+            api_key=resolved_key,
+            base_url=base_url,
+            client=client,
+            tools_max_rounds=tools_max_rounds,
+        )

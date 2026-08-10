@@ -29,7 +29,7 @@ from urllib.parse import urlencode
 
 import aiohttp
 import av
-from getstream.video.rtc.track_util import AudioFormat, PcmData
+from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import tts
 
 logger = logging.getLogger(__name__)
@@ -103,6 +103,7 @@ class TTS(tts.TTS):
         api_key: Optional[str] = None,
         voice: str = DEFAULT_VOICE,
         idle_timeout: float = 10.0,
+        connect_timeout: float = 10.0,
     ) -> None:
         """Initialize Telnyx TTS.
 
@@ -114,6 +115,7 @@ class TTS(tts.TTS):
             idle_timeout: Seconds of server silence before synthesis is treated
                 as finished. Normally the server marks the last frame with
                 ``isFinal``; this is a safety net.
+            connect_timeout: Seconds to wait for the WebSocket handshake.
         """
         super().__init__(provider_name="telnyx")
 
@@ -124,20 +126,30 @@ class TTS(tts.TTS):
             )
 
         self.voice = voice
+        # The voice doubles as the model identifier reported in agent metadata;
+        # Telnyx voice ids carry the provider and model, e.g. AWS.Polly.Danielle-Neural.
+        self.model = voice
         self._idle_timeout = idle_timeout
+        self._connect_timeout = connect_timeout
 
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
+        # A socket is opened per synthesis, so connect/disconnect are reported
+        # once for the life of the plugin rather than once per utterance.
+        self._connected = False
 
     async def close(self) -> None:
         """Close the current WebSocket and release the aiohttp session."""
         await super().close()
-        if self._session is not None and not self._session.closed:
-            await self._session.close()
+        session = self._session
         self._session = None
-        self._on_disconnected()
+        if session is not None and not session.closed:
+            await session.close()
+        if self._connected:
+            self._connected = False
+            self._on_disconnected()
 
     async def stream_audio(
         self, text: str, *_: Any, **__: Any
@@ -189,10 +201,12 @@ class TTS(tts.TTS):
             self._session.ws_connect(
                 url, headers={"Authorization": f"Bearer {self._api_key}"}
             ),
-            timeout=self._idle_timeout,
+            timeout=self._connect_timeout,
         )
         self._ws = ws
-        self._on_connected()
+        if not self._connected:
+            self._connected = True
+            self._on_connected()
         logger.debug("Telnyx TTS websocket connected for voice %s", self.voice)
         return ws
 
@@ -273,14 +287,7 @@ class TTS(tts.TTS):
             for packet in decoder.parse(stripper.feed(audio)):
                 for frame in decoder.decode(packet):
                     for resampled in resampler.resample(frame):
-                        chunks.append(
-                            PcmData(
-                                samples=resampled.to_ndarray().reshape(-1),
-                                sample_rate=resampled.sample_rate,
-                                channels=1,
-                                format=AudioFormat.S16,
-                            )
-                        )
+                        chunks.append(PcmData.from_av_frame(resampled))
         except av.FFmpegError:
             logger.warning("Telnyx TTS sent undecodable audio, dropping payload")
         return chunks

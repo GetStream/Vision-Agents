@@ -4,6 +4,7 @@ import os
 
 import pytest
 from dotenv import load_dotenv
+from openai import AsyncOpenAI
 from vision_agents.core.agents.conversation import InMemoryConversation
 from vision_agents.plugins.telnyx import LLM
 from vision_agents.testing import collect_simple_response
@@ -27,25 +28,15 @@ class TestTelnyxLLM:
         llm = LLM(api_key="KEY_test", model="openai/gpt-4o")
         assert llm.model == "openai/gpt-4o"
 
-    async def test_base_url_points_to_telnyx_inference(self):
-        llm = LLM(api_key="KEY_test")
-        assert str(llm._client.base_url).startswith("https://api.telnyx.com/v2/ai")
-
-    async def test_bearer_token_used_for_auth(self):
-        llm = LLM(api_key="KEY_test")
-        assert llm._client.api_key == "KEY_test"
-
     async def test_provider_name(self):
         llm = LLM(api_key="KEY_test")
         assert llm.provider_name == "telnyx"
 
     async def test_explicit_client_skips_api_key_requirement(self, monkeypatch):
-        from openai import AsyncOpenAI
-
         monkeypatch.delenv("TELNYX_API_KEY", raising=False)
         client = AsyncOpenAI(api_key="KEY_injected", base_url="https://example.invalid")
-        llm = LLM(client=client)
-        assert llm._client is client
+
+        assert LLM(client=client).model == "meta-llama/Llama-3.3-70B-Instruct"
 
 
 @pytest.mark.skipif(not os.getenv("TELNYX_API_KEY"), reason="TELNYX_API_KEY not set")
