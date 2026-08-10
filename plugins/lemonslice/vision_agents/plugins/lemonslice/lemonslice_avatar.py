@@ -48,7 +48,7 @@ class LemonSliceAvatar(Avatar):
         agent_prompt: str | None = None,
         idle_timeout: int | None = None,
         api_key: str | None = None,
-        base_url: str | None = None,
+        api_url: str | None = None,
         stream_api_key: str | None = None,
         stream_api_secret: str | None = None,
         stream_call_type: str = "default",
@@ -67,7 +67,7 @@ class LemonSliceAvatar(Avatar):
             agent_prompt: Prompt describing the agent's persona.
             idle_timeout: Seconds before an idle session is closed.
             api_key: LemonSlice API key. Uses LEMONSLICE_API_KEY env var if not provided.
-            base_url: LemonSlice API base URL override.
+            api_url: Full URL of the LemonSlice session creation endpoint.
             stream_api_key: Stream API key. Uses STREAM_API_KEY env var if not provided.
             stream_api_secret: Stream API secret. Uses STREAM_API_SECRET env var if not provided.
             stream_call_type: Stream call type controlling the default feature set and
@@ -106,8 +106,8 @@ class LemonSliceAvatar(Avatar):
             "idle_timeout": idle_timeout,
             "api_key": api_key,
         }
-        if base_url is not None:
-            client_kwargs["base_url"] = base_url
+        if api_url is not None:
+            client_kwargs["api_url"] = api_url
 
         self._client = LemonSliceClient(**client_kwargs)
         self._rtc_manager = StreamRTCManager(

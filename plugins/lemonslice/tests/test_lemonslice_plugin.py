@@ -83,9 +83,7 @@ class TestLemonSliceAvatar:
         avatar = _make_avatar(
             lemonslice_properties={"voice_id": "nova", "metadata": {"tier": "pro"}}
         )
-        avatar._client._http_client = httpx.AsyncClient(
-            base_url="https://lemonslice.test", transport=session_transport
-        )
+        avatar._client._http_client = httpx.AsyncClient(transport=session_transport)
 
         await avatar._client.create_session(
             call_id="call-1", call_type="default", token="token", api_key="stream-key"
@@ -103,9 +101,7 @@ class TestLemonSliceAvatar:
         avatar = _make_avatar(
             lemonslice_properties={"transport_type": "websocket", "properties": {}}
         )
-        avatar._client._http_client = httpx.AsyncClient(
-            base_url="https://lemonslice.test", transport=session_transport
-        )
+        avatar._client._http_client = httpx.AsyncClient(transport=session_transport)
 
         await avatar._client.create_session(
             call_id="call-1", call_type="default", token="token", api_key="stream-key"
