@@ -1,5 +1,6 @@
 import logging
 from os import getenv
+from typing import Any
 
 import httpx
 
@@ -25,6 +26,7 @@ class LemonSliceClient:
         idle_timeout: int | None = None,
         api_key: str | None = None,
         base_url: str = DEFAULT_BASE_URL,
+        lemonslice_properties: dict[str, Any] | None = None,
     ):
         """Initialize the LemonSlice client.
 
@@ -35,6 +37,7 @@ class LemonSliceClient:
             idle_timeout: Session timeout in seconds.
             api_key: LemonSlice API key. Uses LEMONSLICE_API_KEY env var if not provided.
             base_url: LemonSlice API base URL.
+            lemonslice_properties: Extra fields added to the session creation payload.
         """
         if not agent_id and not agent_image_url:
             raise ValueError("Either agent_id or agent_image_url must be provided.")
@@ -50,6 +53,7 @@ class LemonSliceClient:
         self._agent_image_url = agent_image_url
         self._agent_prompt = agent_prompt
         self._idle_timeout = idle_timeout
+        self._lemonslice_properties = lemonslice_properties or {}
         self._session_id: str | None = None
         self._http_client = httpx.AsyncClient(
             base_url=base_url,
@@ -78,6 +82,7 @@ class LemonSliceClient:
             The created session ID.
         """
         payload: dict[str, object] = {
+            **self._lemonslice_properties,
             "transport_type": "stream",
             "properties": {
                 "call_id": call_id,

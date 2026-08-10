@@ -1,3 +1,6 @@
+import json
+
+import httpx
 import pytest
 from vision_agents.core.agents.inference import AudioOutputStream
 from vision_agents.core.utils.video_track import QueuedVideoTrack
@@ -12,6 +15,20 @@ def _make_avatar(**overrides) -> LemonSliceAvatar:
         "stream_api_secret": "secret",
     }
     return LemonSliceAvatar(**{**default_kwargs, **overrides})
+
+
+@pytest.fixture
+def session_requests() -> list[httpx.Request]:
+    return []
+
+
+@pytest.fixture
+def session_transport(session_requests: list[httpx.Request]) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        session_requests.append(request)
+        return httpx.Response(200, json={"session_id": "session-1"})
+
+    return httpx.MockTransport(handler)
 
 
 class TestLemonSliceAvatar:
@@ -57,3 +74,43 @@ class TestLemonSliceAvatar:
     async def test_audio_output(self):
         avatar = _make_avatar()
         assert isinstance(avatar.audio_output(), AudioOutputStream)
+
+    async def test_extra_params_are_sent_in_the_session_request(
+        self,
+        session_transport: httpx.MockTransport,
+        session_requests: list[httpx.Request],
+    ):
+        avatar = _make_avatar(
+            lemonslice_properties={"voice_id": "nova", "metadata": {"tier": "pro"}}
+        )
+        avatar._client._http_client = httpx.AsyncClient(
+            base_url="https://lemonslice.test", transport=session_transport
+        )
+
+        await avatar._client.create_session(
+            call_id="call-1", call_type="default", token="token", api_key="stream-key"
+        )
+
+        payload = json.loads(session_requests[0].content)
+        assert payload["voice_id"] == "nova"
+        assert payload["metadata"] == {"tier": "pro"}
+
+    async def test_extra_params_do_not_override_transport_fields(
+        self,
+        session_transport: httpx.MockTransport,
+        session_requests: list[httpx.Request],
+    ):
+        avatar = _make_avatar(
+            lemonslice_properties={"transport_type": "websocket", "properties": {}}
+        )
+        avatar._client._http_client = httpx.AsyncClient(
+            base_url="https://lemonslice.test", transport=session_transport
+        )
+
+        await avatar._client.create_session(
+            call_id="call-1", call_type="default", token="token", api_key="stream-key"
+        )
+
+        payload = json.loads(session_requests[0].content)
+        assert payload["transport_type"] == "stream"
+        assert payload["properties"]["call_id"] == "call-1"

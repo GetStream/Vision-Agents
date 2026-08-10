@@ -85,6 +85,7 @@ lemonslice.Avatar(
     fps=30,  # Output video frame rate
     buffer_seconds=1.0,  # Max video buffer depth in seconds
     avatar_join_timeout=30.0,  # Seconds to wait for the avatar to join the bridge call
+    lemonslice_properties=None,  # Extra fields merged into the LemonSlice session request
 )
 ```
 

@@ -57,6 +57,7 @@ class LemonSliceAvatar(Avatar):
         fps: int = 30,
         buffer_seconds: float = 1.0,
         avatar_join_timeout: float = 30.0,
+        lemonslice_properties: dict[str, Any] | None = None,
     ):
         """Initialize the LemonSlice avatar publisher.
 
@@ -86,6 +87,8 @@ class LemonSliceAvatar(Avatar):
                 can be queued ahead of audio playback. Must be > 0.
             avatar_join_timeout: Seconds to wait for the avatar participant to join
                 the call before failing the connection.
+            lemonslice_properties: Extra fields added to the LemonSlice session
+                creation request.
         """
         super().__init__()
         if buffer_seconds <= 0:
@@ -96,6 +99,7 @@ class LemonSliceAvatar(Avatar):
         agent_image_url = agent_image_url or os.getenv("LEMONSLICE_AGENT_IMAGE_URL")
 
         client_kwargs: dict[str, Any] = {
+            "lemonslice_properties": lemonslice_properties,
             "agent_id": agent_id,
             "agent_image_url": agent_image_url,
             "agent_prompt": agent_prompt,
