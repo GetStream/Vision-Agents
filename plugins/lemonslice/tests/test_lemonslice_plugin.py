@@ -1,10 +1,16 @@
+import asyncio
 import json
 
 import httpx
+import numpy as np
 import pytest
-from vision_agents.core.agents.inference import AudioOutputStream
+from getstream import AsyncStream
+from getstream.video.rtc.track_util import AudioFormat, PcmData
+from vision_agents.core.agents.inference import AudioOutputFlush, AudioOutputStream
+from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.plugins.lemonslice.lemonslice_avatar import LemonSliceAvatar
+from vision_agents.plugins.lemonslice.track import AvatarInputTrack
 
 
 def _make_avatar(**overrides) -> LemonSliceAvatar:
@@ -27,6 +33,21 @@ def session_transport(session_requests: list[httpx.Request]) -> httpx.MockTransp
     def handler(request: httpx.Request) -> httpx.Response:
         session_requests.append(request)
         return httpx.Response(200, json={"session_id": "session-1"})
+
+    return httpx.MockTransport(handler)
+
+
+@pytest.fixture
+def call_events() -> list[dict]:
+    return []
+
+
+@pytest.fixture
+def call_event_transport(call_events: list[dict]) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/event"):
+            call_events.append(json.loads(request.content)["custom"])
+        return httpx.Response(200, json={"duration": "0ms"})
 
     return httpx.MockTransport(handler)
 
@@ -110,3 +131,35 @@ class TestLemonSliceAvatar:
         payload = json.loads(session_requests[0].content)
         assert payload["transport_type"] == "stream"
         assert payload["properties"]["call_id"] == "call-1"
+
+    async def test_interrupt_does_not_announce_an_end_of_utterance(
+        self, call_events: list[dict], call_event_transport: httpx.MockTransport
+    ):
+        # An interruption discards the buffered audio, so announcing an
+        # end-of-utterance PTS that covers it points the avatar at audio that
+        # never arrives.
+        avatar = _make_avatar()
+        manager = avatar._rtc_manager
+        manager._client = AsyncStream(
+            api_key="key", api_secret="secret", transport=call_event_transport
+        )
+        manager._call = manager._client.video.call("default", "call-1")
+        manager._input_track = AvatarInputTrack(sample_rate=16000, channels=1)
+        manager._connected = True
+        await manager._input_track.write(
+            PcmData(
+                samples=np.zeros(16000, dtype=np.int16),
+                sample_rate=16000,
+                format=AudioFormat.S16,
+                channels=1,
+            )
+        )
+
+        stream = AudioOutputStream()
+        avatar.attach_audio_input(stream)
+        task = asyncio.create_task(avatar._process_audio_input())
+        stream.send_nowait(AudioOutputFlush())
+        await asyncio.sleep(0.05)
+        await cancel_and_wait(task)
+
+        assert [event["type"] for event in call_events] == ["lemonslice.interrupt"]

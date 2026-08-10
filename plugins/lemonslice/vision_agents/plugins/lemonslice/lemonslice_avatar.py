@@ -175,8 +175,9 @@ class LemonSliceAvatar(Avatar):
                     await self._end_turn()
 
             elif isinstance(item, AudioOutputFlush):
-                # Audio was interrupted
-                await self._end_turn()
+                # Audio was interrupted. No end-of-utterance here: interrupt()
+                # discards the buffered audio, so a PTS covering it would point
+                # the avatar at audio that never arrives.
                 await self._sync.flush()
                 await self._rtc_manager.interrupt()
 
