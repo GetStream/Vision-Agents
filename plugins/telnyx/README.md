@@ -79,10 +79,20 @@ stt = telnyx.STT(sample_rate=8000)
 Requires `TELNYX_API_KEY` in the environment, or an `api_key` argument.
 
 Audio is resampled to `sample_rate` and sent as raw `linear16` frames. Pick the
-engine with `transcription_engine`; the default is `Telnyx`.
+engine with `transcription_engine`; the default is `Telnyx`. The engine
+catalogue is served by Telnyx and is not validated locally.
 
 Telnyx does not send VAD signals on this endpoint, so the plugin emits
 transcripts only and leaves turn detection to the agent.
+
+`interim_results` is honoured per engine rather than per endpoint, and defaults
+to `False`. Measured against the live API with the same audio, `Speechmatics`
+and `Soniox` stream partial transcripts, while `Telnyx` and `Deepgram` accept
+the parameter and return finals only:
+
+```python
+stt = telnyx.STT(transcription_engine="Speechmatics", interim_results=True)
+```
 
 ## TTS
 
@@ -102,6 +112,12 @@ the stop frame, so the plugin reconnects per `stream_audio` call. Audio arrives
 as MP3 and is decoded to `PcmData` as it streams. The output sample rate follows
 the voice, so it is taken from the decoder rather than configured.
 
+The endpoint takes an `audio_format` parameter, but it is honoured only by some
+voices — `AWS.Polly.*` and `Telnyx.NaturalHD.*` serve raw PCM, while the default
+`Telnyx.KokoroTTS.*` returns MP3 regardless. Since the PCM sample rate is not
+reported on the wire and differs per voice, the plugin decodes MP3 for every
+voice rather than carrying a voice-to-rate table that would go stale.
+
 ## Examples
 
 See [examples/](examples/) for minimal inbound and outbound Telnyx phone
@@ -116,6 +132,11 @@ uv run plugins/telnyx/examples/outbound_call.py \
 
 # Inbound call server
 uv run plugins/telnyx/examples/inbound_call.py \
+  --setup-telnyx \
+  --phone-number +15551234567
+
+# Inbound call answered by an all-Telnyx STT/LLM/TTS pipeline
+uv run plugins/telnyx/examples/voice_agent_call.py \
   --setup-telnyx \
   --phone-number +15551234567
 ```

@@ -2,6 +2,19 @@
 
 ## New Features
 
+### `telnyx` plugin: LLM, STT and TTS (#620, #621, #622)
+
+The Telnyx plugin, until now a phone transport, also exposes `telnyx.LLM`,
+`telnyx.STT`, and `telnyx.TTS`, so a phone agent can run end to end on Telnyx.
+`telnyx.LLM` wraps Telnyx Inference's OpenAI-compatible Chat Completions
+endpoint and defaults to `meta-llama/Llama-3.3-70B-Instruct`. `telnyx.STT`
+streams `linear16` over WebSocket and takes a `sample_rate`, so telephony audio
+from `TelnyxMediaStream` can be transcribed at 8 kHz without an upsample; pick
+the engine with `transcription_engine`. `telnyx.TTS` streams MP3 over WebSocket
+and decodes to `PcmData` as it arrives. All three read `TELNYX_API_KEY` from the
+environment. See `plugins/telnyx/examples/voice_agent_call.py` for an inbound
+call answered by an all-Telnyx pipeline.
+
 ### `speechify` plugin: Speechify TTS
 
 Adds a new `speechify` plugin exposing `speechify.TTS`, backed by Speechify's streaming API. It streams raw PCM audio, defaults to the `simba-3.2` model with the `geffen_32` voice, and reads `SPEECHIFY_API_KEY` from the environment. Install with `vision-agents[speechify]`.
