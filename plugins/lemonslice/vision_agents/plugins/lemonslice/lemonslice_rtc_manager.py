@@ -60,6 +60,7 @@ class StreamRTCManager:
         stream_api_key: str | None = None,
         stream_api_secret: str | None = None,
         stream_call_type: str = "default",
+        avatar_join_timeout: float = 30.0,
     ):
         """Create the RTC manager.
 
@@ -81,6 +82,8 @@ class StreamRTCManager:
                 user-role grants.
                 See https://getstream.io/video/docs/api/call_types/builtin/ and
                 https://getstream.io/video/docs/api/call_types/permissions/.
+            avatar_join_timeout: Seconds to wait for the avatar participant to join
+                the call before giving up.
         """
         stream_api_key = stream_api_key or getenv("STREAM_API_KEY")
         stream_api_secret = stream_api_secret or getenv("STREAM_API_SECRET")
@@ -94,6 +97,7 @@ class StreamRTCManager:
         self._stream_api_key = stream_api_key
         self._stream_api_secret = stream_api_secret
         self._stream_call_type = stream_call_type
+        self._avatar_join_timeout = avatar_join_timeout
 
         self._on_video = on_video
         self._on_audio = on_audio
@@ -117,6 +121,7 @@ class StreamRTCManager:
             rate=_AVATAR_AUDIO_SAMPLE_RATE, layout="mono", format="s16", frame_size=0
         )
         self._connected = False
+        self._avatar_joined = asyncio.Event()
         self._event_id = 0
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -204,6 +209,13 @@ class StreamRTCManager:
                 return
             await self._on_audio(pcm)
 
+        @connection.on("participant_joined")
+        async def on_participant_joined(event: events_pb2.ParticipantJoined) -> None:
+            if event.participant.user_id != self._avatar_user_id:
+                return
+            logger.info("LemonSlice avatar joined the call")
+            self._avatar_joined.set()
+
         @connection.on("participant_left")
         async def on_participant_left(event: events_pb2.ParticipantLeft) -> None:
             if event.participant.user_id != self._avatar_user_id:
@@ -228,6 +240,12 @@ class StreamRTCManager:
         await connection.republish_tracks()
         self._connected = True
         logger.info("Connected to Stream call")
+
+    async def wait_for_avatar(self) -> None:
+        """Block until the avatar participant joins the call."""
+        await asyncio.wait_for(
+            self._avatar_joined.wait(), timeout=self._avatar_join_timeout
+        )
 
     async def send_audio(self, pcm: PcmData) -> None:
         """Push a PCM chunk into the outgoing audio track."""

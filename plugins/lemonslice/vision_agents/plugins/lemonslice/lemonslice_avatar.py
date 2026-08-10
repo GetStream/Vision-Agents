@@ -56,6 +56,7 @@ class LemonSliceAvatar(Avatar):
         height: int = 720,
         fps: int = 30,
         buffer_seconds: float = 1.0,
+        avatar_join_timeout: float = 30.0,
     ):
         """Initialize the LemonSlice avatar publisher.
 
@@ -83,6 +84,8 @@ class LemonSliceAvatar(Avatar):
             fps: Output video frame rate. Must be > 0.
             buffer_seconds: Max video buffer depth in seconds. Caps how many frames
                 can be queued ahead of audio playback. Must be > 0.
+            avatar_join_timeout: Seconds to wait for the avatar participant to join
+                the call before failing the connection.
         """
         super().__init__()
         if buffer_seconds <= 0:
@@ -110,6 +113,7 @@ class LemonSliceAvatar(Avatar):
             stream_api_secret=stream_api_secret,
             stream_api_key=stream_api_key,
             stream_call_type=stream_call_type,
+            avatar_join_timeout=avatar_join_timeout,
         )
         self._sync = AVSynchronizer(
             width=width,
@@ -185,6 +189,7 @@ class LemonSliceAvatar(Avatar):
                 token=credentials.avatar_token,
                 api_key=credentials.api_key,
             )
+            await self._rtc_manager.wait_for_avatar()
         except Exception:
             await self._rtc_manager.close()
             raise

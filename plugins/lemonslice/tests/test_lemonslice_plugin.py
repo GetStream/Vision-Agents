@@ -7,6 +7,7 @@ from vision_agents.plugins.lemonslice.lemonslice_avatar import LemonSliceAvatar
 def _make_avatar(**overrides) -> LemonSliceAvatar:
     default_kwargs = {
         "agent_id": "test-agent",
+        "api_key": "lemonslice-key",
         "stream_api_key": "key",
         "stream_api_secret": "secret",
     }

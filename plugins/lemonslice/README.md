@@ -84,12 +84,13 @@ lemonslice.Avatar(
     height=720,  # Output video height in pixels
     fps=30,  # Output video frame rate
     buffer_seconds=1.0,  # Max video buffer depth in seconds
+    avatar_join_timeout=30.0,  # Seconds to wait for the avatar to join the bridge call
 )
 ```
 
 ## How It Works
 
-1. **LemonSlice Session**: Creates a session via LemonSlice API, and joins the Stream call as a participant
+1. **LemonSlice Session**: Creates a session via LemonSlice API, and joins the Stream call as a participant. `agent.join()` blocks until the avatar is on the call, so no audio is sent before it can receive it — if the avatar does not show up within `avatar_join_timeout`, the connection is torn down and the error is raised
 2. **Audio Forwarding**: TTS audio is captured and sent to LemonSlice via the Stream call
 3. **Avatar Generation**: LemonSlice generates synchronized avatar video and audio
 4. **Video Streaming**: Avatar video is streamed to call participants via GetStream Edge
