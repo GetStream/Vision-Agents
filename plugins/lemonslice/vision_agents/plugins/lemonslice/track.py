@@ -27,7 +27,7 @@ class AvatarInputTrack(AudioStreamTrack):
         sample_rate: int = 48000,
         channels: int = 1,
         format: AudioFormatType = AudioFormat.S16,
-        audio_buffer_size_ms: int = 30000,
+        audio_buffer_size_ms: int = 180_000,
     ):
         super().__init__(
             sample_rate=sample_rate,
