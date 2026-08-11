@@ -24,7 +24,11 @@ from vision_agents.core.utils.utils import cancel_and_wait
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-3.5-transcribe-live-preview"
-FINAL_TRANSCRIPT_DELAY_SECONDS = 0.8
+
+# Fallback used when Gemini never sends `input_transcription` for an utterance.
+# It must stay well above the usual interim-to-final gap, otherwise a turn is
+# finalized while Gemini still considers the utterance open.
+FINAL_TRANSCRIPT_DELAY_SECONDS = 3.0
 
 
 class STT(stt.STT):
@@ -92,11 +96,12 @@ class STT(stt.STT):
         self._current_participant: Participant | None = None
         self._audio_start_time: float | None = None
         self._audio_duration_ms = 0.0
-        self._transcript_parts: list[str] = []
+        self._final_text = ""
         self._interim_text = ""
         self._last_transcription: Transcription | None = None
         self._turn_in_progress = False
-        self._received_interim = False
+        self._timed_out_text = ""
+        self._awaiting_final_transcription = False
         self._connected = False
 
     async def start(self) -> None:
@@ -217,6 +222,14 @@ class STT(stt.STT):
                 self._finish_turn(transcription)
             return
 
+        if not self._turn_in_progress and self._awaiting_final_transcription:
+            if not interim:
+                # Late authoritative final for a turn we already timed out.
+                self._awaiting_final_transcription = False
+                return
+            if text.strip() == self._timed_out_text:
+                return
+
         participant = self._current_participant
         if participant is None:
             logger.warning("Received Gemini transcript but no participant set")
@@ -224,38 +237,42 @@ class STT(stt.STT):
 
         if not self._turn_in_progress:
             self._turn_in_progress = True
+            self._timed_out_text = ""
+            self._awaiting_final_transcription = False
             self._emit_turn_started_event(participant)
 
         self._last_transcription = transcription
-        if interim:
-            self._received_interim = True
-            self._interim_text = text
-            self._emit_transcript_event(
-                text,
-                participant,
-                self._build_response(transcription),
-                mode="replacement",
-            )
-            if transcription.finished:
-                self._finish_turn(transcription)
-            else:
-                self._schedule_turn_finalization()
+
+        if not interim:
+            # `input_transcription` holds the whole finalized utterance, so it
+            # ends the turn instead of extending it.
+            self._final_text = text
+            self._finish_turn(transcription)
             return
 
-        self._transcript_parts.append(text)
+        if text == self._interim_text:
+            # Gemini repeats the latest interim while it waits for end of
+            # speech. Re-emitting would restart the finalization timer forever.
+            return
+
+        self._interim_text = text
+        self._emit_transcript_event(
+            text,
+            participant,
+            self._build_response(transcription),
+            mode="replacement",
+        )
         if transcription.finished:
             self._finish_turn(transcription)
         else:
-            if not self._received_interim:
-                self._emit_transcript_event(
-                    text,
-                    participant,
-                    self._build_response(transcription),
-                    mode="delta",
-                )
             self._schedule_turn_finalization()
 
-    def _finish_turn(self, transcription: Transcription | None) -> None:
+    def _finish_turn(
+        self,
+        transcription: Transcription | None,
+        *,
+        timed_out: bool = False,
+    ) -> None:
         if not self._turn_in_progress:
             return
 
@@ -263,7 +280,7 @@ class STT(stt.STT):
         if participant is None:
             return
 
-        text = "".join(self._transcript_parts).strip() or self._interim_text.strip()
+        text = (self._final_text or self._interim_text).strip()
         if text:
             response = self._build_response(transcription)
             self._emit_transcript_event(text, participant, response, mode="final")
@@ -273,6 +290,9 @@ class STT(stt.STT):
             )
         self._cancel_finalize_task_nowait()
         self._reset_turn()
+        if timed_out:
+            self._timed_out_text = text
+            self._awaiting_final_transcription = True
 
     def _build_response(
         self,
@@ -307,11 +327,12 @@ class STT(stt.STT):
     def _reset_turn(self) -> None:
         self._audio_start_time = None
         self._audio_duration_ms = 0.0
-        self._transcript_parts.clear()
+        self._final_text = ""
         self._interim_text = ""
         self._last_transcription = None
         self._turn_in_progress = False
-        self._received_interim = False
+        self._timed_out_text = ""
+        self._awaiting_final_transcription = False
 
     def _schedule_turn_finalization(self) -> None:
         self._cancel_finalize_task_nowait()
@@ -319,7 +340,7 @@ class STT(stt.STT):
 
     async def _finalize_after_delay(self) -> None:
         await asyncio.sleep(FINAL_TRANSCRIPT_DELAY_SECONDS)
-        self._finish_turn(self._last_transcription)
+        self._finish_turn(self._last_transcription, timed_out=True)
 
     async def _cancel_finalize_task(self) -> None:
         task = self._finalize_task
