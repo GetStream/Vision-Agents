@@ -238,7 +238,7 @@ def main() -> None:
             telnyx_phone_number_id=resolved_phone_number_id,
         )
 
-        logger.info("Telnyx voice agent ready for call %s", resolved_phone_number_id)
+        logger.info("Telnyx voice agent ready for call")
         uvicorn.run(app, host=args.host, port=args.port)
     finally:
         cleanup_telnyx_example_setup(telnyx_client, setup)
