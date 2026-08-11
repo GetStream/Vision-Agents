@@ -100,21 +100,17 @@ class TestGeminiSTT:
         assert len([item for item in items if isinstance(item, TurnStarted)]) == 1
         assert len([item for item in items if isinstance(item, TurnEnded)]) == 1
 
-    async def test_delta_transcripts_finish_on_turn_complete(self, stt, participant):
+    async def test_input_transcription_finishes_turn_without_interim(
+        self,
+        stt,
+        participant,
+    ):
         stt._current_participant = participant
 
         stt._handle_message(
             LiveServerMessage(
                 server_content=LiveServerContent(
-                    input_transcription=Transcription(text="forgotten ")
-                )
-            )
-        )
-        stt._handle_message(
-            LiveServerMessage(
-                server_content=LiveServerContent(
-                    input_transcription=Transcription(text="treasures"),
-                    turn_complete=True,
+                    input_transcription=Transcription(text="forgotten treasures")
                 )
             )
         )
@@ -122,8 +118,58 @@ class TestGeminiSTT:
         items = await stt.output.collect(timeout=0)
         transcripts = [item for item in items if isinstance(item, Transcript)]
 
-        assert [item.mode for item in transcripts] == ["delta", "delta", "final"]
+        assert [item.mode for item in transcripts] == ["final"]
         assert transcripts[-1].text == "forgotten treasures"
+        assert len([item for item in items if isinstance(item, TurnEnded)]) == 1
+
+    async def test_repeated_updates_emit_one_final(
+        self,
+        stt,
+        participant,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(
+            gemini_stt_module,
+            "FINAL_TRANSCRIPT_DELAY_SECONDS",
+            0.01,
+        )
+        stt._current_participant = participant
+
+        for _ in range(3):
+            stt._handle_message(
+                LiveServerMessage(
+                    server_content=LiveServerContent(
+                        interim_input_transcription=Transcription(
+                            text="complete thought"
+                        )
+                    )
+                )
+            )
+        await asyncio.sleep(0.05)
+
+        stt._handle_message(
+            LiveServerMessage(
+                server_content=LiveServerContent(
+                    interim_input_transcription=Transcription(text="complete thought")
+                )
+            )
+        )
+        stt._handle_message(
+            LiveServerMessage(
+                server_content=LiveServerContent(
+                    input_transcription=Transcription(text="Complete thought.")
+                )
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        items = await stt.output.collect(timeout=0)
+        transcripts = [item for item in items if isinstance(item, Transcript)]
+
+        assert [item.mode for item in transcripts] == ["replacement", "final"]
+        assert transcripts[-1].text == "complete thought"
+        assert len([item for item in items if isinstance(item, TurnStarted)]) == 1
+        assert len([item for item in items if isinstance(item, TurnEnded)]) == 1
 
     async def test_interim_transcript_finishes_after_updates_stop(
         self,
@@ -204,7 +250,5 @@ class TestGeminiSTT:
         transcripts = [
             item for item in items if isinstance(item, Transcript) and item.final
         ]
-        assert transcripts, items[-5:]
-        assert (
-            "forgotten treasures" in " ".join(item.text for item in transcripts).lower()
-        )
+        assert len(transcripts) == 1, [item.text for item in transcripts]
+        assert "forgotten treasures" in transcripts[0].text.lower()
