@@ -359,8 +359,10 @@ class StreamEdge(EdgeTransport[StreamCall]):
         A custom field set to None is removed from the stored user rather than
         written as null.
         """
-        custom = {key: value for key, value in user.custom.items() if value is not None}
-        unset = [key for key, value in user.custom.items() if value is None]
+        custom: dict[str, object] = {
+            key: value for key, value in user.custom.items() if value is not None
+        }
+        unset: list[str] = [key for key, value in user.custom.items() if value is None]
         set_fields: dict[str, object] = {
             key: value
             for key, value in (("name", user.name), ("image", user.image))
