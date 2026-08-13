@@ -238,3 +238,28 @@ class TestTelnyxTTSIntegration:
 
         assert any(item.data is not None for item in first)
         assert any(item.data is not None for item in second)
+
+    async def test_stop_audio_ends_synthesis_promptly(self, tts):
+        """Barge-in must cut the audio, not just close the socket.
+
+        Telnyx serves a synthesis in very few large frames, so one payload
+        decodes to hundreds of chunks. Checking the stop only per frame let the
+        whole utterance play out after a barge-in.
+        """
+        text = (
+            "This is a deliberately long utterance so that there is plenty of "
+            "audio still being streamed when the barge-in arrives, and it keeps "
+            "going for a while longer to make sure the socket is mid-flight."
+        )
+        baseline = len([chunk async for chunk in await tts.stream_audio(text)])
+        assert baseline > 50, f"need a long synthesis to test against, got {baseline}"
+
+        received = 0
+        async for _ in await tts.stream_audio(text):
+            received += 1
+            if received == 3:
+                await tts.stop_audio()
+
+        assert received < baseline / 2, (
+            f"stop_audio() did not cut the synthesis: {received} of {baseline} chunks"
+        )

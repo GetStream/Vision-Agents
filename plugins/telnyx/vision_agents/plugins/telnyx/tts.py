@@ -264,7 +264,13 @@ class TTS(tts.TTS):
                 except (binascii.Error, TypeError, ValueError):
                     logger.warning("Telnyx TTS sent audio that is not valid base64")
                     continue
+                # Telnyx serves a whole synthesis in very few large frames, so
+                # one payload decodes to hundreds of chunks. Checking the stop
+                # only per frame would let a barge-in play out the rest of the
+                # utterance.
                 for pcm in self._decode(raw, decoder, resampler, stripper):
+                    if self._stop_event.is_set():
+                        return
                     yield pcm
 
             if data.get("isFinal"):
