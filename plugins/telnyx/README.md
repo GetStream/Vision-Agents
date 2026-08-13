@@ -26,28 +26,48 @@ uv add vision-agents-plugins-telnyx
 
 ## Usage
 
+Run a voice agent end to end on Telnyx. Telnyx STT does not emit VAD signals, so
+pair it with a turn detector such as `smart_turn`.
+
+```python
+from vision_agents.core import Agent, User
+from vision_agents.plugins import getstream, smart_turn, telnyx
+
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=User(name="Assistant", id="agent"),
+    instructions="You are a helpful voice assistant.",
+    stt=telnyx.STT(),
+    llm=telnyx.LLM(),
+    tts=telnyx.TTS(),
+    turn_detection=smart_turn.TurnDetection(),
+)
+```
+
+To bridge a PSTN phone call into a Stream call, use the Call Control primitives.
+Your FastAPI server registers the call from a Telnyx webhook, answers with a
+tokenized media URL, then bridges the media WebSocket into the Stream call:
+
 ```python
 from vision_agents.plugins import telnyx
 
-# Create a call registry to track active calls
 registry = telnyx.CallRegistry()
 
-# Register a call from your Telnyx webhook handler
-call = registry.create(
-    call_control_id="v2:abc123",
-    webhook_data={"data": {"payload": {"from": "+15551234567"}}},
-)
+# 1. In your webhook handler, register the call and pre-warm the agent
+call = registry.create(call_id, webhook_data=data, prepare=lambda: prepare_call(call_id))
+stream_url = f"wss://{NGROK_URL}/telnyx/media/{call_id}/{call.token}"
+# answer/dial via the Telnyx API with stream_url
 
-# Create a media stream for the WebSocket connection
+# 2. In your media WebSocket handler, bridge the audio into the Stream call
+call = registry.validate(call_id, token)
 stream = telnyx.MediaStream(websocket)
 await stream.accept()
-
-# Associate stream with call
-call.telnyx_stream = stream
-
-# Run the stream until Telnyx sends a stop event
+agent, phone_user, stream_call = await call.await_prepare()
+await telnyx.attach_phone_to_call(stream_call, stream, phone_user.id)
 await stream.run()
 ```
+
+See [examples/](examples/) for complete, runnable inbound and outbound servers.
 
 ## LLM
 
@@ -120,8 +140,16 @@ voice rather than carrying a voice-to-rate table that would go stale.
 
 ## Examples
 
-See [examples/](examples/) for minimal inbound and outbound Telnyx phone
-examples.
+The fastest way to try `telnyx.STT`, `telnyx.LLM`, and `telnyx.TTS` is
+[examples/voice_bot.py](examples/voice_bot.py), which joins a Stream call in your
+browser and needs no phone number, ngrok, or Call Control App:
+
+```bash
+uv run plugins/telnyx/examples/voice_bot.py run
+```
+
+The phone examples in [examples/](examples/) bridge real PSTN calls and require
+the full Telnyx Call Control setup:
 
 ```bash
 # Outbound call
@@ -246,14 +274,48 @@ payload = pcm_to_pcmu(pcm)
 
 ## Configuration
 
-| Parameter                    | Description                          | Default |
-|------------------------------|--------------------------------------|---------|
-| `TELNYX_DEFAULT_SAMPLE_RATE` | Telnyx PCMU and PCMA sample rate     | `8000`  |
-| `TELNYX_L16_SAMPLE_RATE`     | Telnyx L16 bidirectional sample rate | `16000` |
+### LLM
+
+| Parameter         | Description                                                   | Default                          |
+|-------------------|---------------------------------------------------------------|----------------------------------|
+| `model`           | Model id as served by Telnyx Inference                        | `meta-llama/Llama-3.3-70B-Instruct` |
+| `api_key`         | Telnyx API key (falls back to `TELNYX_API_KEY`)               | `None`                           |
+| `base_url`        | API base URL                                                  | `https://api.telnyx.com/v2/ai`   |
+| `client`          | Pre-configured `AsyncOpenAI` client (overrides key/base URL)  | `None`                           |
+| `tools_max_rounds`| Max calling rounds for multi-hop tool calls                   | `3`                              |
+
+### STT
+
+| Parameter              | Description                                                            | Default   |
+|------------------------|-----------------------------------------------------------------------|-----------|
+| `api_key`              | Telnyx API key (falls back to `TELNYX_API_KEY`)                       | `None`    |
+| `transcription_engine` | Engine to transcribe with, e.g. `Telnyx`, `Deepgram`, `Speechmatics`  | `Telnyx`  |
+| `language`             | Language code                                                         | `en`      |
+| `sample_rate`          | Rate in Hz audio is resampled to (use `8000` for telephony audio)     | `16000`   |
+| `interim_results`      | Emit partial transcripts (honoured per engine)                        | `False`   |
+| `model`                | Optional engine-specific model id                                     | `""`      |
+
+### TTS
+
+| Parameter         | Description                                                   | Default                     |
+|-------------------|---------------------------------------------------------------|-----------------------------|
+| `api_key`         | Telnyx API key (falls back to `TELNYX_API_KEY`)               | `None`                      |
+| `voice`           | Voice id from `GET /v2/text-to-speech/voices`                 | `Telnyx.KokoroTTS.af_heart` |
+| `idle_timeout`    | Seconds of server silence before synthesis is treated as done | `10.0`                      |
+| `connect_timeout` | Seconds to wait for the WebSocket handshake                   | `10.0`                      |
+
+### Audio constants
+
+| Constant                     | Description                          | Value  |
+|------------------------------|--------------------------------------|--------|
+| `TELNYX_DEFAULT_SAMPLE_RATE` | Telnyx PCMU and PCMA sample rate     | `8000` |
+| `TELNYX_L16_SAMPLE_RATE`     | Telnyx L16 bidirectional sample rate | `16000`|
 
 ## Environment Variables
 
-- `TELNYX_API_KEY`: Your Telnyx API key for Call Control API requests.
+- `TELNYX_API_KEY`: Your Telnyx API key for Call Control, Inference, STT, and TTS.
+- `TELNYX_PUBLIC_KEY`: Base64 Ed25519 public key from the Telnyx Mission Control
+  Portal. The phone examples verify webhook signatures before handling events.
 - `TELNYX_PHONE_NUMBER`: Telnyx caller ID or inbound number, in E.164 format.
   You can also pass this as `--from` or `--phone-number`.
 - `NGROK_URL`: Public HTTPS hostname that forwards to your local example server.
@@ -267,6 +329,7 @@ payload = pcm_to_pcmu(pcm)
 
 - vision-agents
 - vision-agents-plugins-openai
+- cryptography
+- fastapi
 - aiohttp
 - numpy
-- fastapi
