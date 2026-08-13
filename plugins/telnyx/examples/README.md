@@ -1,6 +1,16 @@
-# Telnyx Phone Examples
+# Telnyx Examples
 
-Minimal inbound and outbound phone examples for the Telnyx plugin.
+- `voice_bot.py` is the fastest way to try `telnyx.STT`, `telnyx.LLM`, and
+  `telnyx.TTS`. It joins a Stream call in your browser and needs no phone number,
+  ngrok, or Call Control App — only `STREAM_API_KEY`, `STREAM_API_SECRET`, and
+  `TELNYX_API_KEY`. Run it with:
+
+  ```bash
+  uv run plugins/telnyx/examples/voice_bot.py run
+  ```
+
+The remaining examples bridge real PSTN phone calls and require the full Telnyx
+Call Control setup below:
 
 - `outbound_call.py` and `inbound_call.py` use Telnyx Call Control, Telnyx Media
   Streaming, Stream, and Gemini Realtime.
