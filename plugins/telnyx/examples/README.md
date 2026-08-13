@@ -1,7 +1,12 @@
 # Telnyx Phone Examples
 
-Minimal inbound and outbound phone examples for the Telnyx plugin. These examples
-use Telnyx Call Control, Telnyx Media Streaming, Stream, and Gemini Realtime.
+Minimal inbound and outbound phone examples for the Telnyx plugin.
+
+- `outbound_call.py` and `inbound_call.py` use Telnyx Call Control, Telnyx Media
+  Streaming, Stream, and Gemini Realtime.
+- `voice_agent_call.py` answers an inbound call with a pipeline that runs
+  entirely on Telnyx: `telnyx.STT`, `telnyx.LLM`, and `telnyx.TTS`. It needs no
+  `GOOGLE_API_KEY`.
 
 ## Requirements
 
@@ -10,7 +15,7 @@ Create a `.env` file at the repo root or export these variables:
 ```bash
 STREAM_API_KEY=
 STREAM_API_SECRET=
-GOOGLE_API_KEY=
+GOOGLE_API_KEY=   # not needed by voice_agent_call.py
 TELNYX_API_KEY=
 TELNYX_PUBLIC_KEY=
 ```
@@ -53,6 +58,14 @@ Inbound:
 
 ```bash
 uv run plugins/telnyx/examples/inbound_call.py \
+  --setup-telnyx \
+  --phone-number +15551234567
+```
+
+Inbound, all Telnyx:
+
+```bash
+uv run plugins/telnyx/examples/voice_agent_call.py \
   --setup-telnyx \
   --phone-number +15551234567
 ```

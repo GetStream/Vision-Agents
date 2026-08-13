@@ -12,6 +12,9 @@ real-time bidirectional media streaming.
 - **Audio Conversion**: PCMU, PCMA, and L16 RTP payload conversion
 - **WebSocket Management**: Handle Telnyx WebSocket media events
 - **Stream Bridge**: Attach a Telnyx phone participant to a Stream call
+- **LLM**: Telnyx Inference via the OpenAI-compatible Chat Completions API
+- **STT**: Streaming speech to text over WebSocket
+- **TTS**: Streaming text to speech over WebSocket
 
 ## Installation
 
@@ -46,6 +49,75 @@ call.telnyx_stream = stream
 await stream.run()
 ```
 
+## LLM
+
+Telnyx Inference is OpenAI-compatible, so the LLM is a thin wrapper over
+`ChatCompletionsLLM` pointed at `https://api.telnyx.com/v2/ai`. Streaming and
+tool calling work the same as any other Chat Completions provider.
+
+```python
+from vision_agents.plugins import telnyx
+
+llm = telnyx.LLM(model="openai/gpt-4o")
+```
+
+Requires `TELNYX_API_KEY` in the environment, or an `api_key` argument.
+
+Model ids come from the Telnyx catalogue at `GET /v2/ai/models` and are not
+validated locally. The default is `meta-llama/Llama-3.3-70B-Instruct`.
+
+## STT
+
+```python
+from vision_agents.plugins import telnyx
+
+# 8000 matches the PCMU telephony audio that TelnyxMediaStream decodes,
+# so nothing is upsampled on the way to the transcriber.
+stt = telnyx.STT(sample_rate=8000)
+```
+
+Requires `TELNYX_API_KEY` in the environment, or an `api_key` argument.
+
+Audio is resampled to `sample_rate` and sent as raw `linear16` frames. Pick the
+engine with `transcription_engine`; the default is `Telnyx`. The engine
+catalogue is served by Telnyx and is not validated locally.
+
+Telnyx does not send VAD signals on this endpoint, so the plugin emits
+transcripts only and leaves turn detection to the agent.
+
+`interim_results` is honoured per engine rather than per endpoint, and defaults
+to `False`. Measured against the live API with the same audio, `Speechmatics`
+and `Soniox` stream partial transcripts, while `Telnyx` and `Deepgram` accept
+the parameter and return finals only:
+
+```python
+stt = telnyx.STT(transcription_engine="Speechmatics", interim_results=True)
+```
+
+## TTS
+
+```python
+from vision_agents.plugins import telnyx
+
+tts = telnyx.TTS(voice="AWS.Polly.Danielle-Neural")
+```
+
+Requires `TELNYX_API_KEY` in the environment, or an `api_key` argument.
+
+Voice ids come from `GET /v2/text-to-speech/voices`. The default is
+`Telnyx.KokoroTTS.af_heart`.
+
+Telnyx serves each synthesis on its own WebSocket and closes the socket after
+the stop frame, so the plugin reconnects per `stream_audio` call. Audio arrives
+as MP3 and is decoded to `PcmData` as it streams. The output sample rate follows
+the voice, so it is taken from the decoder rather than configured.
+
+The endpoint takes an `audio_format` parameter, but it is honoured only by some
+voices — `AWS.Polly.*` and `Telnyx.NaturalHD.*` serve raw PCM, while the default
+`Telnyx.KokoroTTS.*` returns MP3 regardless. Since the PCM sample rate is not
+reported on the wire and differs per voice, the plugin decodes MP3 for every
+voice rather than carrying a voice-to-rate table that would go stale.
+
 ## Examples
 
 See [examples/](examples/) for minimal inbound and outbound Telnyx phone
@@ -60,6 +132,11 @@ uv run plugins/telnyx/examples/outbound_call.py \
 
 # Inbound call server
 uv run plugins/telnyx/examples/inbound_call.py \
+  --setup-telnyx \
+  --phone-number +15551234567
+
+# Inbound call answered by an all-Telnyx STT/LLM/TTS pipeline
+uv run plugins/telnyx/examples/voice_agent_call.py \
   --setup-telnyx \
   --phone-number +15551234567
 ```
@@ -189,5 +266,7 @@ payload = pcm_to_pcmu(pcm)
 ## Dependencies
 
 - vision-agents
+- vision-agents-plugins-openai
+- aiohttp
 - numpy
 - fastapi
