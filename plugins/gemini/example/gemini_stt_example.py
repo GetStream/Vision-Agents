@@ -27,6 +27,26 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+em_vocab = [
+    "Teenage Engineering",
+    "OP-XY",
+    "Logic Pro",
+    "Dawesome",
+    "ZYKLØP",
+    "ZYKLOP",
+    "MYTH",
+    "oeksound",
+    "Soothe3",
+    "Bloom",
+    "Cableguys",
+    "ShaperBox 3",
+    "Baby Audio",
+    "Transit 2",
+    "Ableton Move",
+    "Ableton Link",
+    "MIDI clock",
+]
+
 
 async def create_agent(**kwargs) -> Agent:
     agent = Agent(
@@ -34,11 +54,11 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="Gemini STT Agent", id="gemini-stt-agent"),
         instructions="You're a helpful voice AI assistant. Keep replies short and conversational.",
         stt=gemini.STT(
-            language_codes=["en-US"],
-            custom_vocabulary=["Vision Agents", "GetStream"],
+            language_codes=["en-US", "de-DE"],
+            custom_vocabulary=em_vocab,
         ),
         llm=gemini.LLM(),
-        tts=elevenlabs.TTS(),
+        tts=elevenlabs.TTS(voice_id="7A85ufQZSEaTbZ5eQ4f4"),
     )
     return agent
 
