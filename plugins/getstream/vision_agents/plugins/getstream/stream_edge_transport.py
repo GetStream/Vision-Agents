@@ -375,9 +375,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
             if e.status_code != 404:
                 raise
             response = await self.client.upsert_users(
-                UserRequest(
-                    id=user.id, name=user.name, image=user.image, custom=custom
-                )
+                UserRequest(id=user.id, name=user.name, image=user.image, custom=custom)
             )
         return response.data.users[user.id]
 
