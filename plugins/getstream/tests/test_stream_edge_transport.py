@@ -179,7 +179,10 @@ class TestStreamEdge:
             assert stored.custom == {"set_elsewhere": "keep me", "is_agent": True}
             assert "stt" not in stored.custom
         finally:
-            await edge.close()
+            try:
+                await edge.client.delete_users([user_id])
+            finally:
+                await edge.close()
 
     @pytest.mark.integration
     async def test_authenticate_omits_none_custom_on_create(self) -> None:
@@ -202,7 +205,10 @@ class TestStreamEdge:
             assert stored.custom == {"is_agent": True}
             assert "stt" not in stored.custom
         finally:
-            await edge.close()
+            try:
+                await edge.client.delete_users([user_id])
+            finally:
+                await edge.close()
 
     @pytest.mark.integration
     async def test_create_users_creates_users_that_do_not_exist_yet(self) -> None:
