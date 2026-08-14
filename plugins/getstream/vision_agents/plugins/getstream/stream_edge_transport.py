@@ -355,24 +355,29 @@ class StreamEdge(EdgeTransport[StreamCall]):
         Upserting replaces the stored user, so custom data written by other
         clients would be lost. A partial update merges instead; it only fails
         when the user does not exist yet, in which case we create it.
+
+        A custom field set to None is removed from the stored user rather than
+        written as null.
         """
+        custom: dict[str, object] = {
+            key: value for key, value in user.custom.items() if value is not None
+        }
+        unset: list[str] = [key for key, value in user.custom.items() if value is None]
         set_fields: dict[str, object] = {
             key: value
             for key, value in (("name", user.name), ("image", user.image))
             if value
         }
-        set_fields.update(user.custom)
+        set_fields.update(custom)
         try:
             response = await self.client.update_users_partial(
-                [UpdateUserPartialRequest(id=user.id, set=set_fields)]
+                [UpdateUserPartialRequest(id=user.id, set=set_fields, unset=unset)]
             )
         except StreamApiException as e:
             if e.status_code != 404:
                 raise
             response = await self.client.upsert_users(
-                UserRequest(
-                    id=user.id, name=user.name, image=user.image, custom=user.custom
-                )
+                UserRequest(id=user.id, name=user.name, image=user.image, custom=custom)
             )
         return response.data.users[user.id]
 
