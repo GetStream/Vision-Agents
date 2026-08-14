@@ -4,6 +4,10 @@ __pycache__/
 *$py.class
 *.so
 .cursor/*
+# Cloud agents read the environment config from the repo, so it must be tracked.
+!.cursor/environment.json
+!.cursor/install.sh
+!.cursor/rules/
 # Distribution / packaging
 .Python
 build/
