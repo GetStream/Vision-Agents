@@ -1,0 +1,69 @@
+model_name: gemma-4-e2b-it
+description: >
+  Google Gemma 4 E2B instruction-tuned, served by vLLM's OpenAI-compatible server so the
+  LLM router's gemma provider can reach it with the same client it uses for everything else.
+model_metadata:
+  repo_id: google/gemma-4-E2B-it
+  tags:
+    - openai-compatible
+  example_model_input:
+    model: google/gemma-4-E2B-it
+    messages:
+      - role: system
+        content: "You are a helpful assistant. Keep answers short."
+      - role: user
+        content: "What is the capital of France?"
+    stream: true
+    stream_options:
+      include_usage: true
+    max_tokens: 64
+
+# vLLM already serves /v1/chat/completions, so there is no model.py here: the container is
+# the server. This is the one deployment in deploy/ that needs no Python at all.
+base_image:
+  image: vllm/vllm-openai:v0.12.0
+
+docker_server:
+  # --served-model-name fixes the id callers send. It matches the Hugging Face repo rather
+  # than the mount path, so the provider's model id is the same whether it is talking to
+  # this deployment or to any other host of the same weights.
+  #
+  # Prefix caching earns its keep here: a conversation resends its whole history every turn,
+  # so all but the newest message is a cache hit, which is also what the cached-input rate in
+  # router.yaml is priced against.
+  start_command: >
+    vllm serve /models/gemma-4-e2b-it
+    --served-model-name google/gemma-4-E2B-it
+    --host 0.0.0.0 --port 8000
+    --enable-prefix-caching
+    --max-model-len 32768
+  readiness_endpoint: /health
+  liveness_endpoint: /health
+  predict_endpoint: /v1/chat/completions
+  server_port: 8000
+
+# The Baseten Delivery Network mirrors the weights and mounts them before the container
+# starts, so a cold start is not waiting on Hugging Face. Gemma is Apache 2.0 but the repo is
+# gated behind Google's terms, so a token is needed to fetch it.
+weights:
+  - source: "hf://google/gemma-4-E2B-it"
+    mount_location: "/models/gemma-4-e2b-it"
+    auth:
+      auth_method: CUSTOM_SECRET
+      auth_secret_name: "hf_access_token"
+
+secrets:
+  hf_access_token: null
+
+resources:
+  # E2B is ~5 GB at bf16 including its per-layer embeddings, so an L4's 24 GB leaves most of
+  # the card for the KV cache. It is the cheapest GPU Baseten offers that fits, which is the
+  # point of routing to a small model in the first place.
+  accelerator: L4
+  use_gpu: true
+
+runtime:
+  predict_concurrency: 128
+  health_checks:
+    restart_threshold_seconds: 300
+    stop_traffic_threshold_seconds: 120

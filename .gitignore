@@ -89,6 +89,14 @@ stream-py/
 examples/*/uv.lock
 plugins/*/example/uv.lock
 
+# Compiled Go commands, which land beside the module they were built from
+/acceleration/agent
+/acceleration/chat
+/acceleration/phone
+/acceleration/router
+/acceleration/say
+/acceleration/transcribe
+
 # Artifacts / assets
 *.pt
 *.kef

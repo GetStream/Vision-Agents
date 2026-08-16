@@ -1,0 +1,49 @@
+# Which telephony vendors this service knows about, what they can carry and what
+# credentials they need. Twilio and Telnyx are implemented; the rest are declared so they
+# list and resolve, and say plainly that they are not implemented when used.
+vendors:
+  - vendor: twilio
+    implemented: true
+    capabilities: [voice, sms, mms]
+    credentials: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN]
+
+  - vendor: telnyx
+    implemented: true
+    capabilities: [voice, sms, mms, fax]
+    credentials: [TELNYX_API_KEY]
+
+  - vendor: sinch
+    capabilities: [voice, sms]
+    credentials: [SINCH_PROJECT_ID, SINCH_KEY_ID, SINCH_KEY_SECRET]
+
+  - vendor: bandwidth
+    capabilities: [voice, sms, mms]
+    credentials: [BANDWIDTH_ACCOUNT_ID, BANDWIDTH_USERNAME, BANDWIDTH_PASSWORD]
+
+  - vendor: bics
+    capabilities: [voice, sms]
+    credentials: [BICS_API_KEY]
+
+  - vendor: infobip
+    capabilities: [voice, sms]
+    credentials: [INFOBIP_BASE_URL, INFOBIP_API_KEY]
+
+  - vendor: vonage
+    capabilities: [voice, sms]
+    credentials: [VONAGE_API_KEY, VONAGE_API_SECRET]
+
+  - vendor: kaleyra
+    capabilities: [voice, sms]
+    credentials: [KALEYRA_SID, KALEYRA_API_KEY]
+
+  - vendor: bird
+    capabilities: [voice, sms]
+    credentials: [BIRD_WORKSPACE_ID, BIRD_ACCESS_KEY]
+
+  - vendor: didww
+    capabilities: [voice, sms]
+    credentials: [DIDWW_API_KEY]
+
+  - vendor: plivo
+    capabilities: [voice, sms, mms]
+    credentials: [PLIVO_AUTH_ID, PLIVO_AUTH_TOKEN]

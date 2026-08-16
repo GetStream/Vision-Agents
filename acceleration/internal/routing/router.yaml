@@ -1,0 +1,353 @@
+# Provider capabilities and the capability shortcuts that resolve to them, one section per
+# modality. Adding a provider or model is a config edit, not a code change.
+#
+# tier is what a model optimises for: low-latency for a live conversation, high-quality
+# when it can take longer. It defaults to low-latency.
+#
+# price is in US dollars and is whatever this deployment is billed, so it is config rather
+# than fact: check each vendor's pricing page, and for a self-hosted model divide the GPU
+# hour by the throughput you measured. A model sets whichever unit it is billed in and
+# leaves the rest at zero, and a model with no price reports a cost of zero.
+
+stt:
+  providers:
+    - provider: deepgram
+      model: flux-general-en
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      price:
+        per_audio_hour: 0.276
+
+    - provider: deepgram
+      model: flux-general-multi
+      languages: [en, es, fr, de, hi, it, ja, ko, nl, pt, ru, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_audio_hour: 0.276
+
+    # 25 languages; see nvidia/parakeet-tdt-0.6b-v3. Self-hosted on an L4, so the price is
+    # the GPU rather than a per-hour-of-audio rate. Measured throughput on one replica.
+    - provider: parakeet
+      model: parakeet-tdt-0.6b-v3
+      languages:
+        [
+          bg,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          et,
+          fi,
+          fr,
+          hr,
+          hu,
+          it,
+          lt,
+          lv,
+          mt,
+          nl,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sl,
+          sv,
+          uk,
+        ]
+      realtime: true
+      tier: low-latency
+      price:
+        per_audio_hour: 0.079
+
+  aliases:
+    en-low-latency:
+      languages: [en]
+      require_realtime: true
+      tier: low-latency
+
+    multilingual-low-latency:
+      multilingual: true
+      require_realtime: true
+      tier: low-latency
+
+    # No tier requirement: accuracy is worth waiting for, so an offline-only model is a
+    # candidate here even though it cannot serve a live call.
+    en-high-accuracy:
+      languages: [en]
+
+    multilingual-high-accuracy:
+      multilingual: true
+
+    # The names sprint 1 shipped, kept so existing callers keep working.
+    en-realtime-best:
+      languages: [en]
+      require_realtime: true
+
+    multi-language-realtime-best:
+      multilingual: true
+      require_realtime: true
+
+    en-slow-best:
+      languages: [en]
+
+    multi-language-slow-best:
+      multilingual: true
+
+tts:
+  providers:
+    # Flash is the low-latency model; the WebSocket streams audio as it is generated.
+    - provider: elevenlabs
+      model: eleven_flash_v2_5
+      languages:
+        [
+          ar,
+          bg,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fi,
+          fil,
+          fr,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ko,
+          ms,
+          nl,
+          no,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          ta,
+          tr,
+          uk,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_chars: 50.0
+
+    # Multilingual v2 is the quality model: better prosody, slower to first audio.
+    - provider: elevenlabs
+      model: eleven_multilingual_v2
+      languages:
+        [
+          ar,
+          bg,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fi,
+          fil,
+          fr,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ko,
+          ms,
+          nl,
+          no,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          ta,
+          tr,
+          uk,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: high-quality
+      price:
+        per_million_chars: 110.0
+
+    # Fish's hosted S2 Pro. 80+ languages; the common ones are listed.
+    - provider: fish
+      model: s2-pro
+      languages:
+        [
+          ar,
+          de,
+          en,
+          es,
+          fi,
+          fr,
+          hi,
+          id,
+          it,
+          ja,
+          ko,
+          nl,
+          pl,
+          pt,
+          ru,
+          sv,
+          th,
+          tr,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: high-quality
+      price:
+        per_million_chars: 15.0
+
+    # The same weights on our own Baseten deployment, where the price is the GPU.
+    - provider: s2pro
+      model: s2-pro
+      languages:
+        [
+          ar,
+          de,
+          en,
+          es,
+          fi,
+          fr,
+          hi,
+          id,
+          it,
+          ja,
+          ko,
+          nl,
+          pl,
+          pt,
+          ru,
+          sv,
+          th,
+          tr,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_chars: 9.0
+
+  aliases:
+    en-low-latency:
+      languages: [en]
+      require_realtime: true
+      tier: low-latency
+
+    multilingual-low-latency:
+      multilingual: true
+      require_realtime: true
+      tier: low-latency
+
+    en-high-accuracy:
+      languages: [en]
+      tier: high-quality
+
+    multilingual-high-accuracy:
+      multilingual: true
+      tier: high-quality
+
+llm:
+  providers:
+    # Flash is a 284B mixture-of-experts model with only 13B active per token, which is why
+    # it answers fast enough for a conversation. Reasoning is off by default, so the first
+    # word of the answer is the first thing that arrives.
+    - provider: deepseek
+      model: DeepSeek-V4-Flash-0731
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.13
+        per_million_cached_input_tokens: 0.028
+        per_million_output_tokens: 0.26
+
+    - provider: openai
+      model: gpt-5.6-luna
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.20
+        per_million_cached_input_tokens: 0.02
+        per_million_output_tokens: 1.20
+
+    # Self-hosted, so there is no per-token bill: the deployment is charged by the minute.
+    # The rates below convert Baseten's L4 rate of $0.01414/min at an assumed 1500 output
+    # tokens per second across the batch, with prefill taken as five times cheaper than
+    # decode. They are an estimate of what this deployment costs us, not a published price.
+    - provider: gemma
+      model: gemma-4-E2B-it
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.032
+        per_million_output_tokens: 0.16
+
+    # Pro is a 1.6T-parameter frontier model: better answers, and slow enough that it wants
+    # to be off the live path unless the caller asked for quality.
+    - provider: deepseek
+      model: DeepSeek-V4-Pro-0813
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      price:
+        per_million_input_tokens: 1.32
+        per_million_cached_input_tokens: 0.132
+        per_million_output_tokens: 3.96
+
+    - provider: openai
+      model: gpt-5.6-terra
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      price:
+        per_million_input_tokens: 2.00
+        per_million_cached_input_tokens: 0.20
+        per_million_output_tokens: 12.00
+
+  aliases:
+    en-low-latency:
+      languages: [en]
+      require_realtime: true
+      tier: low-latency
+
+    multilingual-low-latency:
+      multilingual: true
+      require_realtime: true
+      tier: low-latency
+
+    en-high-accuracy:
+      languages: [en]
+      tier: high-quality
+
+    multilingual-high-accuracy:
+      multilingual: true
+      tier: high-quality
+
+    # Whichever model is quickest, in whatever language. The shorthand a caller reaches for
+    # when the only thing that matters is that the answer starts arriving.
+    llm-fast:
+      require_realtime: true
+      tier: low-latency

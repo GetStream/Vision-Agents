@@ -1,0 +1,10 @@
+package: api
+# Paths are resolved against the working directory, so generation runs from acceleration/.
+output: internal/api/generated.go
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
+  embedded-spec: true
+output-options:
+  skip-prune: true

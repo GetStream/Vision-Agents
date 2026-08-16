@@ -1,0 +1,979 @@
+openapi: 3.0.3
+info:
+  title: Model Router
+  version: 0.2.0
+  description: >
+    Routes speech-to-text and text-to-speech traffic across providers and reports
+    what it cost. Every path is scoped by modality, so the same provider serving
+    two modalities is reported on separately. The caller is identified by a
+    trusted X-Customer-Id header; real authentication is not part of this version.
+
+servers:
+  - url: http://localhost:8080
+
+security:
+  - CustomerId: []
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness and dependency check
+      security: []
+      responses:
+        "200":
+          description: The router is serving
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+        "503":
+          description: A dependency is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /v1/{modality}/providers:
+    get:
+      operationId: listProviders
+      summary: List the providers configured for a modality and their live health
+      parameters:
+        - $ref: "#/components/parameters/Modality"
+      responses:
+        "200":
+          description: The configured providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Provider"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/{modality}/routes/{target}:
+    get:
+      operationId: resolveTarget
+      summary: Resolve a provider name or capability shortcut to a ranked candidate list
+      parameters:
+        - $ref: "#/components/parameters/Modality"
+        - name: target
+          in: path
+          required: true
+          description: A "provider/model" name or a capability shortcut such as en-low-latency.
+          schema:
+            type: string
+          example: en-low-latency
+        - name: language
+          in: query
+          required: false
+          description: Language hints that candidates must cover. Repeat for several.
+          schema:
+            type: array
+            items:
+              type: string
+          example: ["en"]
+      responses:
+        "200":
+          description: Candidates in preference order, best first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Candidate"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/{modality}/stats:
+    get:
+      operationId: getStats
+      summary: Aggregated usage for the calling customer
+      parameters:
+        - $ref: "#/components/parameters/Modality"
+        - name: granularity
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Granularity"
+        - name: from
+          in: query
+          required: true
+          description: Start of the window, inclusive.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          description: End of the window, exclusive.
+          schema:
+            type: string
+            format: date-time
+        - name: tag
+          in: query
+          required: false
+          description: >
+            Only count requests carrying every one of these cost labels, each written
+            "key:value". Repeat for several. Filtering reads the request rows rather
+            than the rollups, since a rollup bucket no longer knows which labels its
+            requests carried.
+          schema:
+            type: array
+            items:
+              type: string
+          example: ["project:moderation", "environment:dev"]
+      responses:
+        "200":
+          description: One row per bucket, provider and model
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StatsBucket"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/{modality}/stats/tags:
+    get:
+      operationId: getTagStats
+      summary: Aggregated usage broken down by the values of one cost label
+      description: >
+        What drives the spend. Requests are labelled with whatever keys the customer
+        chooses, so asking for key=project returns one row per project per bucket.
+      parameters:
+        - $ref: "#/components/parameters/Modality"
+        - name: key
+          in: query
+          required: true
+          description: The cost label to group by.
+          schema:
+            type: string
+          example: project
+        - name: granularity
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Granularity"
+        - name: from
+          in: query
+          required: true
+          description: Start of the window, inclusive.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          description: End of the window, exclusive.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: One row per bucket and label value
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TagStatsBucket"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/turns/stats:
+    get:
+      operationId: getTurnStats
+      summary: Conversational latency for the calling customer
+      description: >
+        One row per bucket and agent. A request row measures one provider call; a turn
+        measures what the caller felt, from finishing a sentence to hearing the answer
+        start, with the transcription, model and voice legs kept apart so a slow
+        conversation can be attributed.
+      parameters:
+        - name: agent_id
+          in: query
+          required: false
+          description: Narrow to one agent. Omit for every agent the customer runs.
+          schema:
+            type: string
+        - name: granularity
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Granularity"
+        - name: from
+          in: query
+          required: true
+          description: Start of the window, inclusive.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          description: End of the window, exclusive.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: One row per bucket and agent
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TurnStatsBucket"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/phone/vendors:
+    get:
+      operationId: listPhoneVendors
+      summary: List the telephony vendors and whether they can be used
+      description: >
+        Every vendor this service knows about. A vendor that is declared but not
+        implemented is listed rather than hidden, so what is missing is visible
+        before a number is bought.
+      responses:
+        "200":
+          description: The declared vendors
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PhoneVendor"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/phone/numbers/available:
+    get:
+      operationId: searchPhoneNumbers
+      summary: Search a vendor for numbers to buy
+      parameters:
+        - name: vendor
+          in: query
+          required: true
+          schema:
+            type: string
+          example: twilio
+        - name: country
+          in: query
+          required: true
+          description: ISO 3166-1 alpha-2 country code.
+          schema:
+            type: string
+          example: US
+        - name: area_code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: contains
+          in: query
+          required: false
+          description: Digits the number must contain.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: What the vendor is offering
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AvailableNumber"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/phone/numbers:
+    get:
+      operationId: listPhoneNumbers
+      summary: The numbers the calling customer holds
+      parameters:
+        - name: include_released
+          in: query
+          required: false
+          description: >
+            Include numbers that have been given back. A released number keeps its
+            row, because what it cost while it was held is still part of that
+            month's bill.
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: The customer's numbers, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PhoneNumber"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: buyPhoneNumber
+      summary: Buy a number, which starts its monthly charge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuyNumberRequest"
+      responses:
+        "201":
+          description: The number is bought and recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhoneNumber"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/phone/numbers/{e164}:
+    delete:
+      operationId: releasePhoneNumber
+      summary: Give a number back, which stops its monthly charge
+      parameters:
+        - name: e164
+          in: path
+          required: true
+          description: The number in +15551234567 form.
+          schema:
+            type: string
+          example: "+15125551234"
+      responses:
+        "204":
+          description: The number was released
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/phone/numbers/{e164}/attach:
+    post:
+      operationId: attachPhoneNumber
+      summary: Point a number at a Stream call
+      description: >
+        Creates the SIP inbound trunk and routing rule and tells the vendor to send
+        calls there. This is what turns a bought number into one that reaches an
+        agent.
+      parameters:
+        - name: e164
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "+15125551234"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttachNumberRequest"
+      responses:
+        "200":
+          description: The number now reaches a call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachedNumber"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/phone/calls:
+    post:
+      operationId: placePhoneCall
+      summary: Place an outbound call and bridge it into a Stream call
+      description: >
+        Stream's SIP is inbound only, so the vendor originates the call and connects
+        it to a trunk the agent is already on, rather than Stream dialling out.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaceCallRequest"
+      responses:
+        "202":
+          description: The vendor is placing the call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlacedCall"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/stats/rollup:
+    post:
+      operationId: runRollup
+      summary: Aggregate request rows into a rollup table
+      description: >
+        Covers every modality and customer in the window. Idempotent: re-running it over
+        the same window recomputes those buckets, so a missed run is fixed by running it
+        again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RollupRequest"
+      responses:
+        "200":
+          description: The rollup completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RollupResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    CustomerId:
+      type: apiKey
+      in: header
+      name: X-Customer-Id
+      description: Trusted customer identifier. Every statistic is keyed by it.
+
+  parameters:
+    Modality:
+      name: modality
+      in: path
+      required: true
+      description: Which kind of model to route.
+      schema:
+        $ref: "#/components/schemas/Modality"
+
+  responses:
+    BadRequest:
+      description: The request was malformed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: The customer header is missing
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such modality, provider or shortcut
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    HealthStatus:
+      type: object
+      required: [status, dependencies]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        dependencies:
+          type: object
+          additionalProperties:
+            type: string
+          description: Dependency name to "ok" or a failure description.
+          example: { postgres: ok, redis: ok }
+
+    Modality:
+      type: string
+      enum: [stt, tts, llm, memory, phone]
+      description: >
+        What kind of work was done. The first three are routed across providers.
+        Memory and phone are recorded but not routed, since there is one memory
+        store and one vendor per number, so the provider paths do not serve them
+        while the statistics paths do.
+      example: tts
+
+    Granularity:
+      type: string
+      enum: [hourly, daily]
+      default: hourly
+
+    Tier:
+      type: string
+      enum: [low-latency, high-quality]
+      description: What the model optimises for.
+
+    Provider:
+      type: object
+      required: [provider, model, languages, realtime, tier, health]
+      properties:
+        provider:
+          type: string
+          example: elevenlabs
+        model:
+          type: string
+          example: eleven_flash_v2_5
+        languages:
+          type: array
+          items:
+            type: string
+        realtime:
+          type: boolean
+        tier:
+          $ref: "#/components/schemas/Tier"
+        health:
+          $ref: "#/components/schemas/ProviderHealth"
+
+    ProviderHealth:
+      type: object
+      required: [available, requests, errors, error_rate, latency_ms_avg]
+      properties:
+        available:
+          type: boolean
+          description: False once the error rate crosses the configured threshold.
+        requests:
+          type: integer
+          format: int64
+          description: Requests seen in the current health window.
+        errors:
+          type: integer
+          format: int64
+        error_rate:
+          type: number
+          format: double
+        latency_ms_avg:
+          type: number
+          format: double
+
+    Candidate:
+      type: object
+      required: [provider, model, health]
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        health:
+          $ref: "#/components/schemas/ProviderHealth"
+
+    StatsBucket:
+      type: object
+      required:
+        [
+          provider,
+          model,
+          bucket,
+          audio_ms_total,
+          characters_total,
+          input_tokens_total,
+          cached_input_tokens_total,
+          output_tokens_total,
+          cost_micros_total,
+          request_count,
+          error_count,
+        ]
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        bucket:
+          type: string
+          format: date-time
+        audio_ms_total:
+          type: integer
+          format: int64
+          description: Billable audio, transcribed or produced.
+        characters_total:
+          type: integer
+          format: int64
+          description: Billable text. Zero for providers that bill by audio.
+        input_tokens_total:
+          type: integer
+          format: int64
+          description: Prompt tokens read, cached ones included. Zero outside llm.
+        cached_input_tokens_total:
+          type: integer
+          format: int64
+          description: The part of the prompt served from the provider's cache.
+        output_tokens_total:
+          type: integer
+          format: int64
+          description: Generated tokens, reasoning included. Zero outside llm.
+        cost_micros_total:
+          type: integer
+          format: int64
+          description: Millionths of a dollar, priced from the configured rates.
+        request_count:
+          type: integer
+          format: int64
+        error_count:
+          type: integer
+          format: int64
+        latency_p50_ms:
+          type: number
+          format: double
+          nullable: true
+        latency_p95_ms:
+          type: number
+          format: double
+          nullable: true
+        uptime:
+          type: number
+          format: double
+          nullable: true
+          description: Successes over total requests in the bucket.
+
+    TagStatsBucket:
+      type: object
+      required:
+        [
+          tag_key,
+          tag_value,
+          bucket,
+          audio_ms_total,
+          characters_total,
+          input_tokens_total,
+          cached_input_tokens_total,
+          output_tokens_total,
+          cost_micros_total,
+          request_count,
+          error_count,
+        ]
+      properties:
+        tag_key:
+          type: string
+          example: project
+        tag_value:
+          type: string
+          example: moderation
+        bucket:
+          type: string
+          format: date-time
+        audio_ms_total:
+          type: integer
+          format: int64
+        characters_total:
+          type: integer
+          format: int64
+        input_tokens_total:
+          type: integer
+          format: int64
+        cached_input_tokens_total:
+          type: integer
+          format: int64
+        output_tokens_total:
+          type: integer
+          format: int64
+        cost_micros_total:
+          type: integer
+          format: int64
+          description: Millionths of a dollar, priced from the configured rates.
+        request_count:
+          type: integer
+          format: int64
+        error_count:
+          type: integer
+          format: int64
+        latency_p50_ms:
+          type: number
+          format: double
+          nullable: true
+        latency_p95_ms:
+          type: number
+          format: double
+          nullable: true
+        uptime:
+          type: number
+          format: double
+          nullable: true
+
+    TurnStatsBucket:
+      type: object
+      required:
+        [agent_id, bucket, turn_count, interrupted_count, audio_out_ms_total]
+      properties:
+        agent_id:
+          type: string
+        bucket:
+          type: string
+          format: date-time
+        turn_count:
+          type: integer
+          format: int64
+        interrupted_count:
+          type: integer
+          format: int64
+          description: Turns a participant talked over before they finished.
+        audio_out_ms_total:
+          type: number
+          format: double
+          description: How much speech the agent published in the bucket.
+        stt_latency_p50_ms:
+          type: number
+          format: double
+          nullable: true
+        stt_latency_p95_ms:
+          type: number
+          format: double
+          nullable: true
+        llm_ttft_p50_ms:
+          type: number
+          format: double
+          nullable: true
+        llm_ttft_p95_ms:
+          type: number
+          format: double
+          nullable: true
+        tts_ttfb_p50_ms:
+          type: number
+          format: double
+          nullable: true
+        tts_ttfb_p95_ms:
+          type: number
+          format: double
+          nullable: true
+        roundtrip_p50_ms:
+          type: number
+          format: double
+          nullable: true
+          description: Settled transcript to first audio published.
+        roundtrip_p95_ms:
+          type: number
+          format: double
+          nullable: true
+        roundtrip_p99_ms:
+          type: number
+          format: double
+          nullable: true
+
+    PhoneVendor:
+      type: object
+      required: [vendor, implemented, ready, capabilities]
+      properties:
+        vendor:
+          type: string
+          example: twilio
+        implemented:
+          type: boolean
+          description: Whether this service can actually work with the vendor.
+        ready:
+          type: boolean
+          description: Implemented and holding every credential it needs.
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/PhoneCapability"
+        missing_credentials:
+          type: array
+          description: The environment variables the vendor needs and does not have.
+          items:
+            type: string
+
+    PhoneCapability:
+      type: string
+      enum: [voice, sms, mms, fax]
+
+    AvailableNumber:
+      type: object
+      required: [e164, country, capabilities]
+      properties:
+        e164:
+          type: string
+          example: "+15125551234"
+        country:
+          type: string
+        region:
+          type: string
+        locality:
+          type: string
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/PhoneCapability"
+        monthly_cost_micros:
+          type: integer
+          format: int64
+          description: Millionths of a dollar per month, zero when the vendor does not quote one.
+
+    PhoneNumber:
+      type: object
+      required: [e164, vendor, country, capabilities, monthly_cost_micros, purchased_at]
+      properties:
+        e164:
+          type: string
+        vendor:
+          type: string
+        country:
+          type: string
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/PhoneCapability"
+        monthly_cost_micros:
+          type: integer
+          format: int64
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+          description: The customer's own cost labels.
+        stream_trunk_id:
+          type: string
+          description: The SIP trunk calls to this number arrive on. Absent until attached.
+        purchased_at:
+          type: string
+          format: date-time
+        released_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    BuyNumberRequest:
+      type: object
+      required: [vendor, e164]
+      properties:
+        vendor:
+          type: string
+          example: twilio
+        e164:
+          type: string
+          example: "+15125551234"
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+          description: Cost labels carried onto the purchase's request row.
+
+    AttachNumberRequest:
+      type: object
+      properties:
+        call_id:
+          type: string
+          description: >
+            The call every caller joins. Omit to give each caller their own call,
+            named after the number they rang.
+        call_type:
+          type: string
+          description: The Stream call type. Omit for "default".
+        allowed_ips:
+          type: array
+          description: The vendor's signalling addresses, as IPs or CIDR blocks.
+          items:
+            type: string
+
+    AttachedNumber:
+      type: object
+      required: [trunk_id, route_id, sip_uri]
+      properties:
+        trunk_id:
+          type: string
+        route_id:
+          type: string
+        sip_uri:
+          type: string
+          description: Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com.
+
+    PlaceCallRequest:
+      type: object
+      required: [from, to]
+      properties:
+        from:
+          type: string
+          description: One of the customer's own numbers, which is what the person sees.
+        to:
+          type: string
+        sip_uri:
+          type: string
+          description: >
+            The trunk the answered call joins. Omit to have one created, which is
+            what a one-off call wants.
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+
+    PlacedCall:
+      type: object
+      required: [vendor_call_id, status]
+      properties:
+        vendor_call_id:
+          type: string
+        status:
+          type: string
+          description: The vendor's own word for where the call is, e.g. "queued".
+
+    RollupRequest:
+      type: object
+      required: [from, to]
+      properties:
+        granularity:
+          $ref: "#/components/schemas/Granularity"
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+
+    RollupResult:
+      type: object
+      required: [granularity, buckets_written]
+      properties:
+        granularity:
+          $ref: "#/components/schemas/Granularity"
+        buckets_written:
+          type: integer
+          format: int64
