@@ -14,6 +14,7 @@ members = [
     "vision-agents-plugins-anam",
     "vision-agents-plugins-anthropic",
     "vision-agents-plugins-assemblyai",
+    "vision-agents-plugins-atlascloud",
     "vision-agents-plugins-aws",
     "vision-agents-plugins-cartesia",
     "vision-agents-plugins-decart",
@@ -6442,6 +6443,9 @@ anthropic = [
 assemblyai = [
     { name = "vision-agents-plugins-assemblyai" },
 ]
+atlascloud = [
+    { name = "vision-agents-plugins-atlascloud" },
+]
 aws = [
     { name = "vision-agents-plugins-aws" },
 ]
@@ -6587,6 +6591,7 @@ requires-dist = [
     { name = "vision-agents-plugins-anam", marker = "extra == 'anam'", editable = "plugins/anam" },
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'anthropic'", editable = "plugins/anthropic" },
     { name = "vision-agents-plugins-assemblyai", marker = "extra == 'assemblyai'", editable = "plugins/assemblyai" },
+    { name = "vision-agents-plugins-atlascloud", marker = "extra == 'atlascloud'", editable = "plugins/atlascloud" },
     { name = "vision-agents-plugins-aws", marker = "extra == 'aws'", editable = "plugins/aws" },
     { name = "vision-agents-plugins-cartesia", marker = "extra == 'cartesia'", editable = "plugins/cartesia" },
     { name = "vision-agents-plugins-decart", marker = "extra == 'decart'", editable = "plugins/decart" },
@@ -6625,7 +6630,7 @@ requires-dist = [
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "atlascloud", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -6697,6 +6702,34 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-atlascloud"
+source = { editable = "plugins/atlascloud" }
+dependencies = [
+    { name = "openai" },
+    { name = "vision-agents" },
+    { name = "vision-agents-plugins-openai" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "openai", specifier = ">=2.26.0,<3" },
+    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
 ]
 
 [package.metadata.requires-dev]
