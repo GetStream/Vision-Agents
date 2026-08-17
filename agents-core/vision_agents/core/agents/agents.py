@@ -20,6 +20,7 @@ from opentelemetry.trace import Tracer, set_span_in_context
 from opentelemetry.trace.propagation import Context, Span
 
 from ..avatars import Avatar
+from ..base import Component
 from ..edge import Call, EdgeTransport
 from ..edge.events import (
     AudioReceivedEvent,
@@ -27,7 +28,7 @@ from ..edge.events import (
     TrackAddedEvent,
     TrackRemovedEvent,
 )
-from ..edge.types import Connection, Participant, TrackType, User
+from ..edge.types import Connection, MetadataValue, Participant, TrackType, User
 from ..events.manager import EventManager
 from ..instructions import Instructions
 from ..llm import events as llm_events
@@ -49,11 +50,10 @@ from ..tts.tts import TTS
 from ..turn_detection import TurnDetector
 from ..utils.audio_filter import AudioFilter, FirstSpeakerWinsFilter
 from ..utils.audio_queue import AudioQueue
+from ..utils.exceptions import log_exceptions
 from ..utils.logging import (
     CallContextToken,
 )
-from ..base import Component
-from ..utils.exceptions import log_exceptions
 from ..utils.utils import cancel_and_wait
 from ..utils.video_forwarder import VideoForwarder
 from ..utils.video_track import VideoFileTrack
@@ -78,6 +78,20 @@ logger = logging.getLogger(__name__)
 # (an AudioOutputChunk with final=True but no data). With no samples nothing is
 # resampled — write(..., final=True) only flushes the tail — so the rate is inert.
 _DRAIN_MARKER = PcmData(sample_rate=48000, format="s16", channels=1)
+
+# Metadata keys owned by components_metadata. Keys not describing a configured
+# component are set to None so the edge provider clears any stale value a
+# previous run of the same agent user wrote.
+_COMPONENT_METADATA_KEYS: tuple[str, ...] = (
+    "llm",
+    "vlm",
+    "realtime",
+    "stt",
+    "tts",
+    "turn_detection",
+    "avatar",
+    "processors",
+)
 
 tracer: Tracer = trace.get_tracer("agents")
 
@@ -841,10 +855,39 @@ class Agent:
                 return None
 
             with self.span("edge.authenticate"):
+                self.agent_user.custom = {
+                    **self.agent_user.custom,
+                    **dict.fromkeys(_COMPONENT_METADATA_KEYS),
+                    **self.components_metadata,
+                    **{"is_agent": True},
+                }
                 await self.edge.authenticate(self.agent_user)
                 self._agent_user_initialized = True
 
         return None
+
+    @property
+    def components_metadata(self) -> dict[str, MetadataValue]:
+        """Build the agent-user metadata describing its configured providers."""
+        category = (
+            "realtime"
+            if _is_realtime_llm(self.llm)
+            else "vlm"
+            if _is_video_llm(self.llm)
+            else "llm"
+        )
+        meta: dict[str, MetadataValue] = {category: _component_info(self.llm)}
+        if self.stt:
+            meta["stt"] = _component_info(self.stt)
+        if self.tts:
+            meta["tts"] = _component_info(self.tts)
+        if self.turn_detection:
+            meta["turn_detection"] = _component_info(self.turn_detection)
+        if self.avatar:
+            meta["avatar"] = _component_info(self.avatar)
+        if self.processors:
+            meta["processors"] = [_component_info(p) for p in self.processors]
+        return meta
 
     async def create_call(self, call_type: str, call_id: str) -> Call:
         """Create a call in the edge provider.
@@ -1319,6 +1362,34 @@ def _is_video_llm(llm: LLM | VideoLLM | AudioLLM) -> TypeGuard[VideoLLM]:
 
 def _is_realtime_llm(llm: LLM | AudioLLM | VideoLLM | Realtime) -> TypeGuard[Realtime]:
     return isinstance(llm, Realtime)
+
+
+def _component_info(component: Component) -> dict[str, MetadataValue]:
+    """
+    Get Component's info.
+
+    Args:
+        component: component to look up
+
+    Returns:
+        dict in format {"provider": <plugin name>, "model": <str | None>}
+    """
+    info: dict[str, MetadataValue] = {}
+
+    # Parse the package name to use as "provider"
+    parts = type(component).__module__.split(".")
+    if len(parts) >= 3 and parts[0] == "vision_agents" and parts[1] == "plugins":
+        provider = parts[2]
+    else:
+        provider = type(component).__name__
+
+    info["provider"] = provider
+
+    model = getattr(component, "model", None)
+    # Return "model" only if it's a string and not some object.
+    if model and isinstance(model, str):
+        info["model"] = model
+    return info
 
 
 class _AgentLoggerAdapter(logging.LoggerAdapter):

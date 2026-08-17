@@ -21,7 +21,7 @@ This example demonstrates how to build a real-time voice conversation AI using x
 
 ## Features
 
-- Real-time voice conversations with xAI's Grok model
+- Real-time speech-to-speech conversations with Grok Voice Think Fast 2.0
 - Server-side voice activity detection (VAD)
 - Multiple voice options (Ara, Rex, Sal, Eve, Leo)
 - **Web search** - enabled by default, search the web for current information
@@ -73,8 +73,24 @@ xAI provides 5 different voice options:
 To change the voice:
 
 ```python
-llm=xai.Realtime(voice="Rex")
+llm=xai.Realtime(voice="rex")
 ```
+
+## Model Selection
+
+The example pins `grok-voice-think-fast-2.0`, the current flagship
+speech-to-speech model:
+
+```python
+llm=xai.Realtime(
+    model="grok-voice-think-fast-2.0",
+    voice="ara",
+)
+```
+
+Use `model="grok-voice-latest"` to follow xAI's rolling alias automatically, or
+pin `model="grok-voice-think-fast-1.0"` to retain the previous-generation model.
+The rolling alias is scheduled to move from 1.0 to 2.0 on August 5, 2026.
 
 ## Search Tools
 
@@ -95,5 +111,5 @@ llm=xai.Realtime(
 
 ## Learn More
 
-- [xAI Voice Agent API Documentation](https://docs.x.ai/docs/guides/voice/agent)
+- [xAI Speech-to-Speech API Documentation](https://docs.x.ai/developers/model-capabilities/audio/speech-to-speech)
 - [Vision Agents Documentation](https://visionagents.ai/)

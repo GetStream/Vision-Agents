@@ -2,6 +2,19 @@
 
 ## New Features
 
+### `telnyx` plugin: LLM, STT and TTS (#620, #621, #622)
+
+The Telnyx plugin, until now a phone transport, also exposes `telnyx.LLM`,
+`telnyx.STT`, and `telnyx.TTS`, so a phone agent can run end to end on Telnyx.
+`telnyx.LLM` wraps Telnyx Inference's OpenAI-compatible Chat Completions
+endpoint and defaults to `meta-llama/Llama-3.3-70B-Instruct`. `telnyx.STT`
+streams `linear16` over WebSocket and takes a `sample_rate`, so telephony audio
+from `TelnyxMediaStream` can be transcribed at 8 kHz without an upsample; pick
+the engine with `transcription_engine`. `telnyx.TTS` streams MP3 over WebSocket
+and decodes to `PcmData` as it arrives. All three read `TELNYX_API_KEY` from the
+environment. See `plugins/telnyx/examples/voice_agent_call.py` for an inbound
+call answered by an all-Telnyx pipeline.
+
 ### `speechify` plugin: Speechify TTS
 
 Adds a new `speechify` plugin exposing `speechify.TTS`, backed by Speechify's streaming API. It streams raw PCM audio, defaults to the `simba-3.2` model with the `geffen_32` voice, and reads `SPEECHIFY_API_KEY` from the environment. Install with `vision-agents[speechify]`.
@@ -23,6 +36,10 @@ Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and
 The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). Sessions use the SDK's direct API-key path and default `video_quality="high"`; the plugin API is unchanged.
 
 ## Bug Fixes
+
+### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct` (#625)
+
+`nvidia/cosmos-reason2-8b` is no longer available on the NVIDIA Chat Completions API for typical API Catalog keys. The plugin default, README, and example now use `meta/llama-3.2-11b-vision-instruct`.
 
 ### `twelvelabs` plugin: asset ready wait and clip duration for Pegasus (#610)
 

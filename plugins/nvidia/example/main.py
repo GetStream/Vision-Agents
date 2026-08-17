@@ -29,7 +29,7 @@ load_dotenv()
 async def create_agent(**kwargs) -> Agent:
     """Create the agent with NVIDIA VLM."""
     llm = nvidia.VLM(
-        model="nvidia/cosmos-reason2-8b",
+        model="meta/llama-3.2-11b-vision-instruct",
         fps=1,
         frame_buffer_seconds=10,
     )

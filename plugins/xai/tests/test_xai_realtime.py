@@ -1,5 +1,6 @@
 import asyncio
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from dotenv import load_dotenv
@@ -16,7 +17,7 @@ class TestXAIRealtimeConfiguration:
     async def test_default_configuration(self):
         """Test that default configuration is set correctly."""
         realtime = Realtime(api_key="test-key")
-        assert realtime.model == "grok-voice-think-fast-1.0"
+        assert realtime.model == "grok-voice-think-fast-2.0"
         assert realtime.voice == "ara"
         # xAI realtime emits PCM at 24 kHz natively.
         assert realtime.sample_rate == 24000
@@ -75,6 +76,38 @@ class TestXAIRealtimeConfiguration:
         realtime = Realtime(api_key="test-key")
         realtime.set_instructions("You are a helpful assistant.")
         assert realtime._instructions == "You are a helpful assistant."
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "grok-voice-think-fast-2.0",
+            "grok-voice-latest",
+            "grok-voice-think-fast-1.0",
+        ],
+    )
+    async def test_model_is_sent_in_websocket_url(self, model):
+        """Test that pinned and rolling model IDs are sent when connecting."""
+        realtime = Realtime(api_key="test-key", model=model)
+        websocket = AsyncMock()
+        connection = MagicMock()
+        connection.__aenter__ = AsyncMock(return_value=websocket)
+        connection.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch(
+                "vision_agents.plugins.xai.xai_realtime.websockets.connect",
+                return_value=connection,
+            ) as connect,
+            patch.object(realtime, "_configure_session", new=AsyncMock()),
+            patch.object(realtime, "_start_processing_task", new=AsyncMock()),
+        ):
+            await realtime.connect()
+
+        connect.assert_called_once_with(
+            uri=f"wss://api.x.ai/v1/realtime?model={model}",
+            additional_headers={"Authorization": "Bearer test-key"},
+        )
+        await realtime.close()
 
 
 @pytest.mark.integration

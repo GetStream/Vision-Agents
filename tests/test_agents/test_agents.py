@@ -42,6 +42,8 @@ class DummyTurnDetector(TurnDetector):
 
 
 class DummyTTS(TTS):
+    model = "tts"
+
     async def stream_audio(self, *_, **__):
         return b""
 
@@ -49,6 +51,8 @@ class DummyTTS(TTS):
 
 
 class DummyLLM(LLM, Warmable[bool]):
+    model = "llm"
+
     def __init__(self):
         super(DummyLLM, self).__init__()
         self.warmed_up = False
@@ -403,6 +407,73 @@ class TestAgent:
 
         assert edge.last_custom_event == test_data
 
+    async def test_authenticate_attaches_agent_metadata(self):
+        """authenticate() records provider and model metadata on the agent user."""
+        llm = DummyLLM()
+        llm.model = "dummy-llm-model"
+        stt = DummySTT()
+        stt.model = "dummy-stt-model"
+
+        tts = DummyTTS()
+        tts.model = None
+
+        agent = Agent(
+            llm=llm,
+            stt=stt,
+            tts=tts,
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        await agent.authenticate()
+
+        custom = agent.agent_user.custom
+        assert custom["is_agent"] is True
+        assert custom["llm"] == {"provider": "DummyLLM", "model": "dummy-llm-model"}
+        assert custom["stt"] == {"provider": "DummySTT", "model": "dummy-stt-model"}
+        # No model set on the TTS -> provider only.
+        assert custom["tts"] == {"provider": "DummyTTS"}
+
+    async def test_authenticate_preserves_user_supplied_custom(self):
+        """Non-managed user custom keys survive; framework owns component metadata."""
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test", custom={"is_agent": False, "team": "red"}),
+        )
+
+        await agent.authenticate()
+
+        custom = agent.agent_user.custom
+        assert custom["is_agent"] is True
+        assert custom["team"] == "red"
+        assert custom["llm"] == {"provider": "DummyLLM", "model": "llm"}
+
+    async def test_authenticate_clears_stale_managed_custom(self):
+        """Stale component keys in agent_user.custom cannot override current metadata."""
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(
+                name="test",
+                custom={
+                    "stt": {"provider": "deepgram", "model": "flux-general-en"},
+                    "team": "red",
+                },
+            ),
+        )
+
+        await agent.authenticate()
+
+        custom = agent.agent_user.custom
+        assert custom["stt"] is None
+        assert custom["team"] == "red"
+        assert custom["llm"] == {"provider": "DummyLLM", "model": "llm"}
+        assert custom["tts"] == {"provider": "DummyTTS", "model": "tts"}
+        assert custom["is_agent"] is True
+
     async def test_send_metrics_event(self):
         """Test that metrics are sent as custom events."""
         edge = DummyEdge()
@@ -614,3 +685,36 @@ class TestAgent:
         )
         assert agent_with.publish_video is True
         assert agent_without.publish_video is False
+
+    async def test_agent_components_metadata_positive(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            avatar=DummyAvatar(),
+        )
+        assert agent.components_metadata == {
+            "llm": {"provider": "DummyLLM", "model": "llm"},
+            "tts": {"provider": "DummyTTS", "model": "tts"},
+            "avatar": {"provider": "DummyAvatar"},
+        }
+
+    async def test_agent_components_metadata_model_is_not_str(self):
+        class LLMWithModelObject(DummyLLM):
+            model = object()
+
+        agent = Agent(
+            llm=LLMWithModelObject(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            avatar=DummyAvatar(),
+        )
+        assert agent.components_metadata == {
+            "llm": {
+                "provider": "LLMWithModelObject",
+            },
+            "tts": {"provider": "DummyTTS", "model": "tts"},
+            "avatar": {"provider": "DummyAvatar"},
+        }

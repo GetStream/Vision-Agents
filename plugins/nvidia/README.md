@@ -33,7 +33,7 @@ export NVIDIA_API_KEY=your_nvidia_api_key
 from vision_agents.plugins import nvidia
 
 vlm = nvidia.VLM(
-    model="nvidia/cosmos-reason2-8b",
+    model="meta/llama-3.2-11b-vision-instruct",
     fps=1,
     frame_buffer_seconds=10,
 )
@@ -49,7 +49,7 @@ print(response.text)
 from vision_agents.plugins import nvidia
 
 vlm = nvidia.VLM(
-    model="nvidia/cosmos-reason2-8b",
+    model="meta/llama-3.2-11b-vision-instruct",
     api_key="your-api-key",
     fps=2,
     frame_buffer_seconds=15,
@@ -65,7 +65,7 @@ vlm = nvidia.VLM(
 
 | Parameter              | Description                                        | Default                      | Type          |
 |------------------------|----------------------------------------------------|------------------------------|---------------|
-| `model`                | NVIDIA model ID                                    | `"nvidia/cosmos-reason2-8b"` | str           |
+| `model`                | NVIDIA model ID                                    | `"meta/llama-3.2-11b-vision-instruct"` | str           |
 | `api_key`              | NVIDIA API token (or use `NVIDIA_API_KEY` env var) | `None`                       | Optional[str] |
 | `fps`                  | Frames per second to buffer                        | `1`                          | int           |
 | `frame_buffer_seconds` | Number of seconds to buffer                        | `10`                         | int           |
