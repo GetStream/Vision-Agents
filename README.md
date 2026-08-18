@@ -142,4 +142,4 @@ Want to add your platform or provider? See [Create Your Own Plugin](https://visi
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=GetStream/vision-agents&type=timeline&legend=top-left)](https://www.star-history.com/#GetStream/vision-agents&type=timeline&legend=top-left)
+[![Star History Chart](https://star-history.dera.page/svg?repos=GetStream/vision-agents&type=timeline&legend=top-left)](https://star-history.dera.page/#GetStream/vision-agents&type=timeline&legend=top-left)
