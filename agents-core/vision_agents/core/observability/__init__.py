@@ -32,6 +32,7 @@ from .metrics import (
     realtime_session_duration_ms,
     # Realtime LLM metrics
     realtime_sessions,
+    realtime_time_to_first_audio_ms,
     realtime_user_transcriptions,
     stt_audio_duration_ms,
     stt_errors,
@@ -42,6 +43,7 @@ from .metrics import (
     tts_errors,
     # TTS metrics
     tts_latency_ms,
+    tts_time_to_first_audio_ms,
     # Turn detection metrics
     turn_duration_ms,
     turn_trailing_silence_ms,
@@ -55,6 +57,7 @@ from .metrics import (
     vlm_inferences,
     vlm_input_tokens,
     vlm_output_tokens,
+    vlm_time_to_first_token_ms,
 )
 
 __all__ = [
@@ -68,6 +71,7 @@ __all__ = [
     "stt_errors",
     # TTS metrics
     "tts_latency_ms",
+    "tts_time_to_first_audio_ms",
     "tts_audio_duration_ms",
     "tts_characters",
     "tts_errors",
@@ -85,6 +89,7 @@ __all__ = [
     # Realtime LLM metrics
     "realtime_sessions",
     "realtime_session_duration_ms",
+    "realtime_time_to_first_audio_ms",
     "realtime_audio_input_bytes",
     "realtime_audio_output_bytes",
     "realtime_audio_input_duration_ms",
@@ -95,6 +100,7 @@ __all__ = [
     "realtime_errors",
     # VLM metrics
     "vlm_inference_latency_ms",
+    "vlm_time_to_first_token_ms",
     "vlm_inferences",
     "vlm_input_tokens",
     "vlm_output_tokens",

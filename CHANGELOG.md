@@ -2,6 +2,15 @@
 
 ## New Features
 
+### Call metrics summary and richer session latency tracking
+
+Session `AgentMetrics` now expose sample counts for every average (`*_ms__count`),
+error totals, turn counts, TTS time-to-first-audio, realtime time-to-first-audio
+and session duration, and VLM time-to-first-token. On agent close the framework
+emits a best-effort `call_metrics_summary` custom event (mode, call duration,
+providers, flat metrics) so clients can show a post-call summary. Periodic
+`agent_metrics` broadcasts are unchanged.
+
 ### `telnyx` plugin: LLM, STT and TTS (#620, #621, #622)
 
 The Telnyx plugin, until now a phone transport, also exposes `telnyx.LLM`,

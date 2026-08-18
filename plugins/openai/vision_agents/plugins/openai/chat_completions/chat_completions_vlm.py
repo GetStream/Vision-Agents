@@ -195,6 +195,7 @@ class ChatCompletionsVLM(VideoLLM):
             provider=self.provider_name,
             model=self.model,
             latency_ms=latency_ms,
+            time_to_first_token_ms=ttft_ms,
             frames_processed=frames_count,
         )
 

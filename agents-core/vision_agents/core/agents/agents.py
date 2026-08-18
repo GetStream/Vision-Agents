@@ -801,6 +801,9 @@ class Agent:
         if self.conversation is not None:
             await self.conversation.wait_for_pending_syncs()
 
+        # Emit final call metrics while the edge connection is still up.
+        await self._emit_call_metrics_summary()
+
         # Stop metrics broadcast task
         if self._metrics_broadcast_task:
             await cancel_and_wait(self._metrics_broadcast_task)
@@ -1296,6 +1299,49 @@ class Agent:
     @property
     def metrics(self) -> AgentMetrics:
         return self._collector.agent_metrics
+
+    def build_metrics_summary(self) -> dict[str, object]:
+        """Build a UI-friendly end-of-call metrics summary payload.
+
+        Returns:
+            A JSON-serializable dict with ``type``, ``mode``, ``call_duration_ms``,
+            ``providers``, and flat ``metrics``.
+        """
+        call_duration_ms: float | None = None
+        if self._joined_at:
+            call_duration_ms = (time.time() - self._joined_at) * 1000
+
+        providers: dict[str, str | None] = {}
+        if _is_realtime_llm(self.llm):
+            providers["realtime"] = self.llm.provider_name
+        else:
+            providers["llm"] = self.llm.provider_name
+        if self.stt is not None:
+            providers["stt"] = self.stt.provider_name
+        if self.tts is not None:
+            providers["tts"] = self.tts.provider_name
+        if self.turn_detection is not None:
+            providers["turn_detection"] = self.turn_detection.provider_name
+
+        return {
+            "type": "call_metrics_summary",
+            "mode": self.metrics.infer_mode(),
+            "call_duration_ms": call_duration_ms,
+            "providers": providers,
+            "metrics": self.metrics.to_dict(),
+        }
+
+    async def _emit_call_metrics_summary(self) -> None:
+        """Best-effort emit of the final call metrics summary custom event."""
+        if self._connection is None:
+            return
+        try:
+            await self.send_custom_event(self.build_metrics_summary())
+        except RuntimeError:
+            # Call already torn down on the edge — nothing to deliver to.
+            self.logger.debug("Skipping call_metrics_summary: not connected")
+        except Exception:
+            self.logger.exception("Failed to emit call_metrics_summary event")
 
     async def send_custom_event(self, data: dict) -> None:
         """Send a custom event to all participants watching the call.

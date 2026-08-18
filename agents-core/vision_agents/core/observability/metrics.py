@@ -63,7 +63,12 @@ stt_errors = meter.create_counter(
 tts_latency_ms = meter.create_histogram(
     "tts.latency.ms",
     unit="ms",
-    description="TTS synthesis latency",
+    description="TTS total synthesis latency (request to complete)",
+)
+tts_time_to_first_audio_ms = meter.create_histogram(
+    "tts.time_to_first_audio.ms",
+    unit="ms",
+    description="TTS time to first audio chunk",
 )
 tts_audio_duration_ms = meter.create_histogram(
     "tts.audio_duration.ms",
@@ -176,6 +181,11 @@ realtime_errors = meter.create_counter(
     "realtime.errors",
     description="Realtime LLM errors",
 )
+realtime_time_to_first_audio_ms = meter.create_histogram(
+    "realtime.time_to_first_audio.ms",
+    unit="ms",
+    description="Realtime time to first audio (speech end to first output)",
+)
 
 # =============================================================================
 # VLM / Vision Metrics
@@ -184,6 +194,11 @@ vlm_inference_latency_ms = meter.create_histogram(
     "vlm.inference.latency.ms",
     unit="ms",
     description="VLM inference latency",
+)
+vlm_time_to_first_token_ms = meter.create_histogram(
+    "vlm.time_to_first_token.ms",
+    unit="ms",
+    description="VLM time to first token (streaming)",
 )
 vlm_inferences = meter.create_counter(
     "vlm.inferences",

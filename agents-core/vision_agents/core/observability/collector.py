@@ -136,6 +136,8 @@ class MetricsCollector:
         error_code: str | None = None,
     ) -> None:
         """Record an LLM error."""
+        self.agent_metrics.llm_errors__total.inc(1)
+
         if self.parent is not None:
             self.parent.on_llm_error(
                 provider=provider, error_type=error_type, error_code=error_code
@@ -154,6 +156,62 @@ class MetricsCollector:
     # =========================================================================
     # Realtime LLM
     # =========================================================================
+
+    def on_realtime_session_started(self, *, provider: str | None = None) -> None:
+        """Record a realtime session start."""
+        if self.parent is not None:
+            self.parent.on_realtime_session_started(provider=provider)
+            return
+
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        metrics.realtime_sessions.add(1, attrs)
+
+    def on_realtime_session_ended(
+        self,
+        *,
+        provider: str | None = None,
+        duration_ms: float | None = None,
+    ) -> None:
+        """Record a realtime session end."""
+        if duration_ms is not None:
+            self.agent_metrics.realtime_session_duration_ms__avg.update(duration_ms)
+
+        if self.parent is not None:
+            self.parent.on_realtime_session_ended(
+                provider=provider, duration_ms=duration_ms
+            )
+            return
+
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        if duration_ms is not None:
+            metrics.realtime_session_duration_ms.record(duration_ms, attrs)
+
+    def on_realtime_time_to_first_audio(
+        self,
+        *,
+        provider: str | None = None,
+        time_to_first_audio_ms: float,
+    ) -> None:
+        """Record realtime time to first audio for a response."""
+        self.agent_metrics.realtime_time_to_first_audio_ms__avg.update(
+            time_to_first_audio_ms
+        )
+
+        if self.parent is not None:
+            self.parent.on_realtime_time_to_first_audio(
+                provider=provider,
+                time_to_first_audio_ms=time_to_first_audio_ms,
+            )
+            return
+
+        attrs: dict = {}
+        if provider:
+            attrs["provider"] = provider
+        metrics.realtime_time_to_first_audio_ms.record(time_to_first_audio_ms, attrs)
 
     def on_realtime_audio_input(
         self,
@@ -211,6 +269,8 @@ class MetricsCollector:
 
     def on_realtime_response_completed(self, *, provider: str | None = None) -> None:
         """Record a completed realtime response."""
+        self.agent_metrics.realtime_responses__total.inc(1)
+
         if self.parent is not None:
             self.parent.on_realtime_response_completed(provider=provider)
             return
@@ -255,6 +315,8 @@ class MetricsCollector:
         is_recoverable: bool = False,
     ) -> None:
         """Record a realtime LLM error."""
+        self.agent_metrics.realtime_errors__total.inc(1)
+
         if self.parent is not None:
             self.parent.on_realtime_error(
                 provider=provider,
@@ -322,6 +384,8 @@ class MetricsCollector:
         error_code: str | None = None,
     ) -> None:
         """Record an STT error."""
+        self.agent_metrics.stt_errors__total.inc(1)
+
         if self.parent is not None:
             self.parent.on_stt_error(
                 provider=provider, error_type=error_type, error_code=error_code
@@ -346,12 +410,17 @@ class MetricsCollector:
         *,
         provider: str | None = None,
         synthesis_time_ms: float | None = None,
+        time_to_first_audio_ms: float | None = None,
         audio_duration_ms: float | None = None,
         character_count: int | None = None,
     ) -> None:
         """Record a completed TTS synthesis."""
         if synthesis_time_ms is not None:
             self.agent_metrics.tts_latency_ms__avg.update(synthesis_time_ms)
+        if time_to_first_audio_ms is not None:
+            self.agent_metrics.tts_time_to_first_audio_ms__avg.update(
+                time_to_first_audio_ms
+            )
         if audio_duration_ms is not None:
             self.agent_metrics.tts_audio_duration_ms__total.inc(int(audio_duration_ms))
         if character_count is not None:
@@ -361,6 +430,7 @@ class MetricsCollector:
             self.parent.on_tts_synthesis(
                 provider=provider,
                 synthesis_time_ms=synthesis_time_ms,
+                time_to_first_audio_ms=time_to_first_audio_ms,
                 audio_duration_ms=audio_duration_ms,
                 character_count=character_count,
             )
@@ -371,6 +441,8 @@ class MetricsCollector:
             attrs["provider"] = provider
         if synthesis_time_ms is not None:
             metrics.tts_latency_ms.record(synthesis_time_ms, attrs)
+        if time_to_first_audio_ms is not None:
+            metrics.tts_time_to_first_audio_ms.record(time_to_first_audio_ms, attrs)
         if audio_duration_ms is not None:
             metrics.tts_audio_duration_ms.record(audio_duration_ms, attrs)
         if character_count is not None:
@@ -384,6 +456,8 @@ class MetricsCollector:
         error_code: str | None = None,
     ) -> None:
         """Record a TTS error."""
+        self.agent_metrics.tts_errors__total.inc(1)
+
         if self.parent is not None:
             self.parent.on_tts_error(
                 provider=provider, error_type=error_type, error_code=error_code
@@ -411,6 +485,7 @@ class MetricsCollector:
         trailing_silence_ms: float | None = None,
     ) -> None:
         """Record a completed conversational turn."""
+        self.agent_metrics.turns__total.inc(1)
         if duration_ms is not None:
             self.agent_metrics.turn_duration_ms__avg.update(duration_ms)
         if trailing_silence_ms is not None:
@@ -442,6 +517,7 @@ class MetricsCollector:
         provider: str | None = None,
         model: str | None = None,
         latency_ms: float | None = None,
+        time_to_first_token_ms: float | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         frames_processed: int = 0,
@@ -451,6 +527,10 @@ class MetricsCollector:
         self.agent_metrics.vlm_inferences__total.inc(1)
         if latency_ms is not None:
             self.agent_metrics.vlm_inference_latency_ms__avg.update(latency_ms)
+        if time_to_first_token_ms is not None:
+            self.agent_metrics.vlm_time_to_first_token_ms__avg.update(
+                time_to_first_token_ms
+            )
         if input_tokens is not None:
             self.agent_metrics.vlm_input_tokens__total.inc(input_tokens)
         if output_tokens is not None:
@@ -463,6 +543,7 @@ class MetricsCollector:
                 provider=provider,
                 model=model,
                 latency_ms=latency_ms,
+                time_to_first_token_ms=time_to_first_token_ms,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 frames_processed=frames_processed,
@@ -478,6 +559,8 @@ class MetricsCollector:
         metrics.vlm_inferences.add(1, attrs)
         if latency_ms is not None:
             metrics.vlm_inference_latency_ms.record(latency_ms, attrs)
+        if time_to_first_token_ms is not None:
+            metrics.vlm_time_to_first_token_ms.record(time_to_first_token_ms, attrs)
         if input_tokens is not None:
             metrics.vlm_input_tokens.add(input_tokens, attrs)
         if output_tokens is not None:
@@ -495,6 +578,8 @@ class MetricsCollector:
         error_code: str | None = None,
     ) -> None:
         """Record a VLM error."""
+        self.agent_metrics.vlm_errors__total.inc(1)
+
         if self.parent is not None:
             self.parent.on_vlm_error(
                 provider=provider, error_type=error_type, error_code=error_code

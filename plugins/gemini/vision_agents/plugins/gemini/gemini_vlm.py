@@ -202,6 +202,7 @@ class GeminiVLM(VideoLLM):
                 provider=self.provider_name,
                 model=self.model,
                 latency_ms=latency_ms,
+                time_to_first_token_ms=ttft_ms,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 frames_processed=frames_count,

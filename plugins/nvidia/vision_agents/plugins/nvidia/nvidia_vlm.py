@@ -316,6 +316,13 @@ class NvidiaVLM(VideoLLM):
                 if first_token_time is not None:
                     ttft_ms = (first_token_time - request_start_time) * 1000
 
+                self.metrics.on_vlm_inference(
+                    provider=self.provider_name,
+                    model=self.model,
+                    latency_ms=latency_ms,
+                    time_to_first_token_ms=ttft_ms,
+                )
+
                 yield LLMResponseFinal(
                     original=last_chunk_data,
                     text=total_text,

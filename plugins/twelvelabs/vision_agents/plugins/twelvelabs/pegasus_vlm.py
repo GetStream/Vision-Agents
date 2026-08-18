@@ -220,6 +220,7 @@ class PegasusVLM(llm.VideoLLM):
                 provider=self.provider_name,
                 model=self.model,
                 latency_ms=latency_ms,
+                time_to_first_token_ms=final_ttft_ms,
                 frames_processed=len(frames),
             )
 

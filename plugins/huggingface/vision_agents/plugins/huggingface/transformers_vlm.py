@@ -247,6 +247,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                     provider=self.provider_name,
                     model=self.model_id,
                     latency_ms=item.latency_ms,
+                    time_to_first_token_ms=item.time_to_first_token_ms,
                     input_tokens=item.input_tokens,
                     output_tokens=item.output_tokens,
                     frames_processed=len(frames_snapshot),
