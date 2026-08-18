@@ -28,11 +28,13 @@ const (
 	STT Modality = "stt"
 	TTS Modality = "tts"
 	LLM Modality = "llm"
-	// Memory and Phone are recorded but not routed: there is one memory store and one
-	// vendor per number, so there is nothing to choose between. They are modalities so
-	// what they cost shows up in the same reporting as the models.
-	Memory Modality = "memory"
-	Phone  Modality = "phone"
+	// Memory, Knowledge and Phone are recorded but not routed: there is one memory store,
+	// one knowledge base and one vendor per number, so there is nothing to choose
+	// between. They are modalities so what they cost shows up in the same reporting as
+	// the models.
+	Memory    Modality = "memory"
+	Knowledge Modality = "knowledge"
+	Phone     Modality = "phone"
 )
 
 // Tier separates models tuned for latency from models tuned for output quality. It is

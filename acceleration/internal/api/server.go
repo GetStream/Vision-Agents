@@ -15,9 +15,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -37,17 +40,33 @@ type Options struct {
 	Live    *live.Client
 	// Phone serves the telephony paths. Absent when the deployment has no vendors, in
 	// which case those paths say so rather than pretending numbers can be bought.
-	Phone  *phone.Service
-	Logger *slog.Logger
+	Phone *phone.Service
+	// Sessions runs conversations. Absent when the deployment only inspects routing, in
+	// which case the session paths report that there are none rather than 500ing.
+	Sessions *session.Manager
+	// Streams serves the per-modality sockets, for callers running their own pipeline.
+	// Absent when the deployment routes nothing itself.
+	Streams *Streams
+	// Transcripts reads back what was said on a call. Absent when the deployment has no
+	// chat credentials, in which case nothing was written down to read.
+	Transcripts *chatlog.Reader
+	// Campaigns rings lists of people. Absent without telephony or sessions, in which
+	// case a campaign can be written down but not run.
+	Campaigns *campaign.Runner
+	Logger    *slog.Logger
 }
 
 // Server implements the generated StrictServerInterface.
 type Server struct {
-	routers map[routing.Modality]routing.Inspector
-	store   *store.Store
-	live    *live.Client
-	phone   *phone.Service
-	logger  *slog.Logger
+	routers     map[routing.Modality]routing.Inspector
+	store       *store.Store
+	live        *live.Client
+	phone       *phone.Service
+	sessions    *session.Manager
+	streams     *Streams
+	transcripts *chatlog.Reader
+	campaigns   *campaign.Runner
+	logger      *slog.Logger
 }
 
 // NewServer wires the handlers.
@@ -66,17 +85,28 @@ func NewServer(options Options) (*Server, error) {
 		logger = slog.Default()
 	}
 	return &Server{
-		routers: options.Routers,
-		store:   options.Store,
-		live:    options.Live,
-		phone:   options.Phone,
-		logger:  logger,
+		routers:     options.Routers,
+		store:       options.Store,
+		live:        options.Live,
+		phone:       options.Phone,
+		sessions:    options.Sessions,
+		streams:     options.Streams,
+		transcripts: options.Transcripts,
+		campaigns:   options.Campaigns,
+		logger:      logger,
 	}, nil
 }
 
 // Handler returns the HTTP handler for the whole API.
+//
+// The two sockets are registered first, on a mux the generated routes are then added to.
+// They are excluded from generation because a strict server returns a response object and
+// an upgrade returns a connection, so there is nothing for it to hand back.
 func (s *Server) Handler() http.Handler {
-	return withCustomer(Handler(NewStrictHandler(s, nil)))
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
+	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
+	return withCustomer(HandlerFromMux(NewStrictHandler(s, nil), mux))
 }
 
 // withCustomer lifts the trusted customer header into the request context so handlers can

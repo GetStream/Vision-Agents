@@ -78,6 +78,17 @@ func (s Skills) Prompt() string {
 	return strings.TrimRight(prompt.String(), "\n")
 }
 
+// Normalize fills in what a skill left out. A skill with no deadline gets one: nothing the
+// caller is waiting through small talk for may run forever, and a zero deadline would
+// abandon the work before it started.
+func (s *Skills) Normalize() {
+	for index, skill := range s.Skills {
+		if skill.Deadline <= 0 {
+			s.Skills[index].Deadline = defaultDeadline
+		}
+	}
+}
+
 // Validate reports the first skill the harness could not use.
 func (s Skills) Validate() error {
 	seen := map[string]struct{}{}
@@ -130,11 +141,6 @@ func parseSkills(raw []byte) (Skills, error) {
 	if err := skills.Validate(); err != nil {
 		return Skills{}, err
 	}
-
-	for index, skill := range skills.Skills {
-		if skill.Deadline <= 0 {
-			skills.Skills[index].Deadline = defaultDeadline
-		}
-	}
+	skills.Normalize()
 	return skills, nil
 }

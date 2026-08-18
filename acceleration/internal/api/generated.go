@@ -24,6 +24,87 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for CallDirection.
+const (
+	Inbound  CallDirection = "inbound"
+	Outbound CallDirection = "outbound"
+)
+
+// Valid indicates whether the value is a known member of the CallDirection enum.
+func (e CallDirection) Valid() bool {
+	switch e {
+	case Inbound:
+		return true
+	case Outbound:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CampaignState.
+const (
+	Draft    CampaignState = "draft"
+	Finished CampaignState = "finished"
+	Paused   CampaignState = "paused"
+	Running  CampaignState = "running"
+)
+
+// Valid indicates whether the value is a known member of the CampaignState enum.
+func (e CampaignState) Valid() bool {
+	switch e {
+	case Draft:
+		return true
+	case Finished:
+		return true
+	case Paused:
+		return true
+	case Running:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ContactState.
+const (
+	Calling ContactState = "calling"
+	Done    ContactState = "done"
+	Failed  ContactState = "failed"
+	Pending ContactState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the ContactState enum.
+func (e ContactState) Valid() bool {
+	switch e {
+	case Calling:
+		return true
+	case Done:
+		return true
+	case Failed:
+		return true
+	case Pending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreateSessionRequestSandbox.
+const (
+	Daytona CreateSessionRequestSandbox = "daytona"
+)
+
+// Valid indicates whether the value is a known member of the CreateSessionRequestSandbox enum.
+func (e CreateSessionRequestSandbox) Valid() bool {
+	switch e {
+	case Daytona:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Granularity.
 const (
 	Daily  Granularity = "daily"
@@ -62,16 +143,19 @@ func (e HealthStatusStatus) Valid() bool {
 
 // Defines values for Modality.
 const (
-	Llm    Modality = "llm"
-	Memory Modality = "memory"
-	Phone  Modality = "phone"
-	Stt    Modality = "stt"
-	Tts    Modality = "tts"
+	Knowledge Modality = "knowledge"
+	Llm       Modality = "llm"
+	Memory    Modality = "memory"
+	Phone     Modality = "phone"
+	Stt       Modality = "stt"
+	Tts       Modality = "tts"
 )
 
 // Valid indicates whether the value is a known member of the Modality enum.
 func (e Modality) Valid() bool {
 	switch e {
+	case Knowledge:
+		return true
 	case Llm:
 		return true
 	case Memory:
@@ -111,6 +195,24 @@ func (e PhoneCapability) Valid() bool {
 	}
 }
 
+// Defines values for SessionState.
+const (
+	Ended SessionState = "ended"
+	Live  SessionState = "live"
+)
+
+// Valid indicates whether the value is a known member of the SessionState enum.
+func (e SessionState) Valid() bool {
+	switch e {
+	case Ended:
+		return true
+	case Live:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Tier.
 const (
 	HighQuality Tier = "high-quality"
@@ -127,6 +229,55 @@ func (e Tier) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// AgentConfig defines model for AgentConfig.
+type AgentConfig struct {
+	CreatedAt          time.Time          `json:"created_at"`
+	Greeting           *string            `json:"greeting,omitempty"`
+	Id                 string             `json:"id"`
+	Instructions       *string            `json:"instructions,omitempty"`
+	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
+	Llm                *string            `json:"llm,omitempty"`
+	Name               string             `json:"name"`
+	Skills             *[]string          `json:"skills,omitempty"`
+	Stt                *string            `json:"stt,omitempty"`
+	Subagent           *string            `json:"subagent,omitempty"`
+	Tags               *map[string]string `json:"tags,omitempty"`
+	Tts                *string            `json:"tts,omitempty"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	Voice              *string            `json:"voice,omitempty"`
+}
+
+// AgentConfigRequest defines model for AgentConfigRequest.
+type AgentConfigRequest struct {
+	Greeting     *string `json:"greeting,omitempty"`
+	Instructions *string `json:"instructions,omitempty"`
+
+	// KnowledgeNamespace What the agent may look things up in. Empty means it knows only what it was told.
+	KnowledgeNamespace *string `json:"knowledge_namespace,omitempty"`
+
+	// Llm The model holding the conversation.
+	Llm *string `json:"llm,omitempty"`
+
+	// Name What the config is called, which is unique among the customer's own.
+	Name string `json:"name"`
+
+	// Skills Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
+	Skills *[]string `json:"skills,omitempty"`
+
+	// Stt A provider/model or a capability shortcut. Empty leaves the default.
+	Stt *string `json:"stt,omitempty"`
+
+	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
+	Subagent *string `json:"subagent,omitempty"`
+
+	// Tags Cost labels, carried onto every request a session using it makes.
+	Tags *map[string]string `json:"tags,omitempty"`
+	Tts  *string            `json:"tts,omitempty"`
+
+	// Voice Provider-specific voice id.
+	Voice *string `json:"voice,omitempty"`
 }
 
 // AttachNumberRequest defines model for AttachNumberRequest.
@@ -176,12 +327,175 @@ type BuyNumberRequest struct {
 	Vendor string `json:"vendor"`
 }
 
+// Call defines model for Call.
+type Call struct {
+	// AgentId Which agent ran it, and where its transcript is kept.
+	AgentId    string        `json:"agent_id"`
+	CallId     string        `json:"call_id"`
+	CampaignId *string       `json:"campaign_id,omitempty"`
+	ConfigId   *string       `json:"config_id,omitempty"`
+	ContactId  *string       `json:"contact_id,omitempty"`
+	Direction  CallDirection `json:"direction"`
+
+	// EndedAt Absent while the call is still running.
+	EndedAt    *time.Time `json:"ended_at,omitempty"`
+	FromNumber *string    `json:"from_number,omitempty"`
+
+	// Id The session that ran the call, which is what it is held by.
+	Id          string  `json:"id"`
+	ReviewNotes *string `json:"review_notes,omitempty"`
+
+	// ReviewScore How well the agent handled it, from 1 to 5.
+	ReviewScore *int      `json:"review_score,omitempty"`
+	StartedAt   time.Time `json:"started_at"`
+
+	// Summary What a model made of the call, written once it was over.
+	Summary  *string            `json:"summary,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+	ToNumber *string            `json:"to_number,omitempty"`
+}
+
+// CallDirection defines model for Call.Direction.
+type CallDirection string
+
+// Campaign defines model for Campaign.
+type Campaign struct {
+	Concurrency int                `json:"concurrency"`
+	ConfigId    string             `json:"config_id"`
+	CreatedAt   time.Time          `json:"created_at"`
+	FinishedAt  *time.Time         `json:"finished_at,omitempty"`
+	FromNumber  string             `json:"from_number"`
+	Id          string             `json:"id"`
+	Name        string             `json:"name"`
+	StartedAt   *time.Time         `json:"started_at,omitempty"`
+	State       CampaignState      `json:"state"`
+	Tags        *map[string]string `json:"tags,omitempty"`
+}
+
+// CampaignState defines model for Campaign.State.
+type CampaignState string
+
+// CampaignRequest defines model for CampaignRequest.
+type CampaignRequest struct {
+	// Concurrency How many of these calls may be happening at once.
+	Concurrency *int `json:"concurrency,omitempty"`
+
+	// ConfigId The agent config the calls are made with.
+	ConfigId string `json:"config_id"`
+
+	// FromNumber One of your own numbers, which is what the person sees.
+	FromNumber string             `json:"from_number"`
+	Name       string             `json:"name"`
+	Tags       *map[string]string `json:"tags,omitempty"`
+}
+
 // Candidate defines model for Candidate.
 type Candidate struct {
 	Health   ProviderHealth `json:"health"`
 	Model    string         `json:"model"`
 	Provider string         `json:"provider"`
 }
+
+// Contact defines model for Contact.
+type Contact struct {
+	Attempts int `json:"attempts"`
+
+	// CallId The call this contact became, which is what the call paths take.
+	CallId *string `json:"call_id,omitempty"`
+
+	// Error Why they could not be rung, when they could not be.
+	Error        *string      `json:"error,omitempty"`
+	Id           string       `json:"id"`
+	Instructions *string      `json:"instructions,omitempty"`
+	State        ContactState `json:"state"`
+	ToNumber     string       `json:"to_number"`
+	VendorCallId *string      `json:"vendor_call_id,omitempty"`
+}
+
+// ContactState defines model for Contact.State.
+type ContactState string
+
+// ContactsRequest defines model for ContactsRequest.
+type ContactsRequest struct {
+	Contacts []struct {
+		// Instructions What to say to this person, added to whatever the config already says.
+		Instructions *string `json:"instructions,omitempty"`
+		ToNumber     string  `json:"to_number"`
+	} `json:"contacts"`
+}
+
+// CreateSessionRequest defines model for CreateSessionRequest.
+type CreateSessionRequest struct {
+	// AgentId Keys transcripts and statistics. Empty means the call id.
+	AgentId *string `json:"agent_id,omitempty"`
+
+	// Backchannel Murmur while a participant is still talking, the way a person does.
+	Backchannel *bool `json:"backchannel,omitempty"`
+
+	// CallId The call to join.
+	CallId   string  `json:"call_id"`
+	CallType *string `json:"call_type,omitempty"`
+
+	// ConfigId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
+	ConfigId *string `json:"config_id,omitempty"`
+
+	// Greeting Said on joining without going through the model. Empty means the agent waits to be spoken to.
+	Greeting     *string `json:"greeting,omitempty"`
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Languages Language hints, which narrow the candidates in every modality.
+	Languages *[]string `json:"languages,omitempty"`
+
+	// Llm A provider/model or a capability shortcut.
+	Llm       *string `json:"llm,omitempty"`
+	MaxTokens *int    `json:"max_tokens,omitempty"`
+
+	// Memory Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
+	Memory *SessionMemory `json:"memory,omitempty"`
+
+	// MinConfidence How sure the transcriber must be before the agent answers rather than checks what was meant.
+	MinConfidence *float64 `json:"min_confidence,omitempty"`
+
+	// Navigating The agent placed this call, so let recordings finish and answer their menus.
+	Navigating *bool `json:"navigating,omitempty"`
+
+	// Phone The number the session acts from, which is what turns transferring on.
+	Phone *SessionPhone `json:"phone,omitempty"`
+
+	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	Sandbox *CreateSessionRequestSandbox `json:"sandbox,omitempty"`
+
+	// SkillNames Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused rather than dropped.
+	SkillNames *[]string `json:"skill_names,omitempty"`
+
+	// Skills Omit for the built-in set of think, recall and explain.
+	Skills *[]SessionSkill `json:"skills,omitempty"`
+	Stt    *string         `json:"stt,omitempty"`
+
+	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
+	Subagent *string `json:"subagent,omitempty"`
+
+	// Tags Cost labels, carried onto every request the session makes.
+	Tags *map[string]string `json:"tags,omitempty"`
+
+	// Tasks How much delegated work may run at once.
+	Tasks *int `json:"tasks,omitempty"`
+
+	// ToolTimeoutMs How long the model waits for a tool result. Zero is the default.
+	ToolTimeoutMs *int           `json:"tool_timeout_ms,omitempty"`
+	Tools         *[]SessionTool `json:"tools,omitempty"`
+	Tts           *string        `json:"tts,omitempty"`
+
+	// UserId Who the agent joins the call as.
+	UserId   *string `json:"user_id,omitempty"`
+	UserName *string `json:"user_name,omitempty"`
+
+	// Voice Provider-specific voice id.
+	Voice *string `json:"voice,omitempty"`
+}
+
+// CreateSessionRequestSandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+type CreateSessionRequestSandbox string
 
 // Error defines model for Error.
 type Error struct {
@@ -203,7 +517,12 @@ type HealthStatus struct {
 // HealthStatusStatus defines model for HealthStatus.Status.
 type HealthStatusStatus string
 
-// Modality What kind of work was done. The first three are routed across providers. Memory and phone are recorded but not routed, since there is one memory store and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// InstructionsRequest defines model for InstructionsRequest.
+type InstructionsRequest struct {
+	Instructions string `json:"instructions"`
+}
+
+// Modality What kind of work was done. The first three are routed across providers. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 //
 // Example: tts
 type Modality string
@@ -313,6 +632,107 @@ type RollupResult struct {
 	Granularity    Granularity `json:"granularity"`
 }
 
+// SayRequest defines model for SayRequest.
+type SayRequest struct {
+	Text string `json:"text"`
+}
+
+// Session defines model for Session.
+type Session struct {
+	AgentId      string    `json:"agent_id"`
+	CallId       string    `json:"call_id"`
+	CallType     string    `json:"call_type"`
+	CreatedAt    time.Time `json:"created_at"`
+	Id           string    `json:"id"`
+	Instructions *string   `json:"instructions,omitempty"`
+
+	// Llm The provider and model answering, once routing has picked one.
+	Llm *string `json:"llm,omitempty"`
+
+	// State Whether the agent is still in the call.
+	State SessionState `json:"state"`
+
+	// Tts The provider and model speaking.
+	Tts    *string `json:"tts,omitempty"`
+	UserId string  `json:"user_id"`
+}
+
+// SessionMemory Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
+type SessionMemory struct {
+	// AppId Separates two deployments sharing one memory account.
+	AppId *string `json:"app_id,omitempty"`
+
+	// Filter The caller's own labels, which narrow recall further. They cannot widen it: a filter is applied alongside the user id, never instead of it.
+	Filter *map[string]string `json:"filter,omitempty"`
+
+	// UserId Who the memories belong to. Empty means the customer.
+	UserId *string `json:"user_id,omitempty"`
+}
+
+// SessionPhone The number the session acts from, which is what turns transferring on.
+type SessionPhone struct {
+	// Number One of the customer's own numbers, written as +15551234567.
+	Number string `json:"number"`
+
+	// Vendor Who carries an outbound leg.
+	Vendor *string `json:"vendor,omitempty"`
+
+	// VendorCallId The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
+	VendorCallId *string `json:"vendor_call_id,omitempty"`
+}
+
+// SessionSkill A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under.
+type SessionSkill struct {
+	// DeadlineMs How long the work may run before it is abandoned. Zero is the default.
+	DeadlineMs *int64 `json:"deadline_ms,omitempty"`
+
+	// Description The one line the fast model sees.
+	Description string `json:"description"`
+
+	// Instructions The full prompt, which only the subagent sees.
+	Instructions string `json:"instructions"`
+	Name         string `json:"name"`
+}
+
+// SessionState Whether the agent is still in the call.
+type SessionState string
+
+// SessionTool One of the caller's own functions. The model is offered it by name and description; running it is the caller's business, over the events socket.
+type SessionTool struct {
+	// Description What the model is told the tool does, which is the whole of how it decides when to reach for one.
+	Description string `json:"description"`
+	Name        string `json:"name"`
+
+	// Parameters A JSON Schema object describing the arguments.
+	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+}
+
+// Skill defines model for Skill.
+type Skill struct {
+	CreatedAt    time.Time `json:"created_at"`
+	DeadlineMs   *int64    `json:"deadline_ms,omitempty"`
+	Description  string    `json:"description"`
+	Id           string    `json:"id"`
+	Instructions string    `json:"instructions"`
+	Name         string    `json:"name"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// SkillRequest defines model for SkillRequest.
+type SkillRequest struct {
+	// DeadlineMs How long the work may run before it is abandoned. Zero is the default.
+	DeadlineMs *int64 `json:"deadline_ms,omitempty"`
+
+	// Description The one line the fast model sees.
+	Description string `json:"description"`
+
+	// Instructions The full prompt, which only the subagent sees.
+	Instructions string `json:"instructions"`
+
+	// Name How a config names it, which is unique among the customer's own.
+	Name string `json:"name"`
+}
+
 // StatsBucket defines model for StatsBucket.
 type StatsBucket struct {
 	// AudioMsTotal Billable audio, transcribed or produced.
@@ -371,6 +791,35 @@ type TagStatsBucket struct {
 // Tier What the model optimises for.
 type Tier string
 
+// TimelineEntry defines model for TimelineEntry.
+type TimelineEntry struct {
+	// AudioOutMs How much the agent spoke.
+	AudioOutMs *float64 `json:"audio_out_ms,omitempty"`
+
+	// Heard What the caller said, when it can be matched to this exchange.
+	Heard *string `json:"heard,omitempty"`
+
+	// Interrupted Whether the caller talked over the answer.
+	Interrupted *bool `json:"interrupted,omitempty"`
+
+	// RoundtripMs How long the caller waited between finishing and being answered.
+	RoundtripMs *float64 `json:"roundtrip_ms,omitempty"`
+
+	// Said What the agent answered.
+	Said      *string   `json:"said,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+	TurnId    string    `json:"turn_id"`
+}
+
+// TranscriptMessage defines model for TranscriptMessage.
+type TranscriptMessage struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// Speaker Who said it, the agent under its own user id.
+	Speaker string `json:"speaker"`
+	Text    string `json:"text"`
+}
+
 // TransferCallRequest defines model for TransferCallRequest.
 type TransferCallRequest struct {
 	// CallId The Stream call the caller and the agent are already on.
@@ -411,6 +860,12 @@ type TurnStatsBucket struct {
 	TurnCount       int64    `json:"turn_count"`
 }
 
+// ResourceID defines model for ResourceID.
+type ResourceID = string
+
+// SessionID defines model for SessionID.
+type SessionID = string
+
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
 
@@ -419,6 +874,25 @@ type NotFound = Error
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
+
+// ListCallsParams defines parameters for ListCalls.
+type ListCallsParams struct {
+	// AgentId Narrow to one agent.
+	AgentId *string `form:"agent_id,omitempty" json:"agent_id,omitempty"`
+
+	// CampaignId Narrow to the calls one campaign placed.
+	CampaignId *string `form:"campaign_id,omitempty" json:"campaign_id,omitempty"`
+
+	// Running Only calls that have not ended.
+	Running *bool `form:"running,omitempty" json:"running,omitempty"`
+
+	// From Only calls that started at or after this, inclusive.
+	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
+
+	// To Only calls that started before this, exclusive.
+	To    *time.Time `form:"to,omitempty" json:"to,omitempty"`
+	Limit *int       `form:"limit,omitempty" json:"limit,omitempty"`
+}
 
 // ListPhoneNumbersParams defines parameters for ListPhoneNumbers.
 type ListPhoneNumbersParams struct {
@@ -485,6 +959,36 @@ type GetTagStatsParams struct {
 	To time.Time `form:"to" json:"to"`
 }
 
+// CreateCampaignJSONRequestBody defines body for CreateCampaign for application/json ContentType.
+type CreateCampaignJSONRequestBody = CampaignRequest
+
+// AddCampaignContactsJSONRequestBody defines body for AddCampaignContacts for application/json ContentType.
+type AddCampaignContactsJSONRequestBody = ContactsRequest
+
+// CreateAgentConfigJSONRequestBody defines body for CreateAgentConfig for application/json ContentType.
+type CreateAgentConfigJSONRequestBody = AgentConfigRequest
+
+// UpdateAgentConfigJSONRequestBody defines body for UpdateAgentConfig for application/json ContentType.
+type UpdateAgentConfigJSONRequestBody = AgentConfigRequest
+
+// CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
+type CreateSessionJSONRequestBody = CreateSessionRequest
+
+// SetSessionInstructionsJSONRequestBody defines body for SetSessionInstructions for application/json ContentType.
+type SetSessionInstructionsJSONRequestBody = InstructionsRequest
+
+// RespondSessionJSONRequestBody defines body for RespondSession for application/json ContentType.
+type RespondSessionJSONRequestBody = SayRequest
+
+// SaySessionJSONRequestBody defines body for SaySession for application/json ContentType.
+type SaySessionJSONRequestBody = SayRequest
+
+// CreateSkillJSONRequestBody defines body for CreateSkill for application/json ContentType.
+type CreateSkillJSONRequestBody = SkillRequest
+
+// UpdateSkillJSONRequestBody defines body for UpdateSkill for application/json ContentType.
+type UpdateSkillJSONRequestBody = SkillRequest
+
 // PlacePhoneCallJSONRequestBody defines body for PlacePhoneCall for application/json ContentType.
 type PlacePhoneCallJSONRequestBody = PlaceCallRequest
 
@@ -508,6 +1012,93 @@ type ServerInterface interface {
 	// GetHealth Liveness and dependency check
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// ListCalls The calls the calling customer has run
+	// (GET /v1/agents/calls)
+	ListCalls(w http.ResponseWriter, r *http.Request, params ListCallsParams)
+	// GetCall One call, with whatever was made of it afterwards
+	// (GET /v1/agents/calls/{id})
+	GetCall(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// GetCallTimeline The call as it unfolded, said and measured together
+	// (GET /v1/agents/calls/{id}/timeline)
+	GetCallTimeline(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// GetCallTranscript What was said on a call
+	// (GET /v1/agents/calls/{id}/transcript)
+	GetCallTranscript(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// ListCampaigns The campaigns the calling customer has
+	// (GET /v1/agents/campaigns)
+	ListCampaigns(w http.ResponseWriter, r *http.Request)
+	// CreateCampaign Define a list of people to ring
+	// (POST /v1/agents/campaigns)
+	CreateCampaign(w http.ResponseWriter, r *http.Request)
+	// GetCampaign One campaign
+	// (GET /v1/agents/campaigns/{id})
+	GetCampaign(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// ListCampaignContacts Who a campaign is ringing, and how far it has got
+	// (GET /v1/agents/campaigns/{id}/contacts)
+	ListCampaignContacts(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// AddCampaignContacts Add people to ring
+	// (POST /v1/agents/campaigns/{id}/contacts)
+	AddCampaignContacts(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// PauseCampaign Stop ringing anybody new
+	// (POST /v1/agents/campaigns/{id}/pause)
+	PauseCampaign(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// StartCampaign Start ringing
+	// (POST /v1/agents/campaigns/{id}/start)
+	StartCampaign(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// ListAgentConfigs The agent configs the calling customer holds
+	// (GET /v1/agents/configs)
+	ListAgentConfigs(w http.ResponseWriter, r *http.Request)
+	// CreateAgentConfig Store a named configuration a session can be created from
+	// (POST /v1/agents/configs)
+	CreateAgentConfig(w http.ResponseWriter, r *http.Request)
+	// DeleteAgentConfig Delete an agent config
+	// (DELETE /v1/agents/configs/{id})
+	DeleteAgentConfig(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// GetAgentConfig One agent config
+	// (GET /v1/agents/configs/{id})
+	GetAgentConfig(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// UpdateAgentConfig Replace an agent config
+	// (PUT /v1/agents/configs/{id})
+	UpdateAgentConfig(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// ListSessions The sessions the calling customer is running
+	// (GET /v1/agents/sessions)
+	ListSessions(w http.ResponseWriter, r *http.Request)
+	// CreateSession Join a call as a voice agent
+	// (POST /v1/agents/sessions)
+	CreateSession(w http.ResponseWriter, r *http.Request)
+	// CloseSession Leave the call and end the session
+	// (DELETE /v1/agents/sessions/{id})
+	CloseSession(w http.ResponseWriter, r *http.Request, id SessionID)
+	// GetSession One session
+	// (GET /v1/agents/sessions/{id})
+	GetSession(w http.ResponseWriter, r *http.Request, id SessionID)
+	// SetSessionInstructions Change what the agent is told to be
+	// (PUT /v1/agents/sessions/{id}/instructions)
+	SetSessionInstructions(w http.ResponseWriter, r *http.Request, id SessionID)
+	// InterruptSession Abandon the reply being spoken
+	// (POST /v1/agents/sessions/{id}/interrupt)
+	InterruptSession(w http.ResponseWriter, r *http.Request, id SessionID)
+	// RespondSession Answer a piece of text through the model, as though it had been said
+	// (POST /v1/agents/sessions/{id}/respond)
+	RespondSession(w http.ResponseWriter, r *http.Request, id SessionID)
+	// SaySession Speak a piece of text without going through the model
+	// (POST /v1/agents/sessions/{id}/say)
+	SaySession(w http.ResponseWriter, r *http.Request, id SessionID)
+	// ListSkills The skills the calling customer has defined
+	// (GET /v1/agents/skills)
+	ListSkills(w http.ResponseWriter, r *http.Request)
+	// CreateSkill Define a kind of work worth handing to the slower model
+	// (POST /v1/agents/skills)
+	CreateSkill(w http.ResponseWriter, r *http.Request)
+	// DeleteSkill Delete a skill
+	// (DELETE /v1/agents/skills/{id})
+	DeleteSkill(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// GetSkill One skill
+	// (GET /v1/agents/skills/{id})
+	GetSkill(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// UpdateSkill Replace a skill
+	// (PUT /v1/agents/skills/{id})
+	UpdateSkill(w http.ResponseWriter, r *http.Request, id ResourceID)
 	// PlacePhoneCall Place an outbound call and bridge it into a Stream call
 	// (POST /v1/phone/calls)
 	PlacePhoneCall(w http.ResponseWriter, r *http.Request)
@@ -569,6 +1160,736 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCalls operation middleware
+func (siw *ServerInterfaceWrapper) ListCalls(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListCallsParams
+
+	// ------------- Optional query parameter "agent_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "agent_id", r.URL.Query(), &params.AgentId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "agent_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "agent_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "campaign_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "campaign_id", r.URL.Query(), &params.CampaignId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "campaign_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "campaign_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "running" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "running", r.URL.Query(), &params.Running, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "running"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "running", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCalls(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCall operation middleware
+func (siw *ServerInterfaceWrapper) GetCall(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCall(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCallTimeline operation middleware
+func (siw *ServerInterfaceWrapper) GetCallTimeline(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCallTimeline(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCallTranscript operation middleware
+func (siw *ServerInterfaceWrapper) GetCallTranscript(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCallTranscript(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCampaigns operation middleware
+func (siw *ServerInterfaceWrapper) ListCampaigns(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCampaigns(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateCampaign operation middleware
+func (siw *ServerInterfaceWrapper) CreateCampaign(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateCampaign(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCampaign operation middleware
+func (siw *ServerInterfaceWrapper) GetCampaign(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCampaign(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCampaignContacts operation middleware
+func (siw *ServerInterfaceWrapper) ListCampaignContacts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCampaignContacts(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddCampaignContacts operation middleware
+func (siw *ServerInterfaceWrapper) AddCampaignContacts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddCampaignContacts(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PauseCampaign operation middleware
+func (siw *ServerInterfaceWrapper) PauseCampaign(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PauseCampaign(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartCampaign operation middleware
+func (siw *ServerInterfaceWrapper) StartCampaign(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartCampaign(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAgentConfigs operation middleware
+func (siw *ServerInterfaceWrapper) ListAgentConfigs(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAgentConfigs(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAgentConfig operation middleware
+func (siw *ServerInterfaceWrapper) CreateAgentConfig(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAgentConfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAgentConfig operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAgentConfig(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAgentConfig(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAgentConfig operation middleware
+func (siw *ServerInterfaceWrapper) GetAgentConfig(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAgentConfig(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateAgentConfig operation middleware
+func (siw *ServerInterfaceWrapper) UpdateAgentConfig(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateAgentConfig(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListSessions operation middleware
+func (siw *ServerInterfaceWrapper) ListSessions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSessions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSession operation middleware
+func (siw *ServerInterfaceWrapper) CreateSession(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSession(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CloseSession operation middleware
+func (siw *ServerInterfaceWrapper) CloseSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SessionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CloseSession(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSession operation middleware
+func (siw *ServerInterfaceWrapper) GetSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SessionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSession(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetSessionInstructions operation middleware
+func (siw *ServerInterfaceWrapper) SetSessionInstructions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SessionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetSessionInstructions(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// InterruptSession operation middleware
+func (siw *ServerInterfaceWrapper) InterruptSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SessionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.InterruptSession(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RespondSession operation middleware
+func (siw *ServerInterfaceWrapper) RespondSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SessionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RespondSession(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaySession operation middleware
+func (siw *ServerInterfaceWrapper) SaySession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id SessionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaySession(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListSkills operation middleware
+func (siw *ServerInterfaceWrapper) ListSkills(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSkills(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSkill operation middleware
+func (siw *ServerInterfaceWrapper) CreateSkill(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSkill(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSkill operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSkill(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSkill(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSkill operation middleware
+func (siw *ServerInterfaceWrapper) GetSkill(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSkill(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateSkill operation middleware
+func (siw *ServerInterfaceWrapper) UpdateSkill(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateSkill(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1290,6 +2611,35 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/phone/calls", wrapper.PlacePhoneCall)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/phone/calls/transfer", wrapper.TransferPhoneCall)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/phone/calls/{vendor_call_id}/digits", wrapper.PressPhoneDigits)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/configs", wrapper.ListAgentConfigs)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents/configs", wrapper.CreateAgentConfig)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/agents/configs/{id}", wrapper.DeleteAgentConfig)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/configs/{id}", wrapper.GetAgentConfig)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/agents/configs/{id}", wrapper.UpdateAgentConfig)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/skills", wrapper.ListSkills)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents/skills", wrapper.CreateSkill)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/agents/skills/{id}", wrapper.DeleteSkill)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/skills/{id}", wrapper.GetSkill)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/agents/skills/{id}", wrapper.UpdateSkill)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/campaigns", wrapper.ListCampaigns)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents/campaigns", wrapper.CreateCampaign)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/campaigns/{id}", wrapper.GetCampaign)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/campaigns/{id}/contacts", wrapper.ListCampaignContacts)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents/campaigns/{id}/contacts", wrapper.AddCampaignContacts)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents/campaigns/{id}/start", wrapper.StartCampaign)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents/campaigns/{id}/pause", wrapper.PauseCampaign)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/calls", wrapper.ListCalls)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/calls/{id}", wrapper.GetCall)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/calls/{id}/transcript", wrapper.GetCallTranscript)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/calls/{id}/timeline", wrapper.GetCallTimeline)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/sessions", wrapper.ListSessions)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents/sessions", wrapper.CreateSession)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/agents/sessions/{id}", wrapper.CloseSession)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/agents/sessions/{id}", wrapper.GetSession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents/sessions/{id}/say", wrapper.SaySession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents/sessions/{id}/respond", wrapper.RespondSession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/agents/sessions/{id}/interrupt", wrapper.InterruptSession)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/agents/sessions/{id}/instructions", wrapper.SetSessionInstructions)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/stats/rollup", wrapper.RunRollup)
 
 	return m
@@ -1332,6 +2682,1654 @@ func (response GetHealth503JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCallsRequestObject struct {
+	Params ListCallsParams
+}
+
+type ListCallsResponseObject interface {
+	VisitListCallsResponse(w http.ResponseWriter) error
+}
+
+type ListCalls200JSONResponse []Call
+
+func (response ListCalls200JSONResponse) VisitListCallsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCalls400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response ListCalls400JSONResponse) VisitListCallsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCalls401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListCalls401JSONResponse) VisitListCallsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCallRequestObject struct {
+	Id ResourceID `json:"id"`
+}
+
+type GetCallResponseObject interface {
+	VisitGetCallResponse(w http.ResponseWriter) error
+}
+
+type GetCall200JSONResponse Call
+
+func (response GetCall200JSONResponse) VisitGetCallResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCall400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetCall400JSONResponse) VisitGetCallResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCall401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetCall401JSONResponse) VisitGetCallResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCall404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetCall404JSONResponse) VisitGetCallResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCallTimelineRequestObject struct {
+	Id ResourceID `json:"id"`
+}
+
+type GetCallTimelineResponseObject interface {
+	VisitGetCallTimelineResponse(w http.ResponseWriter) error
+}
+
+type GetCallTimeline200JSONResponse []TimelineEntry
+
+func (response GetCallTimeline200JSONResponse) VisitGetCallTimelineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCallTimeline400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetCallTimeline400JSONResponse) VisitGetCallTimelineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCallTimeline401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetCallTimeline401JSONResponse) VisitGetCallTimelineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCallTimeline404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetCallTimeline404JSONResponse) VisitGetCallTimelineResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCallTranscriptRequestObject struct {
+	Id ResourceID `json:"id"`
+}
+
+type GetCallTranscriptResponseObject interface {
+	VisitGetCallTranscriptResponse(w http.ResponseWriter) error
+}
+
+type GetCallTranscript200JSONResponse []TranscriptMessage
+
+func (response GetCallTranscript200JSONResponse) VisitGetCallTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCallTranscript400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetCallTranscript400JSONResponse) VisitGetCallTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCallTranscript401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetCallTranscript401JSONResponse) VisitGetCallTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCallTranscript404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetCallTranscript404JSONResponse) VisitGetCallTranscriptResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCampaignsRequestObject struct {
+}
+
+type ListCampaignsResponseObject interface {
+	VisitListCampaignsResponse(w http.ResponseWriter) error
+}
+
+type ListCampaigns200JSONResponse []Campaign
+
+func (response ListCampaigns200JSONResponse) VisitListCampaignsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCampaigns400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response ListCampaigns400JSONResponse) VisitListCampaignsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCampaigns401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListCampaigns401JSONResponse) VisitListCampaignsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCampaignRequestObject struct {
+	Body *CreateCampaignJSONRequestBody
+}
+
+type CreateCampaignResponseObject interface {
+	VisitCreateCampaignResponse(w http.ResponseWriter) error
+}
+
+type CreateCampaign201JSONResponse Campaign
+
+func (response CreateCampaign201JSONResponse) VisitCreateCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCampaign400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateCampaign400JSONResponse) VisitCreateCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCampaign401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreateCampaign401JSONResponse) VisitCreateCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCampaignRequestObject struct {
+	Id ResourceID `json:"id"`
+}
+
+type GetCampaignResponseObject interface {
+	VisitGetCampaignResponse(w http.ResponseWriter) error
+}
+
+type GetCampaign200JSONResponse Campaign
+
+func (response GetCampaign200JSONResponse) VisitGetCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCampaign400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetCampaign400JSONResponse) VisitGetCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCampaign401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetCampaign401JSONResponse) VisitGetCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCampaign404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetCampaign404JSONResponse) VisitGetCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCampaignContactsRequestObject struct {
+	Id ResourceID `json:"id"`
+}
+
+type ListCampaignContactsResponseObject interface {
+	VisitListCampaignContactsResponse(w http.ResponseWriter) error
+}
+
+type ListCampaignContacts200JSONResponse []Contact
+
+func (response ListCampaignContacts200JSONResponse) VisitListCampaignContactsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCampaignContacts400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response ListCampaignContacts400JSONResponse) VisitListCampaignContactsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCampaignContacts401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListCampaignContacts401JSONResponse) VisitListCampaignContactsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCampaignContacts404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response ListCampaignContacts404JSONResponse) VisitListCampaignContactsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddCampaignContactsRequestObject struct {
+	Id   ResourceID `json:"id"`
+	Body *AddCampaignContactsJSONRequestBody
+}
+
+type AddCampaignContactsResponseObject interface {
+	VisitAddCampaignContactsResponse(w http.ResponseWriter) error
+}
+
+type AddCampaignContacts201JSONResponse []Contact
+
+func (response AddCampaignContacts201JSONResponse) VisitAddCampaignContactsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddCampaignContacts400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response AddCampaignContacts400JSONResponse) VisitAddCampaignContactsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddCampaignContacts401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response AddCampaignContacts401JSONResponse) VisitAddCampaignContactsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddCampaignContacts404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response AddCampaignContacts404JSONResponse) VisitAddCampaignContactsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PauseCampaignRequestObject struct {
+	Id ResourceID `json:"id"`
+}
+
+type PauseCampaignResponseObject interface {
+	VisitPauseCampaignResponse(w http.ResponseWriter) error
+}
+
+type PauseCampaign200JSONResponse Campaign
+
+func (response PauseCampaign200JSONResponse) VisitPauseCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PauseCampaign400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PauseCampaign400JSONResponse) VisitPauseCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PauseCampaign401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PauseCampaign401JSONResponse) VisitPauseCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PauseCampaign404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PauseCampaign404JSONResponse) VisitPauseCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartCampaignRequestObject struct {
+	Id ResourceID `json:"id"`
+}
+
+type StartCampaignResponseObject interface {
+	VisitStartCampaignResponse(w http.ResponseWriter) error
+}
+
+type StartCampaign202JSONResponse Campaign
+
+func (response StartCampaign202JSONResponse) VisitStartCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartCampaign400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response StartCampaign400JSONResponse) VisitStartCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartCampaign401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response StartCampaign401JSONResponse) VisitStartCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartCampaign404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response StartCampaign404JSONResponse) VisitStartCampaignResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAgentConfigsRequestObject struct {
+}
+
+type ListAgentConfigsResponseObject interface {
+	VisitListAgentConfigsResponse(w http.ResponseWriter) error
+}
+
+type ListAgentConfigs200JSONResponse []AgentConfig
+
+func (response ListAgentConfigs200JSONResponse) VisitListAgentConfigsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAgentConfigs400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response ListAgentConfigs400JSONResponse) VisitListAgentConfigsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAgentConfigs401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListAgentConfigs401JSONResponse) VisitListAgentConfigsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAgentConfigRequestObject struct {
+	Body *CreateAgentConfigJSONRequestBody
+}
+
+type CreateAgentConfigResponseObject interface {
+	VisitCreateAgentConfigResponse(w http.ResponseWriter) error
+}
+
+type CreateAgentConfig201JSONResponse AgentConfig
+
+func (response CreateAgentConfig201JSONResponse) VisitCreateAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAgentConfig400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateAgentConfig400JSONResponse) VisitCreateAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAgentConfig401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreateAgentConfig401JSONResponse) VisitCreateAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAgentConfigRequestObject struct {
+	Id ResourceID `json:"id"`
+}
+
+type DeleteAgentConfigResponseObject interface {
+	VisitDeleteAgentConfigResponse(w http.ResponseWriter) error
+}
+
+type DeleteAgentConfig204Response struct {
+}
+
+func (response DeleteAgentConfig204Response) VisitDeleteAgentConfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteAgentConfig400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteAgentConfig400JSONResponse) VisitDeleteAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAgentConfig401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteAgentConfig401JSONResponse) VisitDeleteAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAgentConfig404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteAgentConfig404JSONResponse) VisitDeleteAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAgentConfigRequestObject struct {
+	Id ResourceID `json:"id"`
+}
+
+type GetAgentConfigResponseObject interface {
+	VisitGetAgentConfigResponse(w http.ResponseWriter) error
+}
+
+type GetAgentConfig200JSONResponse AgentConfig
+
+func (response GetAgentConfig200JSONResponse) VisitGetAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAgentConfig400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetAgentConfig400JSONResponse) VisitGetAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAgentConfig401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetAgentConfig401JSONResponse) VisitGetAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAgentConfig404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetAgentConfig404JSONResponse) VisitGetAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAgentConfigRequestObject struct {
+	Id   ResourceID `json:"id"`
+	Body *UpdateAgentConfigJSONRequestBody
+}
+
+type UpdateAgentConfigResponseObject interface {
+	VisitUpdateAgentConfigResponse(w http.ResponseWriter) error
+}
+
+type UpdateAgentConfig200JSONResponse AgentConfig
+
+func (response UpdateAgentConfig200JSONResponse) VisitUpdateAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAgentConfig400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response UpdateAgentConfig400JSONResponse) VisitUpdateAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAgentConfig401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response UpdateAgentConfig401JSONResponse) VisitUpdateAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAgentConfig404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response UpdateAgentConfig404JSONResponse) VisitUpdateAgentConfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSessionsRequestObject struct {
+}
+
+type ListSessionsResponseObject interface {
+	VisitListSessionsResponse(w http.ResponseWriter) error
+}
+
+type ListSessions200JSONResponse []Session
+
+func (response ListSessions200JSONResponse) VisitListSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSessions401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListSessions401JSONResponse) VisitListSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSessionRequestObject struct {
+	Body *CreateSessionJSONRequestBody
+}
+
+type CreateSessionResponseObject interface {
+	VisitCreateSessionResponse(w http.ResponseWriter) error
+}
+
+type CreateSession201JSONResponse Session
+
+func (response CreateSession201JSONResponse) VisitCreateSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSession400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateSession400JSONResponse) VisitCreateSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSession401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreateSession401JSONResponse) VisitCreateSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSession404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response CreateSession404JSONResponse) VisitCreateSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseSessionRequestObject struct {
+	Id SessionID `json:"id"`
+}
+
+type CloseSessionResponseObject interface {
+	VisitCloseSessionResponse(w http.ResponseWriter) error
+}
+
+type CloseSession204Response struct {
+}
+
+func (response CloseSession204Response) VisitCloseSessionResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type CloseSession401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CloseSession401JSONResponse) VisitCloseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseSession404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response CloseSession404JSONResponse) VisitCloseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSessionRequestObject struct {
+	Id SessionID `json:"id"`
+}
+
+type GetSessionResponseObject interface {
+	VisitGetSessionResponse(w http.ResponseWriter) error
+}
+
+type GetSession200JSONResponse Session
+
+func (response GetSession200JSONResponse) VisitGetSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSession401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetSession401JSONResponse) VisitGetSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSession404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetSession404JSONResponse) VisitGetSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSessionInstructionsRequestObject struct {
+	Id   SessionID `json:"id"`
+	Body *SetSessionInstructionsJSONRequestBody
+}
+
+type SetSessionInstructionsResponseObject interface {
+	VisitSetSessionInstructionsResponse(w http.ResponseWriter) error
+}
+
+type SetSessionInstructions204Response struct {
+}
+
+func (response SetSessionInstructions204Response) VisitSetSessionInstructionsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type SetSessionInstructions400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response SetSessionInstructions400JSONResponse) VisitSetSessionInstructionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSessionInstructions401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response SetSessionInstructions401JSONResponse) VisitSetSessionInstructionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSessionInstructions404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response SetSessionInstructions404JSONResponse) VisitSetSessionInstructionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InterruptSessionRequestObject struct {
+	Id SessionID `json:"id"`
+}
+
+type InterruptSessionResponseObject interface {
+	VisitInterruptSessionResponse(w http.ResponseWriter) error
+}
+
+type InterruptSession204Response struct {
+}
+
+func (response InterruptSession204Response) VisitInterruptSessionResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type InterruptSession401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response InterruptSession401JSONResponse) VisitInterruptSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type InterruptSession404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response InterruptSession404JSONResponse) VisitInterruptSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RespondSessionRequestObject struct {
+	Id   SessionID `json:"id"`
+	Body *RespondSessionJSONRequestBody
+}
+
+type RespondSessionResponseObject interface {
+	VisitRespondSessionResponse(w http.ResponseWriter) error
+}
+
+type RespondSession204Response struct {
+}
+
+func (response RespondSession204Response) VisitRespondSessionResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RespondSession400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response RespondSession400JSONResponse) VisitRespondSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RespondSession401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response RespondSession401JSONResponse) VisitRespondSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RespondSession404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response RespondSession404JSONResponse) VisitRespondSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaySessionRequestObject struct {
+	Id   SessionID `json:"id"`
+	Body *SaySessionJSONRequestBody
+}
+
+type SaySessionResponseObject interface {
+	VisitSaySessionResponse(w http.ResponseWriter) error
+}
+
+type SaySession204Response struct {
+}
+
+func (response SaySession204Response) VisitSaySessionResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type SaySession400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response SaySession400JSONResponse) VisitSaySessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaySession401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response SaySession401JSONResponse) VisitSaySessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaySession404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response SaySession404JSONResponse) VisitSaySessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSkillsRequestObject struct {
+}
+
+type ListSkillsResponseObject interface {
+	VisitListSkillsResponse(w http.ResponseWriter) error
+}
+
+type ListSkills200JSONResponse []Skill
+
+func (response ListSkills200JSONResponse) VisitListSkillsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSkills400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response ListSkills400JSONResponse) VisitListSkillsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSkills401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response ListSkills401JSONResponse) VisitListSkillsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSkillRequestObject struct {
+	Body *CreateSkillJSONRequestBody
+}
+
+type CreateSkillResponseObject interface {
+	VisitCreateSkillResponse(w http.ResponseWriter) error
+}
+
+type CreateSkill201JSONResponse Skill
+
+func (response CreateSkill201JSONResponse) VisitCreateSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSkill400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateSkill400JSONResponse) VisitCreateSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSkill401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response CreateSkill401JSONResponse) VisitCreateSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteSkillRequestObject struct {
+	Id ResourceID `json:"id"`
+}
+
+type DeleteSkillResponseObject interface {
+	VisitDeleteSkillResponse(w http.ResponseWriter) error
+}
+
+type DeleteSkill204Response struct {
+}
+
+func (response DeleteSkill204Response) VisitDeleteSkillResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteSkill400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteSkill400JSONResponse) VisitDeleteSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteSkill401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteSkill401JSONResponse) VisitDeleteSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteSkill404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteSkill404JSONResponse) VisitDeleteSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSkillRequestObject struct {
+	Id ResourceID `json:"id"`
+}
+
+type GetSkillResponseObject interface {
+	VisitGetSkillResponse(w http.ResponseWriter) error
+}
+
+type GetSkill200JSONResponse Skill
+
+func (response GetSkill200JSONResponse) VisitGetSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSkill400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetSkill400JSONResponse) VisitGetSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSkill401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetSkill401JSONResponse) VisitGetSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSkill404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetSkill404JSONResponse) VisitGetSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSkillRequestObject struct {
+	Id   ResourceID `json:"id"`
+	Body *UpdateSkillJSONRequestBody
+}
+
+type UpdateSkillResponseObject interface {
+	VisitUpdateSkillResponse(w http.ResponseWriter) error
+}
+
+type UpdateSkill200JSONResponse Skill
+
+func (response UpdateSkill200JSONResponse) VisitUpdateSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSkill400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response UpdateSkill400JSONResponse) VisitUpdateSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSkill401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response UpdateSkill401JSONResponse) VisitUpdateSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSkill404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response UpdateSkill404JSONResponse) VisitUpdateSkillResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -2196,6 +5194,93 @@ type StrictServerInterface interface {
 	// GetHealth Liveness and dependency check
 	// (GET /health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
+	// ListCalls The calls the calling customer has run
+	// (GET /v1/agents/calls)
+	ListCalls(ctx context.Context, request ListCallsRequestObject) (ListCallsResponseObject, error)
+	// GetCall One call, with whatever was made of it afterwards
+	// (GET /v1/agents/calls/{id})
+	GetCall(ctx context.Context, request GetCallRequestObject) (GetCallResponseObject, error)
+	// GetCallTimeline The call as it unfolded, said and measured together
+	// (GET /v1/agents/calls/{id}/timeline)
+	GetCallTimeline(ctx context.Context, request GetCallTimelineRequestObject) (GetCallTimelineResponseObject, error)
+	// GetCallTranscript What was said on a call
+	// (GET /v1/agents/calls/{id}/transcript)
+	GetCallTranscript(ctx context.Context, request GetCallTranscriptRequestObject) (GetCallTranscriptResponseObject, error)
+	// ListCampaigns The campaigns the calling customer has
+	// (GET /v1/agents/campaigns)
+	ListCampaigns(ctx context.Context, request ListCampaignsRequestObject) (ListCampaignsResponseObject, error)
+	// CreateCampaign Define a list of people to ring
+	// (POST /v1/agents/campaigns)
+	CreateCampaign(ctx context.Context, request CreateCampaignRequestObject) (CreateCampaignResponseObject, error)
+	// GetCampaign One campaign
+	// (GET /v1/agents/campaigns/{id})
+	GetCampaign(ctx context.Context, request GetCampaignRequestObject) (GetCampaignResponseObject, error)
+	// ListCampaignContacts Who a campaign is ringing, and how far it has got
+	// (GET /v1/agents/campaigns/{id}/contacts)
+	ListCampaignContacts(ctx context.Context, request ListCampaignContactsRequestObject) (ListCampaignContactsResponseObject, error)
+	// AddCampaignContacts Add people to ring
+	// (POST /v1/agents/campaigns/{id}/contacts)
+	AddCampaignContacts(ctx context.Context, request AddCampaignContactsRequestObject) (AddCampaignContactsResponseObject, error)
+	// PauseCampaign Stop ringing anybody new
+	// (POST /v1/agents/campaigns/{id}/pause)
+	PauseCampaign(ctx context.Context, request PauseCampaignRequestObject) (PauseCampaignResponseObject, error)
+	// StartCampaign Start ringing
+	// (POST /v1/agents/campaigns/{id}/start)
+	StartCampaign(ctx context.Context, request StartCampaignRequestObject) (StartCampaignResponseObject, error)
+	// ListAgentConfigs The agent configs the calling customer holds
+	// (GET /v1/agents/configs)
+	ListAgentConfigs(ctx context.Context, request ListAgentConfigsRequestObject) (ListAgentConfigsResponseObject, error)
+	// CreateAgentConfig Store a named configuration a session can be created from
+	// (POST /v1/agents/configs)
+	CreateAgentConfig(ctx context.Context, request CreateAgentConfigRequestObject) (CreateAgentConfigResponseObject, error)
+	// DeleteAgentConfig Delete an agent config
+	// (DELETE /v1/agents/configs/{id})
+	DeleteAgentConfig(ctx context.Context, request DeleteAgentConfigRequestObject) (DeleteAgentConfigResponseObject, error)
+	// GetAgentConfig One agent config
+	// (GET /v1/agents/configs/{id})
+	GetAgentConfig(ctx context.Context, request GetAgentConfigRequestObject) (GetAgentConfigResponseObject, error)
+	// UpdateAgentConfig Replace an agent config
+	// (PUT /v1/agents/configs/{id})
+	UpdateAgentConfig(ctx context.Context, request UpdateAgentConfigRequestObject) (UpdateAgentConfigResponseObject, error)
+	// ListSessions The sessions the calling customer is running
+	// (GET /v1/agents/sessions)
+	ListSessions(ctx context.Context, request ListSessionsRequestObject) (ListSessionsResponseObject, error)
+	// CreateSession Join a call as a voice agent
+	// (POST /v1/agents/sessions)
+	CreateSession(ctx context.Context, request CreateSessionRequestObject) (CreateSessionResponseObject, error)
+	// CloseSession Leave the call and end the session
+	// (DELETE /v1/agents/sessions/{id})
+	CloseSession(ctx context.Context, request CloseSessionRequestObject) (CloseSessionResponseObject, error)
+	// GetSession One session
+	// (GET /v1/agents/sessions/{id})
+	GetSession(ctx context.Context, request GetSessionRequestObject) (GetSessionResponseObject, error)
+	// SetSessionInstructions Change what the agent is told to be
+	// (PUT /v1/agents/sessions/{id}/instructions)
+	SetSessionInstructions(ctx context.Context, request SetSessionInstructionsRequestObject) (SetSessionInstructionsResponseObject, error)
+	// InterruptSession Abandon the reply being spoken
+	// (POST /v1/agents/sessions/{id}/interrupt)
+	InterruptSession(ctx context.Context, request InterruptSessionRequestObject) (InterruptSessionResponseObject, error)
+	// RespondSession Answer a piece of text through the model, as though it had been said
+	// (POST /v1/agents/sessions/{id}/respond)
+	RespondSession(ctx context.Context, request RespondSessionRequestObject) (RespondSessionResponseObject, error)
+	// SaySession Speak a piece of text without going through the model
+	// (POST /v1/agents/sessions/{id}/say)
+	SaySession(ctx context.Context, request SaySessionRequestObject) (SaySessionResponseObject, error)
+	// ListSkills The skills the calling customer has defined
+	// (GET /v1/agents/skills)
+	ListSkills(ctx context.Context, request ListSkillsRequestObject) (ListSkillsResponseObject, error)
+	// CreateSkill Define a kind of work worth handing to the slower model
+	// (POST /v1/agents/skills)
+	CreateSkill(ctx context.Context, request CreateSkillRequestObject) (CreateSkillResponseObject, error)
+	// DeleteSkill Delete a skill
+	// (DELETE /v1/agents/skills/{id})
+	DeleteSkill(ctx context.Context, request DeleteSkillRequestObject) (DeleteSkillResponseObject, error)
+	// GetSkill One skill
+	// (GET /v1/agents/skills/{id})
+	GetSkill(ctx context.Context, request GetSkillRequestObject) (GetSkillResponseObject, error)
+	// UpdateSkill Replace a skill
+	// (PUT /v1/agents/skills/{id})
+	UpdateSkill(ctx context.Context, request UpdateSkillRequestObject) (UpdateSkillResponseObject, error)
 	// PlacePhoneCall Place an outbound call and bridge it into a Stream call
 	// (POST /v1/phone/calls)
 	PlacePhoneCall(ctx context.Context, request PlacePhoneCallRequestObject) (PlacePhoneCallResponseObject, error)
@@ -2299,6 +5384,814 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetHealthResponseObject); ok {
 		if err := validResponse.VisitGetHealthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListCalls operation middleware
+func (sh *strictHandler) ListCalls(w http.ResponseWriter, r *http.Request, params ListCallsParams) {
+	var request ListCallsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCalls(ctx, request.(ListCallsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCalls")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListCallsResponseObject); ok {
+		if err := validResponse.VisitListCallsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCall operation middleware
+func (sh *strictHandler) GetCall(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request GetCallRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCall(ctx, request.(GetCallRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCall")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCallResponseObject); ok {
+		if err := validResponse.VisitGetCallResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCallTimeline operation middleware
+func (sh *strictHandler) GetCallTimeline(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request GetCallTimelineRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCallTimeline(ctx, request.(GetCallTimelineRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCallTimeline")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCallTimelineResponseObject); ok {
+		if err := validResponse.VisitGetCallTimelineResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCallTranscript operation middleware
+func (sh *strictHandler) GetCallTranscript(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request GetCallTranscriptRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCallTranscript(ctx, request.(GetCallTranscriptRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCallTranscript")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCallTranscriptResponseObject); ok {
+		if err := validResponse.VisitGetCallTranscriptResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListCampaigns operation middleware
+func (sh *strictHandler) ListCampaigns(w http.ResponseWriter, r *http.Request) {
+	var request ListCampaignsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCampaigns(ctx, request.(ListCampaignsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCampaigns")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListCampaignsResponseObject); ok {
+		if err := validResponse.VisitListCampaignsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateCampaign operation middleware
+func (sh *strictHandler) CreateCampaign(w http.ResponseWriter, r *http.Request) {
+	var request CreateCampaignRequestObject
+
+	var body CreateCampaignJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateCampaign(ctx, request.(CreateCampaignRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateCampaign")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateCampaignResponseObject); ok {
+		if err := validResponse.VisitCreateCampaignResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCampaign operation middleware
+func (sh *strictHandler) GetCampaign(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request GetCampaignRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCampaign(ctx, request.(GetCampaignRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCampaign")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCampaignResponseObject); ok {
+		if err := validResponse.VisitGetCampaignResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListCampaignContacts operation middleware
+func (sh *strictHandler) ListCampaignContacts(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request ListCampaignContactsRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCampaignContacts(ctx, request.(ListCampaignContactsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCampaignContacts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListCampaignContactsResponseObject); ok {
+		if err := validResponse.VisitListCampaignContactsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AddCampaignContacts operation middleware
+func (sh *strictHandler) AddCampaignContacts(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request AddCampaignContactsRequestObject
+
+	request.Id = id
+
+	var body AddCampaignContactsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AddCampaignContacts(ctx, request.(AddCampaignContactsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AddCampaignContacts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AddCampaignContactsResponseObject); ok {
+		if err := validResponse.VisitAddCampaignContactsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PauseCampaign operation middleware
+func (sh *strictHandler) PauseCampaign(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request PauseCampaignRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PauseCampaign(ctx, request.(PauseCampaignRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PauseCampaign")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PauseCampaignResponseObject); ok {
+		if err := validResponse.VisitPauseCampaignResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartCampaign operation middleware
+func (sh *strictHandler) StartCampaign(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request StartCampaignRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartCampaign(ctx, request.(StartCampaignRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartCampaign")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartCampaignResponseObject); ok {
+		if err := validResponse.VisitStartCampaignResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListAgentConfigs operation middleware
+func (sh *strictHandler) ListAgentConfigs(w http.ResponseWriter, r *http.Request) {
+	var request ListAgentConfigsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAgentConfigs(ctx, request.(ListAgentConfigsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAgentConfigs")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAgentConfigsResponseObject); ok {
+		if err := validResponse.VisitListAgentConfigsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateAgentConfig operation middleware
+func (sh *strictHandler) CreateAgentConfig(w http.ResponseWriter, r *http.Request) {
+	var request CreateAgentConfigRequestObject
+
+	var body CreateAgentConfigJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateAgentConfig(ctx, request.(CreateAgentConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateAgentConfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateAgentConfigResponseObject); ok {
+		if err := validResponse.VisitCreateAgentConfigResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteAgentConfig operation middleware
+func (sh *strictHandler) DeleteAgentConfig(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request DeleteAgentConfigRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteAgentConfig(ctx, request.(DeleteAgentConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteAgentConfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteAgentConfigResponseObject); ok {
+		if err := validResponse.VisitDeleteAgentConfigResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAgentConfig operation middleware
+func (sh *strictHandler) GetAgentConfig(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request GetAgentConfigRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAgentConfig(ctx, request.(GetAgentConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAgentConfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAgentConfigResponseObject); ok {
+		if err := validResponse.VisitGetAgentConfigResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateAgentConfig operation middleware
+func (sh *strictHandler) UpdateAgentConfig(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request UpdateAgentConfigRequestObject
+
+	request.Id = id
+
+	var body UpdateAgentConfigJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateAgentConfig(ctx, request.(UpdateAgentConfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateAgentConfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateAgentConfigResponseObject); ok {
+		if err := validResponse.VisitUpdateAgentConfigResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListSessions operation middleware
+func (sh *strictHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
+	var request ListSessionsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListSessions(ctx, request.(ListSessionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListSessions")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListSessionsResponseObject); ok {
+		if err := validResponse.VisitListSessionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateSession operation middleware
+func (sh *strictHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
+	var request CreateSessionRequestObject
+
+	var body CreateSessionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateSession(ctx, request.(CreateSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateSessionResponseObject); ok {
+		if err := validResponse.VisitCreateSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CloseSession operation middleware
+func (sh *strictHandler) CloseSession(w http.ResponseWriter, r *http.Request, id SessionID) {
+	var request CloseSessionRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CloseSession(ctx, request.(CloseSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CloseSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CloseSessionResponseObject); ok {
+		if err := validResponse.VisitCloseSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSession operation middleware
+func (sh *strictHandler) GetSession(w http.ResponseWriter, r *http.Request, id SessionID) {
+	var request GetSessionRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSession(ctx, request.(GetSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSessionResponseObject); ok {
+		if err := validResponse.VisitGetSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetSessionInstructions operation middleware
+func (sh *strictHandler) SetSessionInstructions(w http.ResponseWriter, r *http.Request, id SessionID) {
+	var request SetSessionInstructionsRequestObject
+
+	request.Id = id
+
+	var body SetSessionInstructionsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetSessionInstructions(ctx, request.(SetSessionInstructionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetSessionInstructions")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetSessionInstructionsResponseObject); ok {
+		if err := validResponse.VisitSetSessionInstructionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// InterruptSession operation middleware
+func (sh *strictHandler) InterruptSession(w http.ResponseWriter, r *http.Request, id SessionID) {
+	var request InterruptSessionRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.InterruptSession(ctx, request.(InterruptSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "InterruptSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(InterruptSessionResponseObject); ok {
+		if err := validResponse.VisitInterruptSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RespondSession operation middleware
+func (sh *strictHandler) RespondSession(w http.ResponseWriter, r *http.Request, id SessionID) {
+	var request RespondSessionRequestObject
+
+	request.Id = id
+
+	var body RespondSessionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RespondSession(ctx, request.(RespondSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RespondSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RespondSessionResponseObject); ok {
+		if err := validResponse.VisitRespondSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaySession operation middleware
+func (sh *strictHandler) SaySession(w http.ResponseWriter, r *http.Request, id SessionID) {
+	var request SaySessionRequestObject
+
+	request.Id = id
+
+	var body SaySessionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaySession(ctx, request.(SaySessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaySession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaySessionResponseObject); ok {
+		if err := validResponse.VisitSaySessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListSkills operation middleware
+func (sh *strictHandler) ListSkills(w http.ResponseWriter, r *http.Request) {
+	var request ListSkillsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListSkills(ctx, request.(ListSkillsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListSkills")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListSkillsResponseObject); ok {
+		if err := validResponse.VisitListSkillsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateSkill operation middleware
+func (sh *strictHandler) CreateSkill(w http.ResponseWriter, r *http.Request) {
+	var request CreateSkillRequestObject
+
+	var body CreateSkillJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateSkill(ctx, request.(CreateSkillRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateSkill")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateSkillResponseObject); ok {
+		if err := validResponse.VisitCreateSkillResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteSkill operation middleware
+func (sh *strictHandler) DeleteSkill(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request DeleteSkillRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteSkill(ctx, request.(DeleteSkillRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteSkill")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteSkillResponseObject); ok {
+		if err := validResponse.VisitDeleteSkillResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSkill operation middleware
+func (sh *strictHandler) GetSkill(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request GetSkillRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSkill(ctx, request.(GetSkillRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSkill")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSkillResponseObject); ok {
+		if err := validResponse.VisitGetSkillResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateSkill operation middleware
+func (sh *strictHandler) UpdateSkill(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	var request UpdateSkillRequestObject
+
+	request.Id = id
+
+	var body UpdateSkillJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateSkill(ctx, request.(UpdateSkillRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateSkill")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateSkillResponseObject); ok {
+		if err := validResponse.VisitUpdateSkillResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -2740,92 +6633,173 @@ func (sh *strictHandler) GetTagStats(w http.ResponseWriter, r *http.Request, mod
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"uuCy0tZd/uuTf30y+/ju4/8PAAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

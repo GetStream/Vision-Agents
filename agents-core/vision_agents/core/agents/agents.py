@@ -30,10 +30,17 @@ from ..edge.events import (
 )
 from ..edge.types import Connection, MetadataValue, Participant, TrackType, User
 from ..events.manager import EventManager
+from ..harness import Harness
 from ..instructions import Instructions
 from ..llm import events as llm_events
 from ..llm.llm import LLM, AudioLLM, VideoLLM
 from ..llm.realtime import Realtime
+from ..llm.remote import (
+    RemoteCall,
+    RemoteEvent,
+    RemotePipeline,
+    RemotePipelineError,
+)
 from ..mcp import MCPBaseServer, MCPManager
 from ..observability import MetricsCollector
 from ..observability.agent import AgentMetrics
@@ -156,6 +163,12 @@ class Agent:
         broadcast_metrics_interval: float = 5.0,
         # Audio filter to process audio from multiple speakers
         multi_speaker_filter: Optional[AudioFilter] = None,
+        # How work is delegated when the pipeline runs remotely
+        harness: Optional[Harness] = None,
+        # Labels every remote request is billed under
+        cost_tracking: Optional[dict[str, str]] = None,
+        # Which memories a remote call may recall
+        memory_filter: Optional[dict[str, str]] = None,
     ):
         """Initialize the Agent.
 
@@ -190,6 +203,11 @@ class Agent:
                 the first participant who starts speaking and drops audio from
                 everyone else until the active speaker's turn ends, or they go
                 silent.
+            harness: How the remote pipeline delegates work it should not answer
+                itself. Only meaningful with an LLM that runs remotely.
+            cost_tracking: Labels attributed to every request a remote call makes,
+                so spend can be attributed to more than a model.
+            memory_filter: Scope keys narrowing which memories a remote call recalls.
 
         """
         self._agent_user_initialized = False
@@ -202,6 +220,7 @@ class Agent:
 
         self._id = str(uuid4())
         self.call: Optional[Call] = None
+        self._call_type = "default"
 
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
@@ -222,6 +241,9 @@ class Agent:
 
         self.instructions = Instructions(input_text=instructions)
         self.edge = edge
+        self.harness = harness
+        self.cost_tracking = cost_tracking
+        self.memory_filter = memory_filter
 
         # OpenTelemetry data
         self.tracer = tracer
@@ -296,6 +318,7 @@ class Agent:
         self._audio_consumer_task: Optional[asyncio.Task] = None
         self._audio_producer_task: Optional[asyncio.Task] = None
         self._metrics_broadcast_task: Optional[asyncio.Task] = None
+        self._remote_events_task: Optional[asyncio.Task] = None
 
         # Metrics broadcasting settings
         self._broadcast_metrics = broadcast_metrics
@@ -403,6 +426,10 @@ class Agent:
                 False, drop silently when a turn is already in flight.
         """
         with self.tracer.start_as_current_span("agent.simple_response"):
+            if isinstance(self.llm, RemotePipeline):
+                await self.llm.respond_remote(text, interrupt=interrupt)
+                return
+
             if participant is None:
                 participant = Participant(
                     original=self.agent_user,
@@ -421,7 +448,10 @@ class Agent:
         """
         self.logger.info('🔊 Agent say: "%s"', text)
         with self.tracer.start_as_current_span("agent.say"):
-            await self._flow.say(text, interrupt=interrupt)
+            if isinstance(self.llm, RemotePipeline):
+                await self.llm.say_remote(text, interrupt=interrupt)
+            else:
+                await self._flow.say(text, interrupt=interrupt)
 
         if self.conversation is not None:
             await self.conversation.upsert_message(
@@ -516,6 +546,11 @@ class Agent:
             self._start_tracing(call)
             self.call = call
             self.conversation = None
+
+            if isinstance(self.llm, RemotePipeline):
+                await self._join_remote(self.llm, call)
+                yield
+                return
 
             await self._start_components()
 
@@ -670,6 +705,114 @@ class Agent:
         with self.tracer.start_as_current_span(name, context=self._root_ctx) as span:
             yield span
 
+    async def _join_remote(self, pipeline: RemotePipeline, call: Call) -> None:
+        """Hand the call to an LLM that is really a pipeline running elsewhere.
+
+        Nothing local joins the call: no tracks are published, no audio is consumed,
+        and the inference flow never starts. What the agent keeps is the conversation
+        and the transcripts, written from the events the pipeline sends back, so
+        observability reads the same either way.
+        """
+        await self._start_components()
+
+        if self.mcp_manager:
+            with self.span("mcp_manager.connect_all"):
+                await self.mcp_manager.connect_all()
+
+        await self.authenticate()
+        self.conversation = await self.edge.create_conversation(
+            call, self.agent_user, self.instructions.full_reference
+        )
+        self.llm.set_conversation(self.conversation)
+
+        with self.span("llm.join_remote"):
+            await pipeline.join_remote(
+                RemoteCall(
+                    call_type=self._call_type,
+                    call_id=call.id,
+                    agent_user_id=self._agent_user_id,
+                    instructions=self.instructions.full_reference,
+                    harness=self.harness,
+                    cost_tracking=self.cost_tracking,
+                    memory_filter=self.memory_filter,
+                )
+            )
+        self.logger.info(f"🤖 Agent joined call remotely: {call.id}")
+        self.events.send(events.AgentJoinedCallEvent(call=call))
+
+        self._call_ended_event = asyncio.Event()
+        self._joined_at = time.time()
+        self._remote_events_task = asyncio.create_task(
+            self._consume_remote_events(pipeline)
+        )
+
+    async def _consume_remote_events(self, pipeline: RemotePipeline) -> None:
+        """Record what the remote pipeline did until the call ends."""
+        with log_exceptions(self.logger, "Error consuming remote pipeline events"):
+            async for event in pipeline.remote_events():
+                await self._record_remote_event(event)
+
+        if self._call_ended_event is not None:
+            self._call_ended_event.set()
+
+    async def _record_remote_event(self, event: RemoteEvent) -> None:
+        """Turn one remote event into the agent's own events, transcript and chat."""
+        participant = Participant(
+            original=None,
+            user_id=event.user_id,
+            id=event.participant_id or event.user_id,
+        )
+
+        if event.type == "user_turn_started":
+            self.events.send(events.UserTurnStartedEvent(participant=participant))
+        elif event.type == "user_turn_ended":
+            self.events.send(events.UserTurnEndedEvent(participant=participant))
+        elif event.type == "user_speech":
+            update = self.transcripts.update_user_transcript(
+                participant_id=participant.id,
+                user_id=event.user_id,
+                text=event.text,
+                mode="final",
+                drop=True,
+            )
+            self.events.send(
+                events.UserTranscriptEvent(text=event.text, participant=participant)
+            )
+            if update is not None and self.conversation is not None:
+                await self.conversation.upsert_message(
+                    role="user",
+                    user_id=event.user_id,
+                    content=update.text,
+                    message_id=update.message_id,
+                    completed=True,
+                )
+        elif event.type == "agent_turn_started":
+            self.events.send(events.AgentTurnStartedEvent())
+        elif event.type == "agent_speech":
+            update = self.transcripts.update_agent_transcript(
+                text=event.text, mode="final", drop=True
+            )
+            self.events.send(
+                llm_events.LLMResponseFinalEvent(
+                    plugin_name=self.llm.provider_name, text=event.text
+                )
+            )
+            if update is not None and self.conversation is not None:
+                await self.conversation.upsert_message(
+                    role="assistant",
+                    user_id=self._agent_user_id,
+                    content=update.text,
+                    message_id=update.message_id,
+                    completed=True,
+                )
+        elif event.type == "agent_turn_ended":
+            self.events.send(events.AgentTurnEndedEvent(interrupted=event.interrupted))
+        elif event.type == "error":
+            self.llm.on_llm_error(error=RemotePipelineError(event.error))
+        elif event.type == "ended":
+            if self._call_ended_event is not None:
+                self._call_ended_event.set()
+
     def _start_tracing(self, call: Call) -> None:
         self._root_span = self.tracer.start_span("join").__enter__()
         self._root_span.set_attribute("call_id", call.id)
@@ -791,6 +934,14 @@ class Agent:
             await cancel_and_wait(self._audio_producer_task)
             self._audio_producer_task = None
 
+        if isinstance(self.llm, RemotePipeline):
+            with log_exceptions(self.logger, "Error leaving the remote call"):
+                await self.llm.leave_remote()
+
+        if self._remote_events_task:
+            await cancel_and_wait(self._remote_events_task)
+            self._remote_events_task = None
+
         # Stop the inference flow
         await self._flow.stop()
         self._audio_input_stream.close()
@@ -898,6 +1049,9 @@ class Agent:
         call = await self.edge.create_call(
             call_id=call_id, agent_user_id=self.agent_user.id, call_type=call_type
         )
+        # A remote pipeline joins the call itself and needs the type to do it; the Call
+        # protocol only promises an id, so remember what we asked for.
+        self._call_type = call_type
         return call
 
     def set_video_track_override_path(self, path: str):

@@ -20,6 +20,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
 // eventBuffer is how many events may queue before a slow consumer applies backpressure.
@@ -46,6 +47,10 @@ type Options struct {
 	// Tools are what the fast model may do rather than say. The harness offers them and
 	// reports what was asked for; the agent is what runs them.
 	Tools Tools
+	// Sandbox is where the subagent runs code it writes. It is offered to the subagent
+	// alone: running code takes seconds, and the model holding the conversation does not
+	// have seconds. Nil means the subagent works everything out in its head.
+	Sandbox sandbox.Sandbox
 	// Tasks caps how much delegated work may run at once.
 	Tasks int
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
@@ -121,7 +126,7 @@ func New(options Options) (*Harness, error) {
 	}
 
 	if options.Subagent != nil {
-		h.tasks = newManager(options.Subagent, options.Tasks, h.logger)
+		h.tasks = newManager(options.Subagent, options.Tasks, options.Sandbox, h.logger)
 		h.running.Add(1)
 		go h.consumeTasks()
 	}

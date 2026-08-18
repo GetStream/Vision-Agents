@@ -45,6 +45,7 @@ vision-agents-plugins-liveavatar = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
 vision-agents-plugins-twelvelabs = { workspace = true }
 vision-agents-plugins-speechify = { workspace = true }
+vision-agents-plugins-stream = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -97,6 +98,7 @@ members = [
     "plugins/tencent",
     "plugins/twelvelabs",
     "plugins/speechify",
+    "plugins/stream",
 ]
 exclude = [
     "**/__pycache__",
@@ -150,6 +152,13 @@ explicit_package_bases = true
 # import its types so we can't skip it, but we ignore errors inside the package.
 [[tool.mypy.overrides]]
 module = "twelvelabs.*"
+ignore_errors = true
+
+# The stream plugin's HTTP client is generated from acceleration/api/openapi.yaml by
+# openapi-python-client. Correcting its output by hand would be undone by the next
+# regeneration.
+[[tool.mypy.overrides]]
+module = "*.stream._generated.*"
 ignore_errors = true
 
 [tool.hatch.version]

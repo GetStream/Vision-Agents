@@ -11,12 +11,21 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -82,6 +91,7 @@ func run(logger *slog.Logger) error {
 
 	// A modality the config says nothing about is simply not served, and its paths 404.
 	routers := map[routing.Modality]routing.Inspector{}
+	streams := &api.Streams{}
 
 	if section, ok := config[routing.STT]; ok {
 		speech, err := sttrouter.New(sttrouter.Options{
@@ -96,6 +106,7 @@ func run(logger *slog.Logger) error {
 		}
 		defer speech.Close()
 		routers[routing.STT] = speech
+		streams.STT = speech
 	}
 
 	if section, ok := config[routing.TTS]; ok {
@@ -111,6 +122,7 @@ func run(logger *slog.Logger) error {
 		}
 		defer voice.Close()
 		routers[routing.TTS] = voice
+		streams.TTS = voice
 	}
 
 	if section, ok := config[routing.LLM]; ok {
@@ -126,6 +138,7 @@ func run(logger *slog.Logger) error {
 		}
 		defer chat.Close()
 		routers[routing.LLM] = chat
+		streams.LLM = chat
 	}
 
 	telephony, err := buildPhone(pgStore, liveClient, logger)
@@ -133,12 +146,52 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
+	// Conversations need all three modalities, so a deployment configured for only one
+	// still inspects routing and reports statistics while the session paths say there
+	// are none.
+	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, logger)
+	if err != nil {
+		return err
+	}
+	if sessions != nil {
+		defer sessions.Shutdown()
+	}
+
+	// A campaign is a phone call, a conversation and a row, so it runs only where all
+	// three are configured. Elsewhere the campaign paths say so.
+	var campaigns *campaign.Runner
+	if pgStore != nil && telephony != nil && sessions != nil {
+		campaigns, err = campaign.New(campaign.Options{
+			Store:    pgStore,
+			Phone:    telephony,
+			Sessions: sessions,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer campaigns.Close()
+	}
+
+	// Reading a transcript back needs the same credentials writing one does. Without
+	// them the calls are still listed; only what was said on them is missing.
+	var transcripts *chatlog.Reader
+	if reader, err := chatlog.NewReader(chatlog.ReaderOptions{}); err != nil {
+		logger.Debug("transcripts will not be readable", "error", err)
+	} else {
+		transcripts = reader
+	}
+
 	server, err := api.NewServer(api.Options{
-		Routers: routers,
-		Store:   pgStore,
-		Live:    liveClient,
-		Phone:   telephony,
-		Logger:  logger,
+		Routers:     routers,
+		Store:       pgStore,
+		Live:        liveClient,
+		Phone:       telephony,
+		Sessions:    sessions,
+		Streams:     streams,
+		Transcripts: transcripts,
+		Campaigns:   campaigns,
+		Logger:      logger,
 	})
 	if err != nil {
 		return err
@@ -174,6 +227,73 @@ func run(logger *slog.Logger) error {
 		defer cancel()
 		return httpServer.Shutdown(shutdownCtx)
 	}
+}
+
+// buildSessions wires the part of the router that holds conversations rather than
+// describing them.
+//
+// It returns nil when a modality is missing, because a conversation needs all three and a
+// manager that could not start one is worse than a path that says there are none. The
+// factories live here rather than in the session package so the Stream edge, whose Opus
+// path is cgo, stays out of everything that only needs to be tested.
+func buildSessions(
+	streams *api.Streams,
+	pgStore *store.Store,
+	liveClient *live.Client,
+	telephony *phone.Service,
+	logger *slog.Logger,
+) (*session.Manager, error) {
+	if streams.STT == nil || streams.TTS == nil || streams.LLM == nil {
+		logger.Warn("not serving sessions, which need all three modalities configured")
+		return nil, nil
+	}
+
+	// Without a mem0 key a session starts every call knowing nothing but its
+	// instructions, which is the behaviour before memory existed.
+	var remembering memory.Store
+	if recall, err := mem0.New(mem0.Options{Logger: logger}); err != nil {
+		logger.Debug("sessions will not remember anything between calls", "error", err)
+	} else {
+		remembering = recall
+	}
+
+	// Without a turbopuffer key an agent knows only what its instructions say, and the
+	// lookup tool is not offered to any session.
+	var reading knowledge.Store
+	if search, err := turbopuffer.New(turbopuffer.Options{Logger: logger}); err != nil {
+		logger.Debug("sessions will not be able to look anything up", "error", err)
+	} else {
+		reading = search
+	}
+
+	return session.NewManager(session.ManagerOptions{
+		LLM:       streams.LLM,
+		STT:       streams.STT,
+		TTS:       streams.TTS,
+		Memory:    remembering,
+		Knowledge: reading,
+		Phone:     telephony,
+		Store:     pgStore,
+		Live:      liveClient,
+		Logger:    logger,
+		Edge: func(spec session.Spec, logger *slog.Logger) (agent.Edge, error) {
+			return streamedge.New(streamedge.Options{
+				CallID:   spec.CallID,
+				CallType: spec.CallType,
+				User:     streamedge.User{ID: spec.UserID, Name: spec.UserName},
+				Logger:   logger,
+			})
+		},
+		Transcript: func(spec session.Spec, logger *slog.Logger) (session.Transcript, error) {
+			// A voice call leaves nothing behind, so what was said is stored in a chat
+			// channel named after the agent.
+			return chatlog.New(chatlog.Options{
+				AgentID: spec.AgentID,
+				Agent:   chatlog.User{ID: spec.UserID, Name: spec.UserName},
+				Logger:  logger,
+			})
+		},
+	})
 }
 
 // buildPhone wires the telephony service. Stream credentials are only needed to attach a

@@ -2,7 +2,32 @@
 
 ## New Features
 
-### `telnyx` plugin: LLM, STT and TTS (#620, #621, #622)
+### `stream` plugin: the whole voice pipeline in the acceleration backend
+
+Adds a new `stream` plugin. `stream.Accelerated(model=, stt=, tts=)` sits in the
+`llm` slot but runs no inference and touches no media: the Go acceleration
+backend joins the call, hears the caller, answers and speaks, and Python records
+the events it sends back. Transcripts, conversation and events work as they do
+locally, and `@agent.llm.register_function` keeps working, because function
+calling stays in Python — the model asks over the session socket and the result
+goes back the same way. Point it at a router with `STREAM_ACCELERATION_URL` and
+`STREAM_ACCELERATION_CUSTOMER_ID`.
+
+For a pipeline that stays in Python, `stream.STT(target)`, `stream.TTS(target,
+voice=)` and `stream.LLM(target)` route one modality each through the same
+router, with the same failover and cost tracking. `stream.Router(target)` asks
+which modality serves a name and returns the plugin for it, at the cost of a
+request at startup. See `examples/00_accelerated_example`.
+
+### `Agent`: `harness`, `cost_tracking` and `memory_filter`
+
+`Agent.__init__` takes three new arguments, all of which apply when the LLM is a
+remote pipeline such as `stream.Accelerated`. `harness=DefaultHarness(...)` from
+the new `vision_agents.core.harness` configures what work is handed to a slower
+model, and `vm=Daytona` gives that model a sandbox to run code in.
+`cost_tracking={...}` labels every request the call makes, and
+`memory_filter={"user_id": ...}` scopes what it recalls. They are configuration
+serialized into the remote session, not a second implementation of the loop.
 
 The Telnyx plugin, until now a phone transport, also exposes `telnyx.LLM`,
 `telnyx.STT`, and `telnyx.TTS`, so a phone agent can run end to end on Telnyx.

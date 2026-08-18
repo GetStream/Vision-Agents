@@ -177,6 +177,19 @@ type Pressed struct {
 
 func (Pressed) isAgentEvent() {}
 
+// LookedUp means the agent read the knowledge base to answer something. It carries how
+// many passages came back rather than the passages themselves: a watcher wants to know the
+// agent went looking and whether it found anything, not to re-read the handbook.
+type LookedUp struct {
+	TurnID string
+	Query  string
+	// Documents is how many passages bore on the question. Zero means the knowledge base
+	// had nothing, which is why the agent said it did not know.
+	Documents int
+}
+
+func (LookedUp) isAgentEvent() {}
+
 // Backchannel means the agent made a listening noise while a participant was still
 // talking, which is not a turn and does not go near the model.
 type Backchannel struct {

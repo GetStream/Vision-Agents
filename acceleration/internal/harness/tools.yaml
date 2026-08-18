@@ -25,6 +25,22 @@ tools:
             with them listening.
       required: [to]
 
+  - name: lookup
+    description: >
+      Look something up in the knowledge base, which is what this business has written
+      down: prices, policies, opening hours, how a product works. Use it whenever the
+      caller asks something your instructions do not already answer, rather than guessing
+      or saying you cannot help. Say something that fills the pause while you look.
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+          description: >
+            What to look for, in the caller's own words. Keep the terms they used: the
+            handbook was written in the same ones.
+      required: [query]
+
   - name: press
     description: >
       Press digits on the keypad, for when you have called a number and reached a menu. Use

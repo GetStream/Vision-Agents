@@ -29,6 +29,10 @@ type Scope struct {
 	AppID string
 	// UserID is who the memories are about, which here is the customer.
 	UserID string
+	// Extra narrows recall further with the caller's own labels, such as the company a
+	// user belongs to. It cannot widen it: a provider is given these alongside the user
+	// id, never instead of it, so an extra label is a filter and not an identity.
+	Extra map[string]string
 }
 
 // Validate reports whether the scope identifies someone.

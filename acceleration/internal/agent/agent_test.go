@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
@@ -387,13 +388,20 @@ type AgentSuite struct {
 	// line is what the agent may do to the call, present only when a test gives it
 	// telephony.
 	line *stubTelephony
-	// tools are what the model may run, which mean nothing without a line to run them on.
+	// tools are what the model may run, which mean nothing without something to run them.
 	tools harness.Tools
+	// runner carries out the tools this package does not own, present only when a test
+	// gives the agent one.
+	runner *stubToolRunner
 	// duplex is how the agent listens and talks at the same time, off unless a test says
 	// otherwise.
 	duplex DuplexOptions
 	// remembers is the memory store the agent joins with, when a test gives it one.
 	remembers *stubMemory
+	// knows is what the agent may look things up in, when a test gives it a knowledge
+	// base, and namespace is which one it reads.
+	knows     *stubKnowledge
+	namespace string
 	// records is where turns are written, when a test gives the agent a database.
 	records *store.Store
 	// agentID names the agent, so a test writing turns can find its own rows.
@@ -410,10 +418,13 @@ func TestAgentSuite(t *testing.T) {
 func (s *AgentSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.remembers = nil
+	s.knows = nil
+	s.namespace = ""
 	s.subagent = nil
 	s.skills = harness.Skills{}
 	s.line = nil
 	s.tools = harness.Tools{}
+	s.runner = nil
 	s.duplex = DuplexOptions{}
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -492,27 +503,38 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	if s.line != nil {
 		calling = s.line
 	}
+	var running ToolRunner
+	if s.runner != nil {
+		running = s.runner
+	}
+	var reading knowledge.Store
+	if s.knows != nil {
+		reading = s.knows
+	}
 
 	agent, err := New(Options{
-		Edge:           s.edge,
-		Instructions:   "be brief",
-		CustomerID:     "acme",
-		AgentID:        s.agentID,
-		AppID:          "router",
-		Store:          s.records,
-		SubagentTarget: subagentTarget,
-		Skills:         s.skills,
-		Telephony:      calling,
-		Tools:          s.tools,
-		Duplex:         s.duplex,
-		LLM:            reasoner,
-		LLMTarget:      "en-low-latency",
-		STT:            transcriber,
-		STTTarget:      "en-low-latency",
-		TTS:            speaker,
-		TTSTarget:      "en-low-latency",
-		Memory:         remembering,
-		Logger:         logger,
+		Edge:               s.edge,
+		Instructions:       "be brief",
+		CustomerID:         "acme",
+		AgentID:            s.agentID,
+		AppID:              "router",
+		Store:              s.records,
+		SubagentTarget:     subagentTarget,
+		Skills:             s.skills,
+		Telephony:          calling,
+		ToolRunner:         running,
+		Tools:              s.tools,
+		Duplex:             s.duplex,
+		LLM:                reasoner,
+		LLMTarget:          "en-low-latency",
+		STT:                transcriber,
+		STTTarget:          "en-low-latency",
+		TTS:                speaker,
+		TTSTarget:          "en-low-latency",
+		Memory:             remembering,
+		Knowledge:          reading,
+		KnowledgeNamespace: s.namespace,
+		Logger:             logger,
 	})
 	s.Require().NoError(err)
 	s.agent = agent

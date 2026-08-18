@@ -89,6 +89,7 @@ tencent = ["vision-agents-plugins-tencent; sys_platform == 'linux'"]
 minimax = ["vision-agents-plugins-minimax"]
 twelvelabs = ["vision-agents-plugins-twelvelabs"]
 speechify = ["vision-agents-plugins-speechify"]
+stream = ["vision-agents-plugins-stream"]
 
 
 [tool.hatch.metadata]

@@ -38,6 +38,9 @@ type stubLLM struct {
 	// automatic answers every request with this text, for tests that do not care which
 	// completion is which.
 	automatic string
+	// calls are tool calls to ask for, one queue entry per request, which is what lets a
+	// test answer with a tool once and with words the next time it is asked.
+	calls [][]llm.ToolCall
 	// failing makes every request report a provider failure before it settles.
 	failing bool
 }
@@ -56,12 +59,24 @@ func (s *stubLLM) Respond(request llm.Request) error {
 		answer, queued = s.automatic, true
 	}
 	failing := s.failing
+	var calls []llm.ToolCall
+	if len(s.calls) > 0 {
+		calls, s.calls = s.calls[0], s.calls[1:]
+	}
 	s.mu.Unlock()
 
 	s.emitter.Send(llm.CompletionStarted{CompletionID: request.ID, At: time.Now()})
 	if failing {
 		s.emitter.Send(llm.Error{CompletionID: request.ID, Err: errModelDown, Context: "stream"})
 		s.emitter.Send(llm.CompletionComplete{CompletionID: request.ID})
+		return nil
+	}
+	if len(calls) > 0 {
+		s.emitter.Send(llm.CompletionComplete{
+			CompletionID: request.ID,
+			Text:         answer,
+			ToolCalls:    calls,
+		})
 		return nil
 	}
 	if queued {
@@ -147,6 +162,8 @@ type HarnessSuite struct {
 	slow *stubLLM
 	// tools is what the next harness offers the fast model.
 	tools Tools
+	// box is where the next harness's subagent may run code. Nil is the usual case.
+	box *stubSandbox
 
 	harness *Harness
 	events  *collector
@@ -159,6 +176,7 @@ func TestHarnessSuite(t *testing.T) {
 func (s *HarnessSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.tools = Tools{}
+	s.box = nil
 }
 
 // collector drains a harness's events for the life of one test, because the emitter
@@ -223,6 +241,9 @@ func (s *HarnessSuite) build(delegating bool) {
 	if delegating {
 		s.slow = newStubLLM()
 		options.Subagent = s.session(s.slow)
+	}
+	if s.box != nil {
+		options.Sandbox = s.box
 	}
 
 	harness, err := New(options)

@@ -19,11 +19,13 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -78,9 +80,17 @@ type Options struct {
 	// Telephony is what the agent may do to the call itself. Without it the agent can
 	// only talk, which is what a call that is not on a phone network can do.
 	Telephony Telephony
-	// Tools are what the voice model may do rather than say. They are only offered when
-	// there is telephony to carry them out, since every tool acts on the call.
+	// ToolRunner carries out the tools that are not the two acting on the phone call,
+	// which is how a caller outside this process owns its own tools.
+	ToolRunner ToolRunner
+	// Tools are what the voice model may do rather than say. Each is only offered when
+	// something on this call can run it: the telephony pair needs Telephony, and every
+	// other tool needs a ToolRunner.
 	Tools harness.Tools
+	// Sandbox is where the subagent runs code it writes. It is never offered to the model
+	// holding the conversation: running code takes seconds, and a conversation cannot
+	// spare them.
+	Sandbox sandbox.Sandbox
 	// Tasks caps how much delegated work may run at once. Zero leaves the harness's own
 	// default in place.
 	Tasks int
@@ -100,9 +110,24 @@ type Options struct {
 	// AppID scopes memories to the application using this service, so two deployments
 	// sharing one memory account do not read each other's.
 	AppID string
+	// MemoryUserID is who the memories are about. Empty means the customer, which is
+	// what a caller with no user of its own to scope by gets.
+	MemoryUserID string
+	// MemoryFilter narrows recall further with the caller's own labels, such as the
+	// company the user belongs to.
+	MemoryFilter map[string]string
 	// RecallLimit caps how many memories are recalled on joining. Zero leaves the
 	// store's own default.
 	RecallLimit int
+	// Knowledge is what the agent may look up mid-conversation. Without it, or without a
+	// namespace to read, the lookup tool is not offered: a model told it can search and
+	// then refused would promise the caller an answer it cannot get.
+	Knowledge knowledge.Store
+	// KnowledgeNamespace is which body of knowledge this agent reads.
+	KnowledgeNamespace string
+	// KnowledgeLimit caps how many passages one lookup returns. Zero leaves the store's
+	// own default.
+	KnowledgeLimit int
 	// Store records what each turn cost the participant in waiting. Without it the
 	// timings are still emitted as Turn events, they are just not persisted.
 	Store  *store.Store
@@ -128,6 +153,9 @@ type Agent struct {
 	turnStore *turnRecorder
 	// memory carries what earlier conversations established into this one.
 	memory *memoryWriter
+	// knowledge answers what the business already wrote down, when the agent has a
+	// namespace to read.
+	knowledge *knowledgeReader
 	// recalled is what the agent already knew on joining, rendered as a system message
 	// and prepended to the instructions on every turn.
 	recalled string
@@ -137,6 +165,10 @@ type Agent struct {
 	cancel context.CancelFunc
 
 	mu sync.Mutex
+	// prompt is what the agent was told to be. It starts as the configured instructions
+	// and lives here rather than in the options because a caller may change what the
+	// agent is part way through a call.
+	prompt string
 	// history is the conversation so far. It lives here rather than in a provider so a
 	// failover between providers mid-conversation loses nothing.
 	history []llm.Message
@@ -234,6 +266,7 @@ func New(options Options) (*Agent, error) {
 		options:    options,
 		logger:     logger,
 		emitter:    NewEmitter(eventBuffer),
+		prompt:     options.Instructions,
 		listeners:  map[string]*sttrouter.Session{},
 		cadence:    newCadence(0, 0, 0),
 		candidates: map[string]candidate{},
@@ -254,13 +287,35 @@ func New(options Options) (*Agent, error) {
 	agent.turns = newTurnTracker(agent.finishTurn)
 
 	if options.Memory != nil {
-		// Memories belong to the customer, and are recorded as a modality of their own so
-		// what remembering costs is reported alongside what the models cost.
+		// Memories belong to the customer unless the caller named someone more specific,
+		// and are recorded as a modality of their own so what remembering costs is
+		// reported alongside what the models cost.
+		scope := memory.Scope{
+			AppID:  options.AppID,
+			UserID: options.CustomerID,
+			Extra:  options.MemoryFilter,
+		}
+		if options.MemoryUserID != "" {
+			scope.UserID = options.MemoryUserID
+		}
 		agent.memory = newMemoryWriter(
 			options.Memory,
-			memory.Scope{AppID: options.AppID, UserID: options.CustomerID},
+			scope,
 			owner,
 			routing.NewRecorder(routing.Memory, options.Store, options.Live, logger),
+			logger,
+		)
+	}
+
+	// A knowledge store without a namespace reads nothing, so the agent is treated as
+	// having none rather than being offered a search that would always fail.
+	if options.Knowledge != nil && options.KnowledgeNamespace != "" {
+		agent.knowledge = newKnowledgeReader(
+			options.Knowledge,
+			options.KnowledgeNamespace,
+			options.KnowledgeLimit,
+			owner,
+			routing.NewRecorder(routing.Knowledge, options.Store, options.Live, logger),
 			logger,
 		)
 	}
@@ -338,19 +393,13 @@ func (a *Agent) Join(ctx context.Context) error {
 		}
 	}
 
-	// Tools are withheld from a model that has no way to run them. Offering a transfer
-	// the agent cannot make would have it promise the caller a person and then sit there.
-	tools := a.options.Tools
-	if a.options.Telephony == nil {
-		tools = harness.Tools{}
-	}
-
 	a.harness, err = harness.New(harness.Options{
 		Model:      model,
 		Controller: controller,
 		Subagent:   subagent,
 		Skills:     a.options.Skills,
-		Tools:      tools,
+		Tools:      a.availableTools(),
+		Sandbox:    a.options.Sandbox,
 		Tasks:      a.options.Tasks,
 		MaxTokens:  a.options.MaxTokens,
 		Logger:     a.logger,
@@ -423,6 +472,24 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 	a.mu.Unlock()
 
 	return a.speakWhole(turnID, text)
+}
+
+// Interrupt abandons the reply being spoken, the way a participant talking over the agent
+// would. It is what a caller outside the call has instead of a voice.
+func (a *Agent) Interrupt() {
+	a.mu.Lock()
+	participant := a.lastParticipant
+	a.mu.Unlock()
+	a.interrupt(participant)
+}
+
+// SetInstructions changes what the agent is told to be from the next turn on. The reply
+// being spoken keeps the prompt it was started with, because rewriting it mid-sentence
+// would have the agent change character in the middle of a thought.
+func (a *Agent) SetInstructions(text string) {
+	a.mu.Lock()
+	a.prompt = text
+	a.mu.Unlock()
 }
 
 // Events carries what happened in the conversation. It is closed by Close.
@@ -536,6 +603,9 @@ func (a *Agent) close() error {
 	}
 	if a.memory != nil {
 		a.memory.Close()
+	}
+	if a.knowledge != nil {
+		a.knowledge.Close()
 	}
 
 	return errors.Join(failures...)
@@ -908,12 +978,12 @@ func (a *Agent) quiet() bool {
 // it whatever it already knew about the person it is talking to.
 func (a *Agent) instructions() string {
 	if a.recalled == "" {
-		return a.options.Instructions
+		return a.prompt
 	}
-	if a.options.Instructions == "" {
+	if a.prompt == "" {
 		return a.recalled
 	}
-	return a.recalled + "\n\n" + a.options.Instructions
+	return a.recalled + "\n\n" + a.prompt
 }
 
 // consumeLLM turns the model's deltas into sentences and sends them to be spoken.

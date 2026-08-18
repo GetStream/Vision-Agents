@@ -1,6 +1,6 @@
 # Features
 
-Sprints 1 to 7 asked for things in the order they had to be built. This is the same work
+Sprints 1 to 8 asked for things in the order they had to be built. This is the same work
 arranged the other way, one document per feature, so a feature can be read without
 reconstructing it from four sprint files.
 
@@ -24,6 +24,7 @@ edits them.
 | [The harness](harness.md)                      | sprints 5, 6         | Built with cache-aware compaction        |
 | [Speaking while listening](duplex.md)          | sprints 5, 6         | Built; acknowledgements default on       |
 | [Finetuning dataset](finetuning-dataset.md)    | sprint 5 C           | Not started                             |
+| [The Python SDK](sdk.md)                       | sprint 8             | Built; Daytona is the only sandbox      |
 
 Everything lives in [acceleration/](../../acceleration), a Go module beside the Python
 framework. [acceleration/README.md](../../acceleration/README.md) is the operator's view:

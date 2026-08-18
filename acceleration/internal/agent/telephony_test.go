@@ -72,6 +72,45 @@ func (s *AgentSuite) onACall() {
 	s.tools = tools
 }
 
+// stubToolRunner stands in for whoever owns the tools this package does not, which in
+// production is a caller on the other end of a socket.
+type stubToolRunner struct {
+	result string
+	err    error
+
+	mu   sync.Mutex
+	runs []llm.ToolCall
+}
+
+func (r *stubToolRunner) Run(_ context.Context, call llm.ToolCall) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runs = append(r.runs, call)
+	if r.err != nil {
+		return "", r.err
+	}
+	return r.result, nil
+}
+
+func (r *stubToolRunner) asked() []llm.ToolCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]llm.ToolCall(nil), r.runs...)
+}
+
+// ownsTools gives the agent a caller with tools of its own, the way a remote session does.
+func (s *AgentSuite) ownsTools(result string) {
+	s.runner = &stubToolRunner{result: result}
+	s.tools = harness.Tools{Tools: []harness.Tool{{
+		Name:        "lookup_order",
+		Description: "find an order by its number",
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"order": map[string]any{"type": "string"}},
+		},
+	}}}
+}
+
 // asksFor makes the next reply call a tool, alongside whatever it says.
 func (s *AgentSuite) asksFor(name, arguments string) {
 	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: name, Arguments: arguments}}
@@ -321,6 +360,83 @@ func (s *AgentSuite) TestPressingSomethingUnreadableIsRefused() {
 
 	s.ErrorContains(s.awaitToolRan().Err, "could not read")
 	s.Empty(s.line.keypad())
+}
+
+func (s *AgentSuite) TestACallersOwnToolsAreOfferedWithoutTelephony() {
+	// The gate is per tool rather than per call: a transfer needs a phone line, and a
+	// caller's own function needs only somebody to run it.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	offered := s.model.requests()[0].Tools
+	s.Require().Len(offered, 1)
+	s.Equal("lookup_order", offered[0].Name)
+}
+
+func (s *AgentSuite) TestACallersOwnToolIsRunByThemAndItsAnswerReachesTheConversation() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the caller was never asked")
+	s.Equal(`{"order":"12"}`, s.runner.asked()[0].Arguments)
+
+	ran := s.awaitToolRan()
+	s.Require().NoError(ran.Err)
+	s.Equal("order 12 ships tomorrow", ran.Result)
+	s.Contains(s.history(), llm.Message{
+		Role:       llm.ToolResult,
+		Content:    "order 12 ships tomorrow",
+		ToolCallID: "call-1",
+	})
+	s.never(s.left, "answering a question is not a reason to hang up")
+}
+
+func (s *AgentSuite) TestATelephonyToolIsNotHandedToTheCallersRunner() {
+	// The two that act on the call are this process's to run, so a caller cannot quietly
+	// take over what happens when the model says it is transferring somebody.
+	s.onACall()
+	s.runner = &stubToolRunner{result: "not mine to answer"}
+	s.join(false)
+	s.model.reply = []string{"Putting you through."}
+	s.asksFor("transfer", `{"to":"+15550001111"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want a person")
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Empty(s.runner.asked(), "the caller was asked to run a transfer")
+}
+
+func (s *AgentSuite) TestACallersToolThatFailsIsToldToTheModel() {
+	s.ownsTools("")
+	s.runner.err = errors.New("the orders service is down")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"Sorry, I cannot look that up right now."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	ran := s.awaitToolRan()
+	s.Require().Error(ran.Err)
+	s.Contains(ran.Result, "did not work")
+	s.eventually(func() bool {
+		return s.spokenText("cannot look that up")
+	}, "the caller was left in silence by a tool that failed")
 }
 
 // awaitToolRan waits for one tool to have settled and returns what it reported, since the

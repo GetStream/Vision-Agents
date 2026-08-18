@@ -189,9 +189,7 @@ class Model:
             )
             return False
 
-        task = asyncio.create_task(
-            self._speak(websocket, synthesis_id, text, frame)
-        )
+        task = asyncio.create_task(self._speak(websocket, synthesis_id, text, frame))
         speaking[synthesis_id] = task
         task.add_done_callback(lambda _: speaking.pop(synthesis_id, None))
         return False

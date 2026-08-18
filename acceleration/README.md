@@ -81,6 +81,8 @@ to play audio, or `-out` to write a file instead.
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
 | `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
 | `MEM0_API_KEY`          | mem0 credentials. Without it the agent remembers nothing   |
+| `TURBOPUFFER_API_KEY`   | turbopuffer credentials. Without it an agent looks nothing up |
+| `DAYTONA_API_KEY`       | Daytona credentials. Without it a session cannot ask for a sandbox |
 | `TWILIO_ACCOUNT_SID`    | Twilio credentials, for buying and operating numbers       |
 | `TWILIO_AUTH_TOKEN`     | Twilio credentials                                         |
 | `TELNYX_API_KEY`        | Telnyx credentials                                         |
@@ -294,6 +296,13 @@ replaces it, the same way `router.yaml` and `phone.yaml` already work.
 Subagent completions go through `llmrouter` like anything else, so what the thinking costs
 lands in `requests` with the same failover and cost tags as the talking.
 
+A session that asks for a sandbox gives the subagent one tool, `run_code`, and the model
+holding the conversation none: running code takes seconds that a conversation does not
+have, and the subagent has already left the live path. Code the subagent writes runs in
+Daytona, its output comes back as a tool result, and the same task is put again, up to four
+rounds and always inside the skill's own deadline. One sandbox is created the first time
+code actually runs and released when the session ends.
+
 Long histories are compacted privately on the thinking session only when the prompt is large
 and the provider's reported cached-token ratio has fallen below half. The result replaces
 only the unchanged old prefix; recent turns stay verbatim and a late summary cannot overwrite
@@ -306,6 +315,91 @@ short listening noise during long speech or delegated work; pass `-backchannel=f
 it off. `-min-confidence` additionally makes the agent clarify a doubtful transcript. The
 flow controller also asks for clarification when the words are clear but the intent is not.
 
+## Sessions, for callers outside this process
+
+Everything above is driven by `cmd/agent` on a command line. `internal/session` is the same
+wiring offered over HTTP, so a Python process can have this service hold a conversation on
+its behalf: the spec's fields are `cmd/agent`'s flags, and the process that used to be
+started per call becomes a session in a process that is already running.
+
+| Endpoint                                | What it does                                    |
+| --------------------------------------- | ----------------------------------------------- |
+| `POST /v1/agents/sessions`              | Join a call. Returns once the agent is listening |
+| `GET  /v1/agents/sessions`              | The customer's sessions, newest first            |
+| `GET  /v1/agents/sessions/{id}`         | One of them                                      |
+| `DELETE /v1/agents/sessions/{id}`       | Leave the call                                   |
+| `POST /v1/agents/sessions/{id}/say`     | Speak, without going through the model           |
+| `POST /v1/agents/sessions/{id}/respond` | Answer something, as though it had been said     |
+| `POST /v1/agents/sessions/{id}/interrupt` | Abandon the reply being spoken                 |
+| `POST /v1/agents/sessions/{id}/instructions` | Change what the agent is, from the next turn |
+| `GET  /v1/agents/sessions/{id}/events`  | WebSocket: everything the agent does             |
+| `GET  /v1/{modality}/stream`            | WebSocket: one modality, for a pipeline elsewhere |
+
+```bash
+curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
+  -H 'Content-Type: application/json' -d '{
+    "call_id": "demo-1",
+    "instructions": "Keep your replies short.",
+    "llm": "llm-fast",
+    "subagent": "llm-smart",
+    "sandbox": "daytona",
+    "tags": {"project": "support"},
+    "memory": {"user_id": "222"}
+  }'
+```
+
+Two things travel in both directions. The socket carries out what the agent heard, said and
+decided, and carries back `say`, `interrupt` and `close`. And it carries `tool_call`: the
+caller's own functions live wherever the caller is, so the model asks for one here, the
+answer comes back from there, and a caller that does not answer inside the tool timeout
+leaves the model to carry on without it rather than leaving the call silent.
+
+Sessions are keyed by customer. A session id that exists but belongs to somebody else is
+reported as not existing at all, since a forbidden would confirm it was real.
+
+## Agents that are configured rather than spelled out
+
+A session can be created from a stored configuration instead of a caller repeating the
+whole spec every time. `config_id` on `POST /v1/agents/sessions` loads one and everything
+inline in the request overrides it, so a config can be reused and one call still changed.
+
+| Endpoint                                    | What it does                                |
+| ------------------------------------------- | ------------------------------------------- |
+| `/v1/agents/configs`                        | Named agents: models, voice, instructions, skills, knowledge |
+| `/v1/agents/skills`                         | What the fast model may hand to the slower one |
+| `GET /v1/agents/calls`                      | Calls that happened, running ones included   |
+| `GET /v1/agents/calls/{id}`                 | One call, with what a model made of it       |
+| `GET /v1/agents/calls/{id}/transcript`      | What was said                                |
+| `GET /v1/agents/calls/{id}/timeline`        | Each exchange, said and measured together    |
+| `/v1/agents/campaigns`                      | Lists of people to ring, and how far they got |
+
+**Skills are named rather than spelled out.** A config carries skill names, and they are
+resolved once when the session is created: the customer's own rows, or the built-in
+`think`, `recall` and `explain`. A name nothing defines is refused rather than dropped,
+because a model offered a skill nobody implements is worse than one offered none. The
+runtime lookup is unchanged.
+
+**Knowledge is what the business wrote down.** With `TURBOPUFFER_API_KEY` set, a config's
+`knowledge_namespace` gives the model a `lookup` tool over full-text search, so a caller's
+question about prices or opening hours is answered out of the handbook rather than guessed
+at. Each search is a `requests` row with modality `knowledge`, like everything else that
+costs money.
+
+**A call outlives the session that ran it.** Sessions live in a map in memory, which
+answers what is happening now and nothing at all about last Tuesday. A `calls` row is
+written when the agent joins and again when it leaves, both off the conversation's path.
+What was said is not copied into Postgres: the transcript is already in Stream Chat, keyed
+by agent, and the timings are already in `turns`. The timeline endpoint is those two
+joined. When the call ends, a short model pass over the conversation writes a summary and
+a score from one to five onto the row, billed through the LLM router like anything else.
+
+**Campaigns are the outbound half.** A campaign is one agent, one of the customer's
+numbers and a list of people, each with instructions of their own that are added to the
+config's. Starting one runs a loop that holds a semaphore sized to `concurrency`, places
+each call at the vendor and creates a session for it; contacts are claimed in Postgres, so
+a process that stopped mid-campaign resumes rather than starting again. Pausing stops
+ringing new people and leaves the conversations already happening alone.
+
 ## What is recorded
 
 | Table                                    | One row per                                        |
@@ -316,6 +410,9 @@ flow controller also asks for clarification when the words are clear but the int
 | `turns`                                  | Exchange in a conversation, measured leg by leg     |
 | `turn_stats_hourly`, `turn_stats_daily`  | Bucket, customer and agent, with per-leg percentiles |
 | `phone_numbers`                          | Number held, kept after release because it was billed |
+| `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
+| `calls`                                  | Conversation that happened, with its summary and score |
+| `campaigns`, `campaign_contacts`         | List of people to ring, and what became of each     |
 
 Three things fall out of this that are worth stating.
 
@@ -405,11 +502,17 @@ docker run -d --name va-redis -p 56379:6379 redis:7-alpine
 
 ## Regenerate the HTTP layer
 
-`api/openapi.yaml` is the source of truth. After editing it:
+`api/openapi.yaml` is the source of truth for both sides. After editing it:
 
 ```bash
 go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
+uv run ../plugins/stream/generate.py
 ```
+
+The two sockets are declared in the spec with a `101` response so a reader and a client
+generator know they exist, and excluded from generation: a strict server cannot express an
+upgrade. Their handlers are hand-written in `internal/api/sessionws.go` and `streamws.go`,
+and the Python side of them in `plugins/stream/.../_socket.py`.
 
 ## Design notes
 

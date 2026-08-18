@@ -194,7 +194,14 @@ func (s *Store) call(ctx context.Context, path string, body, into any) error {
 // filtersFor scopes a search to who the memories belong to. An app id narrows it further,
 // which is what keeps two deployments sharing one mem0 account apart.
 func filtersFor(scope memory.Scope) map[string]string {
-	filters := map[string]string{"user_id": scope.UserID}
+	filters := make(map[string]string, len(scope.Extra)+2)
+	// The caller's own labels go in first, so neither of the two identities below can be
+	// overwritten by one: a filter that could rewrite the user id would read somebody
+	// else's memories.
+	for key, value := range scope.Extra {
+		filters[key] = value
+	}
+	filters["user_id"] = scope.UserID
 	if scope.AppID != "" {
 		filters["app_id"] = scope.AppID
 	}

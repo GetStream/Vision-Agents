@@ -345,6 +345,353 @@ func (s *APIIntegrationSuite) TestProvidersReportLiveHealth() {
 	s.True(english.Health.Available)
 }
 
+func (s *APIIntegrationSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/configs", `{
+		"name":"support","llm":"llm-fast","tts":"en-low-latency","voice":"aurora",
+		"subagent":"llm-best","instructions":"be brief","skills":["think","refund"],
+		"knowledge_namespace":"handbook","tags":{"project":"support"}
+	}`)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	var created AgentConfig
+	s.Require().NoError(json.Unmarshal(payload, &created))
+	s.Require().NotEmpty(created.Id)
+	s.Equal("support", created.Name)
+
+	response, payload = s.do(http.MethodGet, "/v1/agents/configs/"+created.Id, "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var read AgentConfig
+	s.Require().NoError(json.Unmarshal(payload, &read))
+	s.Require().NotNil(read.Llm)
+	s.Equal("llm-fast", *read.Llm)
+	s.Require().NotNil(read.Voice)
+	s.Equal("aurora", *read.Voice)
+	s.Require().NotNil(read.Skills)
+	s.Equal([]string{"think", "refund"}, *read.Skills)
+	s.Require().NotNil(read.KnowledgeNamespace)
+	s.Equal("handbook", *read.KnowledgeNamespace)
+	s.Require().NotNil(read.Tags)
+	s.Equal("support", (*read.Tags)["project"])
+}
+
+func (s *APIIntegrationSuite) TestUpdatingAConfigReplacesWhatItWas() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/configs",
+		`{"name":"support","llm":"llm-fast","instructions":"be brief"}`)
+	var created AgentConfig
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	response, payload := s.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		`{"name":"support","llm":"llm-best"}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var updated AgentConfig
+	s.Require().NoError(json.Unmarshal(payload, &updated))
+	s.Equal(created.Id, updated.Id, "an update keeps the id callers already hold")
+	s.Require().NotNil(updated.Llm)
+	s.Equal("llm-best", *updated.Llm)
+	s.Nil(updated.Instructions, "a field left out of a replacement is gone from it")
+}
+
+func (s *APIIntegrationSuite) TestADeletedConfigCannotBeUsedAgain() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/configs", `{"name":"support"}`)
+	var created AgentConfig
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	response, _ := s.do(http.MethodDelete, "/v1/agents/configs/"+created.Id, "")
+	s.Require().Equal(http.StatusNoContent, response.StatusCode)
+
+	response, _ = s.do(http.MethodGet, "/v1/agents/configs/"+created.Id, "")
+	s.Equal(http.StatusNotFound, response.StatusCode)
+
+	// The name is free again, which is what makes deleting one usable rather than final.
+	response, payload = s.do(http.MethodPost, "/v1/agents/configs", `{"name":"support"}`)
+	s.Equal(http.StatusCreated, response.StatusCode, string(payload))
+}
+
+func (s *APIIntegrationSuite) TestAnotherCustomersConfigIsNotFound() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/configs", `{"name":"support"}`)
+	var created AgentConfig
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodGet,
+		s.server.URL+"/v1/agents/configs/"+created.Id, strings.NewReader(""))
+	s.Require().NoError(err)
+	request.Header.Set(CustomerHeader, "somebody-else")
+
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+func (s *APIIntegrationSuite) TestASkillIsStoredAndListed() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/skills", `{
+		"name":"refund","description":"work out what a caller is owed",
+		"instructions":"Read the order and the policy, then say what to refund.",
+		"deadline_ms":20000
+	}`)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	var created Skill
+	s.Require().NoError(json.Unmarshal(payload, &created))
+	s.Require().NotNil(created.DeadlineMs)
+	s.EqualValues(20000, *created.DeadlineMs)
+
+	response, payload = s.do(http.MethodGet, "/v1/agents/skills", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+
+	var listed []Skill
+	s.Require().NoError(json.Unmarshal(payload, &listed))
+	s.Require().Len(listed, 1)
+	s.Equal("refund", listed[0].Name)
+}
+
+func (s *APIIntegrationSuite) TestASkillWithoutADescriptionIsRefused() {
+	// The description is the whole of how the fast model decides when to hand work over,
+	// so a skill without one would never be reached for.
+	response, payload := s.do(http.MethodPost, "/v1/agents/skills",
+		`{"name":"refund","description":"","instructions":"work it out"}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode)
+
+	var failure Error
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Contains(failure.Error, "description")
+}
+
+// campaign creates a campaign over a stored config and returns it.
+func (s *APIIntegrationSuite) campaign(concurrency int) Campaign {
+	_, payload := s.do(http.MethodPost, "/v1/agents/configs", `{"name":"winback","llm":"llm-fast"}`)
+	var config AgentConfig
+	s.Require().NoError(json.Unmarshal(payload, &config))
+
+	body := fmt.Sprintf(
+		`{"name":"may","config_id":%q,"from_number":"+15550100","concurrency":%d}`,
+		config.Id, concurrency)
+	response, payload := s.do(http.MethodPost, "/v1/agents/campaigns", body)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	var created Campaign
+	s.Require().NoError(json.Unmarshal(payload, &created))
+	return created
+}
+
+func (s *APIIntegrationSuite) TestACampaignIsCreatedStoppedWithNobodyToRing() {
+	created := s.campaign(3)
+
+	s.Equal(Draft, created.State, "a campaign that started itself would ring people nobody added yet")
+	s.Equal(3, created.Concurrency)
+
+	response, payload := s.do(http.MethodGet, "/v1/agents/campaigns/"+created.Id+"/contacts", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var contacts []Contact
+	s.Require().NoError(json.Unmarshal(payload, &contacts))
+	s.Empty(contacts)
+}
+
+func (s *APIIntegrationSuite) TestACampaignNamingAConfigNobodyHasIsRefused() {
+	// A campaign that named a config it could not use would fail one call at a time, at
+	// whatever hour somebody started it.
+	response, payload := s.do(http.MethodPost, "/v1/agents/campaigns",
+		`{"name":"may","config_id":"nope","from_number":"+15550100"}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode)
+
+	var failure Error
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Contains(failure.Error, "config")
+}
+
+func (s *APIIntegrationSuite) TestContactsAreRungInTheOrderTheyWereAdded() {
+	created := s.campaign(1)
+
+	response, payload := s.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/contacts", `{
+		"contacts":[
+			{"to_number":"+15550111","instructions":"ask about the trial"},
+			{"to_number":"+15550222"}
+		]
+	}`)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	claimed, found, err := s.store.ClaimContact(s.ctx, created.Id)
+	s.Require().NoError(err)
+	s.Require().True(found)
+	s.Equal("+15550111", claimed.ToNumber)
+	s.Equal("ask about the trial", claimed.Instructions)
+	s.Equal(store.Calling, claimed.State, "a claimed contact is nobody else's to ring")
+	s.Equal(1, claimed.Attempts)
+
+	next, found, err := s.store.ClaimContact(s.ctx, created.Id)
+	s.Require().NoError(err)
+	s.Require().True(found)
+	s.Equal("+15550222", next.ToNumber, "the same person was taken twice")
+
+	_, found, err = s.store.ClaimContact(s.ctx, created.Id)
+	s.Require().NoError(err)
+	s.False(found, "there was nobody left to ring")
+}
+
+func (s *APIIntegrationSuite) TestACallThatNeverFinishedIsRungAgainRatherThanLost() {
+	// A process that stopped mid-call leaves a contact claimed by nobody. Ringing them
+	// again is better than a campaign that quietly skips them.
+	created := s.campaign(1)
+	_, _ = s.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/contacts",
+		`{"contacts":[{"to_number":"+15550111"}]}`)
+
+	_, found, err := s.store.ClaimContact(s.ctx, created.Id)
+	s.Require().NoError(err)
+	s.Require().True(found)
+
+	s.Require().NoError(s.store.ReleaseContacts(s.ctx, created.Id))
+
+	again, found, err := s.store.ClaimContact(s.ctx, created.Id)
+	s.Require().NoError(err)
+	s.Require().True(found)
+	s.Equal(2, again.Attempts, "the second attempt is counted as one")
+}
+
+func (s *APIIntegrationSuite) TestWhatBecameOfAContactIsShownAgainstIt() {
+	created := s.campaign(1)
+	_, _ = s.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/contacts",
+		`{"contacts":[{"to_number":"+15550111"},{"to_number":"+15550222"}]}`)
+
+	first, _, err := s.store.ClaimContact(s.ctx, created.Id)
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.FinishContact(s.ctx, store.Contact{
+		ID: first.ID, State: store.Done, CallID: "session-1", VendorCallID: "CA1",
+	}))
+
+	second, _, err := s.store.ClaimContact(s.ctx, created.Id)
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.FinishContact(s.ctx, store.Contact{
+		ID: second.ID, State: store.Failed, Error: "the number is not in service",
+	}))
+
+	response, payload := s.do(http.MethodGet, "/v1/agents/campaigns/"+created.Id+"/contacts", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+
+	var contacts []Contact
+	s.Require().NoError(json.Unmarshal(payload, &contacts))
+	s.Require().Len(contacts, 2)
+	s.Equal(Done, contacts[0].State)
+	s.Require().NotNil(contacts[0].CallId)
+	s.Equal("session-1", *contacts[0].CallId)
+	s.Equal(Failed, contacts[1].State)
+	s.Require().NotNil(contacts[1].Error)
+	s.Contains(*contacts[1].Error, "not in service")
+}
+
+func (s *APIIntegrationSuite) TestACampaignCannotBeStartedWithoutAnythingToRingWith() {
+	// This deployment has no telephony, so starting one has to say so rather than
+	// reporting a campaign that is running and will never call anybody.
+	created := s.campaign(1)
+
+	response, payload := s.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", "")
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+}
+
+func (s *APIIntegrationSuite) TestAnotherCustomersCampaignIsNotFound() {
+	created := s.campaign(1)
+
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodGet,
+		s.server.URL+"/v1/agents/campaigns/"+created.Id, strings.NewReader(""))
+	s.Require().NoError(err)
+	request.Header.Set(CustomerHeader, "somebody-else")
+
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+func (s *APIIntegrationSuite) TestACallIsFoundAfterTheSessionRunningItIsGone() {
+	// A session lives in a map in memory. This is the whole point of the row: the call
+	// is still there once the process that held it is not.
+	call := store.Call{
+		ID:         "session-" + s.customerID,
+		CustomerID: s.customerID,
+		CallID:     "call-1",
+		AgentID:    "agent-1",
+		Direction:  store.Outbound,
+		ToNumber:   "+15550101",
+		StartedAt:  s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+
+	response, payload := s.do(http.MethodGet, "/v1/agents/calls/"+call.ID, "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var read Call
+	s.Require().NoError(json.Unmarshal(payload, &read))
+	s.Equal("call-1", read.CallId)
+	s.Equal(Outbound, read.Direction)
+	s.Require().NotNil(read.ToNumber)
+	s.Equal("+15550101", *read.ToNumber)
+	s.Nil(read.EndedAt, "a call nobody has ended is still running")
+}
+
+func (s *APIIntegrationSuite) TestTheRunningCallsAreTheOnesThatHaveNotEnded() {
+	running := store.Call{
+		ID: "running-" + s.customerID, CustomerID: s.customerID,
+		CallID: "call-1", AgentID: "agent-1", StartedAt: s.base,
+	}
+	finished := store.Call{
+		ID: "finished-" + s.customerID, CustomerID: s.customerID,
+		CallID: "call-2", AgentID: "agent-2", StartedAt: s.base.Add(-time.Hour),
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &running))
+	s.Require().NoError(s.store.StartCall(s.ctx, &finished))
+	s.Require().NoError(s.store.FinishCall(s.ctx, finished.ID, s.base))
+
+	response, payload := s.do(http.MethodGet, "/v1/agents/calls?running=true", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var listed []Call
+	s.Require().NoError(json.Unmarshal(payload, &listed))
+	s.Require().Len(listed, 1)
+	s.Equal(running.ID, listed[0].Id)
+
+	response, payload = s.do(http.MethodGet, "/v1/agents/calls", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	s.Require().NoError(json.Unmarshal(payload, &listed))
+	s.Require().Len(listed, 2, "both calls happened")
+	s.Equal(running.ID, listed[0].Id, "newest first")
+	s.Require().NotNil(listed[1].EndedAt)
+}
+
+func (s *APIIntegrationSuite) TestACallKeepsTheTimeItFirstEnded() {
+	// An agent leaves once. A second close is the same leaving reported again, and must
+	// not stretch the call to cover it.
+	call := store.Call{
+		ID: "session-" + s.customerID, CustomerID: s.customerID,
+		CallID: "call-1", AgentID: "agent-1", StartedAt: s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+	s.Require().NoError(s.store.FinishCall(s.ctx, call.ID, s.base.Add(time.Minute)))
+	s.Require().NoError(s.store.FinishCall(s.ctx, call.ID, s.base.Add(time.Hour)))
+
+	read, err := s.store.Call(s.ctx, s.customerID, call.ID)
+	s.Require().NoError(err)
+	s.Require().NotNil(read.EndedAt)
+	s.WithinDuration(s.base.Add(time.Minute), *read.EndedAt, time.Second)
+}
+
+func (s *APIIntegrationSuite) TestAnotherCustomersCallIsNotFound() {
+	call := store.Call{
+		ID: "session-" + s.customerID, CustomerID: "somebody-else",
+		CallID: "call-1", AgentID: "agent-1", StartedAt: s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+
+	response, _ := s.do(http.MethodGet, "/v1/agents/calls/"+call.ID, "")
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
 func (s *APIIntegrationSuite) TestVoiceProvidersAreRankedSeparately() {
 	// A speech-to-text failure must not make the text-to-speech provider look unhealthy.
 	s.Require().NoError(s.live.RecordRequest(s.ctx, live.Usage{

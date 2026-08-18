@@ -159,6 +159,177 @@ type PhoneNumber struct {
 	ReleasedAt    *time.Time `bun:"released_at"`
 }
 
+// AgentConfig is a named set of the decisions a session is created with.
+//
+// It holds only what a caller would otherwise repeat on every call. Everything that is
+// about one conversation rather than the agent behind it, the call id above all, stays in
+// the create request: a config is who the agent is, not which call it is on.
+type AgentConfig struct {
+	bun.BaseModel `bun:"table:agent_configs,alias:ac"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	Name       string `bun:"name,notnull"`
+	// STT, TTS, LLM and Subagent are routing targets. Empty leaves the session default.
+	STT          string `bun:"stt,notnull"`
+	TTS          string `bun:"tts,notnull"`
+	Voice        string `bun:"voice,notnull"`
+	LLM          string `bun:"llm,notnull"`
+	Subagent     string `bun:"subagent,notnull"`
+	Instructions string `bun:"instructions,notnull"`
+	Greeting     string `bun:"greeting,notnull"`
+	// Skills names entries in the skill registry rather than carrying their instructions,
+	// so editing a skill changes every config that uses it.
+	Skills []string `bun:"skills,type:jsonb"`
+	// KnowledgeNamespace is what the agent may look things up in.
+	KnowledgeNamespace string            `bun:"knowledge_namespace,notnull"`
+	Tags               map[string]string `bun:"tags,type:jsonb"`
+	CreatedAt          time.Time         `bun:"created_at,notnull"`
+	UpdatedAt          time.Time         `bun:"updated_at,notnull"`
+	DeletedAt          *time.Time        `bun:"deleted_at"`
+}
+
+// Skill is one kind of work worth handing to the slower model, stored so a config can name
+// it and several configs can share it.
+type Skill struct {
+	bun.BaseModel `bun:"table:skills,alias:sk"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	Name       string `bun:"name,notnull"`
+	// Description is the one line the fast model sees.
+	Description string `bun:"description,notnull"`
+	// Instructions is the full prompt, which only the subagent sees.
+	Instructions string `bun:"instructions,notnull"`
+	// DeadlineMs is how long the work may run before it is abandoned. Zero is the
+	// harness's own default.
+	DeadlineMs int64      `bun:"deadline_ms,notnull"`
+	CreatedAt  time.Time  `bun:"created_at,notnull"`
+	UpdatedAt  time.Time  `bun:"updated_at,notnull"`
+	DeletedAt  *time.Time `bun:"deleted_at"`
+}
+
+// Which way a call went.
+const (
+	// Inbound is somebody ringing the agent.
+	Inbound = "inbound"
+	// Outbound is the agent ringing somebody, which is what a campaign does.
+	Outbound = "outbound"
+)
+
+// Call is one conversation the service ran, kept so it can be found after the process that
+// held it is gone.
+//
+// What was said is not here: the transcript is in Stream Chat, keyed by AgentID, and the
+// timings are in Turn. This row is what ties them together and carries the judgements made
+// after the call ended.
+type Call struct {
+	bun.BaseModel `bun:"table:calls,alias:c"`
+
+	// ID is the session id, which is the handle the caller already holds the call by.
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// CallID is the Stream call, and AgentID is the transcript channel.
+	CallID  string `bun:"call_id,notnull"`
+	AgentID string `bun:"agent_id,notnull"`
+	// ConfigID names the agent config the call ran under. Empty when the caller spelled
+	// the whole spec out.
+	ConfigID   string `bun:"config_id,nullzero"`
+	CampaignID string `bun:"campaign_id,nullzero"`
+	ContactID  string `bun:"contact_id,nullzero"`
+	FromNumber string `bun:"from_number,nullzero"`
+	ToNumber   string `bun:"to_number,nullzero"`
+	// Direction is inbound or outbound: who rang whom.
+	Direction string    `bun:"direction,notnull"`
+	StartedAt time.Time `bun:"started_at,notnull"`
+	// EndedAt is nil while the call is still running.
+	EndedAt *time.Time `bun:"ended_at"`
+	// Summary, ReviewScore and ReviewNotes are written after the call by a short model
+	// pass over the transcript, so they are empty until it has run.
+	Summary     string            `bun:"summary,nullzero"`
+	ReviewScore *int              `bun:"review_score"`
+	ReviewNotes string            `bun:"review_notes,nullzero"`
+	Tags        map[string]string `bun:"tags,type:jsonb,nullzero"`
+}
+
+// What a campaign is doing.
+const (
+	// Draft is a campaign that has never been started.
+	Draft = "draft"
+	// Running means the runner is working through its contacts.
+	Running = "running"
+	// Paused means it was stopped partway and can be started again.
+	Paused = "paused"
+	// Finished means there is nobody left to ring.
+	Finished = "finished"
+)
+
+// What became of one contact.
+const (
+	// Pending is somebody who has not been rung yet.
+	Pending = "pending"
+	// Calling is a call happening now.
+	Calling = "calling"
+	// Done is somebody who was rung, whatever they said.
+	Done = "done"
+	// Failed is a call that could not be made.
+	Failed = "failed"
+)
+
+// Campaign is a list of people to ring and one agent to ring them with.
+type Campaign struct {
+	bun.BaseModel `bun:"table:campaigns,alias:cp"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	Name       string `bun:"name,notnull"`
+	// ConfigID is the agent that makes the calls.
+	ConfigID string `bun:"config_id,notnull"`
+	// FromNumber is one of the customer's own, which is what the person sees.
+	FromNumber string `bun:"from_number,notnull"`
+	// Concurrency is how many of these calls may be happening at once.
+	Concurrency int               `bun:"concurrency,notnull"`
+	State       string            `bun:"state,notnull"`
+	Tags        map[string]string `bun:"tags,type:jsonb,nullzero"`
+	CreatedAt   time.Time         `bun:"created_at,notnull"`
+	StartedAt   *time.Time        `bun:"started_at"`
+	FinishedAt  *time.Time        `bun:"finished_at"`
+}
+
+// Contact is one person to ring, and what became of ringing them.
+type Contact struct {
+	bun.BaseModel `bun:"table:campaign_contacts,alias:cc"`
+
+	ID string `bun:"id,pk"`
+	// Seq is the order they are rung in, which is the order they were added.
+	Seq        int64  `bun:"seq,autoincrement"`
+	CampaignID string `bun:"campaign_id,notnull"`
+	ToNumber   string `bun:"to_number,notnull"`
+	// Instructions are what to say to this person, added to whatever the config says.
+	Instructions string `bun:"instructions,notnull"`
+	State        string `bun:"state,notnull"`
+	Attempts     int    `bun:"attempts,notnull"`
+	// CallID is the calls row this contact became.
+	CallID       string    `bun:"call_id,nullzero"`
+	VendorCallID string    `bun:"vendor_call_id,nullzero"`
+	Error        string    `bun:"error,nullzero"`
+	CreatedAt    time.Time `bun:"created_at,notnull"`
+}
+
+// CallFilter narrows which calls are listed. Every field is optional, and an empty filter
+// is the customer's most recent calls.
+type CallFilter struct {
+	AgentID    string
+	CampaignID string
+	// Running limits the list to calls that have not ended.
+	Running bool
+	// From and To bound when the call started. A zero time is unbounded.
+	From time.Time
+	To   time.Time
+	// Limit caps how many come back. Zero leaves the store's own default.
+	Limit int
+}
+
 // Granularity selects which rollup table to read or write.
 type Granularity string
 

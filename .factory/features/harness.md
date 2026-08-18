@@ -42,6 +42,7 @@ flowchart LR
 | [manager.go](../../acceleration/internal/harness/manager.go)      | Creates, supersedes, times out and abandons tasks |
 | [task.go](../../acceleration/internal/harness/task.go)            | `Result`, `State` and why work was dropped     |
 | [flow.go](../../acceleration/internal/harness/flow.go)            | Constrained cadence and floor decisions        |
+| [sandbox/](../../acceleration/internal/sandbox)                   | Where the subagent runs code it writes         |
 | [compaction.go](../../acceleration/internal/harness/compaction.go) | Cache-aware private conversation summaries     |
 
 ## A skill is not a tool
@@ -104,6 +105,17 @@ answer was coming, so they should not have to ask again. Two details:
 Failures are told to the caller too — "I could not find out" — because after promising an answer,
 silence is the one option that is not available.
 
+## Somewhere to run code, on the far side of the handover
+
+A session that asks for a sandbox gives the *subagent* one tool, `run_code`, and the fast
+model none. Running code takes seconds, and the model holding the conversation has none to
+spare; the subagent has already left the live path. The contract is one method in
+[internal/sandbox](../../acceleration/internal/sandbox), with Daytona behind
+`DAYTONA_API_KEY` as the only provider. A task whose completion asks for code has the code
+run, the output appended as a tool result and the same task put again, up to four rounds
+and always inside the skill's own deadline. Work abandoned while its code was running still
+settles, because the completion it was waiting on has already been and gone.
+
 ## Cache-aware compaction
 
 Large histories remain verbatim while prefix caching is effective. Once a completion reports at
@@ -114,6 +126,7 @@ matches, so late maintenance cannot erase newer conversation. It emits `Compacte
 
 ## Not done
 
-Nothing outstanding from A or B. Part C, the [finetuning dataset](finetuning-dataset.md), was
+Nothing outstanding from A or B; the sandbox arrived with the
+[Python SDK](sdk.md) in sprint 8. Part C, the [finetuning dataset](finetuning-dataset.md), was
 excluded from the sprint plan and has not been started. Part D is
 [speaking while listening](duplex.md).

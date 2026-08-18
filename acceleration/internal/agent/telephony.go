@@ -17,6 +17,7 @@ import (
 const (
 	toolTransfer = "transfer"
 	toolPress    = "press"
+	toolLookup   = "lookup"
 )
 
 // arrivalTimeout bounds how long a warm transfer waits for the human to pick up. Past it
@@ -58,6 +59,23 @@ type Telephony interface {
 	// SendDigits presses digits on the keypad of the call the agent placed, which is how
 	// it gets past a menu.
 	SendDigits(ctx context.Context, digits string) error
+}
+
+// ToolRunner carries out the tools this package does not know about, which is every tool
+// but the two that act on the phone call.
+//
+// It exists so a caller who is not in this process can own its own tools: the Python SDK
+// registers functions against a session, the model asks for one by name, and the runner is
+// what takes the request out to whoever can answer it. The result is words for the model,
+// so a runner that failed says so in a sentence rather than returning an error the caller
+// would never hear about.
+type ToolRunner interface {
+	Run(ctx context.Context, call llm.ToolCall) (string, error)
+}
+
+// telephonyTool reports whether a tool is one of the two this package runs itself.
+func telephonyTool(name string) bool {
+	return name == toolTransfer || name == toolPress
 }
 
 // transferArguments is what the model fills in to hand the caller over. A summary makes it
@@ -119,10 +137,6 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 // callTool runs one tool, reporting what to tell the model and whether the agent has left
 // the call.
 func (a *Agent) callTool(call llm.ToolCall) (string, bool, error) {
-	if a.options.Telephony == nil {
-		return "", false, errors.New("agent: this call has no telephony")
-	}
-
 	a.mu.Lock()
 	ctx := a.ctx
 	a.mu.Unlock()
@@ -130,14 +144,50 @@ func (a *Agent) callTool(call llm.ToolCall) (string, bool, error) {
 		return "", false, errors.New("agent: not joined")
 	}
 
-	switch call.Name {
-	case toolTransfer:
-		return a.transfer(ctx, call)
-	case toolPress:
+	if telephonyTool(call.Name) {
+		if a.options.Telephony == nil {
+			return "", false, errors.New("agent: this call has no telephony")
+		}
+		if call.Name == toolTransfer {
+			return a.transfer(ctx, call)
+		}
 		return a.press(ctx, call)
-	default:
+	}
+
+	if call.Name == toolLookup {
+		if a.knowledge == nil {
+			return "", false, errors.New("agent: this agent has no knowledge base")
+		}
+		return a.lookup(ctx, call)
+	}
+
+	if a.options.ToolRunner == nil {
 		return "", false, fmt.Errorf("agent: %s is not a tool this agent can run", call.Name)
 	}
+	// A remote tool cannot end the call: leaving is the transfer's business, and a runner
+	// that hung up would strand the conversation the agent is still holding history for.
+	result, err := a.options.ToolRunner.Run(ctx, call)
+	return result, false, err
+}
+
+// availableTools is what the voice model is offered, which is the configured set minus
+// whatever nothing on this call can carry out. Offering a transfer the agent cannot make
+// would have it promise the caller a person and then sit there.
+func (a *Agent) availableTools() harness.Tools {
+	var available harness.Tools
+	for _, tool := range a.options.Tools.Tools {
+		runnable := a.options.ToolRunner != nil
+		switch {
+		case telephonyTool(tool.Name):
+			runnable = a.options.Telephony != nil
+		case tool.Name == toolLookup:
+			runnable = a.knowledge != nil
+		}
+		if runnable {
+			available.Tools = append(available.Tools, tool)
+		}
+	}
+	return available
 }
 
 // transfer hands the caller to a human and leaves.

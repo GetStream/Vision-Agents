@@ -8,7 +8,9 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -583,4 +585,14 @@ func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumbe
 		return PhoneNumber{}, fmt.Errorf("store: number: %w", err)
 	}
 	return number, nil
+}
+
+// newID is the handle a caller holds a row by. It is random rather than sequential because
+// it is the only thing standing between two customers who both guessed at an id.
+func newID() string {
+	raw := make([]byte, 16)
+	// rand.Read on crypto/rand never returns an error, which is why the result is not
+	// checked: the alternative would be a row that could not be created.
+	_, _ = rand.Read(raw)
+	return hex.EncodeToString(raw)
 }

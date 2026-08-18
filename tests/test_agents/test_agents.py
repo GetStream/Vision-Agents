@@ -9,11 +9,14 @@ import pytest
 from getstream.video.rtc import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import Agent, User
+from vision_agents.core.agents.events import UserTranscriptEvent
 from vision_agents.core.agents.inference import AudioOutputChunk, AudioOutputStream
 from vision_agents.core.avatars import Avatar
 from vision_agents.core.edge import Call, EdgeTransport
 from vision_agents.core.events import EventManager
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent
+from vision_agents.core.harness import DefaultHarness
+from vision_agents.core.llm.llm import LLM, LLMResponseEvent, OmniLLM
+from vision_agents.core.llm.remote import RemoteCall, RemoteEvent
 from vision_agents.core.processors.base_processor import AudioPublisher
 from vision_agents.core.stt import STT as BaseSTT
 from vision_agents.core.tts import TTS
@@ -128,6 +131,56 @@ class DummyCall(Call):
     @property
     def id(self) -> str:
         return self._id
+
+
+class DummyRemotePipeline(OmniLLM):
+    """An LLM whose pipeline runs somewhere else, as far as the agent can tell."""
+
+    model = "remote"
+
+    def __init__(self):
+        super().__init__()
+        self.joined: Optional[RemoteCall] = None
+        self.left = False
+        self.said: list[str] = []
+        self._reported: asyncio.Queue[Optional[RemoteEvent]] = asyncio.Queue()
+
+    async def join_remote(self, call: RemoteCall) -> None:
+        self.joined = call
+
+    async def remote_events(self):
+        while True:
+            event = await self._reported.get()
+            if event is None:
+                return
+            yield event
+
+    async def say_remote(self, text: str, interrupt: bool = False) -> None:
+        self.said.append(text)
+
+    async def respond_remote(self, text: str, interrupt: bool = True) -> None:
+        self.said.append(text)
+
+    async def leave_remote(self) -> None:
+        self.left = True
+        await self._reported.put(None)
+
+    async def report(self, event: RemoteEvent) -> None:
+        """Say that the remote pipeline did something."""
+        await self._reported.put(event)
+
+    async def simple_response(self, *_, **__):
+        return
+        yield
+
+    async def simple_audio_response(self, pcm, participant):
+        pass
+
+    async def watch_video_track(self, track, shared_forwarder=None) -> None:
+        pass
+
+    async def stop_watching_video_track(self) -> None:
+        pass
 
 
 @pytest.fixture
@@ -718,3 +771,68 @@ class TestAgent:
             "tts": {"provider": "DummyTTS", "model": "tts"},
             "avatar": {"provider": "DummyAvatar"},
         }
+
+    async def test_join_hands_the_call_to_a_remote_pipeline(self, call: Call):
+        llm = DummyRemotePipeline()
+        agent = Agent(
+            llm=llm,
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            instructions="be brief",
+            harness=DefaultHarness(subagents={"default": "llm-smart"}),
+            cost_tracking={"project": "moderation"},
+            memory_filter={"user_id": "222"},
+        )
+
+        async with agent.join(call):
+            pass
+
+        assert llm.joined is not None
+        assert llm.joined.call_id == call.id
+        assert llm.joined.instructions == "be brief"
+        assert llm.joined.harness is not None
+        assert llm.joined.harness.subagent == "llm-smart"
+        assert llm.joined.cost_tracking == {"project": "moderation"}
+        assert llm.joined.memory_filter == {"user_id": "222"}
+        assert llm.left
+
+    async def test_a_remote_pipeline_reports_speech_as_the_agents_own_events(
+        self, call: Call
+    ):
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        heard: list[UserTranscriptEvent] = []
+        arrived = asyncio.Event()
+
+        @agent.subscribe
+        async def on_transcript(event: UserTranscriptEvent):
+            heard.append(event)
+            arrived.set()
+
+        async with agent.join(call):
+            await llm.report(
+                RemoteEvent(
+                    type="user_speech",
+                    text="hello there",
+                    user_id="u1",
+                    participant_id="p1",
+                )
+            )
+            await asyncio.wait_for(arrived.wait(), timeout=5)
+
+        assert [event.text for event in heard] == ["hello there"]
+        assert heard[0].participant is not None
+        assert heard[0].participant.user_id == "u1"
+
+    async def test_saying_something_on_a_remote_call_goes_to_the_pipeline(
+        self, call: Call
+    ):
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.join(call):
+            await agent.say("one moment")
+            await agent.simple_response("greet them")
+
+        assert llm.said == ["one moment", "greet them"]

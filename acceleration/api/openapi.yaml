@@ -510,6 +510,731 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/configs:
+    get:
+      operationId: listAgentConfigs
+      summary: The agent configs the calling customer holds
+      responses:
+        "200":
+          description: The customer's configs, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createAgentConfig
+      summary: Store a named configuration a session can be created from
+      description: >
+        A config holds what a caller would otherwise repeat on every call: the models, the
+        voice, the instructions and which skills the subagent may be handed. What is about
+        one conversation rather than the agent behind it, the call id above all, stays in
+        the create-session request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentConfigRequest"
+      responses:
+        "201":
+          description: The config was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/agents/configs/{id}:
+    get:
+      operationId: getAgentConfig
+      summary: One agent config
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateAgentConfig
+      summary: Replace an agent config
+      description: >
+        Every field is written, so the body is what the config now is rather than what
+        changed about it. Sessions already running keep the configuration they started
+        with.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentConfigRequest"
+      responses:
+        "200":
+          description: The config as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteAgentConfig
+      summary: Delete an agent config
+      description: >
+        Calls that already ran under it keep naming it, so the config stops being usable
+        rather than stops having existed.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "204":
+          description: The config is gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/skills:
+    get:
+      operationId: listSkills
+      summary: The skills the calling customer has defined
+      responses:
+        "200":
+          description: The customer's skills, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Skill"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createSkill
+      summary: Define a kind of work worth handing to the slower model
+      description: >
+        Skills live apart from the configs that use them so several configs can share one,
+        and so editing what a skill means changes it everywhere at once. The built-in
+        think, recall and explain need no row: a config may name them without defining
+        them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillRequest"
+      responses:
+        "201":
+          description: The skill was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/agents/skills/{id}:
+    get:
+      operationId: getSkill
+      summary: One skill
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The skill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateSkill
+      summary: Replace a skill
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillRequest"
+      responses:
+        "200":
+          description: The skill as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteSkill
+      summary: Delete a skill
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "204":
+          description: The skill is gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/campaigns:
+    get:
+      operationId: listCampaigns
+      summary: The campaigns the calling customer has
+      responses:
+        "200":
+          description: The customer's campaigns, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Campaign"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createCampaign
+      summary: Define a list of people to ring
+      description: >
+        A campaign is created stopped. Add the people to ring, then start it: concurrency
+        is how many of these calls may be happening at once, and every call is a
+        conversation this service is running.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CampaignRequest"
+      responses:
+        "201":
+          description: The campaign was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/agents/campaigns/{id}:
+    get:
+      operationId: getCampaign
+      summary: One campaign
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/campaigns/{id}/contacts:
+    get:
+      operationId: listCampaignContacts
+      summary: Who a campaign is ringing, and how far it has got
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The contacts, in the order they are rung
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Contact"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addCampaignContacts
+      summary: Add people to ring
+      description: >
+        Contacts are added rather than replaced, so a campaign can be topped up while it
+        is running. Each may carry instructions of their own, which the agent is told
+        along with whatever its config already says.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContactsRequest"
+      responses:
+        "201":
+          description: The contacts, in the order they are rung
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Contact"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/campaigns/{id}/start:
+    post:
+      operationId: startCampaign
+      summary: Start ringing
+      description: >
+        Returns once the campaign is running rather than once it is over. A campaign that
+        was paused carries on from whoever is left.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "202":
+          description: The campaign is running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/campaigns/{id}/pause:
+    post:
+      operationId: pauseCampaign
+      summary: Stop ringing anybody new
+      description: >
+        The calls already happening are left alone: a campaign is paused to stop ringing
+        people, not to hang up on the ones who answered.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The campaign is paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/calls:
+    get:
+      operationId: listCalls
+      summary: The calls the calling customer has run
+      description: >
+        A session lives in memory and is gone when the process is, so a call is recorded
+        as it starts and again as it ends. This is what answers what happened yesterday,
+        and what is happening now after a restart.
+      parameters:
+        - name: agent_id
+          in: query
+          required: false
+          description: Narrow to one agent.
+          schema:
+            type: string
+        - name: campaign_id
+          in: query
+          required: false
+          description: Narrow to the calls one campaign placed.
+          schema:
+            type: string
+        - name: running
+          in: query
+          required: false
+          description: Only calls that have not ended.
+          schema:
+            type: boolean
+            default: false
+        - name: from
+          in: query
+          required: false
+          description: Only calls that started at or after this, inclusive.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Only calls that started before this, exclusive.
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: The customer's calls, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Call"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/agents/calls/{id}:
+    get:
+      operationId: getCall
+      summary: One call, with whatever was made of it afterwards
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Call"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/calls/{id}/transcript:
+    get:
+      operationId: getCallTranscript
+      summary: What was said on a call
+      description: >
+        Read back from the chat channel the conversation was written to as it happened,
+        rather than copied into a second place that could disagree with it.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The conversation, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TranscriptMessage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/calls/{id}/timeline:
+    get:
+      operationId: getCallTimeline
+      summary: The call as it unfolded, said and measured together
+      description: >
+        Each exchange with what was said in it and what it cost the caller in waiting:
+        how long the answer took to start, how much the agent spoke, and whether it was
+        talked over.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The exchanges, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TimelineEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions:
+    get:
+      operationId: listSessions
+      summary: The sessions the calling customer is running
+      responses:
+        "200":
+          description: The customer's sessions, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createSession
+      summary: Join a call as a voice agent
+      description: >
+        The whole conversation runs here: the agent joins the call, transcribes what it
+        hears, answers it and speaks back, all through the routers. The caller keeps the
+        session id and watches the conversation over the events socket.
+
+        It returns once the agent is in the call, so a session that comes back is one that
+        is already listening. Tools declared here are the caller's own: the model asks for
+        them over the events socket and waits for the caller to answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+      responses:
+        "201":
+          description: The agent is in the call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}:
+    get:
+      operationId: getSession
+      summary: One session
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "200":
+          description: The session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: closeSession
+      summary: Leave the call and end the session
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "204":
+          description: The agent has left
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}/say:
+    post:
+      operationId: saySession
+      summary: Speak a piece of text without going through the model
+      description: >
+        For when the caller already knows what should be said, such as a greeting. A model
+        would only add latency and cost to words that were never in question.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SayRequest"
+      responses:
+        "204":
+          description: The text is being spoken
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}/respond:
+    post:
+      operationId: respondSession
+      summary: Answer a piece of text through the model, as though it had been said
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SayRequest"
+      responses:
+        "204":
+          description: The model is answering
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}/interrupt:
+    post:
+      operationId: interruptSession
+      summary: Abandon the reply being spoken
+      description: >
+        What a caller outside the call has instead of a voice. A murmur is not interrupted,
+        because it was meant to overlap with whoever is talking.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "204":
+          description: The reply was abandoned, if there was one
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}/instructions:
+    put:
+      operationId: setSessionInstructions
+      summary: Change what the agent is told to be
+      description: >
+        Applies from the next turn. The reply being spoken keeps the prompt it started
+        with, because rewriting it mid-sentence would have the agent change character in
+        the middle of a thought.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InstructionsRequest"
+      responses:
+        "204":
+          description: The next turn will use them
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}/events:
+    get:
+      operationId: watchSession
+      summary: Watch the conversation and answer the model's tool calls
+      description: >
+        A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON
+        objects carrying a `type` and the fields of that event.
+
+        The server sends what the conversation did: `joined`, `heard`, `responding`,
+        `response_delta`, `responded`, `spoke`, `turn`, `delegated`, `task_settled`,
+        `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
+        `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
+        `conversation_compacted`, `error` and `left`.
+
+        The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`,
+        `interrupt`, `instructions` or `close` to act on the session. A `tool_call` is the
+        only frame that must be answered: everything else is a report.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      responses:
+        "101":
+          description: The socket is open
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/{modality}/stream:
+    get:
+      operationId: streamModality
+      summary: Route one modality over a socket, for a pipeline running elsewhere
+      description: >
+        A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing
+        the agent does, offered a piece at a time: a caller running its own pipeline sends
+        audio or text and gets transcripts, audio or completions back, and the request is
+        failed over and billed exactly as it would be inside a session.
+
+        Every socket opens with a `start` frame naming the target and the cost tags.
+        Speech-to-text then takes binary 16 kHz mono PCM and returns `transcript` frames.
+        Text-to-speech takes `speak` frames and returns binary audio with
+        `synthesis_complete` between utterances: each audio frame opens with a
+        little-endian header of a uint32 sample rate, a uint16 channel count and two
+        reserved bytes, followed by PCM16 samples. Completions take `respond` frames and
+        return `delta` and `complete`. All three report failures as `error` frames and end
+        with `closed`.
+
+        Memory and phone are recorded rather than routed, so they are not served here.
+      parameters:
+        - $ref: "#/components/parameters/Modality"
+      responses:
+        "101":
+          description: The socket is open
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/stats/rollup:
     post:
       operationId: runRollup
@@ -552,6 +1277,20 @@ components:
       description: Which kind of model to route.
       schema:
         $ref: "#/components/schemas/Modality"
+    SessionID:
+      name: id
+      in: path
+      required: true
+      description: The session, as returned when it was created.
+      schema:
+        type: string
+    ResourceID:
+      name: id
+      in: path
+      required: true
+      description: The resource, as returned when it was created.
+      schema:
+        type: string
 
   responses:
     BadRequest:
@@ -581,6 +1320,544 @@ components:
         error:
           type: string
 
+    SessionState:
+      type: string
+      enum: [live, ended]
+      description: Whether the agent is still in the call.
+
+    SessionTool:
+      type: object
+      required: [name, description]
+      description: >
+        One of the caller's own functions. The model is offered it by name and description;
+        running it is the caller's business, over the events socket.
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          description: >
+            What the model is told the tool does, which is the whole of how it decides when
+            to reach for one.
+        parameters:
+          type: object
+          additionalProperties: true
+          description: A JSON Schema object describing the arguments.
+
+    SessionSkill:
+      type: object
+      required: [name, description, instructions]
+      description: >
+        A kind of work worth handing to the slower model. There is nothing behind a skill
+        but a better model: what it declares is the instructions that model answers under.
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          description: The one line the fast model sees.
+        instructions:
+          type: string
+          description: The full prompt, which only the subagent sees.
+        deadline_ms:
+          type: integer
+          format: int64
+          description: How long the work may run before it is abandoned. Zero is the default.
+
+    SessionMemory:
+      type: object
+      description: >
+        Who the session's memories are about. Without a user id nothing is recalled or
+        stored, which is the case for a call with nobody identified on it.
+      properties:
+        user_id:
+          type: string
+          description: Who the memories belong to. Empty means the customer.
+        app_id:
+          type: string
+          description: Separates two deployments sharing one memory account.
+        filter:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            The caller's own labels, which narrow recall further. They cannot widen it: a
+            filter is applied alongside the user id, never instead of it.
+
+    SessionPhone:
+      type: object
+      required: [number]
+      description: The number the session acts from, which is what turns transferring on.
+      properties:
+        number:
+          type: string
+          description: One of the customer's own numbers, written as +15551234567.
+        vendor:
+          type: string
+          description: Who carries an outbound leg.
+        vendor_call_id:
+          type: string
+          description: >
+            The outbound leg, set for a call the agent placed. Without one the agent has no
+            keypad to press at.
+
+    AgentConfigRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: What the config is called, which is unique among the customer's own.
+        stt:
+          type: string
+          description: A provider/model or a capability shortcut. Empty leaves the default.
+        tts:
+          type: string
+        voice:
+          type: string
+          description: Provider-specific voice id.
+        llm:
+          type: string
+          description: The model holding the conversation.
+        subagent:
+          type: string
+          description: >
+            The model that does the thinking. Empty means the voice model answers
+            everything itself, and skills mean nothing.
+        instructions:
+          type: string
+        greeting:
+          type: string
+        skills:
+          type: array
+          items:
+            type: string
+          description: >
+            Skill names, either the customer's own or one of the built-in think, recall
+            and explain. Omit for the built-in set.
+        knowledge_namespace:
+          type: string
+          description: >
+            What the agent may look things up in. Empty means it knows only what it was
+            told.
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+          description: Cost labels, carried onto every request a session using it makes.
+
+    AgentConfig:
+      type: object
+      required: [id, name, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        stt:
+          type: string
+        tts:
+          type: string
+        voice:
+          type: string
+        llm:
+          type: string
+        subagent:
+          type: string
+        instructions:
+          type: string
+        greeting:
+          type: string
+        skills:
+          type: array
+          items:
+            type: string
+        knowledge_namespace:
+          type: string
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SkillRequest:
+      type: object
+      required: [name, description, instructions]
+      properties:
+        name:
+          type: string
+          description: How a config names it, which is unique among the customer's own.
+        description:
+          type: string
+          description: The one line the fast model sees.
+        instructions:
+          type: string
+          description: The full prompt, which only the subagent sees.
+        deadline_ms:
+          type: integer
+          format: int64
+          description: How long the work may run before it is abandoned. Zero is the default.
+
+    Skill:
+      type: object
+      required: [id, name, description, instructions, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        instructions:
+          type: string
+        deadline_ms:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CampaignRequest:
+      type: object
+      required: [name, config_id, from_number]
+      properties:
+        name:
+          type: string
+        config_id:
+          type: string
+          description: The agent config the calls are made with.
+        from_number:
+          type: string
+          description: One of your own numbers, which is what the person sees.
+        concurrency:
+          type: integer
+          description: How many of these calls may be happening at once.
+          default: 1
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+
+    Campaign:
+      type: object
+      required: [id, name, config_id, from_number, concurrency, state, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        config_id:
+          type: string
+        from_number:
+          type: string
+        concurrency:
+          type: integer
+        state:
+          type: string
+          enum: [draft, running, paused, finished]
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+
+    ContactsRequest:
+      type: object
+      required: [contacts]
+      properties:
+        contacts:
+          type: array
+          items:
+            type: object
+            required: [to_number]
+            properties:
+              to_number:
+                type: string
+              instructions:
+                type: string
+                description: >
+                  What to say to this person, added to whatever the config already says.
+
+    Contact:
+      type: object
+      required: [id, to_number, state, attempts]
+      properties:
+        id:
+          type: string
+        to_number:
+          type: string
+        instructions:
+          type: string
+        state:
+          type: string
+          enum: [pending, calling, done, failed]
+        attempts:
+          type: integer
+        call_id:
+          type: string
+          description: The call this contact became, which is what the call paths take.
+        vendor_call_id:
+          type: string
+        error:
+          type: string
+          description: Why they could not be rung, when they could not be.
+
+    Call:
+      type: object
+      required: [id, call_id, agent_id, direction, started_at]
+      properties:
+        id:
+          type: string
+          description: The session that ran the call, which is what it is held by.
+        call_id:
+          type: string
+        agent_id:
+          type: string
+          description: Which agent ran it, and where its transcript is kept.
+        config_id:
+          type: string
+        campaign_id:
+          type: string
+        contact_id:
+          type: string
+        from_number:
+          type: string
+        to_number:
+          type: string
+        direction:
+          type: string
+          enum: [inbound, outbound]
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+          description: Absent while the call is still running.
+        summary:
+          type: string
+          description: What a model made of the call, written once it was over.
+        review_score:
+          type: integer
+          description: How well the agent handled it, from 1 to 5.
+        review_notes:
+          type: string
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+
+    TranscriptMessage:
+      type: object
+      required: [speaker, text, created_at]
+      properties:
+        speaker:
+          type: string
+          description: Who said it, the agent under its own user id.
+        text:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    TimelineEntry:
+      type: object
+      required: [turn_id, started_at]
+      properties:
+        turn_id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        heard:
+          type: string
+          description: What the caller said, when it can be matched to this exchange.
+        said:
+          type: string
+          description: What the agent answered.
+        roundtrip_ms:
+          type: number
+          format: double
+          description: How long the caller waited between finishing and being answered.
+        audio_out_ms:
+          type: number
+          format: double
+          description: How much the agent spoke.
+        interrupted:
+          type: boolean
+          description: Whether the caller talked over the answer.
+
+    CreateSessionRequest:
+      type: object
+      required: [call_id]
+      properties:
+        call_id:
+          type: string
+          description: The call to join.
+        config_id:
+          type: string
+          description: >
+            An agent config to start from. Everything else in this request overrides what
+            the config says, so a caller can reuse a configuration and still change one
+            thing about this call.
+        call_type:
+          type: string
+          default: default
+        user_id:
+          type: string
+          description: Who the agent joins the call as.
+          default: vision-agent
+        user_name:
+          type: string
+          default: Vision Agent
+        agent_id:
+          type: string
+          description: Keys transcripts and statistics. Empty means the call id.
+        instructions:
+          type: string
+        greeting:
+          type: string
+          description: >
+            Said on joining without going through the model. Empty means the agent waits to
+            be spoken to.
+        navigating:
+          type: boolean
+          default: false
+          description: >
+            The agent placed this call, so let recordings finish and answer their menus.
+        llm:
+          type: string
+          default: llm-fast
+          description: A provider/model or a capability shortcut.
+        stt:
+          type: string
+          default: en-low-latency
+        tts:
+          type: string
+          default: en-low-latency
+        subagent:
+          type: string
+          description: >
+            The model that does the thinking. Empty means the voice model answers
+            everything itself, and skills mean nothing.
+        voice:
+          type: string
+          description: Provider-specific voice id.
+        languages:
+          type: array
+          items:
+            type: string
+          description: Language hints, which narrow the candidates in every modality.
+        max_tokens:
+          type: integer
+        tasks:
+          type: integer
+          description: How much delegated work may run at once.
+        sandbox:
+          type: string
+          enum: [daytona]
+          description: >
+            Where the subagent may run code it writes. Only the subagent is offered it:
+            running code takes seconds, and the model holding the conversation has none to
+            spare. Omit it and the subagent works everything out in its head.
+        backchannel:
+          type: boolean
+          default: false
+          description: Murmur while a participant is still talking, the way a person does.
+        min_confidence:
+          type: number
+          format: double
+          description: >
+            How sure the transcriber must be before the agent answers rather than checks
+            what was meant.
+        skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionSkill"
+          description: Omit for the built-in set of think, recall and explain.
+        skill_names:
+          type: array
+          items:
+            type: string
+          description: >
+            Skills to look up rather than spell out: the customer's own, or one of the
+            built-in think, recall and explain. Ignored when skills are given in full,
+            and a name nothing defines is refused rather than dropped.
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionTool"
+        tool_timeout_ms:
+          type: integer
+          description: How long the model waits for a tool result. Zero is the default.
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+          description: Cost labels, carried onto every request the session makes.
+        memory:
+          $ref: "#/components/schemas/SessionMemory"
+        phone:
+          $ref: "#/components/schemas/SessionPhone"
+
+    Session:
+      type: object
+      required: [id, call_id, call_type, user_id, agent_id, state, created_at]
+      properties:
+        id:
+          type: string
+        call_id:
+          type: string
+        call_type:
+          type: string
+        user_id:
+          type: string
+        agent_id:
+          type: string
+        state:
+          $ref: "#/components/schemas/SessionState"
+        created_at:
+          type: string
+          format: date-time
+        llm:
+          type: string
+          description: The provider and model answering, once routing has picked one.
+        tts:
+          type: string
+          description: The provider and model speaking.
+        instructions:
+          type: string
+
+    SayRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+
+    InstructionsRequest:
+      type: object
+      required: [instructions]
+      properties:
+        instructions:
+          type: string
+
     HealthStatus:
       type: object
       required: [status, dependencies]
@@ -597,12 +1874,12 @@ components:
 
     Modality:
       type: string
-      enum: [stt, tts, llm, memory, phone]
+      enum: [stt, tts, llm, memory, knowledge, phone]
       description: >
         What kind of work was done. The first three are routed across providers.
-        Memory and phone are recorded but not routed, since there is one memory
-        store and one vendor per number, so the provider paths do not serve them
-        while the statistics paths do.
+        Memory, knowledge and phone are recorded but not routed, since there is one
+        memory store, one knowledge base and one vendor per number, so the provider
+        paths do not serve them while the statistics paths do.
       example: tts
 
     Granularity:
