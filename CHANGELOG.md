@@ -1,6 +1,16 @@
 # Unreleased
 
+## Breaking Changes
+
+### `deepgram` plugin: TTS defaults to Flux (`/v2/speak`)
+
+`deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
+
 ## New Features
+
+### `deepgram` plugin: Flux TTS streaming, `speed`, and Interrupt barge-in
+
+Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) with a persistent websocket. Pass optional `speed` (0.85–1.15 in 0.05 steps) on the constructor. Barge-in sends `Interrupt` instead of Aura's `Clear`. Supported sample rates now include 32000 and 44100.
 
 ### `telnyx` plugin: LLM, STT and TTS (#620, #621, #622)
 
@@ -36,6 +46,10 @@ Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and
 The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). Sessions use the SDK's direct API-key path and default `video_quality="high"`; the plugin API is unchanged.
 
 ## Bug Fixes
+
+### `deepgram` plugin: Flux STT handles typed `TurnInfo` from SDK 7.7
+
+`deepgram-sdk` 7.7 delivers listen v2 `TurnInfo` as typed objects instead of dicts. The STT handler now accepts both, so transcripts and turn events are emitted and the unexpected-message warning spam is gone.
 
 ### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct` (#625)
 
