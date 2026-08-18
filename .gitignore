@@ -112,3 +112,5 @@ profile.html
 
 # pytest json report
 .report.json
+.agents/
+.cursor/
