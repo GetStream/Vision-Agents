@@ -15,6 +15,7 @@ members = [
     "vision-agents-plugins-anthropic",
     "vision-agents-plugins-assemblyai",
     "vision-agents-plugins-aws",
+    "vision-agents-plugins-bytedance",
     "vision-agents-plugins-cartesia",
     "vision-agents-plugins-decart",
     "vision-agents-plugins-deepgram",
@@ -6445,6 +6446,9 @@ assemblyai = [
 aws = [
     { name = "vision-agents-plugins-aws" },
 ]
+bytedance = [
+    { name = "vision-agents-plugins-bytedance" },
+]
 cartesia = [
     { name = "vision-agents-plugins-cartesia" },
 ]
@@ -6588,6 +6592,7 @@ requires-dist = [
     { name = "vision-agents-plugins-anthropic", marker = "extra == 'anthropic'", editable = "plugins/anthropic" },
     { name = "vision-agents-plugins-assemblyai", marker = "extra == 'assemblyai'", editable = "plugins/assemblyai" },
     { name = "vision-agents-plugins-aws", marker = "extra == 'aws'", editable = "plugins/aws" },
+    { name = "vision-agents-plugins-bytedance", marker = "extra == 'bytedance'", editable = "plugins/bytedance" },
     { name = "vision-agents-plugins-cartesia", marker = "extra == 'cartesia'", editable = "plugins/cartesia" },
     { name = "vision-agents-plugins-decart", marker = "extra == 'decart'", editable = "plugins/decart" },
     { name = "vision-agents-plugins-deepgram", marker = "extra == 'deepgram'", editable = "plugins/deepgram" },
@@ -6625,7 +6630,7 @@ requires-dist = [
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "bytedance", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -6729,6 +6734,32 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.42.65,<2" },
     { name = "onnxruntime", specifier = ">=1.16.1,<2" },
     { name = "vision-agents", editable = "agents-core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-bytedance"
+source = { editable = "plugins/bytedance" }
+dependencies = [
+    { name = "vision-agents" },
+    { name = "websockets" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "vision-agents", editable = "agents-core" },
+    { name = "websockets", specifier = ">=15.0.1" },
 ]
 
 [package.metadata.requires-dev]

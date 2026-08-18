@@ -45,6 +45,7 @@ vision-agents-plugins-liveavatar = { workspace = true }
 vision-agents-plugins-tencent = { workspace = true }
 vision-agents-plugins-twelvelabs = { workspace = true }
 vision-agents-plugins-speechify = { workspace = true }
+vision-agents-plugins-bytedance = { workspace = true }
 
 [tool.uv]
 # Workspace-level override to resolve numpy version conflicts
@@ -97,6 +98,7 @@ members = [
     "plugins/tencent",
     "plugins/twelvelabs",
     "plugins/speechify",
+    "plugins/bytedance",
 ]
 exclude = [
     "**/__pycache__",

@@ -1,0 +1,96 @@
+// Minimal schema for the Volcengine / BytePlus AST 2.0 (Live Interpretation)
+// WebSocket API: wss://openspeech.bytedance.com/api/v4/ast/v2/translate
+//
+// Field numbers and json_name values are taken verbatim from the upstream
+// protobuf definitions so the wire format matches the service. Only the
+// messages needed by this plugin are included. The `event` field is declared
+// as int32 (wire-compatible with the upstream `event.Type` enum).
+//
+// Regenerate with:
+//   protoc --python_out=. ast.proto
+
+syntax = "proto3";
+
+package vision_agents.plugins.bytedance.ast;
+
+message RequestMeta {
+  string endpoint = 1 [json_name = "endpoint"];
+  string app_key = 2 [json_name = "app_key"];
+  string app_id = 3 [json_name = "app_id"];
+  string resource_id = 4 [json_name = "resource_id"];
+  string connection_id = 5 [json_name = "connection_id"];
+  string session_id = 6 [json_name = "session_id"];
+  int32 sequence = 7 [json_name = "sequence"];
+}
+
+message BillingItem {
+  string unit = 1 [json_name = "unit"];
+  float quantity = 2 [json_name = "quantity"];
+}
+
+message Billing {
+  repeated BillingItem items = 1 [json_name = "items"];
+  int64 duration_msec = 2 [json_name = "duration_msec"];
+  int64 word_count = 3 [json_name = "word_count"];
+}
+
+message ResponseMeta {
+  string session_id = 1 [json_name = "session_id"];
+  int32 sequence = 2 [json_name = "sequence"];
+  int32 status_code = 3 [json_name = "status_code"];
+  string message = 4 [json_name = "message"];
+  optional Billing billing = 5 [json_name = "billing"];
+}
+
+message User {
+  string uid = 1;
+  string did = 2;
+  string platform = 3;
+  string sdk_version = 4;
+  string app_version = 5;
+}
+
+message Audio {
+  string data = 1;
+  string url = 2;
+  string url_type = 3;
+  string format = 4;
+  string codec = 5;
+  string language = 6;
+  int32 rate = 7;
+  int32 bits = 8;
+  int32 channel = 9;
+  string tos_bucket = 10;
+  string tos_access_key = 11;
+  string audio_tos_object = 12;
+  string role_trn = 13;
+  bytes binary_data = 14;
+}
+
+message ReqParams {
+  string mode = 1;
+  string source_language = 2;
+  string target_language = 3;
+  string speaker_id = 4;
+}
+
+message TranslateRequest {
+  optional RequestMeta request_meta = 1;
+  int32 event = 2;
+  User user = 3;
+  Audio source_audio = 4;
+  Audio target_audio = 5;
+  ReqParams request = 6;
+  optional bool denoise = 7;
+}
+
+message TranslateResponse {
+  optional ResponseMeta response_meta = 1;
+  int32 event = 2;
+  bytes data = 3;
+  string text = 4;
+  int32 start_time = 5;
+  int32 end_time = 6;
+  bool spk_chg = 7;
+  int32 muted_duration_ms = 8;
+}

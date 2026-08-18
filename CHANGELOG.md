@@ -2,6 +2,18 @@
 
 ## New Features
 
+### `bytedance` plugin: Seed Speech STT, TTS and Live Interpretation
+
+Adds a new `bytedance` plugin wrapping the ByteDance / BytePlus (Volcengine) Seed
+Speech WebSocket APIs: `bytedance.STT` (streaming ASR on Seed ASR 2.0
+`bigmodel_async`), `bytedance.TTS` (bidirectional streaming TTS, `seed-tts-2.0`,
+PCM output), and `bytedance.Realtime` (AST 2.0 Live Interpretation — a
+speech-to-speech translator used in the same Agent slot as Gemini Live Translate,
+with virtual-microphone input pacing by default). Credentials come from
+`BYTEDANCE_API_KEY` (or `BYTEPLUS_API_KEY`), with legacy `BYTEDANCE_APP_KEY` /
+`BYTEDANCE_ACCESS_KEY` also supported, and every class accepts an overridable
+`ws_url`. Install with `vision-agents[bytedance]`.
+
 ### `telnyx` plugin: LLM, STT and TTS (#620, #621, #622)
 
 The Telnyx plugin, until now a phone transport, also exposes `telnyx.LLM`,
