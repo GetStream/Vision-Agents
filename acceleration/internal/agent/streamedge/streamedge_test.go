@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"math"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,6 +83,50 @@ func (s *StreamEdgeSuite) TestCredentialsComeFromTheEnvironment() {
 
 	s.Require().NoError(err)
 	s.Equal("default", edge.options.CallType, "a Stream app has this call type out of the box")
+}
+
+func (s *StreamEdgeSuite) TestTheDemoLinkJoinsTheAgentsCall() {
+	s.T().Setenv("STREAM_API_KEY", "key")
+	s.T().Setenv("STREAM_API_SECRET", "secret")
+	// A developer whose own environment points the demo somewhere else is not what this is
+	// about.
+	s.T().Setenv("EXAMPLE_BASE_URL", "")
+	edge, err := New(Options{CallID: "my call", User: User{ID: "agent"}})
+	s.Require().NoError(err)
+
+	link, err := edge.DemoURL(User{ID: "demo-caller"})
+
+	s.Require().NoError(err)
+	parsed, err := url.Parse(link)
+	s.Require().NoError(err)
+	s.Equal("https://getstream.io/video/demos/join/my%20call", parsed.Scheme+"://"+parsed.Host+parsed.EscapedPath())
+	s.Equal("key", parsed.Query().Get("api_key"))
+	s.Equal("true", parsed.Query().Get("skip_lobby"), "the caller should land in the call, not a lobby")
+	s.Equal("demo-caller", parsed.Query().Get("user_name"), "an unnamed caller is named after their id")
+	s.NotEmpty(parsed.Query().Get("token"), "the browser joins as somebody the app trusts")
+}
+
+func (s *StreamEdgeSuite) TestTheDemoLinkCanPointAtAnotherDeployment() {
+	s.T().Setenv("STREAM_API_KEY", "key")
+	s.T().Setenv("STREAM_API_SECRET", "secret")
+	s.T().Setenv("EXAMPLE_BASE_URL", "https://pronto.getstream.io/")
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
+	s.Require().NoError(err)
+
+	link, err := edge.DemoURL(User{ID: "demo-caller", Name: "Demo caller"})
+
+	s.Require().NoError(err)
+	s.True(strings.HasPrefix(link, "https://pronto.getstream.io/join/demo?"), link)
+}
+
+func (s *StreamEdgeSuite) TestADemoLinkNeedsASecretToSignAToken() {
+	s.T().Setenv("STREAM_API_KEY", "key")
+	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}, UserToken: "token"})
+	s.Require().NoError(err)
+
+	_, err = edge.DemoURL(User{ID: "demo-caller"})
+
+	s.ErrorContains(err, "STREAM_API_SECRET")
 }
 
 func (s *StreamEdgeSuite) TestSpeechIsEncodedToOpusFrames() {

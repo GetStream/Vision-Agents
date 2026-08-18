@@ -136,6 +136,32 @@ func reasoningFrame(text string) string {
 	}}, nil)
 }
 
+// toolFrame is a chunk carrying one fragment of a tool call. The id and the name arrive on
+// the first fragment and the arguments dribble in over the ones after it, which is how a
+// provider streams a call.
+func toolFrame(index int, id, name, arguments string) string {
+	call := map[string]any{
+		"index":    index,
+		"function": map[string]any{},
+	}
+	if id != "" {
+		call["id"] = id
+		call["type"] = "function"
+	}
+	function := call["function"].(map[string]any)
+	if name != "" {
+		function["name"] = name
+	}
+	if arguments != "" {
+		function["arguments"] = arguments
+	}
+
+	return frame([]any{map[string]any{
+		"index": 0,
+		"delta": map[string]any{"tool_calls": []any{call}},
+	}}, nil)
+}
+
 // usageFrame reports what the completion consumed, optionally settling it with a finish
 // reason. Choices are empty when there is no finish reason, the way a terminal usage-only
 // chunk arrives.
@@ -343,6 +369,22 @@ func (s *OpenAICompatSuite) TestMaxTokensAndTemperatureAreOnlySentWhenAsked() {
 	s.EqualValues(0.0, s.requests[1]["temperature"])
 }
 
+func (s *OpenAICompatSuite) TestJSONIsOnlyAskedForWhenWanted() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+	provider := s.provider(Options{})
+
+	s.ask(provider, hello())
+	s.NotContains(s.requests[0], "response_format", "prose is what a conversation wants")
+
+	s.ask(provider, llm.Request{
+		Messages: []llm.Message{{Role: llm.User, Content: "hi"}},
+		JSON:     true,
+	})
+	format, ok := s.requests[1]["response_format"].(map[string]any)
+	s.Require().True(ok, "a caller that parses the answer has to be able to ask for JSON")
+	s.Equal("json_object", format["type"])
+}
+
 func (s *OpenAICompatSuite) TestInterruptSettlesWhatHadAlreadyArrived() {
 	s.hold = make(chan struct{})
 	s.frames = []string{textFrame("I was saying"), usageFrame(11, 0, 4, 0, "")}
@@ -505,6 +547,154 @@ func (s *OpenAICompatSuite) TestClientReachesTheUnderlyingSDK() {
 	provider := s.provider(Options{})
 
 	s.NotNil(provider.Client(), "anything this package does not standardise is still reachable")
+}
+
+func (s *OpenAICompatSuite) TestToolsAreOnlySentWhenOffered() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+	provider := s.provider(Options{})
+
+	s.ask(provider, hello())
+	s.NotContains(s.requests[0], "tools", "a model offered a toolbox eventually opens it")
+
+	s.ask(provider, llm.Request{
+		Messages: []llm.Message{{Role: llm.User, Content: "hi"}},
+		Tools: []llm.Tool{{
+			Name:        "transfer",
+			Description: "hand the caller to a human",
+			Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"to": map[string]any{"type": "string"}},
+				"required":   []any{"to"},
+			},
+		}},
+	})
+
+	tools, ok := s.requests[1]["tools"].([]any)
+	s.Require().True(ok)
+	s.Require().Len(tools, 1)
+
+	declared, ok := tools[0].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("function", declared["type"])
+
+	function, ok := declared["function"].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("transfer", function["name"])
+	s.Equal("hand the caller to a human", function["description"])
+
+	parameters, ok := function["parameters"].(map[string]any)
+	s.Require().True(ok, "without the schema the model cannot fill the arguments in")
+	s.Equal("object", parameters["type"])
+}
+
+func (s *OpenAICompatSuite) TestStreamedFragmentsAssembleIntoOneToolCall() {
+	// Arguments arrive a few characters at a time, so no single fragment is parseable and
+	// the caller has to be handed the finished call rather than the pieces.
+	s.frames = []string{
+		toolFrame(0, "call-1", "transfer", ""),
+		toolFrame(0, "", "", `{"to":"+1555`),
+		toolFrame(0, "", "", `1234567"}`),
+		usageFrame(20, 0, 9, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{})
+
+	complete, _ := s.ask(provider, hello())
+
+	s.Require().Len(complete.ToolCalls, 1)
+	s.Equal("call-1", complete.ToolCalls[0].ID)
+	s.Equal("transfer", complete.ToolCalls[0].Name)
+	s.Equal(`{"to":"+15551234567"}`, complete.ToolCalls[0].Arguments)
+	s.Equal("tool_calls", complete.FinishReason)
+}
+
+func (s *OpenAICompatSuite) TestSeveralToolCallsKeepTheirOwnArguments() {
+	// A model may ask for two things at once, and the provider interleaves their
+	// fragments, so each one is assembled under the index it was streamed on.
+	s.frames = []string{
+		toolFrame(0, "call-1", "press", ""),
+		toolFrame(1, "call-2", "transfer", ""),
+		toolFrame(0, "", "", `{"digits":"1"}`),
+		toolFrame(1, "", "", `{"to":"+15550001111"}`),
+		usageFrame(20, 0, 12, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{})
+
+	complete, _ := s.ask(provider, hello())
+
+	s.Require().Len(complete.ToolCalls, 2)
+	s.Equal("press", complete.ToolCalls[0].Name)
+	s.Equal(`{"digits":"1"}`, complete.ToolCalls[0].Arguments)
+	s.Equal("transfer", complete.ToolCalls[1].Name)
+	s.Equal(`{"to":"+15550001111"}`, complete.ToolCalls[1].Arguments)
+}
+
+func (s *OpenAICompatSuite) TestSpeechAndAToolCallArriveTogether() {
+	// A model told to keep the caller company while it acts says something and calls the
+	// tool in the same reply, and both halves have to survive.
+	s.frames = []string{
+		textFrame("One moment, putting you through."),
+		toolFrame(0, "call-1", "transfer", `{"to":"+15550001111"}`),
+		usageFrame(20, 0, 14, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{})
+
+	complete, _ := s.ask(provider, hello())
+
+	s.Equal("One moment, putting you through.", complete.Text)
+	s.Require().Len(complete.ToolCalls, 1)
+	s.Equal("transfer", complete.ToolCalls[0].Name)
+}
+
+func (s *OpenAICompatSuite) TestAToolCallWithNoIDStillGetsOne() {
+	// A self-hosted parser may name a call without identifying it, and the result sent
+	// back has to say which call it answers.
+	s.frames = []string{
+		toolFrame(0, "", "press", `{"digits":"2"}`),
+		usageFrame(20, 0, 6, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{})
+
+	complete, _ := s.ask(provider, llm.Request{
+		ID:       "turn-1",
+		Messages: []llm.Message{{Role: llm.User, Content: "hi"}},
+	})
+
+	s.Require().Len(complete.ToolCalls, 1)
+	s.NotEmpty(complete.ToolCalls[0].ID)
+	s.Equal("press", complete.ToolCalls[0].Name)
+}
+
+func (s *OpenAICompatSuite) TestAToolResultIsSentWithTheCallItAnswers() {
+	// The provider matches each result against a call it made, so replaying the turn
+	// without the calls on it is a conversation it refuses.
+	s.frames = []string{textFrame("Done."), usageFrame(5, 0, 1, 0, "stop")}
+	provider := s.provider(Options{})
+
+	s.ask(provider, llm.Request{Messages: []llm.Message{
+		{Role: llm.User, Content: "put me through"},
+		{
+			Role:      llm.Assistant,
+			Content:   "One moment.",
+			ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "transfer", Arguments: `{"to":"+1555"}`}},
+		},
+		{Role: llm.ToolResult, Content: "transferred", ToolCallID: "call-1"},
+	}})
+
+	messages := s.sentMessages(0)
+	s.Require().Len(messages, 3)
+
+	s.Equal("assistant", messages[1]["role"])
+	s.Equal("One moment.", messages[1]["content"])
+	calls, ok := messages[1]["tool_calls"].([]any)
+	s.Require().True(ok, "the turn has to carry the call the result answers")
+	s.Require().Len(calls, 1)
+	call, ok := calls[0].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("call-1", call["id"])
+
+	s.Equal("tool", messages[2]["role"])
+	s.Equal("call-1", messages[2]["tool_call_id"])
+	s.Equal("transferred", messages[2]["content"])
 }
 
 // sentMessages returns the messages from the nth recorded request.

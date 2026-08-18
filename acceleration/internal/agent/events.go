@@ -142,6 +142,41 @@ type TaskCancelled struct {
 
 func (TaskCancelled) isAgentEvent() {}
 
+// ToolRan means the model asked for a tool and it has been carried out, or tried. It is
+// reported whether or not it worked, because a tool that failed still changed what the
+// agent goes on to say.
+type ToolRan struct {
+	TurnID string
+	Tool   string
+	// Arguments is the JSON the model filled in, as it wrote it.
+	Arguments string
+	// Result is what the model was told about the outcome.
+	Result string
+	Err    error
+}
+
+func (ToolRan) isAgentEvent() {}
+
+// Transferred means a human has been dialled onto the call. The agent leaves once the
+// handover is done, which is immediately for a cold transfer and after the summary has been
+// spoken for a warm one.
+type Transferred struct {
+	TurnID string
+	To     string
+	// Summary is what the human is told about the caller. Empty means a cold transfer.
+	Summary string
+}
+
+func (Transferred) isAgentEvent() {}
+
+// Pressed means the agent pressed digits at a menu on a call it had placed.
+type Pressed struct {
+	TurnID string
+	Digits string
+}
+
+func (Pressed) isAgentEvent() {}
+
 // Backchannel means the agent made a listening noise while a participant was still
 // talking, which is not a turn and does not go near the model.
 type Backchannel struct {
@@ -151,19 +186,6 @@ type Backchannel struct {
 
 func (Backchannel) isAgentEvent() {}
 
-// Speculated means the agent started answering a turn the transcriber had provisionally
-// ended. Promoted reports whether the guess held: a promoted reply had its answer ready
-// before the turn even settled, and an unpromoted one was thrown away unheard.
-type Speculated struct {
-	TurnID      string
-	Participant stt.Participant
-	// Text is the provisional transcript the guess was made on.
-	Text     string
-	Promoted bool
-}
-
-func (Speculated) isAgentEvent() {}
-
 // Interrupted means a participant started talking over the agent, so the reply being
 // spoken was abandoned.
 type Interrupted struct {
@@ -172,6 +194,24 @@ type Interrupted struct {
 }
 
 func (Interrupted) isAgentEvent() {}
+
+// OverlapDecided says how the agent handled speech arriving while it was talking.
+type OverlapDecided struct {
+	TurnID      string
+	Participant stt.Participant
+	Action      string
+}
+
+func (OverlapDecided) isAgentEvent() {}
+
+// ConversationCompacted means an old history prefix was replaced with a summary.
+type ConversationCompacted struct {
+	Before  int
+	After   int
+	Summary string
+}
+
+func (ConversationCompacted) isAgentEvent() {}
 
 // Error reports a failure from one of the three modalities or from the edge. The agent
 // keeps going: a failed turn is one lost reply, not a lost conversation.

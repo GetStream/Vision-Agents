@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,12 @@ import (
 
 // assetDir is the fixture directory, relative to the repository root.
 const assetDir = "tests/test_assets"
+
+// peakAmplitude is full scale for PCM16.
+const peakAmplitude = 32767
+
+// noiseSeed keeps generated noise the same from run to run.
+const noiseSeed = 20260817
 
 // Asset resolves a fixture by name by walking up from the working directory until the
 // shared asset directory appears.
@@ -46,11 +53,80 @@ func Load16kMono(name string) (stt.PcmData, error) {
 		return stt.PcmData{}, err
 	}
 
-	cmd := exec.Command(
+	return convert(exec.Command(
 		"ffmpeg", "-loglevel", "error", "-i", path,
 		"-f", "s16le", "-acodec", "pcm_s16le",
 		"-ar", fmt.Sprint(stt.SampleRate), "-ac", "1", "-",
+	))
+}
+
+// Resample16kMono converts audio to the 16 kHz mono PCM16 a call delivers, whatever rate
+// the voice that produced it used. It shells out to ffmpeg, like Load16kMono.
+func Resample16kMono(pcm stt.PcmData) (stt.PcmData, error) {
+	if pcm.SampleRate == stt.SampleRate && pcm.Channels == 1 {
+		return pcm, nil
+	}
+	if pcm.SampleRate <= 0 || pcm.Channels <= 0 {
+		return stt.PcmData{}, fmt.Errorf("testaudio: cannot resample %d Hz in %d channels",
+			pcm.SampleRate, pcm.Channels)
+	}
+
+	cmd := exec.Command(
+		"ffmpeg", "-loglevel", "error",
+		"-f", "s16le", "-ar", fmt.Sprint(pcm.SampleRate), "-ac", fmt.Sprint(pcm.Channels), "-i", "-",
+		"-f", "s16le", "-acodec", "pcm_s16le",
+		"-ar", fmt.Sprint(stt.SampleRate), "-ac", "1", "-",
 	)
+	cmd.Stdin = bytes.NewReader(pcm.Bytes())
+	return convert(cmd)
+}
+
+// Noise returns the requested duration of broadband room noise at the given amplitude,
+// 0 to 1. The seed is fixed, so a conversation that fails in noise fails in the same
+// noise next time.
+func Noise(durationMs int, amplitude float64) stt.PcmData {
+	random := rand.New(rand.NewPCG(noiseSeed, noiseSeed))
+	samples := make([]int16, stt.SampleRate*durationMs/1000)
+	// Room noise sits low in the spectrum, so the white source is smoothed rather than
+	// used raw: broadband hiss is both easier to transcribe through and unlike a room.
+	var smoothed float64
+	for i := range samples {
+		smoothed += 0.2 * ((random.Float64()*2 - 1) - smoothed)
+		samples[i] = clamp(smoothed * amplitude * float64(peakAmplitude) / 0.2)
+	}
+	return stt.PcmData{Samples: samples, SampleRate: stt.SampleRate, Channels: 1}
+}
+
+// Mix lays one chunk over another at the given gain, the way a room's noise sits under a
+// voice. The result is as long as the base, and loud sums clip rather than wrap.
+func Mix(base, overlay stt.PcmData, gain float64) stt.PcmData {
+	mixed := stt.PcmData{
+		Samples:    make([]int16, len(base.Samples)),
+		SampleRate: base.SampleRate,
+		Channels:   base.Channels,
+	}
+	for i, sample := range base.Samples {
+		sum := float64(sample)
+		if len(overlay.Samples) > 0 {
+			sum += float64(overlay.Samples[i%len(overlay.Samples)]) * gain
+		}
+		mixed.Samples[i] = clamp(sum)
+	}
+	return mixed
+}
+
+func clamp(sample float64) int16 {
+	if sample > peakAmplitude {
+		return peakAmplitude
+	}
+	if sample < -peakAmplitude {
+		return -peakAmplitude
+	}
+	return int16(sample)
+}
+
+// convert runs an ffmpeg command that writes 16 kHz mono PCM16 to stdout.
+func convert(cmd *exec.Cmd) (stt.PcmData, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -1,0 +1,40 @@
+# What the fast voice model may do rather than say.
+#
+# A tool is not a skill: a skill hands a question to a better model and gets an answer
+# back, while a tool changes something outside the conversation and cannot be taken back.
+# The description is the whole of how the model decides when to reach for one, so it says
+# what the tool does to the call rather than what it is called.
+tools:
+  - name: transfer
+    description: >
+      Hand the caller to a human and leave the call. Use it when they ask for a person, or
+      when what they need is beyond you. You stop being on the call once the human answers,
+      so say goodbye in the same reply. Give a summary to introduce the caller to whoever
+      picks up; leave it out only if there is nothing worth handing over.
+    parameters:
+      type: object
+      properties:
+        to:
+          type: string
+          description: the human's phone number, written as +15551234567
+        summary:
+          type: string
+          description: >
+            One or two sentences telling the human who is calling and what they want. It is
+            spoken aloud on the call, and the caller hears it too, so say it as you would
+            with them listening.
+      required: [to]
+
+  - name: press
+    description: >
+      Press digits on the keypad, for when you have called a number and reached a menu. Use
+      it only for a menu: a person cannot hear digits, and pressing at one wastes the call.
+    parameters:
+      type: object
+      properties:
+        digits:
+          type: string
+          description: >
+            The digits to press, such as 1 or 4123. Only 0-9, * and # can be pressed, and w
+            waits half a second between two of them.
+      required: [digits]

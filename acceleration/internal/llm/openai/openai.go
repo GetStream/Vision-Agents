@@ -22,6 +22,8 @@ const defaultBaseURL = "https://api.openai.com/v1"
 // right default for a conversation; a caller who wants a better answer names one.
 const defaultModel = "gpt-5.6-luna"
 
+const solModel = "gpt-5.6-sol"
+
 // Options configures the provider.
 type Options struct {
 	APIKey string
@@ -46,11 +48,21 @@ func New(options Options) (*openaicompat.LLM, error) {
 		options.BaseURL = defaultBaseURL
 	}
 
-	return openaicompat.New(openaicompat.Options{
+	compatibility := openaicompat.Options{
 		Provider: ProviderName,
 		Model:    options.Model,
 		APIKey:   options.APIKey,
 		BaseURL:  options.BaseURL,
 		Logger:   options.Logger,
-	})
+	}
+	// Chat completions refuses a request that carries both function tools and a
+	// reasoning effort, and these models reason unless told not to, so the agent's tools
+	// are only reachable with the effort turned off. Sol keeps its reasoning and pays for
+	// it by having no tools.
+	effort := "none"
+	if options.Model == solModel {
+		effort = "medium"
+	}
+	compatibility.ExtraBody = map[string]any{"reasoning_effort": effort}
+	return openaicompat.New(compatibility)
 }

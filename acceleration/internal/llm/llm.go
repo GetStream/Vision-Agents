@@ -1,13 +1,14 @@
 // Package llm defines the minimal large-language-model contract shared by every provider.
 //
 // Only the pieces the router actually needs are standardised: messages in, streamed text
-// out, barge-in, and identity. Anything provider-specific stays on the concrete type,
-// which also exposes a Client method returning the underlying SDK client so callers are
-// never boxed in by this interface.
+// out, tool calls, barge-in, and identity. Anything provider-specific stays on the
+// concrete type, which also exposes a Client method returning the underlying SDK client so
+// callers are never boxed in by this interface.
 //
-// Tool calling is deliberately absent. Standardising a tool schema across providers is a
-// larger question than routing needs answered, and the Client escape hatch reaches the
-// provider's own tool support in the meantime.
+// Tools are here because an agent on a phone call has to do things the conversation cannot
+// do for it: hand the caller to a human, press a digit at a menu. Every provider this
+// routes to speaks the OpenAI tool schema, so standardising it turned out to be the small
+// question it was once assumed not to be.
 package llm
 
 import (
@@ -24,12 +25,45 @@ const (
 	User Role = "user"
 	// Assistant is what the model said on an earlier turn.
 	Assistant Role = "assistant"
+	// ToolResult is what running a tool returned, answering an earlier assistant turn.
+	ToolResult Role = "tool"
 )
 
 // Message is one turn of a conversation.
 type Message struct {
 	Role    Role
 	Content string
+	// ToolCalls are what an assistant turn asked to have run. A turn that called a tool
+	// has to be replayed with them, because the provider rejects a tool result that
+	// answers nothing.
+	ToolCalls []ToolCall
+	// ToolCallID names the call a ToolResult message answers.
+	ToolCallID string
+}
+
+// Tool is something the model may do instead of, or alongside, saying something.
+type Tool struct {
+	// Name is how the model asks for it.
+	Name string
+	// Description is what the model is told the tool does, which is the whole of how it
+	// decides when to reach for one.
+	Description string
+	// Parameters is a JSON Schema object describing the arguments. It is untyped because
+	// a schema is untyped: the shape is whatever the tool accepts.
+	Parameters map[string]any
+}
+
+// ToolCall is the model asking for a tool to be run.
+type ToolCall struct {
+	// ID correlates the call with the result sent back, and is what the provider matches
+	// a Tool message against.
+	ID string
+	// Name is which tool was asked for.
+	Name string
+	// Arguments is the JSON object the model filled in, left as text because it is the
+	// tool that knows what shape to expect. A model may produce arguments that do not
+	// parse, and the caller is better placed than this package to say what that means.
+	Arguments string
 }
 
 // Request is one completion to generate.
@@ -48,9 +82,16 @@ type Request struct {
 	Messages []Message
 	// MaxTokens caps the response. Zero leaves the provider's own default in place.
 	MaxTokens int
+	// JSON asks for one JSON object instead of prose. A caller that parses the answer
+	// needs it: a model handed a conversation and asked about it will otherwise sometimes
+	// carry the conversation on instead.
+	JSON bool
 	// Temperature controls randomness. Nil leaves the provider's own default in place,
 	// which is not the same as zero.
 	Temperature *float64
+	// Tools the model may call. An empty list sends none, which is what a request that
+	// only wants prose wants: a model offered a tool will eventually reach for it.
+	Tools []Tool
 }
 
 // LLM is a streaming large-language-model provider.

@@ -70,24 +70,12 @@ func (s *DeepgramSuite) TestNewAcceptsLanguageHintsOnMultilingualModel() {
 	s.Equal(MultilingualModel, provider.Model())
 }
 
-func (s *DeepgramSuite) TestEagerTurnDetectionGetsAThreshold() {
-	// Asking for eager turns without a threshold is meaningless, so one is supplied.
-	s.Equal(defaultEagerEotThreshold, s.newSTT(Options{EagerTurnDetection: true}).options.EagerEotThreshold)
-
-	// An explicit threshold is respected.
-	s.Equal(0.8, s.newSTT(Options{EagerTurnDetection: true, EagerEotThreshold: 0.8}).options.EagerEotThreshold)
-
-	// Without eager turn detection there is no threshold at all.
-	s.Zero(s.newSTT(Options{}).options.EagerEotThreshold)
-}
-
-func (s *DeepgramSuite) TestProviderAndTurnDetectionAreReported() {
+func (s *DeepgramSuite) TestProviderIsReported() {
 	provider := s.newSTT(Options{})
 	s.Equal(ProviderName, provider.Provider())
-	s.True(provider.TurnDetection(), "Flux detects turns server-side")
 }
 
-func (s *DeepgramSuite) TestStartOfTurnBeginsATurnWithoutATranscript() {
+func (s *DeepgramSuite) TestStartOfTurnDoesNotEnterTheSharedContract() {
 	provider := s.newSTT(Options{})
 
 	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
@@ -95,11 +83,7 @@ func (s *DeepgramSuite) TestStartOfTurnBeginsATurnWithoutATranscript() {
 		EndOfTurnConfidence: 0.1,
 	})
 
-	events := s.drain(provider)
-	s.Require().Len(events, 1)
-	started, ok := events[0].(stt.TurnStarted)
-	s.Require().True(ok)
-	s.InDelta(0.1, started.Confidence, 0.001)
+	s.Empty(s.drain(provider))
 }
 
 func (s *DeepgramSuite) TestUpdateProducesAReplacementTranscript() {
@@ -131,7 +115,7 @@ func (s *DeepgramSuite) TestUpdateProducesAReplacementTranscript() {
 	s.InDelta(1500.0, transcript.AudioDurationMs, 0.001, "audio window is reported in seconds")
 }
 
-func (s *DeepgramSuite) TestEndOfTurnProducesAFinalTranscriptAndEndsTheTurn() {
+func (s *DeepgramSuite) TestEndOfTurnProducesAFinalTranscript() {
 	provider := s.newSTT(Options{})
 
 	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
@@ -143,22 +127,17 @@ func (s *DeepgramSuite) TestEndOfTurnProducesAFinalTranscriptAndEndsTheTurn() {
 	})
 
 	events := s.drain(provider)
-	s.Require().Len(events, 2)
+	s.Require().Len(events, 1)
 
 	transcript, ok := events[0].(stt.Transcript)
 	s.Require().True(ok)
 	s.Equal("hello world", transcript.Text)
 	s.True(transcript.Final())
-
-	ended, ok := events[1].(stt.TurnEnded)
-	s.Require().True(ok)
-	s.False(ended.Eager, "a real end of turn is not eager")
-	s.InDelta(0.95, ended.Confidence, 0.001)
-	s.InDelta(2000.0, ended.DurationMs, 0.001)
+	s.InDelta(2000.0, transcript.AudioDurationMs, 0.001)
 }
 
-func (s *DeepgramSuite) TestEagerEndOfTurnIsMarkedEagerAndStaysNonFinal() {
-	provider := s.newSTT(Options{EagerTurnDetection: true})
+func (s *DeepgramSuite) TestEagerEndOfTurnStaysAReplacementTranscript() {
+	provider := s.newSTT(Options{EagerEotThreshold: 0.5})
 
 	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
 		EventType:  msginterfaces.TurnEventEagerEndOfTurn,
@@ -166,27 +145,20 @@ func (s *DeepgramSuite) TestEagerEndOfTurnIsMarkedEagerAndStaysNonFinal() {
 	})
 
 	events := s.drain(provider)
-	s.Require().Len(events, 2)
+	s.Require().Len(events, 1)
 
 	transcript, ok := events[0].(stt.Transcript)
 	s.Require().True(ok)
 	s.False(transcript.Final(), "an eager end of turn can still be revoked")
 	s.Equal(stt.ModeReplacement, transcript.Mode)
-
-	ended, ok := events[1].(stt.TurnEnded)
-	s.Require().True(ok)
-	s.True(ended.Eager)
 }
 
-func (s *DeepgramSuite) TestTurnResumedReopensTheTurn() {
-	provider := s.newSTT(Options{EagerTurnDetection: true})
+func (s *DeepgramSuite) TestTurnResumedDoesNotEnterTheSharedContract() {
+	provider := s.newSTT(Options{})
 
 	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{EventType: msginterfaces.TurnEventTurnResumed})
 
-	events := s.drain(provider)
-	s.Require().Len(events, 1)
-	_, ok := events[0].(stt.TurnStarted)
-	s.True(ok, "resumed speech should look like a turn starting again")
+	s.Empty(s.drain(provider))
 }
 
 func (s *DeepgramSuite) TestEmptyTranscriptsAreNotEmitted() {
@@ -200,7 +172,7 @@ func (s *DeepgramSuite) TestEmptyTranscriptsAreNotEmitted() {
 	s.Empty(s.drain(provider), "whitespace-only transcripts carry no information")
 }
 
-func (s *DeepgramSuite) TestEndOfTurnWithoutTextStillEndsTheTurn() {
+func (s *DeepgramSuite) TestEndOfTurnWithoutTextEmitsNothing() {
 	provider := s.newSTT(Options{})
 
 	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
@@ -208,10 +180,7 @@ func (s *DeepgramSuite) TestEndOfTurnWithoutTextStillEndsTheTurn() {
 		Transcript: "",
 	})
 
-	events := s.drain(provider)
-	s.Require().Len(events, 1)
-	_, ok := events[0].(stt.TurnEnded)
-	s.True(ok)
+	s.Empty(s.drain(provider))
 }
 
 func (s *DeepgramSuite) TestProcessAudioRejectsWrongAudioFormat() {

@@ -50,6 +50,8 @@ type manager struct {
 type task struct {
 	id        string
 	skill     string
+	turnID    string
+	private   bool
 	prompt    string
 	startedAt time.Time
 	// deadline abandons the task once the answer has stopped being worth having.
@@ -84,7 +86,13 @@ func newManager(subagent *llmrouter.Session, limit int, logger *slog.Logger) *ma
 // A newer request for a skill supersedes the one it already had: the caller has said
 // something since, so the older question was asked about a conversation that no longer
 // exists.
-func (m *manager) Create(skill Skill, prompt string, history []llm.Message) (string, error) {
+func (m *manager) Create(
+	skill Skill,
+	prompt string,
+	history []llm.Message,
+	turnID string,
+	private bool,
+) (string, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -103,6 +111,8 @@ func (m *manager) Create(skill Skill, prompt string, history []llm.Message) (str
 	created := &task{
 		id:        fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), m.sequence.Add(1)),
 		skill:     skill.Name,
+		turnID:    turnID,
+		private:   private,
 		prompt:    prompt,
 		startedAt: time.Now(),
 	}
@@ -125,6 +135,23 @@ func (m *manager) Create(skill Skill, prompt string, history []llm.Message) (str
 		return "", fmt.Errorf("harness: delegate %s: %w", skill.Name, err)
 	}
 	return created.id, nil
+}
+
+// CancelTurn abandons work whose conversational premise was superseded.
+func (m *manager) CancelTurn(turnID, reason string) {
+	m.mu.Lock()
+	var abandoned []string
+	for id, running := range m.running {
+		if running.live() && running.turnID == turnID {
+			m.cancelLocked(id, reason)
+			abandoned = append(abandoned, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, id := range abandoned {
+		m.abandon(id)
+	}
 }
 
 // Cancel abandons a task. The completion it was running still settles, and is reported
@@ -185,6 +212,20 @@ func (m *manager) Running() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.liveLocked()
+}
+
+// RunningPublic is how much work the caller is waiting to hear about.
+func (m *manager) RunningPublic() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var live int
+	for _, running := range m.running {
+		if running.live() && !running.private {
+			live++
+		}
+	}
+	return live
 }
 
 // Results carries finished tasks. It is closed by Close.

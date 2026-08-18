@@ -71,6 +71,17 @@ survives a failover. That means all but the newest message is identical to the p
 prompt, which is exactly what prefix caching is for. It is also what the
 `per_million_cached_input_tokens` rate in `internal/routing/router.yaml` is priced against.
 
+## Tool calling
+
+`--enable-auto-tool-choice --tool-call-parser pythonic` is what lets this deployment answer
+with a tool call. vLLM otherwise accepts a `tools` array and ignores it, replying in prose,
+which looks like a model that decided not to call anything rather than a server that was
+never able to. The agent's `transfer` and `press` tools go through this path, so a call the
+model wants to hand to a human depends on both flags being set.
+
+`pythonic` is the parser Gemma wants: it writes calls as `[transfer(to="+15551234567")]`
+rather than the JSON block the Hermes and Mistral parsers read.
+
 ## Test it
 
 The Go provider's integration test covers this deployment and skips until it exists:

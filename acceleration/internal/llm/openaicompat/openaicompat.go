@@ -20,6 +20,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/packages/respjson"
+	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
@@ -278,6 +279,14 @@ func (l *LLM) stream(ctx context.Context, request llm.Request, completion *llm.C
 			if thinking := reasoning(choice.Delta.JSON.ExtraFields); thinking != "" {
 				l.emitter.Send(completion.Reasoning(thinking))
 			}
+			for _, call := range choice.Delta.ToolCalls {
+				l.emitter.Send(completion.ToolCall(
+					call.Index,
+					call.ID,
+					call.Function.Name,
+					call.Function.Arguments,
+				))
+			}
 			if choice.FinishReason != "" {
 				completion.Finish(choice.FinishReason)
 			}
@@ -312,7 +321,9 @@ func (l *LLM) params(request llm.Request) openai.ChatCompletionNewParams {
 		case llm.System:
 			messages = append(messages, openai.SystemMessage(message.Content))
 		case llm.Assistant:
-			messages = append(messages, openai.AssistantMessage(message.Content))
+			messages = append(messages, assistantMessage(message))
+		case llm.ToolResult:
+			messages = append(messages, openai.ToolMessage(message.Content, message.ToolCallID))
 		default:
 			messages = append(messages, openai.UserMessage(message.Content))
 		}
@@ -326,6 +337,14 @@ func (l *LLM) params(request llm.Request) openai.ChatCompletionNewParams {
 			IncludeUsage: param.NewOpt(true),
 		},
 	}
+	if len(request.Tools) > 0 {
+		params.Tools = tools(request.Tools)
+	}
+	if request.JSON {
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
+		}
+	}
 	if request.MaxTokens > 0 {
 		params.MaxCompletionTokens = param.NewOpt(int64(request.MaxTokens))
 	}
@@ -333,6 +352,54 @@ func (l *LLM) params(request llm.Request) openai.ChatCompletionNewParams {
 		params.Temperature = param.NewOpt(*request.Temperature)
 	}
 	return params
+}
+
+// tools renders the tools a request offers. A tool with no parameters is sent without a
+// schema, which is how the protocol spells "this one takes no arguments".
+func tools(offered []llm.Tool) []openai.ChatCompletionToolUnionParam {
+	rendered := make([]openai.ChatCompletionToolUnionParam, 0, len(offered))
+	for _, tool := range offered {
+		definition := shared.FunctionDefinitionParam{Name: tool.Name}
+		if tool.Description != "" {
+			definition.Description = param.NewOpt(tool.Description)
+		}
+		if len(tool.Parameters) > 0 {
+			definition.Parameters = shared.FunctionParameters(tool.Parameters)
+		}
+		rendered = append(rendered, openai.ChatCompletionFunctionTool(definition))
+	}
+	return rendered
+}
+
+// assistantMessage replays a turn the model took.
+//
+// A turn that called a tool has to carry the calls it made, because the provider matches
+// each tool result against one and rejects a conversation where a result answers nothing.
+func assistantMessage(message llm.Message) openai.ChatCompletionMessageParamUnion {
+	if len(message.ToolCalls) == 0 {
+		return openai.AssistantMessage(message.Content)
+	}
+
+	calls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(message.ToolCalls))
+	for _, call := range message.ToolCalls {
+		calls = append(calls, openai.ChatCompletionMessageToolCallUnionParam{
+			OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
+				ID: call.ID,
+				Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+					Name:      call.Name,
+					Arguments: call.Arguments,
+				},
+			},
+		})
+	}
+
+	assistant := openai.ChatCompletionAssistantMessageParam{ToolCalls: calls}
+	if message.Content != "" {
+		assistant.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
+			OfString: param.NewOpt(message.Content),
+		}
+	}
+	return openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant}
 }
 
 // requestOptions applies the provider's extra body fields.

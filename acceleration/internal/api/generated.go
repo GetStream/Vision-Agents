@@ -263,6 +263,15 @@ type PlacedCall struct {
 	VendorCallId string `json:"vendor_call_id"`
 }
 
+// PressDigitsRequest defines model for PressDigitsRequest.
+type PressDigitsRequest struct {
+	// Digits What to press. Only 0-9, * and # can be pressed, and w waits half a second between two of them.
+	Digits string `json:"digits"`
+
+	// Vendor Who is carrying the call, e.g. "telnyx".
+	Vendor string `json:"vendor"`
+}
+
 // Provider defines model for Provider.
 type Provider struct {
 	Health    ProviderHealth `json:"health"`
@@ -361,6 +370,22 @@ type TagStatsBucket struct {
 
 // Tier What the model optimises for.
 type Tier string
+
+// TransferCallRequest defines model for TransferCallRequest.
+type TransferCallRequest struct {
+	// CallId The Stream call the caller and the agent are already on.
+	CallId string `json:"call_id"`
+
+	// CallType The Stream call type. Omit for "default".
+	CallType *string `json:"call_type,omitempty"`
+
+	// From The customer's number the human is dialled from, which is what they see.
+	From string             `json:"from"`
+	Tags *map[string]string `json:"tags,omitempty"`
+
+	// To The human being brought onto the call.
+	To string `json:"to"`
+}
 
 // TurnStatsBucket defines model for TurnStatsBucket.
 type TurnStatsBucket struct {
@@ -463,6 +488,12 @@ type GetTagStatsParams struct {
 // PlacePhoneCallJSONRequestBody defines body for PlacePhoneCall for application/json ContentType.
 type PlacePhoneCallJSONRequestBody = PlaceCallRequest
 
+// TransferPhoneCallJSONRequestBody defines body for TransferPhoneCall for application/json ContentType.
+type TransferPhoneCallJSONRequestBody = TransferCallRequest
+
+// PressPhoneDigitsJSONRequestBody defines body for PressPhoneDigits for application/json ContentType.
+type PressPhoneDigitsJSONRequestBody = PressDigitsRequest
+
 // BuyPhoneNumberJSONRequestBody defines body for BuyPhoneNumber for application/json ContentType.
 type BuyPhoneNumberJSONRequestBody = BuyNumberRequest
 
@@ -480,6 +511,12 @@ type ServerInterface interface {
 	// PlacePhoneCall Place an outbound call and bridge it into a Stream call
 	// (POST /v1/phone/calls)
 	PlacePhoneCall(w http.ResponseWriter, r *http.Request)
+	// TransferPhoneCall Bring a human onto a call that is already happening
+	// (POST /v1/phone/calls/transfer)
+	TransferPhoneCall(w http.ResponseWriter, r *http.Request)
+	// PressPhoneDigits Press digits on a call placed from here
+	// (POST /v1/phone/calls/{vendor_call_id}/digits)
+	PressPhoneDigits(w http.ResponseWriter, r *http.Request, vendorCallId string)
 	// ListPhoneNumbers The numbers the calling customer holds
 	// (GET /v1/phone/numbers)
 	ListPhoneNumbers(w http.ResponseWriter, r *http.Request, params ListPhoneNumbersParams)
@@ -546,6 +583,46 @@ func (siw *ServerInterfaceWrapper) PlacePhoneCall(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PlacePhoneCall(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TransferPhoneCall operation middleware
+func (siw *ServerInterfaceWrapper) TransferPhoneCall(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TransferPhoneCall(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PressPhoneDigits operation middleware
+func (siw *ServerInterfaceWrapper) PressPhoneDigits(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "vendor_call_id" -------------
+	var vendorCallId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "vendor_call_id", r.PathValue("vendor_call_id"), &vendorCallId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "vendor_call_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PressPhoneDigits(w, r, vendorCallId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1211,6 +1288,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/phone/numbers/{e164}", wrapper.ReleasePhoneNumber)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/phone/numbers/{e164}/attach", wrapper.AttachPhoneNumber)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/phone/calls", wrapper.PlacePhoneCall)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/phone/calls/transfer", wrapper.TransferPhoneCall)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/phone/calls/{vendor_call_id}/digits", wrapper.PressPhoneDigits)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/stats/rollup", wrapper.RunRollup)
 
 	return m
@@ -1310,6 +1389,129 @@ func (response PlacePhoneCall401JSONResponse) VisitPlacePhoneCallResponse(w http
 type PlacePhoneCall404JSONResponse struct{ NotFoundJSONResponse }
 
 func (response PlacePhoneCall404JSONResponse) VisitPlacePhoneCallResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TransferPhoneCallRequestObject struct {
+	Body *TransferPhoneCallJSONRequestBody
+}
+
+type TransferPhoneCallResponseObject interface {
+	VisitTransferPhoneCallResponse(w http.ResponseWriter) error
+}
+
+type TransferPhoneCall202JSONResponse PlacedCall
+
+func (response TransferPhoneCall202JSONResponse) VisitTransferPhoneCallResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TransferPhoneCall400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response TransferPhoneCall400JSONResponse) VisitTransferPhoneCallResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TransferPhoneCall401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response TransferPhoneCall401JSONResponse) VisitTransferPhoneCallResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TransferPhoneCall404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response TransferPhoneCall404JSONResponse) VisitTransferPhoneCallResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PressPhoneDigitsRequestObject struct {
+	VendorCallId string `json:"vendor_call_id"`
+	Body         *PressPhoneDigitsJSONRequestBody
+}
+
+type PressPhoneDigitsResponseObject interface {
+	VisitPressPhoneDigitsResponse(w http.ResponseWriter) error
+}
+
+type PressPhoneDigits204Response struct {
+}
+
+func (response PressPhoneDigits204Response) VisitPressPhoneDigitsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PressPhoneDigits400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PressPhoneDigits400JSONResponse) VisitPressPhoneDigitsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PressPhoneDigits401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PressPhoneDigits401JSONResponse) VisitPressPhoneDigitsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PressPhoneDigits404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PressPhoneDigits404JSONResponse) VisitPressPhoneDigitsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -1997,6 +2199,12 @@ type StrictServerInterface interface {
 	// PlacePhoneCall Place an outbound call and bridge it into a Stream call
 	// (POST /v1/phone/calls)
 	PlacePhoneCall(ctx context.Context, request PlacePhoneCallRequestObject) (PlacePhoneCallResponseObject, error)
+	// TransferPhoneCall Bring a human onto a call that is already happening
+	// (POST /v1/phone/calls/transfer)
+	TransferPhoneCall(ctx context.Context, request TransferPhoneCallRequestObject) (TransferPhoneCallResponseObject, error)
+	// PressPhoneDigits Press digits on a call placed from here
+	// (POST /v1/phone/calls/{vendor_call_id}/digits)
+	PressPhoneDigits(ctx context.Context, request PressPhoneDigitsRequestObject) (PressPhoneDigitsResponseObject, error)
 	// ListPhoneNumbers The numbers the calling customer holds
 	// (GET /v1/phone/numbers)
 	ListPhoneNumbers(ctx context.Context, request ListPhoneNumbersRequestObject) (ListPhoneNumbersResponseObject, error)
@@ -2122,6 +2330,70 @@ func (sh *strictHandler) PlacePhoneCall(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PlacePhoneCallResponseObject); ok {
 		if err := validResponse.VisitPlacePhoneCallResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// TransferPhoneCall operation middleware
+func (sh *strictHandler) TransferPhoneCall(w http.ResponseWriter, r *http.Request) {
+	var request TransferPhoneCallRequestObject
+
+	var body TransferPhoneCallJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.TransferPhoneCall(ctx, request.(TransferPhoneCallRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "TransferPhoneCall")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(TransferPhoneCallResponseObject); ok {
+		if err := validResponse.VisitTransferPhoneCallResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PressPhoneDigits operation middleware
+func (sh *strictHandler) PressPhoneDigits(w http.ResponseWriter, r *http.Request, vendorCallId string) {
+	var request PressPhoneDigitsRequestObject
+
+	request.VendorCallId = vendorCallId
+
+	var body PressPhoneDigitsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PressPhoneDigits(ctx, request.(PressPhoneDigitsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PressPhoneDigits")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PressPhoneDigitsResponseObject); ok {
+		if err := validResponse.VisitPressPhoneDigitsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -2468,83 +2740,92 @@ func (sh *strictHandler) GetTagStats(w http.ResponseWriter, r *http.Request, mod
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

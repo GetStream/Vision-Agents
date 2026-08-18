@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -64,117 +63,27 @@ func (s *DuplexSuite) TestMurmursDoNotRepeatThemselves() {
 }
 
 func (s *DuplexSuite) TestWithoutBackchannelsNothingIsMurmured() {
-	listener := newDuplex(DuplexOptions{Speculate: true})
+	listener := newDuplex(DuplexOptions{})
 	alice := stt.Participant{ID: "alice"}
 
 	s.Empty(listener.Heard(alice, "so I was wondering whether you could help me with this", true))
 }
 
-func (s *DuplexSuite) TestTheLatestRevisionIsKeptEvenWithoutBackchannels() {
-	// A provisional end of turn carries no words, so the last revision is what a reply
-	// guessed at it would be answering.
-	listener := newDuplex(DuplexOptions{Speculate: true})
+func (s *DuplexSuite) TestALongActiveGapGetsAListeningAcknowledgement() {
+	listener := newDuplex(DuplexOptions{
+		Backchannel:    true,
+		BackchannelGap: time.Millisecond,
+	})
 	alice := stt.Participant{ID: "alice"}
 
-	listener.Heard(alice, "book a table", true)
-
-	s.Equal("book a table", listener.Interim(alice))
+	s.NotEmpty(listener.Presence(alice, time.Now().Add(-time.Second), true))
 }
 
-func (s *DuplexSuite) TestAGuessIsMadeOnAProvisionalEndOfTurn() {
-	listener := newDuplex(DuplexOptions{Speculate: true})
-	alice := stt.Participant{ID: "alice"}
+func (s *DuplexSuite) TestPresenceDoesNotTalkOverTheAgent() {
+	listener := newDuplex(DuplexOptions{
+		Backchannel:    true,
+		BackchannelGap: time.Millisecond,
+	})
 
-	turnID, abandoned, ok := listener.Eager(alice, "book a table")
-
-	s.True(ok)
-	s.True(strings.HasPrefix(turnID, speculationPrefix))
-	s.Empty(abandoned, "there was nothing in flight to replace")
-}
-
-func (s *DuplexSuite) TestWithoutSpeculationNoGuessIsMade() {
-	listener := newDuplex(DuplexOptions{Backchannel: true})
-	alice := stt.Participant{ID: "alice"}
-
-	_, _, ok := listener.Eager(alice, "book a table")
-
-	s.False(ok)
-}
-
-func (s *DuplexSuite) TestTheSameWordsAreNotGuessedAtTwice() {
-	// Guessing twice at one sentence would be paying for the same reply twice.
-	listener := newDuplex(DuplexOptions{Speculate: true})
-	alice := stt.Participant{ID: "alice"}
-	listener.Eager(alice, "book a table")
-
-	_, _, ok := listener.Eager(alice, "Book a table.")
-
-	s.False(ok)
-}
-
-func (s *DuplexSuite) TestASecondGuessReplacesTheFirst() {
-	listener := newDuplex(DuplexOptions{Speculate: true})
-	alice := stt.Participant{ID: "alice"}
-	first, _, _ := listener.Eager(alice, "book a table")
-
-	_, abandoned, ok := listener.Eager(alice, "book a table for four")
-
-	s.True(ok)
-	s.Equal(first, abandoned, "the words it answered are not what they said")
-}
-
-func (s *DuplexSuite) TestATurnThatSettlesOnTheGuessedWordsPromotesIt() {
-	listener := newDuplex(DuplexOptions{Speculate: true})
-	alice := stt.Participant{ID: "alice"}
-	guess, _, _ := listener.Eager(alice, "book a table for four")
-
-	promoted, abandoned := listener.Settled(alice, "Book a table for four.")
-
-	s.Equal(guess, promoted)
-	s.Empty(abandoned)
-}
-
-func (s *DuplexSuite) TestATurnThatSettlesOnOtherWordsThrowsTheGuessAway() {
-	listener := newDuplex(DuplexOptions{Speculate: true})
-	alice := stt.Participant{ID: "alice"}
-	guess, _, _ := listener.Eager(alice, "book a table for four")
-
-	promoted, abandoned := listener.Settled(alice, "book a table for four on Friday")
-
-	s.Empty(promoted, "an answer to something they did not say is worse than no answer")
-	s.Equal(guess, abandoned)
-}
-
-func (s *DuplexSuite) TestCarryingOnTalkingThrowsTheGuessAway() {
-	listener := newDuplex(DuplexOptions{Speculate: true})
-	alice := stt.Participant{ID: "alice"}
-	guess, _, _ := listener.Eager(alice, "book a table for four")
-
-	abandoned := listener.Began(alice)
-
-	s.Equal(guess, abandoned, "they had not finished, so the reply was to half a sentence")
-	promoted, _ := listener.Settled(alice, "book a table for four")
-	s.Empty(promoted, "and it is not promoted later either")
-}
-
-func (s *DuplexSuite) TestATurnWithNoGuessSettlesQuietly() {
-	listener := newDuplex(DuplexOptions{Speculate: true})
-	alice := stt.Participant{ID: "alice"}
-
-	promoted, abandoned := listener.Settled(alice, "book a table")
-
-	s.Empty(promoted)
-	s.Empty(abandoned)
-}
-
-func (s *DuplexSuite) TestTwoPeopleTalkingAreTwoSeparateTurns() {
-	listener := newDuplex(DuplexOptions{Speculate: true})
-	alice := stt.Participant{ID: "alice"}
-	bob := stt.Participant{ID: "bob"}
-	guess, _, _ := listener.Eager(alice, "book a table")
-
-	listener.Began(bob)
-
-	promoted, _ := listener.Settled(alice, "book a table")
-	s.Equal(guess, promoted, "one person talking does not cancel what someone else said")
+	s.Empty(listener.Presence(stt.Participant{ID: "alice"}, time.Now().Add(-time.Second), false))
 }

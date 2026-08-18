@@ -450,6 +450,66 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/phone/calls/transfer:
+    post:
+      operationId: transferPhoneCall
+      summary: Bring a human onto a call that is already happening
+      description: >
+        Stream's SIP is inbound only, so a transfer is a second leg rather than a
+        handover: the vendor dials the human and the answered leg is routed into the
+        same Stream call, after which the agent can leave. The caller is never moved,
+        so nothing is lost if nobody answers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransferCallRequest"
+      responses:
+        "202":
+          description: The vendor is dialling the human
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlacedCall"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/phone/calls/{vendor_call_id}/digits:
+    post:
+      operationId: pressPhoneDigits
+      summary: Press digits on a call placed from here
+      description: >
+        For getting past a menu on an outbound call. The call is named by the id its
+        vendor gave when it was dialled, so only calls placed from this service can be
+        pressed at. Not every vendor can do this without ending the call it is on, and
+        one that cannot says so.
+      parameters:
+        - name: vendor_call_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PressDigitsRequest"
+      responses:
+        "204":
+          description: The digits were pressed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/stats/rollup:
     post:
       operationId: runRollup
@@ -954,6 +1014,41 @@ components:
         status:
           type: string
           description: The vendor's own word for where the call is, e.g. "queued".
+
+    TransferCallRequest:
+      type: object
+      required: [from, to, call_id]
+      properties:
+        from:
+          type: string
+          description: >
+            The customer's number the human is dialled from, which is what they see.
+        to:
+          type: string
+          description: The human being brought onto the call.
+        call_id:
+          type: string
+          description: The Stream call the caller and the agent are already on.
+        call_type:
+          type: string
+          description: The Stream call type. Omit for "default".
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+
+    PressDigitsRequest:
+      type: object
+      required: [vendor, digits]
+      properties:
+        vendor:
+          type: string
+          description: Who is carrying the call, e.g. "telnyx".
+        digits:
+          type: string
+          description: >
+            What to press. Only 0-9, * and # can be pressed, and w waits half a second
+            between two of them.
 
     RollupRequest:
       type: object

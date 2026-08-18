@@ -46,6 +46,25 @@ type ReasoningDelta struct {
 
 func (ReasoningDelta) isLLMEvent() {}
 
+// ToolCallDelta is a piece of a call the model is asking for. Index identifies which call
+// within the completion the piece belongs to, since a model may ask for several at once and
+// providers interleave their fragments.
+//
+// Arguments arrive as JSON text a few characters at a time, so a delta is rarely parseable
+// on its own. CompletionComplete carries the assembled calls, which is what a caller that
+// means to run one should wait for.
+type ToolCallDelta struct {
+	CompletionID string
+	Index        int64
+	// ToolCallID and Name arrive on the first fragment of a call and are empty on the
+	// rest.
+	ToolCallID string
+	Name       string
+	Arguments  string
+}
+
+func (ToolCallDelta) isLLMEvent() {}
+
 // CompletionComplete settles one completion. It carries everything a stat row needs, since
 // this is the natural unit of billable work.
 type CompletionComplete struct {
@@ -55,6 +74,10 @@ type CompletionComplete struct {
 	// Text is the whole answer, reasoning excluded, so a caller that ignored the deltas
 	// still has the reply.
 	Text string
+	// ToolCalls are the assembled calls the model asked for, in the order it asked. A
+	// completion may carry both these and text: a model told to keep the caller company
+	// while it acts will say something and call a tool in the same breath.
+	ToolCalls []ToolCall
 	// InputTokens is the whole prompt the model read, cached part included.
 	InputTokens int64
 	// CachedInputTokens is the part of the prompt the provider served from its cache.

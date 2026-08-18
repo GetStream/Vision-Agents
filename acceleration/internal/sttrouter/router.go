@@ -42,9 +42,6 @@ type Request struct {
 	Target string
 	// LanguageHints narrow multilingual models.
 	LanguageHints []string
-	// EagerTurns asks for provisional end-of-turn signals from a provider that has them,
-	// so a caller may start answering before the turn has settled.
-	EagerTurns bool
 }
 
 // Router selects a speech-to-text provider and opens transcription sessions.
@@ -78,7 +75,6 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		Tags:          request.Tags,
 		Target:        request.Target,
 		LanguageHints: request.LanguageHints,
-		EagerTurns:    request.EagerTurns,
 	}
 	provider, config, err := r.Select(ctx, core)
 	if err != nil {

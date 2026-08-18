@@ -254,6 +254,98 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Dialed, error)
 	return placed, err
 }
 
+// TransferRequest hands a live call to a human.
+type TransferRequest struct {
+	Owner routing.Owner
+	// From is the customer's number the human is called from, which is what they see.
+	From string
+	// To is the human being brought onto the call.
+	To string
+	// CallID is the Stream call to bring them into, which is the one the agent and the
+	// caller are already on.
+	CallID string
+	// CallType is the Stream call type. Empty means "default".
+	CallType string
+}
+
+// Transfer brings a human onto a call that is already happening.
+//
+// Stream's SIP is inbound only, so a transfer is not a handover of the caller's leg: it is
+// a second leg, originated at the vendor and routed into the same Stream call, after which
+// three parties are on it and the agent leaves. The caller is never moved, which is why they
+// hear nothing of it happening and why nothing is lost if the human does not answer.
+//
+// The routing rule is pinned to the live call rather than to the number's own template, so
+// the human joins this conversation rather than whichever one their number would have
+// landed in. It is created per transfer because a trunk's password is only readable when
+// the trunk is made, and keeping SIP credentials to reuse later is a worse trade than
+// making a second trunk.
+func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed, error) {
+	if s.stream == nil {
+		return Dialed{}, errors.New("phone: transferring a call needs stream credentials")
+	}
+	if s.store == nil {
+		return Dialed{}, errors.New("phone: transferring a call needs a database to know who holds the number")
+	}
+	if request.CallID == "" {
+		return Dialed{}, errors.New("phone: a transfer needs the call to transfer into")
+	}
+	if request.To == "" {
+		return Dialed{}, errors.New("phone: a transfer needs someone to transfer to")
+	}
+
+	held, err := s.store.Number(ctx, request.Owner.CustomerID, request.From)
+	if err != nil {
+		return Dialed{}, err
+	}
+	provider, err := s.registry.Open(held.Vendor)
+	if err != nil {
+		return Dialed{}, err
+	}
+
+	trunkID, bridge, err := s.stream.CreateTrunk(ctx, Trunk{
+		Name:    "transfer-" + request.CallID,
+		Numbers: []string{request.From},
+	})
+	if err != nil {
+		return Dialed{}, err
+	}
+	if _, err := s.stream.CreateRoute(ctx, Route{
+		Name:          "transfer-" + request.CallID,
+		TrunkIDs:      []string{trunkID},
+		CalledNumbers: []string{request.From},
+		CallID:        request.CallID,
+		CallType:      request.CallType,
+	}); err != nil {
+		return Dialed{}, err
+	}
+
+	started := time.Now()
+	placed, err := provider.Dial(ctx, Outbound{From: request.From, To: request.To, Bridge: bridge})
+	s.record(held.Vendor, "transfer", request.Owner, started, 0, err)
+	return placed, err
+}
+
+// SendDigits presses digits on a call this service placed, which is how an agent answers a
+// menu it has reached.
+//
+// The call is named by the id its vendor gave when it was dialled. An inbound call has no
+// such id here, because it arrived at Stream rather than being made from this service, so
+// only calls placed from here can be pressed at.
+func (s *Service) SendDigits(ctx context.Context, vendor, vendorCallID, digits string) error {
+	if vendorCallID == "" {
+		return errors.New("phone: pressing digits needs the call to press them on")
+	}
+	if err := ValidateDigits(digits); err != nil {
+		return err
+	}
+	provider, err := s.registry.Open(vendor)
+	if err != nil {
+		return err
+	}
+	return provider.SendDigits(ctx, vendorCallID, digits)
+}
+
 // Numbers returns what a customer holds.
 func (s *Service) Numbers(ctx context.Context, customerID string, includeReleased bool) ([]store.PhoneNumber, error) {
 	if s.store == nil {

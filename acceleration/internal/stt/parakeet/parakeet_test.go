@@ -70,21 +70,16 @@ func (s *ParakeetSuite) TestProviderAndModelAreReported() {
 	provider := s.newSTT()
 	s.Equal(ProviderName, provider.Provider())
 	s.Equal(DefaultModel, provider.Model())
-	s.True(provider.TurnDetection(), "the deployment ends turns on trailing silence")
 }
 
-func (s *ParakeetSuite) TestStartOfTurnBeginsATurn() {
+func (s *ParakeetSuite) TestStartOfTurnDoesNotEnterTheSharedContract() {
 	provider := s.newSTT()
 	speaker := stt.Participant{ID: "p1", UserID: "u1"}
 	provider.participant = speaker
 
 	provider.handleMessage(serverMessage{Type: messageStartOfTurn})
 
-	events := s.drain(provider)
-	s.Require().Len(events, 1)
-	started, ok := events[0].(stt.TurnStarted)
-	s.Require().True(ok)
-	s.Equal(speaker, started.Participant)
+	s.Empty(s.drain(provider))
 }
 
 func (s *ParakeetSuite) TestPartialProducesAReplacementTranscript() {
@@ -111,7 +106,7 @@ func (s *ParakeetSuite) TestPartialProducesAReplacementTranscript() {
 	s.InDelta(120.0, transcript.ProcessingTimeMs, 0.001, "the server's own decode time is preferred")
 }
 
-func (s *ParakeetSuite) TestFinalProducesAFinalTranscriptAndEndsTheTurn() {
+func (s *ParakeetSuite) TestFinalProducesAFinalTranscript() {
 	provider := s.newSTT()
 
 	provider.handleMessage(serverMessage{
@@ -121,17 +116,13 @@ func (s *ParakeetSuite) TestFinalProducesAFinalTranscriptAndEndsTheTurn() {
 	})
 
 	events := s.drain(provider)
-	s.Require().Len(events, 2)
+	s.Require().Len(events, 1)
 
 	transcript, ok := events[0].(stt.Transcript)
 	s.Require().True(ok)
 	s.Equal("forgotten treasures", transcript.Text)
 	s.True(transcript.Final())
-
-	ended, ok := events[1].(stt.TurnEnded)
-	s.Require().True(ok)
-	s.False(ended.Eager, "the deployment has no eager end-of-turn signal")
-	s.InDelta(9800.0, ended.DurationMs, 0.001)
+	s.InDelta(9800.0, transcript.AudioDurationMs, 0.001)
 }
 
 func (s *ParakeetSuite) TestEmptyTranscriptsAreNotEmitted() {

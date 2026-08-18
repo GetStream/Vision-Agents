@@ -5,11 +5,15 @@
 //	phone buy -vendor twilio -number +15125551234 -tag project=support
 //	phone attach -number +15125551234 -call support-line
 //	phone dial -from +15125551234 -to +15550001111
+//	phone transfer -from +15125551234 -to +15550002222 -call support-line
+//	phone press -vendor telnyx -call-id v3:abc -digits 1
 //	phone list
 //	phone release -number +15125551234
 //
 // Stream's SIP is inbound only today, so dialling out is the vendor placing the call and
-// bridging it into a trunk the agent is already on.
+// bridging it into a trunk the agent is already on. A transfer is the same thing aimed at
+// a call that already exists: the human becomes a third party on it rather than the caller
+// being handed anywhere.
 package main
 
 import (
@@ -53,7 +57,8 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: phone <vendors|search|buy|attach|dial|list|release> [flags]")
+	fmt.Fprintln(os.Stderr,
+		"usage: phone <vendors|search|buy|attach|dial|transfer|press|list|release> [flags]")
 }
 
 func run(command string, arguments []string) error {
@@ -71,6 +76,10 @@ func run(command string, arguments []string) error {
 		return attach(ctx, arguments)
 	case "dial":
 		return dial(ctx, arguments)
+	case "transfer":
+		return transfer(ctx, arguments)
+	case "press":
+		return press(ctx, arguments)
 	case "list":
 		return list(ctx, arguments)
 	case "release":
@@ -258,6 +267,72 @@ func dial(ctx context.Context, arguments []string) error {
 	}
 
 	fmt.Printf("calling %s, vendor call %s (%s)\n", *to, placed.VendorCallID, placed.Status)
+	return nil
+}
+
+func transfer(ctx context.Context, arguments []string) error {
+	flags := flag.NewFlagSet("transfer", flag.ExitOnError)
+	from := flags.String("from", "", "one of your numbers, which is what the human sees")
+	to := flags.String("to", "", "the human to bring onto the call")
+	call := flags.String("call", "", "the stream call the caller and agent are already on")
+	callType := flags.String("call-type", "", "stream call type, empty means default")
+	customer := flags.String("customer", "demo", "customer the call is billed to")
+	var tags routing.TagsFlag
+	flags.Var(&tags, "tag", "cost label as key=value, repeat for several")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if *from == "" || *to == "" {
+		return errors.New("a from and a to are required")
+	}
+	if *call == "" {
+		return errors.New("the call to transfer into is required")
+	}
+
+	service, cleanup, err := build(ctx)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	placed, err := service.Transfer(ctx, phone.TransferRequest{
+		Owner:    routing.Owner{CustomerID: *customer, Tags: tags.Tags},
+		From:     *from,
+		To:       *to,
+		CallID:   *call,
+		CallType: *callType,
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("bringing %s onto %s, vendor call %s (%s)\n",
+		*to, *call, placed.VendorCallID, placed.Status)
+	return nil
+}
+
+func press(ctx context.Context, arguments []string) error {
+	flags := flag.NewFlagSet("press", flag.ExitOnError)
+	vendor := flags.String("vendor", "telnyx", "vendor carrying the call")
+	callID := flags.String("call-id", "", "the vendor call id dialling returned")
+	digits := flags.String("digits", "", "what to press, e.g. 1 or 4123")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if *callID == "" {
+		return errors.New("the vendor call id is required")
+	}
+
+	service, cleanup, err := build(ctx)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	if err := service.SendDigits(ctx, *vendor, *callID, *digits); err != nil {
+		return err
+	}
+	fmt.Printf("pressed %s on %s\n", *digits, *callID)
 	return nil
 }
 

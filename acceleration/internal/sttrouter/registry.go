@@ -17,11 +17,8 @@ func DefaultRegistry() *Registry {
 
 	registry.Register(deepgram.ProviderName, func(spec routing.Spec) (stt.STT, error) {
 		options := deepgram.Options{
-			Model: spec.Model,
-			// Flux reports a provisional end of turn before it is sure, and revokes it if
-			// the caller carries on. That is what lets an agent start answering early.
-			EagerTurnDetection: spec.EagerTurns,
-			Logger:             spec.Logger,
+			Model:  spec.Model,
+			Logger: spec.Logger,
 		}
 		// Flux only accepts language hints on the multilingual model.
 		if spec.Model == deepgram.MultilingualModel {

@@ -29,26 +29,6 @@ func (t Transcript) Final() bool { return t.Mode == ModeFinal }
 
 func (Transcript) isSTTEvent() {}
 
-// TurnStarted means the provider detected the start of speech.
-type TurnStarted struct {
-	Participant Participant
-	Confidence  float64
-}
-
-func (TurnStarted) isSTTEvent() {}
-
-// TurnEnded means the provider detected the end of speech. Eager marks a provisional
-// end-of-turn that may still be revoked, which lets callers start work early.
-type TurnEnded struct {
-	Participant       Participant
-	Confidence        float64
-	Eager             bool
-	TrailingSilenceMs float64
-	DurationMs        float64
-}
-
-func (TurnEnded) isSTTEvent() {}
-
 // Connected means the upstream connection is established.
 type Connected struct {
 	Provider string

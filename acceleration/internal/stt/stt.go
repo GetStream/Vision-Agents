@@ -1,7 +1,7 @@
 // Package stt defines the minimal speech-to-text contract shared by every provider.
 //
 // Only the pieces the router actually needs are standardised: audio in, transcript
-// and turn events out, plus identity and lifecycle. Anything provider-specific stays
+// revisions out, plus identity and lifecycle. Anything provider-specific stays
 // on the concrete type, which also exposes a Client method returning the underlying
 // SDK client so callers are never boxed in by this interface.
 package stt
@@ -40,7 +40,7 @@ type PcmData = audio.PcmData
 // STT is a streaming speech-to-text provider.
 //
 // Start opens the upstream connection, ProcessAudio feeds it, and Events carries
-// transcripts and turn boundaries back. Events is closed by Close.
+// transcript revisions back. Events is closed by Close.
 type STT interface {
 	Start(ctx context.Context) error
 	ProcessAudio(pcm PcmData, participant Participant) error
@@ -51,6 +51,4 @@ type STT interface {
 	Provider() string
 	// Model is the model identifier used in stats, e.g. "flux-general-en".
 	Model() string
-	// TurnDetection reports whether the provider detects turns itself.
-	TurnDetection() bool
 }

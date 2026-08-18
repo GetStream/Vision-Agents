@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +28,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -33,14 +37,22 @@ import (
 )
 
 const (
-	postgresEnvVar = "ROUTER_POSTGRES_DSN"
-	redisEnvVar    = "ROUTER_REDIS_ADDR"
-	configEnvVar   = "ROUTER_CONFIG"
-	skillsEnvVar   = "HARNESS_SKILLS"
+	postgresEnvVar    = "ROUTER_POSTGRES_DSN"
+	redisEnvVar       = "ROUTER_REDIS_ADDR"
+	configEnvVar      = "ROUTER_CONFIG"
+	skillsEnvVar      = "HARNESS_SKILLS"
+	toolsEnvVar       = "HARNESS_TOOLS"
+	phoneConfigEnvVar = "ROUTER_PHONE_CONFIG"
 )
 
 // finishWithin bounds how long the agent is given to finish its last sentence.
 const finishWithin = 10 * time.Second
+
+// The person the browser joins the call as, so the agent has somebody to talk to.
+const (
+	demoUserID   = "demo-caller"
+	demoUserName = "Demo caller"
+)
 
 func main() {
 	options := options{}
@@ -65,13 +77,22 @@ func main() {
 		"provider/model or shortcut for the model that does the thinking, empty to answer everything on the voice model")
 	flag.StringVar(&options.skillsFile, "skills", os.Getenv(skillsEnvVar),
 		"skills the voice model may hand over, empty for the built-in set")
+	flag.StringVar(&options.toolsFile, "tools", os.Getenv(toolsEnvVar),
+		"tools the voice model may run, empty for the built-in set")
+	flag.StringVar(&options.number, "number", "",
+		"one of your numbers, which is what a transferred human sees, and what turns transferring on")
+	flag.StringVar(&options.vendor, "vendor", "telnyx", "vendor carrying an outbound leg")
+	flag.StringVar(&options.vendorCallID, "vendor-call", "",
+		"the vendor call id of an outbound leg, which is what lets the agent press digits at a menu")
+	flag.BoolVar(&options.navigating, "navigating", false,
+		"the agent placed this call, so let recordings finish and answer their menus")
 	flag.IntVar(&options.tasks, "tasks", 0, "how much delegated work may run at once")
-	flag.BoolVar(&options.backchannel, "backchannel", false,
+	flag.BoolVar(&options.backchannel, "backchannel", true,
 		"murmur while the caller is still talking, the way a person on the phone does")
-	flag.BoolVar(&options.speculate, "speculate", false,
-		"start answering as soon as the transcriber thinks a turn has ended, rather than once it is sure")
 	flag.Float64Var(&options.minConfidence, "min-confidence", 0,
 		"how sure the transcriber must be for the agent to answer rather than check what was meant")
+	flag.BoolVar(&options.demo, "demo", true,
+		"open a browser on a link that joins the call, so there is somebody for the agent to talk to")
 	verbose := flag.Bool("verbose", false, "log lifecycle events")
 	flag.Parse()
 
@@ -106,17 +127,31 @@ type options struct {
 
 	subagentTarget string
 	skillsFile     string
+	toolsFile      string
 	tasks          int
 	backchannel    bool
-	speculate      bool
 	minConfidence  float64
+	demo           bool
+
+	number       string
+	vendor       string
+	vendorCallID string
+	navigating   bool
+}
+
+// prompt is what the agent is told to be. An agent that placed the call is told how to get
+// through whatever answers, ahead of whatever it was told to do once it has.
+func (o options) prompt() string {
+	if !o.navigating {
+		return o.instructions
+	}
+	return agent.NavigatingInstructions + "\n\n" + o.instructions
 }
 
 // duplex is how the agent listens and talks at the same time.
 func (o options) duplex() agent.DuplexOptions {
 	return agent.DuplexOptions{
 		Backchannel:   o.backchannel,
-		Speculate:     o.speculate,
 		MinConfidence: o.minConfidence,
 	}
 }
@@ -180,15 +215,24 @@ func run(options options, logger *slog.Logger) error {
 		}
 	}
 
+	// Telephony is only wired when the agent has a number to act from: a call in a
+	// browser has nowhere to transfer anyone to and no keypad to press.
+	line, tools, err := buildTelephony(options, routers.store, logger)
+	if err != nil {
+		return err
+	}
+
 	voiceAgent, err := agent.New(agent.Options{
 		Edge:           edge,
-		Instructions:   options.instructions,
+		Instructions:   options.prompt(),
 		CustomerID:     options.customerID,
 		AgentID:        options.agent(),
 		CallID:         options.callID,
 		Tags:           options.tags.Tags,
 		SubagentTarget: options.subagentTarget,
 		Skills:         skills,
+		Telephony:      line,
+		Tools:          tools,
 		Tasks:          options.tasks,
 		Duplex:         options.duplex(),
 		LLM:            routers.llm,
@@ -242,6 +286,10 @@ func run(options options, logger *slog.Logger) error {
 		fmt.Printf("handing the hard parts to %s: %s\n", options.subagentTarget, skillNames(skills))
 	}
 
+	if options.demo {
+		invite(edge, logger)
+	}
+
 	if options.greeting != "" {
 		if err := voiceAgent.Say(ctx, options.greeting); err != nil {
 			return err
@@ -260,6 +308,87 @@ func run(options options, logger *slog.Logger) error {
 
 	fmt.Println("\nleaving")
 	return voiceAgent.Close()
+}
+
+// buildTelephony wires what the agent may do to the call, which is nothing unless it was
+// given a number to act from.
+//
+// The tools are returned alongside because they are only worth offering to a model that can
+// run them: a model told it may transfer, on a call with nowhere to transfer to, promises
+// the caller a person who never arrives.
+func buildTelephony(
+	options options,
+	numbers *store.Store,
+	logger *slog.Logger,
+) (agent.Telephony, harness.Tools, error) {
+	if strings.TrimSpace(options.number) == "" {
+		return nil, harness.Tools{}, nil
+	}
+	if numbers == nil {
+		return nil, harness.Tools{}, fmt.Errorf(
+			"transferring needs %s, because it is the record of who holds %s",
+			postgresEnvVar, options.number)
+	}
+
+	tools, err := harness.LoadTools(options.toolsFile)
+	if err != nil {
+		return nil, harness.Tools{}, err
+	}
+
+	config, err := phone.LoadConfig(os.Getenv(phoneConfigEnvVar))
+	if err != nil {
+		return nil, harness.Tools{}, err
+	}
+	stream, err := phone.NewStream(phone.StreamOptions{})
+	if err != nil {
+		return nil, harness.Tools{}, err
+	}
+	service, err := phone.NewService(phone.ServiceOptions{
+		Registry: vendors.Registry(config),
+		Store:    numbers,
+		Stream:   stream,
+		Logger:   logger,
+	})
+	if err != nil {
+		return nil, harness.Tools{}, err
+	}
+
+	return service.Line(phone.LineOptions{
+		Owner:        routing.Owner{CustomerID: options.customerID, Tags: options.tags.Tags},
+		From:         options.number,
+		CallID:       options.callID,
+		CallType:     options.callType,
+		Vendor:       options.vendor,
+		VendorCallID: options.vendorCallID,
+	}), tools, nil
+}
+
+// invite opens a browser on a link that joins the call, because an agent alone in a call
+// has nobody to talk to. A link that cannot be opened is still printed: the conversation
+// works, it just needs somebody to click.
+func invite(edge *streamedge.Edge, logger *slog.Logger) {
+	link, err := edge.DemoURL(streamedge.User{ID: demoUserID, Name: demoUserName})
+	if err != nil {
+		logger.Warn("not opening a browser on the call", "error", err)
+		return
+	}
+
+	fmt.Printf("join the call at %s\n", link)
+	if err := openBrowser(link); err != nil {
+		logger.Warn("could not open a browser, so open the link above instead", "error", err)
+	}
+}
+
+// openBrowser shows a link in whatever this machine opens links with.
+func openBrowser(link string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", link).Start()
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", link).Start()
+	default:
+		return exec.Command("xdg-open", link).Start()
+	}
 }
 
 // report prints the conversation as it happens and stores it. Interim work is left to
@@ -285,9 +414,13 @@ func report(voiceAgent *agent.Agent, transcript *chatlog.Log) {
 				typed.Skill, typed.ElapsedMs, typed.Text, typed.Question)
 		case agent.TaskCancelled:
 			fmt.Printf("  %s abandoned (%s)\n", typed.Skill, typed.Reason)
-		case agent.Speculated:
-			if typed.Promoted {
-				fmt.Println("  (answered before they finished)")
+		case agent.Transferred:
+			fmt.Printf("  transferring to %s: %s\n", typed.To, typed.Summary)
+		case agent.Pressed:
+			fmt.Printf("  pressed %s\n", typed.Digits)
+		case agent.ToolRan:
+			if typed.Err != nil {
+				fmt.Fprintf(os.Stderr, "  %s failed: %v\n", typed.Tool, typed.Err)
 			}
 		case agent.Interrupted:
 			fmt.Println("(interrupted)")

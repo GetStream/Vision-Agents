@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -144,6 +145,8 @@ type HarnessSuite struct {
 
 	fast *stubLLM
 	slow *stubLLM
+	// tools is what the next harness offers the fast model.
+	tools Tools
 
 	harness *Harness
 	events  *collector
@@ -155,6 +158,7 @@ func TestHarnessSuite(t *testing.T) {
 
 func (s *HarnessSuite) SetupTest() {
 	s.ctx = context.Background()
+	s.tools = Tools{}
 }
 
 // collector drains a harness's events for the life of one test, because the emitter
@@ -186,6 +190,11 @@ func (c *collector) seen() []Event {
 
 // session starts a routed session over a stub provider.
 func (s *HarnessSuite) session(provider *stubLLM) *llmrouter.Session {
+	return stubSession(&s.Suite, s.ctx, provider)
+}
+
+// stubSession starts a routed session over a stub provider.
+func stubSession(s *suite.Suite, ctx context.Context, provider *stubLLM) *llmrouter.Session {
 	logger := slog.New(slog.DiscardHandler)
 
 	registry := llmrouter.NewRegistry()
@@ -196,17 +205,19 @@ func (s *HarnessSuite) session(provider *stubLLM) *llmrouter.Session {
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)
 
-	session, err := router.Start(s.ctx, llmrouter.Request{CustomerID: "acme", Target: "en-low-latency"})
+	session, err := router.Start(ctx, llmrouter.Request{CustomerID: "acme", Target: "en-low-latency"})
 	s.Require().NoError(err)
 	return session
 }
 
-// build returns a harness over two stub models, with or without a subagent.
+// build returns a harness over two stub models, with or without a subagent. Whatever is in
+// tools is offered, which is nothing unless a test set it first.
 func (s *HarnessSuite) build(delegating bool) {
 	s.fast = newStubLLM()
 	options := Options{
 		Model:  s.session(s.fast),
 		Skills: testSkills(),
+		Tools:  s.tools,
 		Logger: slog.New(slog.DiscardHandler),
 	}
 	if delegating {
@@ -262,6 +273,24 @@ func (s *HarnessSuite) awaitDelegated(count int) []Delegated {
 	return delegatedIn(s.events.seen())
 }
 
+// awaitToolRequests waits for the given number of tool calls to have been reported, since
+// the collector sees them on its own goroutine.
+func (s *HarnessSuite) awaitToolRequests(count int) []ToolRequested {
+	s.eventually(func() bool { return len(toolsRequestedIn(s.events.seen())) == count },
+		"the tool calls were never reported")
+	return toolsRequestedIn(s.events.seen())
+}
+
+func toolsRequestedIn(events []Event) []ToolRequested {
+	var requested []ToolRequested
+	for _, event := range events {
+		if typed, ok := event.(ToolRequested); ok {
+			requested = append(requested, typed)
+		}
+	}
+	return requested
+}
+
 func settledIn(events []Event) []Settled {
 	var settled []Settled
 	for _, event := range events {
@@ -280,6 +309,27 @@ func delegatedIn(events []Event) []Delegated {
 		}
 	}
 	return delegated
+}
+
+func compactedIn(events []Event) []Compacted {
+	var compacted []Compacted
+	for _, event := range events {
+		if typed, ok := event.(Compacted); ok {
+			compacted = append(compacted, typed)
+		}
+	}
+	return compacted
+}
+
+func longHistory() []llm.Message {
+	history := make([]llm.Message, 0, compactionMinMessages)
+	for index := range compactionMinMessages / 2 {
+		history = append(history,
+			llm.Message{Role: llm.User, Content: fmt.Sprintf("question %d", index)},
+			llm.Message{Role: llm.Assistant, Content: fmt.Sprintf("answer %d", index)},
+		)
+	}
+	return history
 }
 
 func (s *HarnessSuite) TestAModelIsRequired() {
@@ -308,6 +358,91 @@ func (s *HarnessSuite) TestTheModelIsToldWhatItMayHandOver() {
 	s.Contains(instructions, "be brief", "the agent's own instructions come first")
 	s.Contains(instructions, "think: hard questions")
 	s.Contains(instructions, "<ask skill=", "and how to ask for it")
+}
+
+func (s *HarnessSuite) TestToolsAreOfferedToTheFastModel() {
+	s.tools = testTools()
+	s.build(false)
+
+	s.respond("turn-1", "put me through to someone")
+
+	s.Require().Len(s.fast.requests(), 1)
+	offered := s.fast.requests()[0].Tools
+	s.Require().Len(offered, 2)
+	s.Equal("transfer", offered[0].Name)
+	s.Equal("hand the caller to a human", offered[0].Description)
+	s.NotEmpty(offered[0].Parameters, "without a schema the model cannot fill the arguments in")
+}
+
+func (s *HarnessSuite) TestWithoutToolsTheRequestOffersNone() {
+	// A model handed an empty toolbox still answers as though it had one, so a request
+	// with nothing to offer must carry no tools rather than an empty list.
+	s.build(false)
+
+	s.respond("turn-1", "hello")
+
+	s.Require().Len(s.fast.requests(), 1)
+	s.Nil(s.fast.requests()[0].Tools)
+}
+
+func (s *HarnessSuite) TestAToolCallIsReportedForSomebodyElseToRun() {
+	// The harness cannot transfer a call it does not know exists, so what it does with a
+	// tool call is say that one was asked for.
+	s.tools = testTools()
+	s.build(false)
+
+	s.harness.Requested("turn-1", []llm.ToolCall{
+		{ID: "call-1", Name: "transfer", Arguments: `{"to":"+15550001111"}`},
+	})
+
+	requested := s.awaitToolRequests(1)
+	s.Equal("turn-1", requested[0].TurnID)
+	s.Equal("transfer", requested[0].Call.Name)
+	s.Equal(`{"to":"+15550001111"}`, requested[0].Call.Arguments)
+}
+
+func (s *HarnessSuite) TestAToolThatWasNeverOfferedIsDropped() {
+	// Models invent tools, and whoever runs them should not have to know which names are
+	// real before acting on one.
+	s.tools = testTools()
+	s.build(false)
+
+	s.harness.Requested("turn-1", []llm.ToolCall{
+		{ID: "call-1", Name: "hang_up", Arguments: "{}"},
+		{ID: "call-2", Name: "press", Arguments: `{"digits":"1"}`},
+	})
+
+	requested := s.awaitToolRequests(1)
+	s.Equal("press", requested[0].Call.Name, "only the real one survives")
+}
+
+func (s *HarnessSuite) TestATurnThatCalledAToolIsAnsweredWithTheResult() {
+	// The provider matches each result against the call it answers, so the turn the model
+	// took has to be replayed with the calls still on it.
+	s.tools = testTools()
+	s.build(false)
+
+	s.Require().NoError(s.harness.Respond(Turn{
+		ID:           "turn-2",
+		Instructions: "be brief",
+		History: []llm.Message{
+			{Role: llm.User, Content: "put me through"},
+			{
+				Role:      llm.Assistant,
+				Content:   "One moment.",
+				ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "transfer", Arguments: `{"to":"+1555"}`}},
+			},
+			{Role: llm.ToolResult, Content: "transferred", ToolCallID: "call-1"},
+		},
+	}))
+
+	s.Require().Len(s.fast.requests(), 1)
+	sent := s.fast.requests()[0].Messages
+	s.Require().Len(sent, 3)
+	s.Require().Len(sent[1].ToolCalls, 1)
+	s.Equal("call-1", sent[1].ToolCalls[0].ID)
+	s.Equal(llm.ToolResult, sent[2].Role)
+	s.Equal("call-1", sent[2].ToolCallID)
 }
 
 func (s *HarnessSuite) TestWithoutASubagentNothingIsOffered() {
@@ -436,6 +571,20 @@ func (s *HarnessSuite) TestANewerRequestSupersedesTheOneItReplaces() {
 	s.False(settled[0].Actionable(), "nobody was still waiting on the question that changed")
 }
 
+func (s *HarnessSuite) TestARevisedConversationCancelsWorkFromItsOldTurn() {
+	s.build(true)
+	s.respond("turn-1", "what is 15% of 84.20")
+	s.reply("turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	s.eventually(func() bool { return s.harness.Delegating() }, "the task never started")
+
+	s.harness.CancelTurn("turn-1", ReasonSuperseded)
+
+	settled := s.awaitSettled(1)[0]
+	s.Equal(Cancelled, settled.State)
+	s.Equal(ReasonSuperseded, settled.Reason)
+	s.False(settled.Actionable())
+}
+
 func (s *HarnessSuite) TestTheModelCanDropWorkTheCallerHasMovedPast() {
 	s.build(true)
 	s.respond("turn-1", "what is 15% of 84.20")
@@ -518,6 +667,46 @@ func (s *HarnessSuite) TestWorkThatFailsStillTellsTheCallerSomething() {
 
 	s.respond("turn-2", "")
 	s.Contains(s.fast.requests()[1].Instructions, "could not find out")
+}
+
+func (s *HarnessSuite) TestAColdLargePrefixIsCompactedPrivately() {
+	s.build(true)
+	s.slow.automatic = "The caller is planning dinner for Friday."
+	history := longHistory()
+
+	s.Require().NoError(s.harness.MaybeCompact(history, compactionMinTokens, 0))
+
+	s.eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
+		"the conversation was never compacted")
+	compacted := compactedIn(s.events.seen())[0]
+	s.Equal(history[:len(history)-compactionKeepRecent], compacted.Prefix)
+	s.Equal("The caller is planning dinner for Friday.", compacted.Summary)
+	s.Empty(settledIn(s.events.seen()), "private maintenance is not a caller-facing task")
+	s.False(s.harness.Delegating(), "the caller is not waiting for private maintenance")
+}
+
+func (s *HarnessSuite) TestAnEffectivePrefixCacheKeepsVerbatimHistory() {
+	s.build(true)
+
+	s.Require().NoError(s.harness.MaybeCompact(
+		longHistory(),
+		compactionMinTokens,
+		int64(float64(compactionMinTokens)*compactionCacheRatio),
+	))
+
+	s.Empty(s.slow.requests(), "cached history is cheaper and more faithful than a summary")
+}
+
+func (s *HarnessSuite) TestShortHistoryIsNotCompacted() {
+	s.build(true)
+
+	s.Require().NoError(s.harness.MaybeCompact(
+		longHistory()[:compactionMinMessages-1],
+		compactionMinTokens,
+		0,
+	))
+
+	s.Empty(s.slow.requests())
 }
 
 func (s *HarnessSuite) TestClosingAbandonsWorkNobodyWillHear() {

@@ -94,13 +94,11 @@ func (s *ParakeetIntegrationSuite) TestTranscribesSpeechAndEndsTheTurn() {
 	}
 
 	var partials, finals []stt.Transcript
-	var sawConnected, sawTurnStarted bool
+	var sawConnected bool
 	for _, event := range events {
 		switch typed := event.(type) {
 		case stt.Connected:
 			sawConnected = true
-		case stt.TurnStarted:
-			sawTurnStarted = true
 		case stt.Transcript:
 			if typed.Final() {
 				finals = append(finals, typed)
@@ -113,7 +111,6 @@ func (s *ParakeetIntegrationSuite) TestTranscribesSpeechAndEndsTheTurn() {
 	}
 
 	s.True(sawConnected, "should report the session becoming ready")
-	s.True(sawTurnStarted, "should report speech starting")
 	s.NotEmpty(partials, "should stream incremental transcripts, not just a final")
 	s.Require().NotEmpty(finals, "should produce a final transcript")
 

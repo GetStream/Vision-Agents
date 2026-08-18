@@ -37,7 +37,7 @@ and billing as a direct API call.
 | `cmd/say`            | Types a line, hears it                                              |
 | `cmd/chat`           | Types a line, reads the answer                                      |
 | `cmd/agent`          | Joins a Stream call and holds a conversation                        |
-| `cmd/phone`          | Buys numbers and points them at an agent                            |
+| `cmd/phone`          | Buys numbers, points them at an agent, and transfers live calls     |
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
 | `deploy/gemma-4`     | The Gemma 4 vLLM Truss, written and validated but not yet pushed    |
@@ -102,6 +102,7 @@ to play audio, or `-out` to write a file instead.
 | `STREAM_API_KEY`        | Stream credentials, used by `cmd/agent`                    |
 | `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them |
 | `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
+| `EXAMPLE_BASE_URL`      | Optional; points `cmd/agent`'s demo link at another deployment |
 
 Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.
@@ -131,6 +132,7 @@ Which models those shortcuts reach for LLM, and what each is billed at per milli
 | `gemma/gemma-4-E2B-it`            | low-latency  | $0.032 | -       | $0.16   |
 | `deepseek/DeepSeek-V4-Pro-0813`   | high-quality | $1.32  | $0.132  | $3.96   |
 | `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |
+| `openai/gpt-5.6-sol`              | high-quality | $5.00  | $0.50   | $30.00  |
 
 Gemma is self-hosted, so its rates are an estimate of what the deployment costs rather than
 a published price: Baseten's L4 rate divided by an assumed throughput. Cached prompt tokens
@@ -164,11 +166,16 @@ go run ./cmd/chat -text "Name three primary colours."
 # Or hold a conversation, which keeps its history between turns
 go run ./cmd/chat -target en-high-accuracy
 
-# Join a Stream call and talk to it
+# Join a Stream call and talk to it. A browser opens on a link that joins the same call,
+# which -demo=false turns off when the caller is joining from somewhere else.
 go run ./cmd/agent -call my-call
 
-# Let it hand the hard parts to a better model, and answer before the caller has finished
-go run ./cmd/agent -call my-call -subagent en-high-accuracy -speculate -backchannel
+# Sprint 6 stack: Gemma speaks, Sol handles the hard parts
+go run ./cmd/agent -call my-call \
+  -stt parakeet/parakeet-tdt-0.6b-v3 \
+  -tts fish/s2-pro \
+  -llm gemma/gemma-4-E2B-it \
+  -subagent openai/gpt-5.6-sol
 
 # Label what a session costs, so spend can be broken down later
 go run ./cmd/agent -call my-call -tag project=support -tag environment=dev
@@ -178,6 +185,14 @@ go run ./cmd/phone vendors
 go run ./cmd/phone search -vendor twilio -country US -area 512
 go run ./cmd/phone buy -vendor twilio -number +15125551234 -tag project=support
 go run ./cmd/phone attach -number +15125551234 -call support-line
+
+# Let the agent hand a caller to a human, or answer a menu on a call it placed
+go run ./cmd/agent -call support-line -number +15125551234
+go run ./cmd/agent -call outbound-1 -number +15125551234 -vendor-call v3:abc -navigating
+
+# Or do either by hand
+go run ./cmd/phone transfer -from +15125551234 -to +15550002222 -call support-line
+go run ./cmd/phone press -vendor telnyx -call-id v3:abc -digits 1
 ```
 
 Each utterance `cmd/say` finishes prints which provider served it, the wait for the first
@@ -203,30 +218,31 @@ speaker.
 ```mermaid
 flowchart LR
   edge["Edge audio 16k mono"] --> stt["STT session per participant"]
-  stt -->|"final transcript"| conv[Conversation history]
+  stt -->|"transcript revisions"| cadence["Cadence"]
+  cadence --> flow["Fast flow controller"]
+  flow -->|"respond or clarify"| conv[Conversation history]
+  flow -->|"stop, shorten, continue"| floor["Speech floor"]
   conv --> harness["Harness"]
   harness --> llmSession["LLM session"]
   llmSession -->|"text deltas"| harness
   harness -->|"speech"| chunker["Sentence chunker"]
   chunker --> ttsSession["TTS session"]
   ttsSession -->|"PCM chunks"| out["Edge audio track"]
-  stt -->|"turn started"| barge["Interrupt TTS and LLM"]
 ```
 
 Three decisions are worth knowing about:
 
-- **Only settled turns are answered.** An interim transcript is a revision of a turn that
-  has not finished, so replying to one means replying to half a sentence. Turn boundaries
-  come from the speech-to-text provider rather than a separate detector, since Deepgram Flux
-  already reports them.
+- **Cadence, not turn detection, decides when to act.** Transcript revisions are debounced
+  per participant, then a separate fast-model session decides whether to wait, ignore
+  background speech, respond, or clarify. A provider final is metadata rather than the
+  response trigger; new words cancel a stale decision.
 - **The reply is spoken sentence by sentence.** A model emits a few characters at a time,
   and a voice given two words at a time pauses in the wrong places. A streaming voice takes
   a turn's sentences as deltas of one utterance, so one turn stays one billed synthesis; a
   voice that cannot take deltas gets one final request per sentence.
-- **Barge-in drops audio at both ends.** A turn is only allowed to produce audio while it is
-  the current one, so a provider still sending after being interrupted is ignored, and the
-  outbound queue holds only 400 ms of speech so stopping is heard rather than merely
-  recorded.
+- **Overlap is a floor decision.** A correction stops the model and voice, a related addition
+  shortens the current answer after speech already queued, and an acknowledgement lets it
+  continue. Audio from an abandoned turn is still dropped at publication.
 
 `Edge` is four methods (`Join`, `Audio`, `PublishAudio`, `Leave`), which is what lets the
 whole flow be tested in-process against a loopback rather than only against a real call.
@@ -243,7 +259,8 @@ while it runs.
 
 ```mermaid
 flowchart LR
-  stt["STT session"] -->|"final / eager / interim"| h["Harness"]
+  stt["Transcript cadence"] --> controller["Flow controller"]
+  controller -->|"respond or clarify"| h["Harness"]
   h -->|"reply"| fast["Fast LLM session"]
   fast -->|"deltas"| filter["Directive filter"]
   filter -->|"speech"| chunker["Sentence chunker"] --> tts["TTS"]
@@ -251,6 +268,7 @@ flowchart LR
   tasks --> sub["Subagent LLM session"]
   sub -->|"result"| h
   h -->|"cancel superseded"| tasks
+  sub -->|"private summary"| compact["History compaction"]
 ```
 
 A skill is a name, a line telling the fast model what it is for, and the instructions the
@@ -264,8 +282,9 @@ replaces it, the same way `router.yaml` and `phone.yaml` already work.
 - **A task is a completion, so cancelling one is a targeted interrupt.** `Interrupt` on
   `llm.LLM` takes completion ids, which is what lets a conversation abandon stale work
   without stopping the reply being spoken. Work is abandoned when a newer request for the
-  same skill supersedes it, when the model writes `<drop skill="…"/>` because the caller
-  moved on, when its deadline passes, or when the call ends.
+  same skill or a revised conversational premise supersedes it, when the model writes
+  `<drop skill="…"/>` because the caller moved on, when its deadline passes, or when the
+  call ends.
 - **Answers come back as a turn nobody asked for.** The caller was told an answer was
   coming, so it arrives without them asking again. If the agent is mid-sentence the answer
   waits for it to finish rather than talking over itself. A subagent that cannot answer
@@ -275,20 +294,17 @@ replaces it, the same way `router.yaml` and `phone.yaml` already work.
 Subagent completions go through `llmrouter` like anything else, so what the thinking costs
 lands in `requests` with the same failover and cost tags as the talking.
 
+Long histories are compacted privately on the thinking session only when the prompt is large
+and the provider's reported cached-token ratio has fallen below half. The result replaces
+only the unchanged old prefix; recent turns stay verbatim and a late summary cannot overwrite
+newer conversation.
+
 ### Listening and talking at the same time
 
-Three things, all off by default, because each trades a guess for latency:
-
-- **`-backchannel`** murmurs while the caller is still talking. It never reaches the model:
-  a listening noise is not a turn, so it costs no completion and is not what barge-in
-  cancels.
-- **`-speculate`** starts answering as soon as Deepgram Flux provisionally ends a turn,
-  rather than once it is sure. The reply is generated but not spoken; it is promoted when
-  the turn really does settle on the same words, and thrown away unheard when it does not.
-  What it buys is the model's time to first token, which is most of the wait, without
-  needing to buffer audio. It sets `EagerTurnDetection` through `routing.Spec`.
-- **`-min-confidence`** has the agent check what a caller meant when the transcriber was
-  doubtful, rather than confidently answering the wrong question.
+Cadence and floor control are always part of the agent. `-backchannel` defaults on and makes a
+short listening noise during long speech or delegated work; pass `-backchannel=false` to turn
+it off. `-min-confidence` additionally makes the agent clarify a doubtful transcript. The
+flow controller also asks for clarification when the words are clear but the intent is not.
 
 ## What is recorded
 
@@ -326,7 +342,8 @@ statistics paths do.
 ## Transcripts, memory and phone
 
 **Transcripts.** With `STREAM_API_KEY` and `STREAM_API_SECRET` set, `cmd/agent` writes every
-settled transcript and every reply into the Stream Chat channel `messaging:{agentID}`, off
+relevant transcript committed by the flow controller and every reply into the Stream Chat
+channel `messaging:{agentID}`, off
 the event stream rather than from inside the conversation loop. A voice call otherwise leaves
 nothing behind, and any Stream Chat client can already read a channel.
 
@@ -368,6 +385,16 @@ go test -tags integration ./...
 ```
 
 Integration tests skip themselves when the credentials or services they need are absent.
+
+`internal/agent/conversation_test.go` is the conversation-quality suite: a synthesised caller
+is played into a real agent at the rate a real call delivers audio, in silence, in a noisy
+room, over somebody else's conversation and while the agent is talking. What it asserts is
+what a caller would notice, including how long they waited to be answered.
+
+```bash
+go test -tags integration -run TestConversationSuite ./internal/agent
+```
+
 Postgres and Redis for local runs:
 
 ```bash

@@ -38,8 +38,14 @@ type Options struct {
 	// the harness offers no skills and the fast model answers everything itself. The
 	// harness takes ownership of the session and closes it.
 	Subagent *llmrouter.Session
+	// Controller is a second fast-model session that decides when evolving speech is
+	// complete, relevant, or interrupting. The harness takes ownership of it.
+	Controller *llmrouter.Session
 	// Skills are what the fast model may hand over. They mean nothing without a subagent.
 	Skills Skills
+	// Tools are what the fast model may do rather than say. The harness offers them and
+	// reports what was asked for; the agent is what runs them.
+	Tools Tools
 	// Tasks caps how much delegated work may run at once.
 	Tasks int
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
@@ -69,6 +75,7 @@ type Harness struct {
 	// tasks is nil when there is no subagent, which is what makes delegation optional
 	// rather than a second thing to configure before the agent works at all.
 	tasks *manager
+	flow  *flow
 
 	mu sync.Mutex
 	// notes are what has come back from the subagent since the fast model last spoke.
@@ -77,6 +84,8 @@ type Harness struct {
 	// history is the conversation as of the last turn, so a request for help carries the
 	// context it was asked in rather than only the sentence that prompted it.
 	history []llm.Message
+	// compaction is private summary work in flight.
+	compaction *compaction
 
 	// scan splits replies into speech and requests for help. Only the consumer of the
 	// model's deltas touches it, which is one goroutine.
@@ -101,6 +110,9 @@ func New(options Options) (*Harness, error) {
 	if err := options.Skills.Validate(); err != nil {
 		return nil, err
 	}
+	if err := options.Tools.Validate(); err != nil {
+		return nil, err
+	}
 
 	h := &Harness{
 		options: options,
@@ -112,6 +124,9 @@ func New(options Options) (*Harness, error) {
 		h.tasks = newManager(options.Subagent, options.Tasks, h.logger)
 		h.running.Add(1)
 		go h.consumeTasks()
+	}
+	if options.Controller != nil {
+		h.flow = newFlow(options.Controller, h.emitter, h.logger)
 	}
 	return h, nil
 }
@@ -129,7 +144,46 @@ func (h *Harness) Respond(turn Turn) error {
 		Instructions: instructions,
 		Messages:     turn.History,
 		MaxTokens:    h.options.MaxTokens,
+		Tools:        h.options.Tools.Requests(),
 	})
+}
+
+// Requested reports the tools the model asked to have run in one reply.
+//
+// A call for a tool that was never offered is dropped rather than passed on: models invent
+// them, and the agent should not have to know which names are real. Running the rest is the
+// agent's job, because a tool acts on the call and the harness does not know there is one.
+func (h *Harness) Requested(turnID string, calls []llm.ToolCall) {
+	for _, call := range calls {
+		if _, known := h.options.Tools.Lookup(call.Name); !known {
+			h.logger.Debug("the model asked for a tool that does not exist", "tool", call.Name)
+			continue
+		}
+		h.emitter.Send(ToolRequested{TurnID: turnID, Call: call})
+	}
+}
+
+// Decide asks the fast flow controller what to do with an evolving transcript.
+func (h *Harness) Decide(turn FlowTurn) error {
+	if h.flow == nil {
+		return errors.New("harness: a flow controller is required")
+	}
+	return h.flow.Decide(turn)
+}
+
+// CancelDecision abandons a flow decision whose transcript changed.
+func (h *Harness) CancelDecision(candidateID string) error {
+	if h.flow == nil {
+		return nil
+	}
+	return h.flow.Cancel(candidateID)
+}
+
+// CancelTurn abandons delegated work whose conversational premise changed.
+func (h *Harness) CancelTurn(turnID, reason string) {
+	if h.tasks != nil {
+		h.tasks.CancelTurn(turnID, reason)
+	}
 }
 
 // Filter takes a delta of a reply and returns the part of it the caller should hear.
@@ -157,7 +211,7 @@ func (h *Harness) Delegating() bool {
 	if h.tasks == nil {
 		return false
 	}
-	return h.tasks.Running() > 0
+	return h.tasks.RunningPublic() > 0
 }
 
 // Pending reports whether anything has come back that the caller has not been told
@@ -175,11 +229,20 @@ func (h *Harness) Events() <-chan Event { return h.emitter.Events() }
 func (h *Harness) Close() error {
 	var err error
 	h.closeOnce.Do(func() {
+		var failures []error
+		if h.flow != nil {
+			if failure := h.flow.Close(); failure != nil {
+				failures = append(failures, failure)
+			}
+		}
 		if h.tasks != nil {
-			err = h.tasks.Close()
+			if failure := h.tasks.Close(); failure != nil {
+				failures = append(failures, failure)
+			}
 		}
 		h.running.Wait()
 		h.emitter.Close()
+		err = errors.Join(failures...)
 	})
 	return err
 }
@@ -208,7 +271,7 @@ func (h *Harness) act(turnID string, found directive) {
 	history := append([]llm.Message(nil), h.history...)
 	h.mu.Unlock()
 
-	taskID, err := h.tasks.Create(skill, found.body, history)
+	taskID, err := h.tasks.Create(skill, found.body, history, turnID, false)
 	if err != nil {
 		h.logger.Error("could not delegate", "skill", skill.Name, "error", err)
 		return
@@ -226,6 +289,10 @@ func (h *Harness) consumeTasks() {
 	defer h.running.Done()
 
 	for result := range h.tasks.Results() {
+		if result.Skill == compactionSkillName {
+			h.finishCompaction(result)
+			continue
+		}
 		if written := note(result); written != "" {
 			h.mu.Lock()
 			h.notes = append(h.notes, written)

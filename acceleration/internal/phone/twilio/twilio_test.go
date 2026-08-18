@@ -200,6 +200,15 @@ func (s *TwilioSuite) TestDiallingOutBridgesTheAnsweredCallIntoTheTrunk() {
 	s.Equal("queued", placed.Status)
 }
 
+func (s *TwilioSuite) TestPressingDigitsIsRefusedRatherThanEndingTheCall() {
+	// The only way to make tones at Twilio is to replace the TwiML the leg is running,
+	// which is the <Dial> holding the agent on the call. Refusing is the honest answer.
+	err := s.provider.SendDigits(s.ctx, "CA1", "1")
+
+	s.ErrorIs(err, phone.ErrNotImplemented)
+	s.ErrorContains(err, "without ending the call")
+}
+
 func (s *TwilioSuite) TestACallWithoutBothEndsIsRejected() {
 	_, err := s.provider.Dial(s.ctx, phone.Outbound{From: "+15125551234"})
 

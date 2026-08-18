@@ -274,6 +274,76 @@ func (s *Server) PlacePhoneCall(
 	}, nil
 }
 
+// TransferPhoneCall brings a human onto a call that is already happening.
+func (s *Server) TransferPhoneCall(
+	ctx context.Context,
+	request TransferPhoneCallRequestObject,
+) (TransferPhoneCallResponseObject, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return TransferPhoneCall401JSONResponse{missingCustomer()}, nil
+	}
+	if request.Body == nil {
+		return TransferPhoneCall400JSONResponse{badRequest("a request body is required")}, nil
+	}
+	if s.phone == nil {
+		return TransferPhoneCall400JSONResponse{noTelephony()}, nil
+	}
+
+	tags := phoneTags(request.Body.Tags)
+	if err := tags.Validate(); err != nil {
+		return TransferPhoneCall400JSONResponse{badRequest(err.Error())}, nil
+	}
+
+	transfer := phone.TransferRequest{
+		Owner:  routing.Owner{CustomerID: customerID, Tags: tags},
+		From:   request.Body.From,
+		To:     request.Body.To,
+		CallID: request.Body.CallId,
+	}
+	if request.Body.CallType != nil {
+		transfer.CallType = *request.Body.CallType
+	}
+
+	placed, err := s.phone.Transfer(ctx, transfer)
+	if err != nil && strings.Contains(err.Error(), "is not a number") {
+		return TransferPhoneCall404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+	}
+	if err != nil {
+		return TransferPhoneCall400JSONResponse{badRequest(err.Error())}, nil
+	}
+
+	return TransferPhoneCall202JSONResponse{
+		VendorCallId: placed.VendorCallID,
+		Status:       placed.Status,
+	}, nil
+}
+
+// PressPhoneDigits presses digits on a call placed from here.
+func (s *Server) PressPhoneDigits(
+	ctx context.Context,
+	request PressPhoneDigitsRequestObject,
+) (PressPhoneDigitsResponseObject, error) {
+	if _, ok := CustomerFrom(ctx); !ok {
+		return PressPhoneDigits401JSONResponse{missingCustomer()}, nil
+	}
+	if request.Body == nil {
+		return PressPhoneDigits400JSONResponse{badRequest("a request body is required")}, nil
+	}
+	if s.phone == nil {
+		return PressPhoneDigits400JSONResponse{noTelephony()}, nil
+	}
+
+	err := s.phone.SendDigits(ctx, request.Body.Vendor, request.VendorCallId, request.Body.Digits)
+	if errors.Is(err, phone.ErrNotImplemented) {
+		return PressPhoneDigits404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
+	}
+	if err != nil {
+		return PressPhoneDigits400JSONResponse{badRequest(err.Error())}, nil
+	}
+	return PressPhoneDigits204Response{}, nil
+}
+
 func phoneNumber(held store.PhoneNumber) PhoneNumber {
 	number := PhoneNumber{
 		E164:              held.E164,

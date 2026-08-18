@@ -1,8 +1,8 @@
 // Package deepgram implements the stt.STT contract on top of Deepgram Flux.
 //
-// Flux runs turn detection server-side and reports it through TurnInfo events, so
-// callers do not need a separate turn detector. Interim transcripts arrive as full
-// replacements rather than deltas, which is why Update maps to stt.ModeReplacement.
+// Flux reports evolving transcripts through TurnInfo events. Interim transcripts arrive
+// as full replacements rather than deltas, which is why Update maps to
+// stt.ModeReplacement.
 package deepgram
 
 import (
@@ -32,9 +32,11 @@ const DefaultModel = "flux-general-en"
 // MultilingualModel is the Flux model that accepts language hints.
 const MultilingualModel = "flux-general-multi"
 
-// defaultEagerEotThreshold matches the Python plugin: eager turn detection is
-// meaningless without a threshold, so supply one when the caller only asks for eagerness.
-const defaultEagerEotThreshold = 0.5
+// keepAlivePeriod is how often the session is pinged. Flux closes a connection it has not
+// been pinged on for 60 seconds and audio does not count towards that, so a conversation
+// with a pause in it loses its transcriber without this. The SDK's own keepalive pings
+// exactly on the deadline, which is too late to rely on.
+const keepAlivePeriod = 20 * time.Second
 
 // Options configures the provider. Only APIKey is required, and it falls back to
 // DEEPGRAM_API_KEY.
@@ -42,14 +44,12 @@ type Options struct {
 	APIKey string
 	Model  string
 	// LanguageHints is only valid with MultilingualModel.
-	LanguageHints []string
-	// EagerTurnDetection asks Flux for early end-of-turn signals.
-	EagerTurnDetection bool
-	EagerEotThreshold  float64
-	EotThreshold       float64
-	EotTimeoutMs       int
-	Keyterms           []string
-	Logger             *slog.Logger
+	LanguageHints     []string
+	EagerEotThreshold float64
+	EotThreshold      float64
+	EotTimeoutMs      int
+	Keyterms          []string
+	Logger            *slog.Logger
 }
 
 // STT is a Deepgram Flux speech-to-text session.
@@ -59,6 +59,11 @@ type STT struct {
 	emitter *stt.Emitter
 
 	client *listenv2.WSCallback
+
+	// done stops the keepalive, and pinging is what Close waits for so no ping is
+	// attempted on a socket that is being torn down.
+	done    chan struct{}
+	pinging sync.WaitGroup
 
 	mu sync.Mutex
 	// participant is the speaker of the most recent audio, used to label transcripts
@@ -85,9 +90,6 @@ func New(options Options) (*STT, error) {
 	if len(options.LanguageHints) > 0 && options.Model != MultilingualModel {
 		return nil, fmt.Errorf("deepgram: language hints require model %s, got %s", MultilingualModel, options.Model)
 	}
-	if options.EagerTurnDetection && options.EagerEotThreshold == 0 {
-		options.EagerEotThreshold = defaultEagerEotThreshold
-	}
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -97,6 +99,7 @@ func New(options Options) (*STT, error) {
 		options: options,
 		logger:  logger.With("provider", ProviderName, "model", options.Model),
 		emitter: stt.NewEmitter(64),
+		done:    make(chan struct{}),
 	}, nil
 }
 
@@ -136,7 +139,27 @@ func (s *STT) Start(ctx context.Context) error {
 	}
 
 	s.client = client
+	s.pinging.Add(1)
+	go s.keepAlive(client)
 	return nil
+}
+
+// keepAlive pings the socket until the session is closed.
+func (s *STT) keepAlive(client *listenv2.WSCallback) {
+	defer s.pinging.Done()
+
+	ticker := time.NewTicker(keepAlivePeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			if err := client.WritePing(); err != nil {
+				s.logger.Debug("keepalive ping failed", "error", err)
+			}
+		}
+	}
 }
 
 // ProcessAudio streams one chunk of audio. The participant labels any transcript that
@@ -165,7 +188,7 @@ func (s *STT) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
 	return nil
 }
 
-// Events returns transcripts and turn boundaries.
+// Events returns transcript revisions.
 func (s *STT) Events() <-chan stt.Event { return s.emitter.Events() }
 
 // Close tears down the session and closes the event channel.
@@ -179,6 +202,9 @@ func (s *STT) Close() error {
 	client := s.client
 	s.mu.Unlock()
 
+	close(s.done)
+	s.pinging.Wait()
+
 	if client != nil {
 		client.Stop()
 	}
@@ -191,9 +217,6 @@ func (s *STT) Provider() string { return ProviderName }
 
 // Model implements stt.STT.
 func (s *STT) Model() string { return s.options.Model }
-
-// TurnDetection reports true: Flux detects turns itself.
-func (s *STT) TurnDetection() bool { return true }
 
 // Client exposes the underlying Deepgram client so callers can use Flux features this
 // abstraction deliberately does not cover, such as mid-session Configure.
@@ -223,19 +246,14 @@ func (s *STT) handleTurnInfo(turn *msginterfaces.TurnInfoResponse) {
 	text := strings.TrimSpace(turn.Transcript)
 
 	switch turn.EventType {
-	case msginterfaces.TurnEventStartOfTurn:
-		s.emitter.Send(stt.TurnStarted{Participant: participant, Confidence: turn.EndOfTurnConfidence})
-	case msginterfaces.TurnEventTurnResumed:
-		// Speech continued after an eager end-of-turn, so the turn is live again.
-		s.emitter.Send(stt.TurnStarted{Participant: participant, Confidence: turn.EndOfTurnConfidence})
 	case msginterfaces.TurnEventUpdate:
 		s.sendTranscript(participant, turn, text, stt.ModeReplacement, latencyMs)
 	case msginterfaces.TurnEventEagerEndOfTurn:
 		s.sendTranscript(participant, turn, text, stt.ModeReplacement, latencyMs)
-		s.sendTurnEnded(participant, turn, true)
 	case msginterfaces.TurnEventEndOfTurn:
 		s.sendTranscript(participant, turn, text, stt.ModeFinal, latencyMs)
-		s.sendTurnEnded(participant, turn, false)
+	case msginterfaces.TurnEventStartOfTurn, msginterfaces.TurnEventTurnResumed:
+		return
 	default:
 		s.logger.Debug("unhandled turn event", "event", turn.EventType)
 	}
@@ -262,15 +280,6 @@ func (s *STT) sendTranscript(
 		Model:            s.options.Model,
 		ProcessingTimeMs: latencyMs,
 		AudioDurationMs:  audioWindowMs(turn),
-	})
-}
-
-func (s *STT) sendTurnEnded(participant stt.Participant, turn *msginterfaces.TurnInfoResponse, eager bool) {
-	s.emitter.Send(stt.TurnEnded{
-		Participant: participant,
-		Confidence:  turn.EndOfTurnConfidence,
-		Eager:       eager,
-		DurationMs:  audioWindowMs(turn),
 	})
 }
 

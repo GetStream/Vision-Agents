@@ -327,6 +327,18 @@ llm:
         per_million_cached_input_tokens: 0.20
         per_million_output_tokens: 12.00
 
+    # Sol is the frontier tier. OpenAI defaults it to medium reasoning effort, which the
+    # provider also sends explicitly when this concrete model is selected.
+    - provider: openai
+      model: gpt-5.6-sol
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      price:
+        per_million_input_tokens: 5.00
+        per_million_cached_input_tokens: 0.50
+        per_million_output_tokens: 30.00
+
   aliases:
     en-low-latency:
       languages: [en]

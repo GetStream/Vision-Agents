@@ -31,11 +31,18 @@ docker_server:
   # Prefix caching earns its keep here: a conversation resends its whole history every turn,
   # so all but the newest message is a cache hit, which is also what the cached-input rate in
   # router.yaml is priced against.
+  #
+  # Tool choice has to be turned on explicitly: without it vLLM accepts a tools array and
+  # answers in prose anyway, so the agent would never be able to transfer a call. Gemma emits
+  # calls as Python-style invocations rather than JSON blocks, which is what the pythonic
+  # parser reads.
   start_command: >
     vllm serve /models/gemma-4-e2b-it
     --served-model-name google/gemma-4-E2B-it
     --host 0.0.0.0 --port 8000
     --enable-prefix-caching
+    --enable-auto-tool-choice
+    --tool-call-parser pythonic
     --max-model-len 32768
   readiness_endpoint: /health
   liveness_endpoint: /health

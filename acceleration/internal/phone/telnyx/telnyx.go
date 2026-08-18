@@ -234,6 +234,23 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	return phone.Dialed{VendorCallID: response.Data.CallControlID, Status: status}, nil
 }
 
+// SendDigits presses digits on a leg Telnyx is holding, which is how an agent gets past a
+// menu on a call it placed.
+//
+// Telnyx's call control sends the tones without disturbing what the leg is already doing,
+// so the agent stays bridged to the call while the menu is answered.
+func (p *Provider) SendDigits(ctx context.Context, vendorCallID, digits string) error {
+	if vendorCallID == "" {
+		return errors.New("telnyx: pressing digits needs the call to press them on")
+	}
+	if digits == "" {
+		return errors.New("telnyx: pressing needs digits to press")
+	}
+
+	path := "/v2/calls/" + url.PathEscape(vendorCallID) + "/actions/send_dtmf"
+	return p.do(ctx, http.MethodPost, path, nil, sendDigits{Digits: digits}, nil)
+}
+
 // Vendor is the name this provider is recorded under.
 func (p *Provider) Vendor() string { return "telnyx" }
 
@@ -418,4 +435,8 @@ type dialRequest struct {
 type dialedCall struct {
 	CallControlID string `json:"call_control_id"`
 	IsAlive       bool   `json:"is_alive"`
+}
+
+type sendDigits struct {
+	Digits string `json:"digits"`
 }

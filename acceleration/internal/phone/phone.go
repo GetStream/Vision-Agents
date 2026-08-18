@@ -134,6 +134,10 @@ type Provider interface {
 	// Dial places a call and bridges it into the agent's call. Stream cannot dial out
 	// itself, so the vendor originates and the agent is already waiting on the trunk.
 	Dial(ctx context.Context, outbound Outbound) (Dialed, error)
+	// SendDigits presses digits on a leg the vendor is holding, which is how an agent
+	// gets past a menu on a call it placed. The leg is named by the id Dial returned:
+	// there is no such id for an inbound call, so this only reaches calls made from here.
+	SendDigits(ctx context.Context, vendorCallID, digits string) error
 
 	// Vendor is the stable vendor name used in stats, e.g. "twilio".
 	Vendor() string
@@ -171,12 +175,33 @@ func (n *notImplemented) Dial(context.Context, Outbound) (Dialed, error) {
 	return Dialed{}, n.err()
 }
 
+func (n *notImplemented) SendDigits(context.Context, string, string) error { return n.err() }
+
 func (n *notImplemented) Vendor() string { return n.vendor }
 
 func (n *notImplemented) Client() *http.Client { return n.client }
 
 func (n *notImplemented) err() error {
 	return fmt.Errorf("%w: %s", ErrNotImplemented, n.vendor)
+}
+
+// ValidateDigits reports whether a string can be pressed on a keypad.
+//
+// A keypad has twelve keys, and w is the pause every vendor spells the same way: a menu
+// that asks for an extension after a beep needs one. Anything else is a model that has
+// written words where it meant digits, and sending it would be a silent no-op on the call.
+func ValidateDigits(digits string) error {
+	if digits == "" {
+		return errors.New("phone: pressing needs digits to press")
+	}
+	for _, key := range digits {
+		switch {
+		case key >= '0' && key <= '9', key == '*', key == '#', key == 'w':
+		default:
+			return fmt.Errorf("phone: %q is not something a keypad can press", string(key))
+		}
+	}
+	return nil
 }
 
 // covers reports whether a set of capabilities includes every one asked for.

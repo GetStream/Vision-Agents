@@ -85,9 +85,6 @@ type Request struct {
 	LanguageHints []string
 	// Voice selects the speaker for modalities that produce audio.
 	Voice string
-	// EagerTurns asks a transcriber that can do it for provisional end-of-turn signals,
-	// so a caller may start answering before the turn has settled.
-	EagerTurns bool
 }
 
 // Owner returns who the request is billed to and how it is labelled.
@@ -237,7 +234,6 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 		Model:         candidate.Config.Model,
 		LanguageHints: request.LanguageHints,
 		Voice:         request.Voice,
-		EagerTurns:    request.EagerTurns,
 		Logger:        r.logger,
 	}
 

@@ -234,6 +234,19 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	return phone.Dialed{VendorCallID: placed.SID, Status: placed.Status}, nil
 }
 
+// SendDigits is not available at Twilio, and says so rather than half-doing it.
+//
+// Twilio has no action that presses digits on a leg that is already busy. The only way to
+// make tones is to give the leg new TwiML, and the TwiML the leg is running is the <Dial>
+// holding the agent on the call: replacing it presses the digit and drops the agent in the
+// same breath. Telnyx's call control does have such an action, which is why the contract
+// carries this at all, and Client reaches Twilio's own API for a deployment that decides
+// the trade is worth making.
+func (p *Provider) SendDigits(context.Context, string, string) error {
+	return fmt.Errorf("%w: twilio cannot press digits without ending the call they are "+
+		"pressed on", phone.ErrNotImplemented)
+}
+
 // Vendor is the name this provider is recorded under.
 func (p *Provider) Vendor() string { return "twilio" }
 

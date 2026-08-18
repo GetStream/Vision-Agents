@@ -20,11 +20,6 @@ type Session struct {
 
 	events chan stt.Event
 
-	mu sync.Mutex
-	// turnStartedAt is when the current turn began, so a turn's stat covers the whole
-	// turn rather than the last transcript in it.
-	turnStartedAt time.Time
-
 	closeOnce sync.Once
 }
 
@@ -81,11 +76,6 @@ func (s *Session) forward() {
 
 func (s *Session) observe(event stt.Event) {
 	switch typed := event.(type) {
-	case stt.TurnStarted:
-		s.mu.Lock()
-		s.turnStartedAt = time.Now()
-		s.mu.Unlock()
-
 	case stt.Transcript:
 		// Only settled transcripts are billable work; interim ones are revisions of a
 		// turn that has not finished yet.
@@ -94,7 +84,7 @@ func (s *Session) observe(event stt.Event) {
 		}
 		s.recorder.Record(s.config, routing.Stat{
 			Owner:     s.owner,
-			StartedAt: s.turnStart(),
+			StartedAt: time.Now().UTC(),
 			Usage:     routing.Usage{AudioMs: int64(typed.AudioDurationMs)},
 			LatencyMs: typed.ProcessingTimeMs,
 			Success:   true,
@@ -103,25 +93,11 @@ func (s *Session) observe(event stt.Event) {
 	case stt.Error:
 		s.recorder.Record(s.config, routing.Stat{
 			Owner:     s.owner,
-			StartedAt: s.turnStart(),
+			StartedAt: time.Now().UTC(),
 			Success:   false,
 			ErrorCode: errorCode(typed),
 		})
 	}
-}
-
-// turnStart returns the start of the current turn, consuming it so the next turn gets its
-// own timestamp. It falls back to now for providers that never signal a turn start.
-func (s *Session) turnStart() time.Time {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	started := s.turnStartedAt
-	s.turnStartedAt = time.Time{}
-	if started.IsZero() {
-		return time.Now().UTC()
-	}
-	return started.UTC()
 }
 
 func errorCode(failure stt.Error) string {

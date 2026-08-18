@@ -81,6 +81,38 @@ func (s *PhoneSuite) TestADeclaredButUnimplementedVendorRefusesEveryOperation() 
 	s.ErrorIs(provider.ConfigureInbound(s.ctx, Inbound{}), ErrNotImplemented)
 	_, err = provider.Dial(s.ctx, Outbound{})
 	s.ErrorIs(err, ErrNotImplemented)
+	s.ErrorIs(provider.SendDigits(s.ctx, "call-1", "1"), ErrNotImplemented)
+}
+
+func (s *PhoneSuite) TestOnlyWhatAKeypadHasCanBePressed() {
+	s.NoError(ValidateDigits("1"))
+	s.NoError(ValidateDigits("4123"))
+	s.NoError(ValidateDigits("*0#"))
+	s.NoError(ValidateDigits("1w2"), "a menu that asks for an extension after a beep needs a pause")
+
+	s.ErrorContains(ValidateDigits(""), "digits to press")
+	s.ErrorContains(ValidateDigits("one"), "keypad can press")
+	s.ErrorContains(ValidateDigits("press 1"), "keypad can press")
+}
+
+func (s *PhoneSuite) TestALineThatWasNotPlacedFromHereCannotPressAnything() {
+	// Pressing needs the vendor's own id for the leg, and an inbound call arrived at
+	// Stream rather than being dialled from here, so there is no such id to name.
+	service, err := NewService(ServiceOptions{Registry: NewRegistry(s.config())})
+	s.Require().NoError(err)
+
+	line := service.Line(LineOptions{From: "+15125551234", CallID: "support-line"})
+
+	s.ErrorContains(line.SendDigits(s.ctx, "1"), "not placed from here")
+}
+
+func (s *PhoneSuite) TestATransferSaysWhatItIsMissing() {
+	service, err := NewService(ServiceOptions{Registry: NewRegistry(s.config())})
+	s.Require().NoError(err)
+
+	_, err = service.Transfer(s.ctx, TransferRequest{From: "+15125551234", To: "+15550001111"})
+	s.ErrorContains(err, "stream credentials",
+		"a transfer routes a leg into a call, which needs Stream")
 }
 
 func (s *PhoneSuite) TestAVendorIsOpenedOnceAndReused() {

@@ -55,7 +55,7 @@ func (s *DeepgramIntegrationSuite) transcribe(options Options) []stt.Event {
 		var events []stt.Event
 		for event := range provider.Events() {
 			events = append(events, event)
-			if ended, ok := event.(stt.TurnEnded); ok && !ended.Eager {
+			if transcript, ok := event.(stt.Transcript); ok && transcript.Final() {
 				break
 			}
 		}
@@ -83,11 +83,67 @@ func (s *DeepgramIntegrationSuite) transcribe(options Options) []stt.Event {
 	}
 }
 
-func (s *DeepgramIntegrationSuite) TestTranscribesSpeechAndEndsTheTurn() {
+// TestAnIdleSessionOutlivesTheFluxPingDeadline is slow by nature: the deadline it is about
+// is a minute long, so there is no shorter way to see the session survive it.
+func (s *DeepgramIntegrationSuite) TestAnIdleSessionOutlivesTheFluxPingDeadline() {
+	provider, err := New(Options{})
+	s.Require().NoError(err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	s.Require().NoError(provider.Start(ctx))
+	defer func() {
+		s.Require().NoError(provider.Close())
+	}()
+
+	finals := make(chan stt.Transcript, 8)
+	failures := make(chan error, 8)
+	go func() {
+		for event := range provider.Events() {
+			switch typed := event.(type) {
+			case stt.Transcript:
+				if typed.Final() {
+					finals <- typed
+				}
+			case stt.Error:
+				failures <- typed.Err
+			}
+		}
+	}()
+
+	// Flux closes a session it has not been pinged on for 60 seconds, and the audio a
+	// conversation sends does not count towards that.
+	select {
+	case err := <-failures:
+		s.FailNowf("the idle session was closed", "%v", err)
+	case <-time.After(75 * time.Second):
+	}
+
+	speaker := stt.Participant{ID: "test-user", UserID: "test-user"}
+	for _, chunk := range testaudio.Chunks(s.audio, 80) {
+		s.Require().NoError(provider.ProcessAudio(chunk, speaker))
+		time.Sleep(10 * time.Millisecond)
+	}
+	for _, chunk := range testaudio.Chunks(testaudio.Silence(2000), 80) {
+		s.Require().NoError(provider.ProcessAudio(chunk, speaker))
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	select {
+	case final := <-finals:
+		s.NotEmpty(final.Text, "speech after a long pause is still transcribed")
+	case err := <-failures:
+		s.FailNowf("the session failed after the pause", "%v", err)
+	case <-time.After(20 * time.Second):
+		s.FailNow("nothing came back after the pause")
+	}
+}
+
+func (s *DeepgramIntegrationSuite) TestTranscribesSpeechToAFinalRevision() {
 	events := s.transcribe(Options{})
 
 	var finals []stt.Transcript
-	var sawConnected, sawTurnEnded bool
+	var sawConnected bool
 	for _, event := range events {
 		switch typed := event.(type) {
 		case stt.Connected:
@@ -96,8 +152,6 @@ func (s *DeepgramIntegrationSuite) TestTranscribesSpeechAndEndsTheTurn() {
 			if typed.Final() {
 				finals = append(finals, typed)
 			}
-		case stt.TurnEnded:
-			sawTurnEnded = true
 		case stt.Error:
 			s.Failf("provider error", "%v", typed.Err)
 		}
@@ -105,7 +159,6 @@ func (s *DeepgramIntegrationSuite) TestTranscribesSpeechAndEndsTheTurn() {
 
 	s.True(sawConnected, "should report the session becoming ready")
 	s.Require().NotEmpty(finals, "should produce at least one final transcript")
-	s.True(sawTurnEnded, "should report the end of the turn")
 
 	var text strings.Builder
 	for _, final := range finals {
@@ -119,22 +172,4 @@ func (s *DeepgramIntegrationSuite) TestTranscribesSpeechAndEndsTheTurn() {
 	s.Equal(ProviderName, first.Provider)
 	s.Equal(DefaultModel, first.Model)
 	s.Positive(first.AudioDurationMs, "final transcripts should report the audio window")
-}
-
-func (s *DeepgramIntegrationSuite) TestEagerTurnDetectionEmitsAnEarlyEndOfTurn() {
-	events := s.transcribe(Options{EagerTurnDetection: true})
-
-	var eager, settled int
-	for _, event := range events {
-		if ended, ok := event.(stt.TurnEnded); ok {
-			if ended.Eager {
-				eager++
-			} else {
-				settled++
-			}
-		}
-	}
-
-	s.Positive(eager, "eager turn detection should signal before silence completes")
-	s.Positive(settled, "the turn should still settle afterwards")
 }

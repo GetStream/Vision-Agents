@@ -199,6 +199,23 @@ func (s *TelnyxSuite) TestDiallingOutLinksTheAnsweredCallToTheTrunk() {
 	s.Equal("dialing", placed.Status)
 }
 
+func (s *TelnyxSuite) TestPressingDigitsActsOnTheLegWithoutEndingIt() {
+	// Telnyx sends the tones as an action on the live call, so the agent stays bridged
+	// while the menu is answered.
+	s.answer(`{"data":{"result":"ok"}}`)
+
+	s.Require().NoError(s.provider.SendDigits(s.ctx, "cc-1", "4123"))
+
+	s.Equal(http.MethodPost, s.seen.method)
+	s.Equal("/v2/calls/cc-1/actions/send_dtmf", s.seen.path)
+	s.Equal("4123", s.seen.body["digits"])
+}
+
+func (s *TelnyxSuite) TestPressingWithoutACallOrDigitsIsRejected() {
+	s.ErrorContains(s.provider.SendDigits(s.ctx, "", "1"), "call to press them on")
+	s.ErrorContains(s.provider.SendDigits(s.ctx, "cc-1", ""), "digits to press")
+}
+
 func (s *TelnyxSuite) TestACallWithoutBothEndsIsRejected() {
 	_, err := s.provider.Dial(s.ctx, phone.Outbound{To: "+15550001111"})
 

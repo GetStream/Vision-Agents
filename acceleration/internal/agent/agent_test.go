@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -103,9 +102,8 @@ func (s *stubSTT) Close() error {
 	return nil
 }
 
-func (s *stubSTT) Provider() string    { return "stub" }
-func (s *stubSTT) Model() string       { return "stub-stt" }
-func (s *stubSTT) TurnDetection() bool { return true }
+func (s *stubSTT) Provider() string { return "stub" }
+func (s *stubSTT) Model() string    { return "stub-stt" }
 
 func (s *stubSTT) transcribed() []audio.PcmData {
 	s.mu.Lock()
@@ -129,6 +127,12 @@ type stubLLM struct {
 	// then replaces reply from the second request onward, so a model that asked for help
 	// on the first turn does not ask for it again once the answer has come back.
 	then []string
+	// calls are the tools the first reply asks for. Later replies ask for nothing, so a
+	// model that transferred a caller does not transfer them again.
+	calls []llm.ToolCall
+	// keepCalling asks for them on every reply instead, which is the model that answers
+	// a tool that failed by reaching for it again.
+	keepCalling bool
 }
 
 func newStubLLM() *stubLLM { return &stubLLM{emitter: llm.NewEmitter(64)} }
@@ -139,12 +143,17 @@ func (s *stubLLM) Respond(request llm.Request) error {
 	s.mu.Lock()
 	s.asked = append(s.asked, request)
 	reply := append([]string(nil), s.reply...)
-	if len(s.asked) > 1 && s.then != nil {
+	first := len(s.asked) == 1
+	if !first && s.then != nil {
 		reply = append([]string(nil), s.then...)
+	}
+	var calls []llm.ToolCall
+	if first || s.keepCalling {
+		calls = append([]llm.ToolCall(nil), s.calls...)
 	}
 	s.mu.Unlock()
 
-	if len(reply) == 0 {
+	if len(reply) == 0 && len(calls) == 0 {
 		return nil
 	}
 
@@ -158,6 +167,7 @@ func (s *stubLLM) Respond(request llm.Request) error {
 		s.emitter.Send(llm.CompletionComplete{
 			CompletionID:       request.ID,
 			Text:               whole,
+			ToolCalls:          calls,
 			InputTokens:        12,
 			OutputTokens:       8,
 			TimeToFirstTokenMs: 42,
@@ -368,11 +378,17 @@ type AgentSuite struct {
 	edge  *loopbackEdge
 	voice *stubTTS
 	model *stubLLM
+	flow  *stubLLM
 	ears  *stubSTT
 	// subagent is the second model, present only when a test asks for delegation.
 	subagent *stubLLM
 	// skills are what the model may hand over, when a test gives the agent a subagent.
 	skills harness.Skills
+	// line is what the agent may do to the call, present only when a test gives it
+	// telephony.
+	line *stubTelephony
+	// tools are what the model may run, which mean nothing without a line to run them on.
+	tools harness.Tools
 	// duplex is how the agent listens and talks at the same time, off unless a test says
 	// otherwise.
 	duplex DuplexOptions
@@ -396,6 +412,8 @@ func (s *AgentSuite) SetupTest() {
 	s.remembers = nil
 	s.subagent = nil
 	s.skills = harness.Skills{}
+	s.line = nil
+	s.tools = harness.Tools{}
 	s.duplex = DuplexOptions{}
 	if s.agentID == "" {
 		s.agentID = "agent-1"
@@ -418,8 +436,10 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	s.edge = newLoopbackEdge()
 	s.ears = newStubSTT()
 	s.model = newStubLLM()
+	s.flow = newStubLLM()
 	s.voice = newStubTTS(streamingVoice)
 	s.model.reply = []string{"Hello there. ", "How are you?"}
+	s.flow.reply = []string{`{"disposition":"respond","floor":"stop"}`}
 
 	logger := slog.New(slog.DiscardHandler)
 
@@ -431,9 +451,8 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	s.Require().NoError(err)
 	s.T().Cleanup(transcriber.Close)
 
-	// The agent opens the voice model first and the subagent second, so the registry
-	// hands them out in that order.
-	models := []llm.LLM{s.model}
+	// The agent opens the voice model, flow controller and optional subagent in order.
+	models := []llm.LLM{s.model, s.flow}
 	if s.subagent != nil {
 		models = append(models, s.subagent)
 	}
@@ -469,6 +488,10 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	if s.remembers != nil {
 		remembering = s.remembers
 	}
+	var calling Telephony
+	if s.line != nil {
+		calling = s.line
+	}
 
 	agent, err := New(Options{
 		Edge:           s.edge,
@@ -479,6 +502,8 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		Store:          s.records,
 		SubagentTarget: subagentTarget,
 		Skills:         s.skills,
+		Telephony:      calling,
+		Tools:          s.tools,
 		Duplex:         s.duplex,
 		LLM:            reasoner,
 		LLMTarget:      "en-low-latency",
@@ -546,11 +571,6 @@ func (s *AgentSuite) mutters(participant stt.Participant, text string) {
 		Text:        text,
 		Language:    "en",
 	})
-}
-
-// almostDone makes the transcriber provisionally end a turn, which it may yet revoke.
-func (s *AgentSuite) almostDone(participant stt.Participant) {
-	s.ears.emitter.Send(stt.TurnEnded{Participant: participant, Eager: true})
 }
 
 // eventually waits for a condition, which is how a test asserts on a flow that crosses
@@ -646,9 +666,7 @@ func (s *AgentSuite) TestASettledTurnIsAnsweredAndSpoken() {
 		"the reply was never published to the call")
 }
 
-func (s *AgentSuite) TestOnlyASettledTurnIsAnswered() {
-	// An interim transcript is a revision of a turn that has not finished, so answering it
-	// would mean answering half a sentence.
+func (s *AgentSuite) TestARevisionReplacesTheWordsBeforeCadenceActs() {
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
@@ -657,7 +675,68 @@ func (s *AgentSuite) TestOnlyASettledTurnIsAnswered() {
 	s.says(participant, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Len(s.model.requests(), 1, "only the settled turn was answered")
+	s.Equal("hello", s.model.requests()[0].Messages[0].Content)
+}
+
+func (s *AgentSuite) TestStablePartialSpeechIsAnsweredWithoutAFinalEvent() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.mutters(participant, "can you help me")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 },
+		"cadence should act without waiting for a provider final event")
+	s.Equal("can you help me", s.model.requests()[0].Messages[0].Content)
+}
+
+func (s *AgentSuite) TestSettlingOnAnAnsweredUtteranceDoesNotAnswerItTwice() {
+	// A transcriber restates an utterance when it settles on it, which lands after the
+	// agent has started answering those same words. Answering the restatement as well is
+	// what makes the agent reply twice to one thing.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.mutters(participant, "how is your day going")
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the model was never asked")
+	s.says(participant, "How is your day going?")
+
+	// The restatement is given longer than a cadence gap to become a second question,
+	// because becoming one is the bug.
+	time.Sleep(3 * defaultCadenceGap)
+	s.Len(s.flow.requests(), 1, "the transcriber settling is not a second thing to answer")
+
+	s.mutters(participant, "and what is the weather")
+	s.eventually(func() bool { return len(s.flow.requests()) == 2 },
+		"the agent stopped listening after the restatement")
+}
+
+func (s *AgentSuite) TestBackgroundSpeechIsIgnored() {
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"ignore","floor":"continue"}`}
+	participant := stt.Participant{ID: "child", Name: "Child"}
+	s.speak(participant)
+
+	s.mutters(participant, "mom where is my backpack")
+
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 },
+		"the flow controller never considered the speech")
+	s.Empty(s.model.requests(), "speech addressed to somebody else should stay in the background")
+	s.Empty(s.agent.History())
+	s.Zero(countOf[Heard](s.reported()))
+}
+
+func (s *AgentSuite) TestAmbiguousSpeechAsksAClarifyingQuestion() {
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"clarify","floor":"continue"}`}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.mutters(participant, "do it like last time")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	s.Contains(s.model.requests()[0].Instructions, "ambiguous")
 }
 
 func (s *AgentSuite) TestAnEmptyTurnIsNotAnswered() {
@@ -746,6 +825,56 @@ func (s *AgentSuite) TestASecondTurnCarriesTheWholeConversation() {
 	s.Equal("and again", second.Messages[2].Content)
 }
 
+func (s *AgentSuite) TestCompactionKeepsNewerTurnsVerbatim() {
+	prefix := []llm.Message{
+		{Role: llm.User, Content: "first question"},
+		{Role: llm.Assistant, Content: "first answer"},
+	}
+	recent := []llm.Message{
+		{Role: llm.User, Content: "new question"},
+		{Role: llm.Assistant, Content: "new answer"},
+	}
+	emitter := NewEmitter(eventBuffer)
+	defer emitter.Close()
+	agent := &Agent{
+		emitter: emitter,
+		history: append(append([]llm.Message(nil), prefix...), recent...),
+	}
+
+	agent.applyCompaction(harness.Compacted{Prefix: prefix, Summary: "The first answer was established."})
+
+	history := agent.History()
+	s.Require().Len(history, 3)
+	s.Equal(llm.System, history[0].Role)
+	s.Contains(history[0].Content, "The first answer was established.")
+	s.Equal(recent, history[1:])
+	event, ok := (<-emitter.Events()).(ConversationCompacted)
+	s.Require().True(ok)
+	s.Equal(4, event.Before)
+	s.Equal(3, event.After)
+}
+
+func (s *AgentSuite) TestLateCompactionCannotReplaceAChangedPrefix() {
+	emitter := NewEmitter(eventBuffer)
+	defer emitter.Close()
+	agent := &Agent{
+		emitter: emitter,
+		history: []llm.Message{{Role: llm.User, Content: "corrected question"}},
+	}
+
+	agent.applyCompaction(harness.Compacted{
+		Prefix:  []llm.Message{{Role: llm.User, Content: "old question"}},
+		Summary: "stale summary",
+	})
+
+	s.Equal("corrected question", agent.History()[0].Content)
+	select {
+	case <-emitter.Events():
+		s.Fail("a stale compaction was reported")
+	default:
+	}
+}
+
 func (s *AgentSuite) TestAFinishedTurnReportsWhatTheParticipantWaitedFor() {
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
@@ -789,7 +918,7 @@ func (s *AgentSuite) TestAnInterruptedTurnIsStillMeasured() {
 	s.says(participant, "hello")
 	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "no turn was started")
 
-	s.ears.emitter.Send(stt.TurnStarted{Participant: participant})
+	s.says(participant, "actually, stop")
 
 	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 },
 		"an abandoned turn still happened and is still worth reporting")
@@ -874,6 +1003,25 @@ func (s *AgentSuite) TestARequestForHelpIsHandedOverRatherThanSpoken() {
 		s.NotContains(request.Text, "ask skill", "the caller must never hear the request itself")
 	}
 	s.Equal("Let me check that.", s.voice.spoken()[0].Text)
+}
+
+func (s *AgentSuite) TestLongThinkingWorkConfirmsTheAgentIsStillListening() {
+	s.delegates()
+	s.duplex = DuplexOptions{
+		Backchannel:      true,
+		BackchannelWords: 100,
+		BackchannelGap:   10 * time.Millisecond,
+	}
+	s.join(true)
+	s.model.reply = []string{`<ask skill="think">work through the itinerary</ask>`}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "please work through the itinerary")
+
+	s.eventually(func() bool { return s.agent.delegating() }, "the thinking task never started")
+	s.eventually(func() bool { return countOf[Backchannel](s.reported()) == 1 },
+		"a long thinking gap sounded like a dead call")
 }
 
 func (s *AgentSuite) TestDelegatedWorkIsReported() {
@@ -965,117 +1113,23 @@ func (s *AgentSuite) TestClosingAbandonsWorkNobodyWillHear() {
 	s.Equal(harness.ReasonClosed, cancelled.Reason)
 }
 
-func (s *AgentSuite) TestAGuessedReplyIsNotSpokenUntilTheTurnSettles() {
-	s.duplex = DuplexOptions{Speculate: true}
+func (s *AgentSuite) TestARelevantNewCandidateCancelsWorkFromTheOldPremise() {
+	s.delegates()
 	s.join(true)
+	s.model.reply = []string{`<ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"Okay."}
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
-	s.mutters(participant, "book a table for four")
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool { return s.agent.delegating() }, "the task never started")
 
-	s.almostDone(participant)
+	s.says(participant, "actually, use 20 percent")
 
-	s.eventually(func() bool { return len(s.model.requests()) == 1 },
-		"the model should be answering already, before the turn has settled")
-	s.Empty(s.voice.spoken(), "but the caller hears nothing until they have really finished")
-	s.Zero(countOf[Responding](s.reported()), "and it is not a turn yet either")
-}
-
-func (s *AgentSuite) TestAGuessThatHeldIsSpokenWithoutAskingAgain() {
-	// This is what speculating buys: the reply was written while the caller was still
-	// finishing, so it starts the moment they do.
-	s.duplex = DuplexOptions{Speculate: true}
-	s.join(true)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.mutters(participant, "book a table for four")
-	s.almostDone(participant)
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "nothing was guessed at")
-
-	s.says(participant, "Book a table for four.")
-
-	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply never reached the call")
-	s.Len(s.model.requests(), 1, "the reply was already written, so it is not asked for twice")
-
-	s.eventually(func() bool { return countOf[Speculated](s.reported()) == 1 }, "the guess was never reported")
-	speculated, _ := firstOf[Speculated](s.reported())
-	s.True(speculated.Promoted)
-	s.Equal("book a table for four", speculated.Text)
-}
-
-func (s *AgentSuite) TestAPromotedGuessIsRememberedAsWhatTheySettledOn() {
-	s.duplex = DuplexOptions{Speculate: true}
-	s.join(true)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.mutters(participant, "book a table for four")
-	s.almostDone(participant)
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "nothing was guessed at")
-
-	s.says(participant, "Book a table for four.")
-
-	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
-	history := s.agent.History()
-	s.Require().Len(history, 2)
-	s.Equal("Book a table for four.", history[0].Content,
-		"the conversation remembers what they said, not what was guessed at")
-	s.Equal("Hello there. How are you?", history[1].Content)
-}
-
-func (s *AgentSuite) TestAGuessOnWordsTheyDidNotSayIsThrownAway() {
-	s.duplex = DuplexOptions{Speculate: true}
-	s.join(true)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.mutters(participant, "book a table")
-	s.almostDone(participant)
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "nothing was guessed at")
-
-	s.says(participant, "book a table for four on Friday")
-
-	s.eventually(func() bool { return len(s.model.requests()) == 2 },
-		"a reply to something they did not say has to be asked for again")
-	s.Equal("book a table for four on Friday", s.model.requests()[1].Messages[0].Content)
-
-	s.eventually(func() bool { return countOf[Speculated](s.reported()) == 1 }, "the guess was never reported")
-	speculated, _ := firstOf[Speculated](s.reported())
-	s.False(speculated.Promoted)
-	s.Equal("book a table", speculated.Text)
-
-	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the second reply was never spoken")
-	for _, request := range s.voice.spoken() {
-		s.True(strings.HasPrefix(request.ID, replyPrefix),
-			"nothing guessed at reaches the voice, only the reply to what they really said")
-	}
-}
-
-func (s *AgentSuite) TestAGuessIsThrownAwayWhenTheCallerCarriesOn() {
-	// Deepgram's Flux revokes a provisional end of turn by starting the turn again.
-	s.duplex = DuplexOptions{Speculate: true}
-	s.join(true)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.mutters(participant, "book a table")
-	s.almostDone(participant)
-	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "nothing was guessed at")
-
-	s.ears.emitter.Send(stt.TurnStarted{Participant: participant})
-
-	s.eventually(func() bool { return countOf[Speculated](s.reported()) == 1 }, "the guess was never abandoned")
-	speculated, _ := firstOf[Speculated](s.reported())
-	s.False(speculated.Promoted)
-	s.Empty(s.voice.spoken(), "a reply to half a sentence is never heard")
-}
-
-func (s *AgentSuite) TestWithoutSpeculationAProvisionalEndOfTurnIsIgnored() {
-	s.join(true)
-	participant := stt.Participant{ID: "alice"}
-	s.speak(participant)
-	s.mutters(participant, "book a table for four")
-
-	s.almostDone(participant)
-
-	s.eventually(func() bool { return len(s.ears.transcribed()) == 1 }, "audio never arrived")
-	s.Empty(s.model.requests(), "an agent that does not guess waits for the turn to settle")
+	s.eventually(func() bool { return countOf[TaskCancelled](s.reported()) == 1 },
+		"work based on the old premise was not cancelled")
+	cancelled, _ := firstOf[TaskCancelled](s.reported())
+	s.Equal(harness.ReasonSuperseded, cancelled.Reason)
+	s.Equal(1, s.subagent.interrupted())
 }
 
 func (s *AgentSuite) TestTheAgentMurmursWhileSomeoneIsStillTalking() {
@@ -1105,7 +1159,7 @@ func (s *AgentSuite) TestSomeoneCarryingOnAfterAMurmurIsNotAnInterruption() {
 	s.mutters(participant, "so I was wondering whether")
 	s.eventually(func() bool { return countOf[Backchannel](s.reported()) == 1 }, "nothing was murmured")
 
-	s.ears.emitter.Send(stt.TurnStarted{Participant: participant})
+	s.mutters(participant, "so I was wondering whether you could")
 
 	s.eventually(func() bool { return len(s.ears.transcribed()) == 1 }, "audio never arrived")
 	s.Zero(countOf[Interrupted](s.reported()), "there was no reply to cut short")
@@ -1163,14 +1217,59 @@ func (s *AgentSuite) TestWithoutDuplexNothingIsMurmured() {
 	s.Empty(s.voice.spoken())
 }
 
+func (s *AgentSuite) TestRelatedOverlapShortensThenAnswersTheAddition() {
+	s.join(true)
+	s.model.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.flow.then = []string{`{"disposition":"respond","floor":"shorten"}`}
+
+	s.says(participant, "only the vegetarian options")
+
+	s.eventually(func() bool { return countOf[OverlapDecided](s.reported()) == 1 },
+		"the overlap was never decided")
+	overlap, _ := firstOf[OverlapDecided](s.reported())
+	s.Equal(string(harness.Shorten), overlap.Action)
+	s.eventually(func() bool { return s.model.interrupted() == 1 }, "the long answer kept generating")
+	s.Zero(s.voice.interrupted(), "speech already sent should finish rather than stop abruptly")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the addition was never answered")
+}
+
+func (s *AgentSuite) TestAcknowledgementOverlapLetsTheCurrentReplyContinue() {
+	s.join(true)
+	s.model.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	first := s.model.requests()[0].ID
+	s.flow.then = []string{`{"disposition":"respond","floor":"continue"}`}
+
+	s.says(participant, "okay")
+
+	s.eventually(func() bool { return countOf[OverlapDecided](s.reported()) == 1 },
+		"the overlap was never decided")
+	overlap, _ := firstOf[OverlapDecided](s.reported())
+	s.Equal(string(harness.Continue), overlap.Action)
+	s.Zero(s.model.interrupted())
+	s.Len(s.model.requests(), 1, "the acknowledgement waits behind the current reply")
+
+	s.model.emitter.Send(llm.CompletionComplete{CompletionID: first})
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the queued turn was not answered after the current reply")
+}
+
 func (s *AgentSuite) TestBargeInStopsTheModelAndTheVoice() {
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
+	s.voice.silent = true
 	s.speak(participant)
 	s.says(participant, "hello")
 	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "no turn was started")
 
-	s.ears.emitter.Send(stt.TurnStarted{Participant: participant})
+	s.says(participant, "actually, stop")
 
 	s.eventually(func() bool { return s.voice.interrupted() == 1 && s.model.interrupted() == 1 },
 		"talking over the agent should stop it mid-sentence")
@@ -1183,11 +1282,12 @@ func (s *AgentSuite) TestAudioFromAnAbandonedTurnIsNotPublished() {
 	// here is what makes barge-in sound immediate.
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
+	s.voice.silent = true
 	s.speak(participant)
 	s.says(participant, "hello")
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
 
-	s.ears.emitter.Send(stt.TurnStarted{Participant: participant})
+	s.says(participant, "actually, stop")
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "no interruption")
 
 	before := len(s.edge.heard())
@@ -1206,7 +1306,6 @@ func (s *AgentSuite) TestBargeInWithNothingToSayIsIgnored() {
 
 	s.ears.emitter.Send(stt.Connected{Provider: "stub"})
 	s.speak(stt.Participant{ID: "alice"})
-	s.ears.emitter.Send(stt.TurnStarted{Participant: stt.Participant{ID: "alice"}})
 
 	s.eventually(func() bool { return len(s.ears.transcribed()) == 1 }, "audio never arrived")
 	s.Zero(countOf[Interrupted](s.reported()), "there was no reply to interrupt")

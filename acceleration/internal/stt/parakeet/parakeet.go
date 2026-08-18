@@ -3,7 +3,7 @@
 //
 // Parakeet TDT is a chunk model, so the server re-decodes the current utterance on a
 // timer and sends the whole hypothesis each time. Partials are therefore replacements,
-// not deltas. Turn boundaries come from energy-based silence detection on the server.
+// not deltas.
 package parakeet
 
 import (
@@ -193,7 +193,7 @@ func (s *STT) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
 	return nil
 }
 
-// Events returns transcripts and turn boundaries.
+// Events returns transcript revisions.
 func (s *STT) Events() <-chan stt.Event { return s.emitter.Events() }
 
 // Close asks the server to flush any pending audio, then tears down the connection.
@@ -235,9 +235,6 @@ func (s *STT) Provider() string { return ProviderName }
 
 // Model implements stt.STT.
 func (s *STT) Model() string { return s.options.Model }
-
-// TurnDetection reports true: the deployment ends turns on trailing silence.
-func (s *STT) TurnDetection() bool { return true }
 
 // Client exposes the underlying WebSocket so callers can use the deployment directly.
 func (s *STT) Client() *websocket.Conn { return s.conn }
@@ -325,12 +322,11 @@ func (s *STT) handleMessage(message serverMessage) {
 
 	switch message.Type {
 	case messageStartOfTurn:
-		s.emitter.Send(stt.TurnStarted{Participant: participant})
+		return
 	case messagePartial:
 		s.sendTranscript(participant, message, stt.ModeReplacement, latencyMs)
 	case messageFinal:
 		s.sendTranscript(participant, message, stt.ModeFinal, latencyMs)
-		s.emitter.Send(stt.TurnEnded{Participant: participant, DurationMs: message.AudioDurationMs})
 	case messageError:
 		s.emitter.Send(stt.Error{
 			Provider: ProviderName,

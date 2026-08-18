@@ -14,8 +14,9 @@ import (
 // treated as a reply worth interrupting.
 const (
 	replyPrefix       = "turn-"
-	speculationPrefix = "guess-"
 	backchannelPrefix = "back-"
+	handoffPrefix     = "hand-"
+	toolPrefix        = "tool-"
 )
 
 // Defaults for listening while someone else is talking.
@@ -45,11 +46,6 @@ type DuplexOptions struct {
 	// Backchannel makes the agent murmur while someone is still talking, the way a person
 	// on the phone does. It never reaches the model: a listening noise is not a turn.
 	Backchannel bool
-	// Speculate starts answering as soon as the transcriber provisionally ends a turn,
-	// rather than waiting for it to be sure. The reply is held back until the turn really
-	// does settle on the same words, and thrown away unheard when it does not. What it
-	// buys is the model's time to first token, which is most of the wait.
-	Speculate bool
 	// Phrases are what the agent murmurs. Empty means the built-in ones.
 	Phrases []string
 	// BackchannelWords is how much someone must have said before it is worth
@@ -63,14 +59,7 @@ type DuplexOptions struct {
 	MinConfidence float64
 }
 
-// enabled reports whether either half of duplex is on.
-func (o DuplexOptions) enabled() bool { return o.Backchannel || o.Speculate }
-
-// duplex tracks what each participant is in the middle of saying.
-//
-// Turn boundaries come from the transcriber, which reports the start of speech, a
-// provisional end that it may yet revoke, and a settled end. Taking the provisional one
-// seriously is what lets the agent be answering already when the turn really ends.
+// duplex tracks acknowledgements and confidence for each participant.
 type duplex struct {
 	options DuplexOptions
 
@@ -84,15 +73,8 @@ type duplex struct {
 
 // speaker is what one participant is in the middle of.
 type speaker struct {
-	// interim is the latest revision of what they are saying.
-	interim string
 	// murmured is when the agent last let them know it was still there.
 	murmured time.Time
-	// guess is the reply started on a provisional end of turn, empty when there is none.
-	guess string
-	// guessed is the transcript that reply was started on, which the settled one has to
-	// agree with for the reply to be worth keeping.
-	guessed string
 }
 
 func newDuplex(options DuplexOptions) *duplex {
@@ -108,19 +90,6 @@ func newDuplex(options DuplexOptions) *duplex {
 	return &duplex{options: options, speakers: map[string]*speaker{}}
 }
 
-// Began records that a participant has started, or gone back to, talking. It returns the
-// speculative reply to abandon: they carried on, so whatever was being answered was only
-// half of what they had to say.
-func (d *duplex) Began(participant stt.Participant) string {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	current := d.speakerFor(participant)
-	abandoned := current.guess
-	current.guess, current.guessed = "", ""
-	return abandoned
-}
-
 // Heard records a revision of what someone is saying and returns a murmur worth making,
 // or empty when there is none. Quiet says whether the agent has the floor: talking over
 // someone to tell them you are listening is not listening.
@@ -129,9 +98,6 @@ func (d *duplex) Heard(participant stt.Participant, text string, quiet bool) str
 	defer d.mu.Unlock()
 
 	current := d.speakerFor(participant)
-	// The revision is kept whatever happens next: a provisional end of turn carries no
-	// words of its own, so this is what a reply guessed at it would be answering.
-	current.interim = text
 
 	if !d.options.Backchannel || !quiet {
 		return ""
@@ -142,58 +108,25 @@ func (d *duplex) Heard(participant stt.Participant, text string, quiet bool) str
 	if time.Since(current.murmured) < d.options.BackchannelGap {
 		return ""
 	}
-	// A murmur made while a reply is being guessed at would land on top of the reply
-	// itself a moment later.
-	if current.guess != "" {
+	current.murmured = time.Now()
+	return d.nextPhraseLocked()
+}
+
+// Presence returns a short acknowledgement after a long active listening or thinking
+// gap. An otherwise idle call stays quiet.
+func (d *duplex) Presence(participant stt.Participant, lastSpokeAt time.Time, quiet bool) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if !d.options.Backchannel || !quiet || time.Since(lastSpokeAt) < d.options.BackchannelGap {
 		return ""
 	}
-
+	current := d.speakerFor(participant)
+	if time.Since(current.murmured) < d.options.BackchannelGap {
+		return ""
+	}
 	current.murmured = time.Now()
-	phrase := d.options.Phrases[d.phrase%len(d.options.Phrases)]
-	d.phrase++
-	return phrase
-}
-
-// Eager records that the transcriber has provisionally ended a turn, and returns the
-// reply worth starting on it. The text is what the reply should answer, which is the
-// provisional transcript rather than the empty string a bare end-of-turn carries.
-func (d *duplex) Eager(participant stt.Participant, text string) (string, string, bool) {
-	if !d.options.Speculate || strings.TrimSpace(text) == "" {
-		return "", "", false
-	}
-
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	current := d.speakerFor(participant)
-	// Guessing twice at the same words would be paying for the same reply twice.
-	if current.guess != "" && sameWords(current.guessed, text) {
-		return "", "", false
-	}
-
-	abandoned := current.guess
-	current.guess = speculationPrefix + turnStamp()
-	current.guessed = text
-	return current.guess, abandoned, true
-}
-
-// Settled records that a turn is over, and reports what to do with the reply that was
-// guessed at: promote it if the words held, abandon it if they did not.
-func (d *duplex) Settled(participant stt.Participant, text string) (string, string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	current := d.speakerFor(participant)
-	guess, guessed := current.guess, current.guessed
-	current.guess, current.guessed, current.interim = "", "", ""
-
-	if guess == "" {
-		return "", ""
-	}
-	if sameWords(guessed, text) {
-		return guess, ""
-	}
-	return "", guess
+	return d.nextPhraseLocked()
 }
 
 // Note is what the model should know about a turn beyond its words, which for now is
@@ -209,13 +142,6 @@ func (d *duplex) Note(confidence float64) string {
 		return ""
 	}
 	return uncertainNote
-}
-
-// Interim is the latest revision of what a participant is saying.
-func (d *duplex) Interim(participant stt.Participant) string {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.speakerFor(participant).interim
 }
 
 // Forget drops a participant's state, so a reconnection does not inherit half a turn.
@@ -234,6 +160,12 @@ func (d *duplex) speakerFor(participant stt.Participant) *speaker {
 		d.speakers[participant.ID] = current
 	}
 	return current
+}
+
+func (d *duplex) nextPhraseLocked() string {
+	phrase := d.options.Phrases[d.phrase%len(d.options.Phrases)]
+	d.phrase++
+	return phrase
 }
 
 // sameWords reports whether two transcripts say the same thing.

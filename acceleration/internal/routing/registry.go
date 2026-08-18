@@ -15,11 +15,8 @@ type Spec struct {
 	// LanguageHints narrow multilingual models.
 	LanguageHints []string
 	// Voice selects the speaker for modalities that produce audio.
-	Voice string
-	// EagerTurns asks a transcriber that can do it for provisional end-of-turn signals.
-	// A provider without them ignores it, so asking is never an error.
-	EagerTurns bool
-	Logger     *slog.Logger
+	Voice  string
+	Logger *slog.Logger
 }
 
 // Factory builds an unstarted provider.
