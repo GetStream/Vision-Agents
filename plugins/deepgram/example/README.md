@@ -1,6 +1,6 @@
 # Deepgram TTS Example
 
-This example demonstrates how to use Deepgram's Aura text-to-speech with Vision Agents.
+This example demonstrates how to use Deepgram's Flux text-to-speech with Vision Agents.
 
 ## Setup
 
@@ -32,18 +32,18 @@ uv run python deepgram_tts_example.py run --call-type audio_room --call-id test
 
 ## Features
 
-- Uses Deepgram Aura for high-quality text-to-speech
+- Uses Deepgram Flux TTS for high-quality text-to-speech
 - Uses Deepgram Flux for speech-to-text with turn detection
 - Integrates with Stream for real-time communication
 - Uses Gemini as the LLM for conversation
 
 ## Voice Models
 
-Deepgram offers various Aura voice models. You can customize the voice by passing the `model` parameter:
+Deepgram Flux voices use the `flux-{voice}-en` format. You can customize the voice by passing the `model` parameter:
 
 ```python
-tts = deepgram.TTS(model="aura-2-thalia-en")  # Default female voice
-tts = deepgram.TTS(model="aura-2-orion-en")  # Male voice
+tts = deepgram.TTS(model="flux-haley-en")  # Default featured voice
+tts = deepgram.TTS(model="flux-kit-en")
 ```
 
-See [Deepgram TTS Models](https://developers.deepgram.com/docs/tts-models) for all available voices.
+See [Flux TTS voices](https://developers.deepgram.com/docs/flux-tts/voices) for all available voices.
