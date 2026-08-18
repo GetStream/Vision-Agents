@@ -535,6 +535,8 @@ class Agent:
                 self._connection = await self.edge.join(self, call)
             self.logger.info(f"🤖 Agent joined call: {call.id}")
             self.events.send(events.AgentJoinedCallEvent(call=call))
+            # Call lifetime starts when we are on the SFU, not after warmup work.
+            self._joined_at = time.time()
 
             # Set up audio and video tracks together to avoid SDP issues
             audio_track = self._audio_track if self.publish_audio else None
@@ -574,7 +576,6 @@ class Agent:
                 )
 
             self._call_ended_event = asyncio.Event()
-            self._joined_at = time.time()
             yield
         except Exception as exc:
             if self._closing or self._closed:
@@ -801,13 +802,14 @@ class Agent:
         if self.conversation is not None:
             await self.conversation.wait_for_pending_syncs()
 
-        # Emit final call metrics while the edge connection is still up.
-        await self._emit_call_metrics_summary()
-
-        # Stop metrics broadcast task
+        # Stop metrics broadcast before the final summary so a late
+        # agent_metrics event cannot arrive after call_metrics_summary.
         if self._metrics_broadcast_task:
             await cancel_and_wait(self._metrics_broadcast_task)
             self._metrics_broadcast_task = None
+
+        # Emit final call metrics while the edge connection is still up.
+        await self._emit_call_metrics_summary()
 
         await self._stop_components()
 

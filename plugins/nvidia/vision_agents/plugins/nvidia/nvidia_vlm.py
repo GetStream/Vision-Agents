@@ -54,6 +54,8 @@ class NvidiaVLM(VideoLLM):
 
     """
 
+    provider_name = PLUGIN_NAME
+
     def __init__(
         self,
         model: str = "meta/llama-3.2-11b-vision-instruct",

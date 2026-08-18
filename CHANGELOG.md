@@ -8,7 +8,7 @@
 
 ## New Features
 
-### Call metrics summary and richer session latency tracking
+### Call metrics summary and richer session latency tracking (#635)
 
 Session `AgentMetrics` now expose sample counts for every average (`*_ms__count`),
 error totals, turn counts, TTS time-to-first-audio, realtime time-to-first-audio

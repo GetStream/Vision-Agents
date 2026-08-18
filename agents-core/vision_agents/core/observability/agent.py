@@ -216,7 +216,9 @@ class AgentMetrics:
                 metric.inc(int(value))
             elif isinstance(metric, Average):
                 count = data.get(cls.count_field_name(f.name))
-                if isinstance(count, (int, float)) and count > 0:
+                if isinstance(count, int) and count > 0:
+                    metric.load(float(value), count)
+                elif isinstance(count, float) and count.is_integer() and count > 0:
                     metric.load(float(value), int(count))
                 else:
                     metric.update(value)
@@ -265,6 +267,7 @@ class AgentMetrics:
             or self.stt_latency_ms__avg.count > 0
             or self.tts_latency_ms__avg.count > 0
             or self.tts_time_to_first_audio_ms__avg.count > 0
+            or self.vlm_inferences__total.value() > 0
         )
         has_realtime = (
             self.realtime_responses__total.value() > 0

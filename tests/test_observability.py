@@ -489,3 +489,23 @@ class TestAgentMetrics:
         metrics.stt_latency_ms__avg.update(50)
         metrics.realtime_time_to_first_audio_ms__avg.update(80)
         assert metrics.infer_mode() == "hybrid"
+
+    def test_infer_mode_hybrid_realtime_plus_vlm(self):
+        metrics = AgentMetrics()
+        metrics.realtime_responses__total.inc(1)
+        metrics.vlm_inferences__total.inc(1)
+        assert metrics.infer_mode() == "hybrid"
+
+    def test_from_dict_rejects_fractional_count(self):
+        metrics = AgentMetrics.from_dict(
+            {"llm_latency_ms__avg": 100.0, "llm_latency_ms__count": 1.5}
+        )
+        assert metrics.llm_latency_ms__avg.value() == 100.0
+        assert metrics.llm_latency_ms__avg.count == 1
+
+    def test_from_dict_accepts_integral_float_count(self):
+        metrics = AgentMetrics.from_dict(
+            {"llm_latency_ms__avg": 100.0, "llm_latency_ms__count": 2.0}
+        )
+        assert metrics.llm_latency_ms__avg.value() == 100.0
+        assert metrics.llm_latency_ms__avg.count == 2
