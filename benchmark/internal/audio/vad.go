@@ -73,7 +73,7 @@ func DetectSpeech(samples []int16, rate int, threshold float64, hangoverMs int) 
 	return spans
 }
 
-// DefaultSpeechThreshold is a conservative energy gate for 8 kHz mu-law recordings.
+// DefaultSpeechThreshold is a conservative energy gate for 16 kHz PCM recordings.
 const DefaultSpeechThreshold = 0.0015
 
 // DefaultHangoverMs covers a short pause without splitting a turn.

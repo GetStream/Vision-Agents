@@ -7,29 +7,8 @@ import (
 	"testing"
 )
 
-func TestUlawRoundTrip(t *testing.T) {
-	original := make([]int16, 256)
-	for i := range original {
-		original[i] = int16((i - 128) * 200)
-	}
-	encoded := EncodeUlaw(original)
-	decoded := DecodeUlaw(encoded)
-	if len(decoded) != len(original) {
-		t.Fatalf("len %d != %d", len(decoded), len(original))
-	}
-	var errSum float64
-	for i := range original {
-		d := float64(decoded[i] - original[i])
-		errSum += d * d
-	}
-	rms := errSum / float64(len(original))
-	if rms > 4e6 {
-		t.Fatalf("mu-law error too high: %v", rms)
-	}
-}
-
 func TestWAVRoundTrip(t *testing.T) {
-	pcm := PCM{Rate: TelnyxRate, Samples: Tone(TelnyxRate, 440, 8000)}
+	pcm := PCM{Rate: Rate, Samples: Tone(Rate, 440, 8000)}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tone.wav")
 	if err := WriteWAV(path, pcm); err != nil {
@@ -71,8 +50,8 @@ func TestResample(t *testing.T) {
 }
 
 func TestDetectSpeech(t *testing.T) {
-	samples := Concat(Silence(800), Tone(1600, 220, 12000), Silence(800))
-	spans := DetectSpeech(samples, TelnyxRate, DefaultSpeechThreshold, DefaultHangoverMs)
+	samples := Concat(Silence(Rate/10), Tone(Rate/5, 220, 12000), Silence(Rate/10))
+	spans := DetectSpeech(samples, Rate, DefaultSpeechThreshold, DefaultHangoverMs)
 	if len(spans) != 1 {
 		t.Fatalf("got %d spans: %+v", len(spans), spans)
 	}
@@ -82,34 +61,23 @@ func TestDetectSpeech(t *testing.T) {
 }
 
 func TestConversationNoiseAndTalker(t *testing.T) {
-	babble := ConversationNoise(TelnyxRate, 7)
-	if len(babble) != TelnyxRate {
+	babble := ConversationNoise(Rate, 7)
+	if len(babble) != Rate {
 		t.Fatalf("babble len %d", len(babble))
 	}
 	if meanSquare(babble) < 1e4 {
 		t.Fatal("conversation noise too quiet")
 	}
 	talker := Talker(3)
-	if len(talker) < TelnyxRate {
+	if len(talker) < Rate {
 		t.Fatalf("talker too short: %d", len(talker))
 	}
 	bed := ScaleNoiseForSNR(babble, 10)
 	frame := Tone(FrameSamples, 200, 8000)
+	orig10, orig40 := frame[10], frame[40]
 	mixed := Add(frame, bed, 0)
-	if mixed[10] == frame[10] && mixed[40] == frame[40] {
+	if mixed[10] == orig10 && mixed[40] == orig40 {
 		t.Fatal("expected bed to change the frame")
-	}
-}
-
-func TestMixSNR(t *testing.T) {
-	speech := Tone(TelnyxRate, 200, 8000)
-	noise := KitchenNoise(TelnyxRate, 1)
-	mixed := MixSNR(speech, noise, 10)
-	if len(mixed) != len(speech) {
-		t.Fatal("mix length")
-	}
-	if mixed[100] == speech[100] && mixed[500] == speech[500] {
-		t.Fatal("expected noise to change samples")
 	}
 }
 
@@ -118,7 +86,7 @@ func TestWriteStereoWAV(t *testing.T) {
 	path := filepath.Join(dir, "mix.wav")
 	left := Tone(400, 220, 4000)
 	right := Tone(200, 440, 4000)
-	if err := WriteStereoWAV(path, TelnyxRate, left, right); err != nil {
+	if err := WriteStereoWAV(path, Rate, left, right); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)

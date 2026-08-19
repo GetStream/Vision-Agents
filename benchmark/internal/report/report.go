@@ -147,6 +147,12 @@ func Markdown(s Summary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Voicebench %s\n\n", s.RunID)
 	fmt.Fprintf(&b, "System: `%s`  \nK: %d  \nSchema: %d\n\n", s.System, s.K, s.SchemaVersion)
+	b.WriteString("## Scorecard\n\n")
+	b.WriteString("| Benchmark | Gold | Ours | Gap |\n| --- | --- | --- | --- |\n")
+	for _, r := range Scorecard(s) {
+		fmt.Fprintf(&b, "| %s | %s | %s | %s |\n", r.Name, r.Gold, r.Ours, r.Gap)
+	}
+	b.WriteString("\n## Latency\n\n")
 	b.WriteString("| Pack | V2V P50 | Non-tool P50 | Spikes | False cutoff / call |\n| --- | ---: | ---: | ---: | ---: |\n")
 	for _, p := range s.Packs {
 		fmt.Fprintf(&b, "| %s | %d ms | %d ms | %d | %.2f |\n", p.Pack, p.V2VP50, p.NonToolP50, p.Spikes, p.Cutoff)

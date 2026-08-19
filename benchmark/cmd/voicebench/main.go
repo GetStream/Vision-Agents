@@ -81,18 +81,13 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	pack := fs.String("pack", "restaurant", "scenario pack")
 	id := fs.String("scenario", "", "run a single scenario id")
 	k := fs.Int("k", 3, "trials per scenario")
-	transport := fs.String("transport", "telnyx", "telnyx or webrtc")
-	number := fs.String("number", "", "agent E.164 number to dial (telnyx)")
-	from := fs.String("from", os.Getenv("TELNYX_PHONE_NUMBER"), "harness caller ID (telnyx)")
-	callID := fs.String("call-id", "", "Stream call id (webrtc). Empty generates one per trial")
-	callType := fs.String("call-type", "default", "Stream call type (webrtc)")
-	agentURL := fs.String("agent-url", "", "Vision Agents HTTP base, POST /calls/{id}/sessions (webrtc)")
-	spawnAgent := fs.Bool("spawn-agent", false, "start python -m voicebench_agents for this pack (webrtc)")
+	callID := fs.String("call-id", "", "Stream call id. Empty generates one per trial")
+	callType := fs.String("call-type", "default", "Stream call type")
+	agentURL := fs.String("agent-url", "", "Vision Agents HTTP base, POST /calls/{id}/sessions")
+	spawnAgent := fs.Bool("spawn-agent", false, "start python -m voicebench_agents for this pack")
 	agentPort := fs.Int("agent-port", 8000, "port for --spawn-agent")
-	userID := fs.String("user", "voicebench-caller", "Stream user id the harness joins as (webrtc)")
+	userID := fs.String("user", "voicebench-caller", "Stream user id the harness joins as")
 	worldAddr := fs.String("world-addr", "127.0.0.1:8090", "world server bind")
-	mediaAddr := fs.String("media-addr", "127.0.0.1:8091", "media websocket bind")
-	streamHost := fs.String("stream-host", os.Getenv("NGROK_URL"), "public host Telnyx uses for media")
 	system := fs.String("system", "vision-agents", "system name in the report")
 	out := fs.String("out", "", "output directory")
 	skipSTT := fs.Bool("skip-stt", false, "skip Deepgram (fails the trial)")
@@ -100,18 +95,13 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	_, err := run.Run(ctx, run.Config{
+	sum, err := run.Run(ctx, run.Config{
 		Root:       root,
 		OutDir:     *out,
 		Pack:       *pack,
 		ScenarioID: *id,
 		K:          *k,
-		Transport:  *transport,
-		Number:     *number,
-		From:       *from,
 		WorldAddr:  *worldAddr,
-		MediaAddr:  *mediaAddr,
-		StreamHost: *streamHost,
 		CallID:     *callID,
 		CallType:   *callType,
 		AgentURL:   *agentURL,
@@ -123,6 +113,9 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 		SkipJudge:  *skipJudge,
 		Logger:     slog.Default(),
 	})
+	if len(sum.Calls) > 0 {
+		report.FprintTable(os.Stdout, sum)
+	}
 	return err
 }
 
@@ -143,6 +136,7 @@ func cmdReport(root string, args []string) error {
 	if err := json.Unmarshal(raw, &sum); err != nil {
 		return err
 	}
+	report.FprintTable(os.Stdout, sum)
 	return os.WriteFile(filepath.Join(*dir, "report.md"), []byte(report.Markdown(sum)), 0o644)
 }
 

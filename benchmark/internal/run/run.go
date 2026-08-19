@@ -17,12 +17,10 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/caller"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/report"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/synth"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/telephony"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/world"
 )
 
@@ -33,12 +31,7 @@ type Config struct {
 	Pack       string
 	ScenarioID string
 	K          int
-	Transport  string
-	Number     string
-	From       string
-	MediaAddr  string
 	WorldAddr  string
-	StreamHost string
 	CallID     string
 	CallType   string
 	AgentURL   string
@@ -62,22 +55,13 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 	if cfg.Root == "" {
 		cfg.Root = "."
 	}
-	if cfg.Transport == "" {
-		cfg.Transport = "telnyx"
-	}
 	if cfg.WorldAddr == "" {
 		cfg.WorldAddr = "127.0.0.1:8090"
-	}
-	if cfg.MediaAddr == "" {
-		cfg.MediaAddr = "127.0.0.1:8091"
 	}
 	if cfg.System == "" {
 		cfg.System = "vision-agents"
 	}
 	if cfg.SpawnAgent {
-		if cfg.Transport != "webrtc" {
-			return report.Summary{}, fmt.Errorf("run: --spawn-agent requires --transport webrtc")
-		}
 		if cfg.AgentPort <= 0 {
 			cfg.AgentPort = 8000
 		}
@@ -158,23 +142,14 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 
 	audioMap := map[string][]int16{}
 	for _, text := range sc.SpeechTexts() {
-		pcm, err := loadCallerAudio(cfg, text)
+		pcm, err := synth.LoadOrSynth(cfg.Root, "", text)
 		if err != nil {
-			return result, err
+			return result, fmt.Errorf("run: tts required for caller speech: %w", err)
 		}
 		audioMap[text] = pcm
 	}
 
-	var rec caller.Result
-	var err error
-	switch cfg.Transport {
-	case "telnyx":
-		rec, err = runTelnyx(ctx, cfg, sc, audioMap)
-	case "webrtc":
-		rec, err = runWebRTC(ctx, cfg, sc, audioMap, trial)
-	default:
-		return result, fmt.Errorf("unknown transport %s", cfg.Transport)
-	}
+	rec, err := runWebRTC(ctx, cfg, sc, audioMap, trial)
 	if err != nil {
 		return result, err
 	}
@@ -190,8 +165,8 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 	}
 
 	sess := worldSrv.Snapshot()
-	metrics := score.Metrics{SelectivityHold: true, HoldThroughOverlap: true}
-	metrics.V2V = score.TimingFromRecording(rec, sc.Turns)
+	metrics := score.Metrics{}
+	metrics.V2V = score.TimingFromRecording(rec)
 	if sess != nil {
 		score.MarkToolTurns(&metrics, rec, sess.Tools)
 	}
@@ -245,20 +220,30 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 	result.Metrics = metrics
 	result.Passed = metrics.Passed
 
-	writeJSON(filepath.Join(callDir, "metrics.json"), metrics)
-	writeJSON(filepath.Join(callDir, "result.json"), result)
-	if sess != nil {
-		writeJSON(filepath.Join(callDir, "tools.json"), sess.Tools)
-		writeJSON(filepath.Join(callDir, "state.json"), sess.State)
+	if err := writeJSON(filepath.Join(callDir, "metrics.json"), metrics); err != nil {
+		return result, err
 	}
-	writeJSON(filepath.Join(callDir, "transcript.json"), map[string]string{"caller": callerText, "agent": agentText})
+	if err := writeJSON(filepath.Join(callDir, "result.json"), result); err != nil {
+		return result, err
+	}
+	if sess != nil {
+		if err := writeJSON(filepath.Join(callDir, "tools.json"), sess.Tools); err != nil {
+			return result, err
+		}
+		if err := writeJSON(filepath.Join(callDir, "state.json"), sess.State); err != nil {
+			return result, err
+		}
+	}
+	if err := writeJSON(filepath.Join(callDir, "transcript.json"), map[string]string{"caller": callerText, "agent": agentText}); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
 func startAgentProc(ctx context.Context, cfg Config, worldURL string) (func(), error) {
 	port := cfg.AgentPort
 	cmd := exec.CommandContext(ctx, "uv", "run", "python", "-m", "voicebench_agents", cfg.Pack,
-		"--transport", "webrtc", "--host", "127.0.0.1", "--port", strconv.Itoa(port))
+		"--host", "127.0.0.1", "--port", strconv.Itoa(port))
 	cmd.Dir = filepath.Join(cfg.Root, "agents")
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, e := range os.Environ() {
@@ -314,62 +299,6 @@ func startAgentProc(ctx context.Context, cfg Config, worldURL string) (func(), e
 	}
 	stop()
 	return nil, fmt.Errorf("run: agent did not become ready at %s", readyURL)
-}
-
-func runTelnyx(ctx context.Context, cfg Config, sc scenario.Scenario, audioMap map[string][]int16) (caller.Result, error) {
-	if cfg.Number == "" {
-		return caller.Result{}, fmt.Errorf("run: --number is required for telnyx")
-	}
-	from := cfg.From
-	if from == "" {
-		from = os.Getenv("TELNYX_PHONE_NUMBER")
-	}
-	if from == "" {
-		return caller.Result{}, fmt.Errorf("run: --from or TELNYX_PHONE_NUMBER is required")
-	}
-	client, err := telephony.NewClient()
-	if err != nil {
-		return caller.Result{}, err
-	}
-	token := randomToken()
-	server, err := telephony.StartMediaServer(cfg.MediaAddr, token, cfg.Logger)
-	if err != nil {
-		return caller.Result{}, err
-	}
-	defer server.Close()
-
-	host := cfg.StreamHost
-	if host == "" {
-		host = os.Getenv("NGROK_URL")
-	}
-	if host == "" {
-		host = detectNgrok()
-	}
-	if host == "" {
-		return caller.Result{}, fmt.Errorf("run: --stream-host or NGROK_URL is required")
-	}
-	host = strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
-	streamURL := "wss://" + host + "/media/" + token
-
-	callID, err := client.Dial(ctx, telephony.DialRequest{From: from, To: cfg.Number, StreamURL: streamURL})
-	if err != nil {
-		return caller.Result{}, err
-	}
-	defer client.Hangup(context.Background(), callID)
-
-	stream, err := server.Accept(30 * time.Second)
-	if err != nil {
-		return caller.Result{}, err
-	}
-	defer stream.Close()
-	if err := stream.WaitStart(20 * time.Second); err != nil {
-		return caller.Result{}, err
-	}
-
-	eng := caller.Engine{Audio: audioMap, Logger: cfg.Logger}
-	callCtx, cancel := context.WithTimeout(ctx, time.Duration(max(sc.MaxDurationS, 60))*time.Second)
-	defer cancel()
-	return eng.Play(callCtx, sc, stream)
 }
 
 func webrtcCallID(cfg Config, sc scenario.Scenario, trial int) string {
@@ -454,43 +383,16 @@ func closeAgentSession(ctx context.Context, logger *slog.Logger, agentURL, callI
 	logger.Warn("agent session still open after close", "session", sessionID, "call", callID)
 }
 
-func loadCallerAudio(cfg Config, text string) ([]int16, error) {
-	pcm, err := synth.LoadOrSynth(cfg.Root, "", text)
+func writeJSON(path string, v any) error {
+	raw, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("run: tts required for caller speech: %w", err)
+		return err
 	}
-	return pcm, nil
-}
-
-func writeJSON(path string, v any) {
-	raw, _ := json.MarshalIndent(v, "", "  ")
-	_ = os.WriteFile(path, raw, 0o644)
+	return os.WriteFile(path, raw, 0o644)
 }
 
 func randomToken() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
-}
-
-func detectNgrok() string {
-	resp, err := http.Get("http://127.0.0.1:4040/api/tunnels")
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	var parsed struct {
-		Tunnels []struct {
-			PublicURL string `json:"public_url"`
-		} `json:"tunnels"`
-	}
-	if json.NewDecoder(resp.Body).Decode(&parsed) != nil {
-		return ""
-	}
-	for _, t := range parsed.Tunnels {
-		if strings.HasPrefix(t.PublicURL, "https://") {
-			return strings.TrimPrefix(t.PublicURL, "https://")
-		}
-	}
-	return ""
 }

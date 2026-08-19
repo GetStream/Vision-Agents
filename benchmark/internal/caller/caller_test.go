@@ -7,15 +7,15 @@ import (
 
 	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/telephony"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
 )
 
 func TestPlayLoopback(t *testing.T) {
-	loop := telephony.NewLoopback()
+	loop := transport.NewLoopback()
 	defer loop.Close()
 
 	go func() {
-		_ = loop.SendAgent(audio.Tone(audio.TelnyxRate, 220, 10000))
+		_ = loop.SendAgent(audio.Tone(audio.Rate, 220, 10000))
 		time.Sleep(200 * time.Millisecond)
 		for range loop.AgentRecv {
 		}
@@ -24,7 +24,7 @@ func TestPlayLoopback(t *testing.T) {
 	text := "hello table for four"
 	eng := Engine{
 		Audio: map[string][]int16{
-			text: audio.Tone(audio.TelnyxRate/2, 180, 10000),
+			text: audio.Tone(audio.Rate/2, 180, 10000),
 		},
 	}
 	sc := scenario.Scenario{
@@ -56,20 +56,20 @@ func TestPlayLoopback(t *testing.T) {
 }
 
 func TestMidReplyPauseDoesNotAdvanceTurn(t *testing.T) {
-	loop := telephony.NewLoopback()
+	loop := transport.NewLoopback()
 	defer loop.Close()
 
 	go func() {
-		_ = loop.SendAgent(audio.Tone(audio.TelnyxRate/5, 220, 10000))
+		_ = loop.SendAgent(audio.Tone(audio.Rate/5, 220, 10000))
 		heard := false
 		for frame := range loop.AgentRecv {
 			if heard || audio.FrameEnergy(frame.PCM) < audio.DefaultSpeechThreshold {
 				continue
 			}
 			heard = true
-			_ = loop.SendAgent(audio.Tone(audio.TelnyxRate/5, 210, 10000))
+			_ = loop.SendAgent(audio.Tone(audio.Rate/5, 210, 10000))
 			time.Sleep(400 * time.Millisecond)
-			_ = loop.SendAgent(audio.Tone(audio.TelnyxRate, 210, 10000))
+			_ = loop.SendAgent(audio.Tone(audio.Rate, 210, 10000))
 		}
 	}()
 
@@ -77,8 +77,8 @@ func TestMidReplyPauseDoesNotAdvanceTurn(t *testing.T) {
 	second := "second turn"
 	eng := Engine{
 		Audio: map[string][]int16{
-			first:  audio.Tone(audio.TelnyxRate/4, 180, 10000),
-			second: audio.Tone(audio.TelnyxRate/4, 190, 10000),
+			first:  audio.Tone(audio.Rate/4, 180, 10000),
+			second: audio.Tone(audio.Rate/4, 190, 10000),
 		},
 		TurnHangoverMS: 1200,
 	}
@@ -106,11 +106,11 @@ func TestMidReplyPauseDoesNotAdvanceTurn(t *testing.T) {
 }
 
 func TestDuringAgentOverlapPlaysWhileAgentSpeaks(t *testing.T) {
-	loop := telephony.NewLoopback()
+	loop := transport.NewLoopback()
 	defer loop.Close()
 
 	go func() {
-		_ = loop.SendAgent(audio.Tone(2*audio.TelnyxRate, 220, 10000))
+		_ = loop.SendAgent(audio.Tone(2*audio.Rate, 220, 10000))
 		for range loop.AgentRecv {
 		}
 	}()
@@ -155,12 +155,12 @@ func TestDuringAgentOverlapPlaysWhileAgentSpeaks(t *testing.T) {
 }
 
 func TestBargeInWaitsForAgentSpeech(t *testing.T) {
-	loop := telephony.NewLoopback()
+	loop := transport.NewLoopback()
 	defer loop.Close()
 
 	go func() {
 		time.Sleep(1500 * time.Millisecond)
-		_ = loop.SendAgent(audio.Tone(2*audio.TelnyxRate, 220, 10000))
+		_ = loop.SendAgent(audio.Tone(2*audio.Rate, 220, 10000))
 		for range loop.AgentRecv {
 		}
 	}()
@@ -168,7 +168,7 @@ func TestBargeInWaitsForAgentSpeech(t *testing.T) {
 	text := "wait make it six"
 	eng := Engine{
 		Audio: map[string][]int16{
-			text: audio.Tone(audio.TelnyxRate/4, 180, 10000),
+			text: audio.Tone(audio.Rate/4, 180, 10000),
 		},
 	}
 	sc := scenario.Scenario{
@@ -210,11 +210,11 @@ func TestBargeInWaitsForAgentSpeech(t *testing.T) {
 }
 
 func TestFinalWaitCapturesLateReply(t *testing.T) {
-	loop := telephony.NewLoopback()
+	loop := transport.NewLoopback()
 	defer loop.Close()
 
 	go func() {
-		_ = loop.SendAgent(audio.Tone(audio.TelnyxRate/5, 220, 10000))
+		_ = loop.SendAgent(audio.Tone(audio.Rate/5, 220, 10000))
 		heard := false
 		for frame := range loop.AgentRecv {
 			if heard || audio.FrameEnergy(frame.PCM) < audio.DefaultSpeechThreshold {
@@ -222,14 +222,14 @@ func TestFinalWaitCapturesLateReply(t *testing.T) {
 			}
 			heard = true
 			time.Sleep(2 * time.Second)
-			_ = loop.SendAgent(audio.Tone(audio.TelnyxRate, 260, 12000))
+			_ = loop.SendAgent(audio.Tone(audio.Rate, 260, 12000))
 		}
 	}()
 
 	text := "book me"
 	eng := Engine{
 		Audio: map[string][]int16{
-			text: audio.Tone(audio.TelnyxRate/4, 180, 10000),
+			text: audio.Tone(audio.Rate/4, 180, 10000),
 		},
 	}
 	sc := scenario.Scenario{

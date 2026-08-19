@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	// TelnyxRate is the PSTN sample rate used on the media stream.
-	TelnyxRate = 8000
-	// FrameSamples is 20 ms of 8 kHz mono audio.
-	FrameSamples = 160
+	// Rate is the native scoring sample rate (matches acceleration STT).
+	Rate = 16000
+	// FrameSamples is 20 ms of 16 kHz mono audio.
+	FrameSamples = 320
 )
 
 // PCM is mono signed 16-bit audio at a fixed sample rate.

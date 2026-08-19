@@ -1,4 +1,4 @@
-package telephony
+package transport
 
 import (
 	"sync"
@@ -7,7 +7,7 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 )
 
-// Loopback is an in-process duplex pipe used without Telnyx.
+// Loopback is an in-process duplex pipe used in tests.
 type Loopback struct {
 	toAgent   chan Frame
 	toCaller  chan Frame
@@ -25,40 +25,13 @@ func NewLoopback() *Loopback {
 }
 
 func (l *Loopback) Send(pcm []int16) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.closed {
-		return nil
-	}
-	for i := 0; i < len(pcm); i += audio.FrameSamples {
-		end := min(i+audio.FrameSamples, len(pcm))
-		chunk := audio.PadRight(append([]int16(nil), pcm[i:end]...), audio.FrameSamples)
-		select {
-		case l.toAgent <- Frame{PCM: chunk}:
-		default:
-		}
-	}
-	return nil
+	return l.push(l.toAgent, pcm, false)
 }
 
 func (l *Loopback) Recv() <-chan Frame { return l.toCaller }
 
 func (l *Loopback) SendAgent(pcm []int16) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.closed {
-		return nil
-	}
-	for i := 0; i < len(pcm); i += audio.FrameSamples {
-		end := min(i+audio.FrameSamples, len(pcm))
-		chunk := audio.PadRight(append([]int16(nil), pcm[i:end]...), audio.FrameSamples)
-		select {
-		case l.toCaller <- Frame{PCM: chunk}:
-		default:
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	return nil
+	return l.push(l.toCaller, pcm, true)
 }
 
 func (l *Loopback) Close() error {
@@ -70,5 +43,28 @@ func (l *Loopback) Close() error {
 	l.closed = true
 	close(l.toAgent)
 	close(l.toCaller)
+	return nil
+}
+
+func (l *Loopback) push(dst chan Frame, pcm []int16, pace bool) error {
+	for i := 0; i < len(pcm); i += audio.FrameSamples {
+		end := min(i+audio.FrameSamples, len(pcm))
+		chunk := audio.PadRight(append([]int16(nil), pcm[i:end]...), audio.FrameSamples)
+		l.mu.Lock()
+		closed := l.closed
+		if !closed {
+			select {
+			case dst <- Frame{PCM: chunk}:
+			default:
+			}
+		}
+		l.mu.Unlock()
+		if closed {
+			return nil
+		}
+		if pace {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
 	return nil
 }

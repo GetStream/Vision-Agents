@@ -9,7 +9,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/telephony"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
 )
 
 // DefaultTurnHangoverMS is how long the agent must be silent before the next caller turn.
@@ -53,7 +53,7 @@ type clipJob struct {
 }
 
 // Play runs the caller script until turns finish or the context is done.
-func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media telephony.Media) (Result, error) {
+func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.Media) (Result, error) {
 	if e.Logger == nil {
 		e.Logger = slog.Default()
 	}
@@ -67,8 +67,9 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media telephony.
 	startedAt := time.Now()
 
 	var mu sync.Mutex
-	var callerRec []int16
-	var agentRec []int16
+	maxN := audio.Rate * max(sc.MaxDurationS, 60)
+	callerRec := make([]int16, 0, maxN)
+	agentRec := make([]int16, 0, maxN)
 	agentLive := false
 	hasSpoken := false
 	agentLiveAt := time.Time{}
@@ -101,9 +102,7 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media telephony.
 					return
 				}
 				mu.Lock()
-				for len(agentRec) < len(callerRec) {
-					agentRec = append(agentRec, 0)
-				}
+				agentRec = padTo(agentRec, len(callerRec))
 				agentRec = append(agentRec, frame.PCM...)
 				energy := audio.FrameEnergy(frame.PCM)
 				if energy >= e.Threshold {
@@ -207,16 +206,21 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media telephony.
 
 	var bed []int16
 	if sc.Noise != "" && sc.Noise != "none" {
-		n := audio.TelnyxRate * max(sc.MaxDurationS, 60)
-		bed = audio.ScaleNoiseForSNR(audio.NoiseNamed(sc.Noise, n, 42), snrOrDefault(sc.SNRDB))
+		snr := sc.SNRDB
+		if snr == 0 {
+			snr = 10
+		}
+		bed = audio.ScaleNoiseForSNR(audio.NoiseNamed(sc.Noise, audio.Rate*5, 42), snr)
 	}
 
+	var sendFail = make(chan error, 1)
 	go func() {
 		defer close(pacerDone)
 		tick := time.NewTicker(paceInterval)
 		defer tick.Stop()
 		var job *clipJob
 		off := 0
+		frame := make([]int16, audio.FrameSamples)
 		for {
 			select {
 			case <-ctx.Done():
@@ -233,11 +237,11 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media telephony.
 				default:
 				}
 			}
-			frame := make([]int16, audio.FrameSamples)
+			clear(frame)
 			if job != nil {
 				if off == 0 {
 					mu.Lock()
-					start := len(callerRec) * 1000 / audio.TelnyxRate
+					start := len(callerRec) * 1000 / audio.Rate
 					mu.Unlock()
 					job.startMs <- start
 				}
@@ -248,15 +252,19 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media telephony.
 				mu.Lock()
 				pos := len(callerRec)
 				mu.Unlock()
-				frame = audio.Add(frame, bed, pos)
+				audio.Add(frame, bed, pos)
 			}
-			_ = media.Send(frame)
+			if err := media.Send(frame); err != nil {
+				select {
+				case sendFail <- err:
+				default:
+				}
+				return
+			}
 			mu.Lock()
 			callerRec = append(callerRec, frame...)
-			end := len(callerRec) * 1000 / audio.TelnyxRate
-			for len(agentRec) < len(callerRec) {
-				agentRec = append(agentRec, 0)
-			}
+			end := len(callerRec) * 1000 / audio.Rate
+			agentRec = padTo(agentRec, len(callerRec))
 			mu.Unlock()
 			if job != nil && off >= len(job.pcm) {
 				job.endMs <- end
@@ -268,7 +276,7 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media telephony.
 	playClip := func(pcm []int16) (int, int, error) {
 		if len(pcm) == 0 {
 			mu.Lock()
-			ms := len(callerRec) * 1000 / audio.TelnyxRate
+			ms := len(callerRec) * 1000 / audio.Rate
 			mu.Unlock()
 			return ms, ms, nil
 		}
@@ -276,17 +284,23 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media telephony.
 		endCh := make(chan int, 1)
 		select {
 		case jobs <- clipJob{pcm: pcm, startMs: startCh, endMs: endCh}:
+		case err := <-sendFail:
+			return 0, 0, err
 		case <-ctx.Done():
 			return 0, 0, ctx.Err()
 		}
 		var start, end int
 		select {
 		case start = <-startCh:
+		case err := <-sendFail:
+			return 0, 0, err
 		case <-ctx.Done():
 			return 0, 0, ctx.Err()
 		}
 		select {
 		case end = <-endCh:
+		case err := <-sendFail:
+			return 0, 0, err
 		case <-ctx.Done():
 			return 0, 0, ctx.Err()
 		}
@@ -374,6 +388,12 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media telephony.
 	case <-time.After(200 * time.Millisecond):
 	}
 
+	select {
+	case err := <-sendFail:
+		return Result{}, err
+	default:
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 	n := len(callerRec)
@@ -383,15 +403,15 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media telephony.
 	return Result{
 		Caller:    audio.PadRight(callerRec, n),
 		Agent:     audio.PadRight(agentRec, n),
-		Rate:      audio.TelnyxRate,
+		Rate:      audio.Rate,
 		Events:    events,
 		StartedAt: startedAt,
 	}, nil
 }
 
-func snrOrDefault(snr float64) float64 {
-	if snr == 0 {
-		return 10
+func padTo(samples []int16, n int) []int16 {
+	if extra := n - len(samples); extra > 0 {
+		return append(samples, make([]int16, extra)...)
 	}
-	return snr
+	return samples
 }

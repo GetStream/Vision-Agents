@@ -40,7 +40,6 @@ type Scenario struct {
 	Entities      []Entity          `yaml:"entities"`
 	Policy        []string          `yaml:"policy"`
 	Judge         JudgeSpec         `yaml:"judge"`
-	AgentReplies  []string          `yaml:"agent_replies"`
 }
 
 // Turn is one caller utterance or overlap sound.

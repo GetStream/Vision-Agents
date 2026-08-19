@@ -22,7 +22,7 @@ func cacheDir(root string) string {
 }
 
 func hash(voice, text string) string {
-	sum := sha256.Sum256([]byte(voice + "\x00" + text))
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", voice, text, audio.Rate)))
 	return fmt.Sprintf("%x", sum[:12])
 }
 
@@ -30,7 +30,7 @@ func pathFor(root, voice, text string) string {
 	return filepath.Join(cacheDir(root), hash(voice, text)+".wav")
 }
 
-// LoadOrSynth returns 8 kHz PCM for text, synthesizing via ElevenLabs on a miss.
+// LoadOrSynth returns 16 kHz PCM for text, synthesizing via ElevenLabs on a miss.
 func LoadOrSynth(root, voice, text string) ([]int16, error) {
 	if voice == "" {
 		voice = os.Getenv("ELEVENLABS_VOICE_ID")
@@ -39,10 +39,7 @@ func LoadOrSynth(root, voice, text string) ([]int16, error) {
 		voice = defaultVoice
 	}
 	path := pathFor(root, voice, text)
-	if pcm, err := audio.ReadWAV(path); err == nil {
-		if pcm.Rate != audio.TelnyxRate {
-			pcm = audio.Resample(pcm, audio.TelnyxRate)
-		}
+	if pcm, err := audio.ReadWAV(path); err == nil && pcm.Rate == audio.Rate {
 		return pcm.Samples, nil
 	}
 	pcm, err := elevenLabs(voice, text)
@@ -75,7 +72,7 @@ func elevenLabs(voice, text string) (audio.PCM, error) {
 	if key == "" {
 		return audio.PCM{}, fmt.Errorf("synth: ELEVENLABS_API_KEY is required")
 	}
-	url := fmt.Sprintf("https://api.elevenlabs.io/v1/text-to-speech/%s?output_format=pcm_8000", voice)
+	url := fmt.Sprintf("https://api.elevenlabs.io/v1/text-to-speech/%s?output_format=pcm_16000", voice)
 	body, err := json.Marshal(map[string]string{
 		"text":     text,
 		"model_id": "eleven_flash_v2_5",
@@ -103,5 +100,5 @@ func elevenLabs(voice, text string) (audio.PCM, error) {
 	if resp.StatusCode >= 300 {
 		return audio.PCM{}, fmt.Errorf("elevenlabs HTTP %d: %s", resp.StatusCode, raw)
 	}
-	return audio.FromPCM16LE(raw, audio.TelnyxRate), nil
+	return audio.FromPCM16LE(raw, audio.Rate), nil
 }

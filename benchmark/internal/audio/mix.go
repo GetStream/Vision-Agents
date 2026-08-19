@@ -2,33 +2,6 @@ package audio
 
 import "math"
 
-// MixSNR adds noise to speech at the given signal-to-noise ratio in dB.
-func MixSNR(speech, noise []int16, snrDB float64) []int16 {
-	if len(speech) == 0 {
-		return nil
-	}
-	if len(noise) == 0 {
-		return append([]int16(nil), speech...)
-	}
-	tiled := make([]int16, len(speech))
-	for i := range tiled {
-		tiled[i] = noise[i%len(noise)]
-	}
-	ps := meanSquare(speech)
-	pn := meanSquare(tiled)
-	if pn == 0 {
-		return append([]int16(nil), speech...)
-	}
-	target := ps / math.Pow(10, snrDB/10)
-	scale := math.Sqrt(target / pn)
-	out := make([]int16, len(speech))
-	for i, s := range speech {
-		v := float64(s) + float64(tiled[i])*scale
-		out[i] = clip(v)
-	}
-	return out
-}
-
 func meanSquare(samples []int16) float64 {
 	if len(samples) == 0 {
 		return 0
@@ -76,21 +49,20 @@ func Add(frame, bed []int16, offset int) []int16 {
 	if len(bed) == 0 {
 		return frame
 	}
-	out := make([]int16, len(frame))
 	for i, s := range frame {
-		out[i] = clip(float64(s) + float64(bed[(offset+i)%len(bed)]))
+		frame[i] = clip(float64(s) + float64(bed[(offset+i)%len(bed)]))
 	}
-	return out
+	return frame
 }
 
-// KitchenNoise is bursty clatter at 8 kHz.
+// KitchenNoise is bursty clatter.
 func KitchenNoise(samples int, seed int64) []int16 {
 	rng := newLCG(seed)
 	out := make([]int16, samples)
 	burst := 0
 	for i := range out {
 		if burst <= 0 && rng.float64() < 0.02 {
-			burst = 80 + int(rng.float64()*200)
+			burst = Rate/100 + int(rng.float64()*Rate/40)
 		}
 		if burst > 0 {
 			out[i] = int16((rng.float64()*2 - 1) * 12000)
@@ -102,7 +74,7 @@ func KitchenNoise(samples int, seed int64) []int16 {
 	return out
 }
 
-// StreetNoise is a low rumble with occasional spikes at 8 kHz.
+// StreetNoise is a low rumble with occasional spikes.
 func StreetNoise(samples int, seed int64) []int16 {
 	rng := newLCG(seed)
 	out := make([]int16, samples)
@@ -118,7 +90,7 @@ func StreetNoise(samples int, seed int64) []int16 {
 	return out
 }
 
-// ConversationNoise is overlapping syllabic babble at 8 kHz, not a pair of sines.
+// ConversationNoise is overlapping syllabic babble, not a pair of sines.
 func ConversationNoise(samples int, seed int64) []int16 {
 	rng := newLCG(seed)
 	a := voicedTalker(samples, 110+rng.float64()*20, 4.2, rng, 0)
@@ -132,7 +104,7 @@ func ConversationNoise(samples int, seed int64) []int16 {
 
 // Talker is a ~1.2s other-conversation clip for mid-utterance overlap.
 func Talker(seed int64) []int16 {
-	n := TelnyxRate * 6 / 5
+	n := Rate * 6 / 5
 	rng := newLCG(seed)
 	return voicedTalker(n, 145+rng.float64()*30, 4.6, rng, 0.4)
 }
@@ -142,12 +114,12 @@ func voicedTalker(samples int, f0, syllHz float64, rng *lcg, phase float64) []in
 	gapUntil := 0
 	for i := range out {
 		if i >= gapUntil && rng.float64() < 0.0008 {
-			gapUntil = i + int(rng.float64()*0.18*TelnyxRate)
+			gapUntil = i + int(rng.float64()*0.18*Rate)
 		}
 		if i < gapUntil {
 			continue
 		}
-		t := float64(i) / TelnyxRate
+		t := float64(i) / Rate
 		syll := 0.5 + 0.5*math.Sin(2*math.Pi*syllHz*t+phase)
 		if syll < 0.22 {
 			continue
@@ -159,9 +131,9 @@ func voicedTalker(samples int, f0, syllHz float64, rng *lcg, phase float64) []in
 	return out
 }
 
-// Cough is a short noisy burst (~200 ms at 8 kHz).
+// Cough is a short noisy burst (~200 ms).
 func Cough(seed int64) []int16 {
-	n := TelnyxRate / 5
+	n := Rate / 5
 	rng := newLCG(seed)
 	out := make([]int16, n)
 	for i := range out {
@@ -173,10 +145,10 @@ func Cough(seed int64) []int16 {
 
 // Backchannel is a short "mm-hm" like hum (~250 ms).
 func Backchannel() []int16 {
-	n := TelnyxRate / 4
+	n := Rate / 4
 	out := make([]int16, n)
 	for i := range out {
-		t := float64(i) / TelnyxRate
+		t := float64(i) / Rate
 		env := math.Sin(math.Pi * float64(i) / float64(n))
 		out[i] = clip(math.Sin(2*math.Pi*140*t) * 9000 * env)
 	}
@@ -187,7 +159,7 @@ func Backchannel() []int16 {
 func Tone(samples int, hz float64, amp float64) []int16 {
 	out := make([]int16, samples)
 	for i := range out {
-		t := float64(i) / TelnyxRate
+		t := float64(i) / Rate
 		out[i] = clip(math.Sin(2*math.Pi*hz*t) * amp)
 	}
 	return out

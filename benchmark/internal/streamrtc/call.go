@@ -22,15 +22,13 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
-	"github.com/GetStream/Vision-Agents/benchmark/internal/telephony"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
 )
-
-const inboundRate = 16_000
 
 type rtcCall struct {
 	options Options
 	logger  *slog.Logger
-	recv    chan telephony.Frame
+	recv    chan transport.Frame
 	speaker *speaker
 
 	client *videosdk.Client
@@ -44,7 +42,7 @@ type rtcCall struct {
 	pending    []int16
 }
 
-func join(ctx context.Context, options Options) (telephony.Media, error) {
+func join(ctx context.Context, options Options) (transport.Media, error) {
 	if options.CallID == "" {
 		return nil, errors.New("streamrtc: a call id is required")
 	}
@@ -79,7 +77,7 @@ func join(ctx context.Context, options Options) (telephony.Media, error) {
 	c := &rtcCall{
 		options:   options,
 		logger:    options.Logger.With("call", options.CallType+":"+options.CallID),
-		recv:      make(chan telephony.Frame, 64),
+		recv:      make(chan transport.Frame, 64),
 		speaker:   newSpeaker(),
 		listening: map[string]*lkmedia.PCMRemoteTrack{},
 	}
@@ -153,7 +151,7 @@ func (c *rtcCall) listen(remote videosdk.OnTrackReceived) {
 		return
 	}
 	decoder, err := lkmedia.NewPCMRemoteTrack(remote.Track, &listener{call: c},
-		lkmedia.WithTargetSampleRate(inboundRate),
+		lkmedia.WithTargetSampleRate(audio.Rate),
 		lkmedia.WithTargetChannels(1),
 	)
 	if err != nil {
@@ -241,12 +239,10 @@ func (c *rtcCall) pushInbound(sample media.PCM16Sample) error {
 		return nil
 	}
 	c.pending = append(c.pending, sample...)
-	frame16 := inboundRate / 50
-	for len(c.pending) >= frame16 {
-		chunk := append([]int16(nil), c.pending[:frame16]...)
-		c.pending = c.pending[frame16:]
-		pcm8 := audio.Resample(audio.PCM{Rate: inboundRate, Samples: chunk}, audio.TelnyxRate)
-		frame := telephony.Frame{PCM: audio.PadRight(pcm8.Samples, audio.FrameSamples)}
+	for len(c.pending) >= audio.FrameSamples {
+		chunk := append([]int16(nil), c.pending[:audio.FrameSamples]...)
+		c.pending = c.pending[audio.FrameSamples:]
+		frame := transport.Frame{PCM: chunk}
 		select {
 		case c.recv <- frame:
 		default:
@@ -257,10 +253,10 @@ func (c *rtcCall) pushInbound(sample media.PCM16Sample) error {
 }
 
 func (c *rtcCall) Send(pcm []int16) error {
-	return c.speaker.Write(audio.PCM{Rate: audio.TelnyxRate, Samples: pcm})
+	return c.speaker.Write(audio.PCM{Rate: audio.Rate, Samples: pcm})
 }
 
-func (c *rtcCall) Recv() <-chan telephony.Frame { return c.recv }
+func (c *rtcCall) Recv() <-chan transport.Frame { return c.recv }
 
 func (c *rtcCall) Close() error {
 	c.mu.Lock()

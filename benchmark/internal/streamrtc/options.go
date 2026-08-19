@@ -5,7 +5,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/GetStream/Vision-Agents/benchmark/internal/telephony"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
 )
 
 const (
@@ -32,6 +32,6 @@ type Options struct {
 var ErrDisabled = errors.New("streamrtc: rebuild with -tags webrtc, CGO_ENABLED=1, and libopus")
 
 // Join connects to a Stream call as the benchmark caller.
-func Join(ctx context.Context, options Options) (telephony.Media, error) {
+func Join(ctx context.Context, options Options) (transport.Media, error) {
 	return join(ctx, options)
 }

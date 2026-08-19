@@ -53,13 +53,13 @@ type Metrics struct {
 }
 
 // TimingFromRecording measures V2V from caller-turn end to the next agent onset.
-func TimingFromRecording(rec caller.Result, turns []scenario.Turn) []Timing {
+func TimingFromRecording(rec caller.Result) []Timing {
 	rate := rec.Rate
 	if rate <= 0 {
-		rate = audio.TelnyxRate
+		rate = audio.Rate
 	}
 	var out []Timing
-	for i, ev := range rec.Events {
+	for _, ev := range rec.Events {
 		if ev.BargeIn || ev.Overlap {
 			continue
 		}
@@ -68,11 +68,7 @@ func TimingFromRecording(rec caller.Result, turns []scenario.Turn) []Timing {
 		if next < 0 {
 			continue
 		}
-		id := ev.TurnID
-		if i < len(turns) {
-			id = turns[i].ID
-		}
-		out = append(out, Timing{TurnID: id, V2VMS: next - cEnd})
+		out = append(out, Timing{TurnID: ev.TurnID, V2VMS: next - cEnd})
 	}
 	return out
 }

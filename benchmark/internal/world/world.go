@@ -199,7 +199,9 @@ func (s *Server) postTool(w http.ResponseWriter, r *http.Request) {
 		call.Result = map[string]any{"error": err.Error()}
 	}
 	s.mu.Lock()
-	sess.Tools = append(sess.Tools, call)
+	if s.session == sess {
+		sess.Tools = append(sess.Tools, call)
+	}
 	s.mu.Unlock()
 	writeJSON(w, call.Result)
 }
@@ -213,9 +215,14 @@ func cloneMap(in map[string]any) map[string]any {
 	if in == nil {
 		return nil
 	}
-	raw, _ := json.Marshal(in)
+	raw, err := json.Marshal(in)
+	if err != nil {
+		panic("world: seed is not json: " + err.Error())
+	}
 	var out map[string]any
-	_ = json.Unmarshal(raw, &out)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		panic("world: seed clone failed: " + err.Error())
+	}
 	return out
 }
 

@@ -41,7 +41,7 @@ func TestEntityInSpeech(t *testing.T) {
 }
 
 func TestBargeInStopMSUnmeasured(t *testing.T) {
-	rec := caller.Result{Rate: audio.TelnyxRate, Agent: audio.Silence(audio.TelnyxRate)}
+	rec := caller.Result{Rate: audio.Rate, Agent: audio.Silence(audio.Rate)}
 	if got := BargeInStopMS(rec); got != -1 {
 		t.Fatalf("no barge event: %d", got)
 	}
@@ -56,7 +56,7 @@ func TestBargeInStopMSUnmeasured(t *testing.T) {
 }
 
 func TestBargeInStopMSMeasured(t *testing.T) {
-	rate := audio.TelnyxRate
+	rate := audio.Rate
 	agent := audio.Concat(audio.Silence(rate/5), audio.Tone(rate, 220, 12000))
 	rec := caller.Result{
 		Agent: agent,
@@ -149,7 +149,7 @@ func TestDelayedToolNamesSkipsVerify(t *testing.T) {
 }
 
 func TestScoreFiller(t *testing.T) {
-	rate := audio.TelnyxRate
+	rate := audio.Rate
 	start := time.Now().Add(-2 * time.Second)
 	agent := audio.Concat(audio.Silence(rate/5), audio.Tone(rate, 220, 12000))
 	rec := caller.Result{Agent: agent, Rate: rate, StartedAt: start}
@@ -170,7 +170,7 @@ func TestScoreFiller(t *testing.T) {
 }
 
 func TestHoldThroughOverlap(t *testing.T) {
-	rate := audio.TelnyxRate
+	rate := audio.Rate
 	agent := audio.Concat(audio.Silence(rate/10), audio.Tone(rate, 220, 12000))
 	rec := caller.Result{
 		Agent: agent,
@@ -191,7 +191,7 @@ func TestHoldThroughOverlap(t *testing.T) {
 }
 
 func TestTimingFromRecording(t *testing.T) {
-	rate := audio.TelnyxRate
+	rate := audio.Rate
 	callerPCM := audio.Concat(audio.Silence(rate/10), audio.Tone(rate/5, 180, 12000), audio.Silence(rate))
 	agentPCM := audio.Concat(audio.Silence(rate/2), audio.Tone(rate/10, 220, 12000), audio.Silence(rate/10))
 	rec := caller.Result{
@@ -200,7 +200,7 @@ func TestTimingFromRecording(t *testing.T) {
 		Rate:   rate,
 		Events: []caller.Event{{TurnID: "intro", RecEndMs: 300}},
 	}
-	got := TimingFromRecording(rec, nil)
+	got := TimingFromRecording(rec)
 	if len(got) != 1 {
 		t.Fatalf("got %d samples", len(got))
 	}
@@ -210,14 +210,14 @@ func TestTimingFromRecording(t *testing.T) {
 }
 
 func TestTimingIgnoresMergedEarlierAgentSpan(t *testing.T) {
-	rate := audio.TelnyxRate
+	rate := audio.Rate
 	agent := audio.Concat(audio.Tone(rate, 220, 12000), audio.Silence(rate/5), audio.Tone(rate/10, 220, 12000))
 	rec := caller.Result{
 		Agent:  agent,
 		Rate:   rate,
 		Events: []caller.Event{{TurnID: "intro", RecEndMs: 400}},
 	}
-	got := TimingFromRecording(rec, nil)
+	got := TimingFromRecording(rec)
 	if len(got) != 1 {
 		t.Fatalf("got %d", len(got))
 	}
