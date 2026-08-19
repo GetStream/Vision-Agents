@@ -2,7 +2,7 @@
 
 ## Breaking Changes
 
-### `sarvam` plugin: drop `sarvam-30b` from supported LLM models
+### `sarvam` plugin: drop `sarvam-30b` from supported LLM models (#636)
 
 `sarvam.LLM` no longer accepts `sarvam-30b`. Use `sarvam-m` or `sarvam-105b` instead.
 

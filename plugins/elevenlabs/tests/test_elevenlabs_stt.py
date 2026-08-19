@@ -19,12 +19,14 @@ class TestElevenLabsSTTCallbacks:
         return Participant({}, user_id="test-user", id="test-user")
 
     @pytest.fixture
-    def stt(self, participant):
+    def stt(self, participant: Participant) -> elevenlabs.STT:
         stt = elevenlabs.STT(api_key="test-key")
         stt._current_participant = participant
         return stt
 
-    def test_duplicate_partials_emit_one_turn_started(self, stt):
+    def test_duplicate_partials_emit_one_turn_started(
+        self, stt: elevenlabs.STT
+    ) -> None:
         stt._on_partial_transcript({"text": "Hello"})
         stt._on_partial_transcript({"text": "Hello world"})
 
@@ -33,7 +35,9 @@ class TestElevenLabsSTTCallbacks:
         ]
         assert len(turn_events) == 1
 
-    def test_multiple_committed_utterances_emit_balanced_ordered_turns(self, stt):
+    def test_multiple_committed_utterances_emit_balanced_ordered_turns(
+        self, stt: elevenlabs.STT
+    ) -> None:
         stt._on_partial_transcript({"text": "First"})
         stt._on_committed_transcript({"text": "First utterance"})
         stt._on_partial_transcript({"text": "Second"})
@@ -51,7 +55,7 @@ class TestElevenLabsSTTCallbacks:
             for index in range(0, len(turn_events), 2)
         )
 
-    def test_empty_commit_ends_active_turn(self, stt):
+    def test_empty_commit_ends_active_turn(self, stt: elevenlabs.STT) -> None:
         stt._on_partial_transcript({"text": "Speech"})
         stt._on_committed_transcript({"text": ""})
 
@@ -64,7 +68,9 @@ class TestElevenLabsSTTCallbacks:
         assert isinstance(turn_events[0], TurnStarted)
         assert isinstance(turn_events[1], TurnEnded)
 
-    def test_keepalive_empty_commit_does_not_emit_turn_events(self, stt):
+    def test_keepalive_empty_commit_does_not_emit_turn_events(
+        self, stt: elevenlabs.STT
+    ) -> None:
         stt._on_committed_transcript({"text": ""})
         stt._on_committed_transcript({"text": "   "})
 

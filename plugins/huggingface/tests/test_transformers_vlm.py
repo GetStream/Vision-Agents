@@ -368,5 +368,9 @@ class TestTransformersVLMIntegration:
         finally:
             if not response_task.done():
                 await vlm.interrupt()
-                await response_task
+                try:
+                    await asyncio.wait_for(response_task, timeout=10)
+                except asyncio.TimeoutError:
+                    response_task.cancel()
+                    await asyncio.gather(response_task, return_exceptions=True)
             vlm.unload()

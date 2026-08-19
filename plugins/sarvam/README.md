@@ -9,8 +9,8 @@ AI models built for Indian languages.
   Activity Detection for turn events.
 - **TTS**: WebSocket streaming text-to-speech (Bulbul) with configurable
   speaker, pace, and language.
-- **LLM**: OpenAI-compatible chat completions (Sarvam-30B / Sarvam-105B /
-  Sarvam-M) via the existing `ChatCompletionsLLM` from the OpenAI plugin.
+- **LLM**: OpenAI-compatible chat completions (Sarvam-105B / Sarvam-M) via
+  the existing `ChatCompletionsLLM` from the OpenAI plugin.
 
 ## Installation
 
