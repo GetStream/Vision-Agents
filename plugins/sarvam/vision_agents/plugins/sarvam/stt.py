@@ -3,9 +3,9 @@
 Docs: https://docs.sarvam.ai/api-reference-docs/api-guides-tutorials/speech-to-text/streaming-api
 
 Supported models:
-    - ``saaras:v3`` (default, recommended) – transcription + translation
-    - ``saarika:v2.5`` – legacy transcription-only
-    - ``saaras:v2.5`` – legacy translation
+    - ``saaras:v3-realtime`` (default) – low-latency transcription
+    - ``saaras:v3`` – transcription + translation
+    - ``saaras:v4`` – latest transcription model
 """
 
 import asyncio
@@ -26,15 +26,10 @@ from vision_agents.core.stt import TranscriptResponse
 logger = logging.getLogger(__name__)
 
 WS_STT_URL = "wss://api.sarvam.ai/speech-to-text/ws"
-WS_STT_TRANSLATE_URL = "wss://api.sarvam.ai/speech-to-text-translate/ws"
 
 SUPPORTED_SAMPLE_RATES = {8000, 16000}
 SUPPORTED_MODES = {"transcribe", "translate", "verbatim", "translit", "codemix"}
-
-MODELS_USING_TRANSLATE_ENDPOINT = {"saaras:v2.5"}
-MODELS_SUPPORTING_PROMPT = {"saaras:v2.5", "saaras:v3"}
-MODELS_SUPPORTING_MODE = {"saaras:v3"}
-SUPPORTED_MODELS = {"saaras:v3", "saarika:v2.5", "saaras:v2.5"}
+SUPPORTED_MODELS = {"saaras:v3", "saaras:v3-realtime", "saaras:v4"}
 
 
 class STT(stt.STT):
@@ -53,7 +48,7 @@ class STT(stt.STT):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "saaras:v3",
+        model: str = "saaras:v3-realtime",
         language: Optional[str] = None,
         mode: Optional[str] = None,
         sample_rate: int = 16000,
@@ -65,7 +60,7 @@ class STT(stt.STT):
 
         Args:
             api_key: Sarvam API key. Falls back to ``SARVAM_API_KEY`` env var.
-            model: Streaming model id. Defaults to ``saaras:v3``.
+            model: Streaming model id. Defaults to ``saaras:v3-realtime``.
             language: Language code (e.g. ``hi-IN``, ``en-IN``). ``None`` lets
                 Sarvam auto-detect.
             mode: One of ``transcribe``, ``translate``, ``verbatim``,
@@ -120,11 +115,6 @@ class STT(stt.STT):
         self._turn_end_pending: bool = False
 
     def _build_ws_url(self) -> str:
-        base = (
-            WS_STT_TRANSLATE_URL
-            if self.model in MODELS_USING_TRANSLATE_ENDPOINT
-            else WS_STT_URL
-        )
         params: dict[str, str | int] = {
             "model": self.model,
             "sample_rate": self.sample_rate,
@@ -132,11 +122,11 @@ class STT(stt.STT):
         }
         if self.language is not None:
             params["language-code"] = self.language
-        if self.mode is not None and self.model in MODELS_SUPPORTING_MODE:
+        if self.mode is not None:
             params["mode"] = self.mode
         if self.high_vad_sensitivity:
             params["high_vad_sensitivity"] = "true"
-        return f"{base}?{urlencode(params)}"
+        return f"{WS_STT_URL}?{urlencode(params)}"
 
     async def start(self) -> None:
         """Open the Sarvam WebSocket and start the receive loop."""
@@ -148,7 +138,7 @@ class STT(stt.STT):
         self._session = aiohttp.ClientSession()
         self._ws = await self._session.ws_connect(url, headers=headers)
 
-        if self._prompt and self.model in MODELS_SUPPORTING_PROMPT:
+        if self._prompt:
             await self._ws.send_str(
                 json.dumps({"type": "config", "prompt": self._prompt})
             )
