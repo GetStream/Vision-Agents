@@ -7,37 +7,45 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.error import Error
-from ...models.modality import Modality
-from ...models.provider import Provider
+from ...models.skill import Skill
+from ...models.skill_request import SkillRequest
 from ...types import Response
 
 
 def _get_kwargs(
-    modality: Modality,
+    id: str,
+    *,
+    body: SkillRequest,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/v1/{modality}/providers".format(
-            modality=quote(str(modality), safe=""),
+        "method": "put",
+        "url": "/v1/agents/skills/{id}".format(
+            id=quote(str(id), safe=""),
         ),
     }
 
+    _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[Provider] | None:
+) -> Error | Skill | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for response_200_item_data in _response_200:
-            response_200_item = Provider.from_dict(response_200_item_data)
-
-            response_200.append(response_200_item)
+        response_200 = Skill.from_dict(response.json())
 
         return response_200
+
+    if response.status_code == 400:
+        response_400 = Error.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Error.from_dict(response.json())
@@ -57,7 +65,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[Provider]]:
+) -> Response[Error | Skill]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -67,29 +75,28 @@ def _build_response(
 
 
 def sync_detailed(
-    modality: Modality,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | list[Provider]]:
-    """List the providers configured for a modality and their live health
+    body: SkillRequest,
+) -> Response[Error | Skill]:
+    """Replace a skill
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
-             Example: tts.
+        id (str):
+        body (SkillRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[Provider]]
+        Response[Error | Skill]
     """
 
     kwargs = _get_kwargs(
-        modality=modality,
+        id=id,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -100,57 +107,55 @@ def sync_detailed(
 
 
 def sync(
-    modality: Modality,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Error | list[Provider] | None:
-    """List the providers configured for a modality and their live health
+    body: SkillRequest,
+) -> Error | Skill | None:
+    """Replace a skill
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
-             Example: tts.
+        id (str):
+        body (SkillRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[Provider]
+        Error | Skill
     """
 
     return sync_detailed(
-        modality=modality,
+        id=id,
         client=client,
+        body=body,
     ).parsed
 
 
 async def asyncio_detailed(
-    modality: Modality,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | list[Provider]]:
-    """List the providers configured for a modality and their live health
+    body: SkillRequest,
+) -> Response[Error | Skill]:
+    """Replace a skill
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
-             Example: tts.
+        id (str):
+        body (SkillRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[Provider]]
+        Response[Error | Skill]
     """
 
     kwargs = _get_kwargs(
-        modality=modality,
+        id=id,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -159,30 +164,29 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    modality: Modality,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Error | list[Provider] | None:
-    """List the providers configured for a modality and their live health
+    body: SkillRequest,
+) -> Error | Skill | None:
+    """Replace a skill
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
-             Example: tts.
+        id (str):
+        body (SkillRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[Provider]
+        Error | Skill
     """
 
     return (
         await asyncio_detailed(
-            modality=modality,
+            id=id,
             client=client,
+            body=body,
         )
     ).parsed

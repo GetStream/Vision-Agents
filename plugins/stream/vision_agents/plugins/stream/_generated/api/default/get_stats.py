@@ -114,9 +114,9 @@ def sync_detailed(
 
     Args:
         modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory and phone are recorded but not routed, since there is one memory store
-            and one vendor per number, so the provider paths do not serve them while the statistics
-            paths do.
+            providers. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
              Example: tts.
         granularity (Granularity | Unset):
         from_ (datetime.datetime):
@@ -159,9 +159,9 @@ def sync(
 
     Args:
         modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory and phone are recorded but not routed, since there is one memory store
-            and one vendor per number, so the provider paths do not serve them while the statistics
-            paths do.
+            providers. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
              Example: tts.
         granularity (Granularity | Unset):
         from_ (datetime.datetime):
@@ -199,9 +199,9 @@ async def asyncio_detailed(
 
     Args:
         modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory and phone are recorded but not routed, since there is one memory store
-            and one vendor per number, so the provider paths do not serve them while the statistics
-            paths do.
+            providers. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
              Example: tts.
         granularity (Granularity | Unset):
         from_ (datetime.datetime):
@@ -242,9 +242,9 @@ async def asyncio(
 
     Args:
         modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory and phone are recorded but not routed, since there is one memory store
-            and one vendor per number, so the provider paths do not serve them while the statistics
-            paths do.
+            providers. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
              Example: tts.
         granularity (Granularity | Unset):
         from_ (datetime.datetime):

@@ -25,7 +25,14 @@ T = TypeVar("T", bound="CreateSessionRequest")
 class CreateSessionRequest:
     """
     Attributes:
-        call_id (str): The call to join.
+        call_id (str | Unset): The call to join. Required unless the session is text.
+        text (bool | Unset): Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing
+            is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is
+            unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive
+            as response_delta and responded events on the session's socket.
+             Default: False.
+        config_id (str | Unset): An agent config to start from. Everything else in this request overrides what the
+            config says, so a caller can reuse a configuration and still change one thing about this call.
         call_type (str | Unset):  Default: 'default'.
         user_id (str | Unset): Who the agent joins the call as. Default: 'vision-agent'.
         user_name (str | Unset):  Default: 'Vision Agent'.
@@ -51,6 +58,9 @@ class CreateSessionRequest:
         min_confidence (float | Unset): How sure the transcriber must be before the agent answers rather than checks
             what was meant.
         skills (list[SessionSkill] | Unset): Omit for the built-in set of think, recall and explain.
+        skill_names (list[str] | Unset): Skills to look up rather than spell out: the customer's own, or one of the
+            built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused
+            rather than dropped.
         tools (list[SessionTool] | Unset):
         tool_timeout_ms (int | Unset): How long the model waits for a tool result. Zero is the default.
         tags (CreateSessionRequestTags | Unset): Cost labels, carried onto every request the session makes.
@@ -59,7 +69,9 @@ class CreateSessionRequest:
         phone (SessionPhone | Unset): The number the session acts from, which is what turns transferring on.
     """
 
-    call_id: str
+    call_id: str | Unset = UNSET
+    text: bool | Unset = False
+    config_id: str | Unset = UNSET
     call_type: str | Unset = "default"
     user_id: str | Unset = "vision-agent"
     user_name: str | Unset = "Vision Agent"
@@ -79,6 +91,7 @@ class CreateSessionRequest:
     backchannel: bool | Unset = False
     min_confidence: float | Unset = UNSET
     skills: list[SessionSkill] | Unset = UNSET
+    skill_names: list[str] | Unset = UNSET
     tools: list[SessionTool] | Unset = UNSET
     tool_timeout_ms: int | Unset = UNSET
     tags: CreateSessionRequestTags | Unset = UNSET
@@ -88,6 +101,10 @@ class CreateSessionRequest:
 
     def to_dict(self) -> dict[str, Any]:
         call_id = self.call_id
+
+        text = self.text
+
+        config_id = self.config_id
 
         call_type = self.call_type
 
@@ -136,6 +153,10 @@ class CreateSessionRequest:
                 skills_item = skills_item_data.to_dict()
                 skills.append(skills_item)
 
+        skill_names: list[str] | Unset = UNSET
+        if not isinstance(self.skill_names, Unset):
+            skill_names = self.skill_names
+
         tools: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.tools, Unset):
             tools = []
@@ -159,11 +180,13 @@ class CreateSessionRequest:
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update(
-            {
-                "call_id": call_id,
-            }
-        )
+        field_dict.update({})
+        if call_id is not UNSET:
+            field_dict["call_id"] = call_id
+        if text is not UNSET:
+            field_dict["text"] = text
+        if config_id is not UNSET:
+            field_dict["config_id"] = config_id
         if call_type is not UNSET:
             field_dict["call_type"] = call_type
         if user_id is not UNSET:
@@ -202,6 +225,8 @@ class CreateSessionRequest:
             field_dict["min_confidence"] = min_confidence
         if skills is not UNSET:
             field_dict["skills"] = skills
+        if skill_names is not UNSET:
+            field_dict["skill_names"] = skill_names
         if tools is not UNSET:
             field_dict["tools"] = tools
         if tool_timeout_ms is not UNSET:
@@ -224,7 +249,11 @@ class CreateSessionRequest:
         from ..models.session_tool import SessionTool
 
         d = dict(src_dict)
-        call_id = d.pop("call_id")
+        call_id = d.pop("call_id", UNSET)
+
+        text = d.pop("text", UNSET)
+
+        config_id = d.pop("config_id", UNSET)
 
         call_type = d.pop("call_type", UNSET)
 
@@ -276,6 +305,8 @@ class CreateSessionRequest:
 
                 skills.append(skills_item)
 
+        skill_names = cast(list[str], d.pop("skill_names", UNSET))
+
         _tools = d.pop("tools", UNSET)
         tools: list[SessionTool] | Unset = UNSET
         if _tools is not UNSET:
@@ -310,6 +341,8 @@ class CreateSessionRequest:
 
         create_session_request = cls(
             call_id=call_id,
+            text=text,
+            config_id=config_id,
             call_type=call_type,
             user_id=user_id,
             user_name=user_name,
@@ -329,6 +362,7 @@ class CreateSessionRequest:
             backchannel=backchannel,
             min_confidence=min_confidence,
             skills=skills,
+            skill_names=skill_names,
             tools=tools,
             tool_timeout_ms=tool_timeout_ms,
             tags=tags,

@@ -52,6 +52,47 @@ events the backend sends back are recorded into the same places.
 on the backend. Only the subagent is offered it: running code takes seconds, and the model
 holding the conversation has none to spare.
 
+## A conversation held in writing
+
+The same agent, with the voice left off. No call is joined, nothing is transcribed and
+nothing is spoken, but everything between hearing a question and answering it is unchanged:
+the same skills handed to the same slower model, and the same knowledge base looked up
+mid-answer.
+
+```python
+from vision_agents.core.harness import Skill
+from vision_agents.plugins import stream
+
+config = await stream.define_agent(
+    name="docs-agent",
+    instructions="Answer questions about the documentation.",
+    llm="llm-fast",
+    subagent="llm-smart",
+    skills=[Skill(name="explain", description="...", instructions="...")],
+    knowledge="docs",
+)
+
+async with stream.TextSession(config_id=config.id) as session:
+    async for event in session.ask("how does failover work?"):
+        if event.type == "delta":
+            print(event.text, end="", flush=True)
+```
+
+`define_agent` stores a named configuration in the backend's Postgres, along with the skills
+it names. Both are found by name before writing, so running it again edits what is stored
+rather than storing another copy. A session then names the config by id, which is how the
+same agent is reached from a script, from a phone call and from anywhere else without any of
+them repeating the configuration.
+
+`TextSession.ask` streams back what the backend did on its way to an answer: `delta` as it
+is written, `looked_up` when the knowledge base was searched, `delegated` and `settled`
+around work handed to a skill, and `answer` when the turn is finished. Delegated work
+outlives the turn that asked for it, so the model says something while it runs and the answer
+arrives when it comes back.
+
+See [example 12](../../examples/12_docs_agent_example) for the whole thing, including reading
+this repo's markdown into a knowledge base.
+
 ## One modality at a time
 
 For a pipeline that stays in Python, each modality can be routed on its own. Failover and

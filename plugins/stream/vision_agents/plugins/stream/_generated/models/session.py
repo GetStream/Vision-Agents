@@ -19,12 +19,13 @@ class Session:
     """
     Attributes:
         id (str):
-        call_id (str):
+        call_id (str): Empty for a text session, which joins no call.
         call_type (str):
         user_id (str):
         agent_id (str):
         state (SessionState): Whether the agent is still in the call.
         created_at (datetime.datetime):
+        text (bool | Unset): The conversation is held in writing rather than on a call.
         llm (str | Unset): The provider and model answering, once routing has picked one.
         tts (str | Unset): The provider and model speaking.
         instructions (str | Unset):
@@ -37,6 +38,7 @@ class Session:
     agent_id: str
     state: SessionState
     created_at: datetime.datetime
+    text: bool | Unset = UNSET
     llm: str | Unset = UNSET
     tts: str | Unset = UNSET
     instructions: str | Unset = UNSET
@@ -57,6 +59,8 @@ class Session:
 
         created_at = self.created_at.isoformat()
 
+        text = self.text
+
         llm = self.llm
 
         tts = self.tts
@@ -76,6 +80,8 @@ class Session:
                 "created_at": created_at,
             }
         )
+        if text is not UNSET:
+            field_dict["text"] = text
         if llm is not UNSET:
             field_dict["llm"] = llm
         if tts is not UNSET:
@@ -102,6 +108,8 @@ class Session:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        text = d.pop("text", UNSET)
+
         llm = d.pop("llm", UNSET)
 
         tts = d.pop("tts", UNSET)
@@ -116,6 +124,7 @@ class Session:
             agent_id=agent_id,
             state=state,
             created_at=created_at,
+            text=text,
             llm=llm,
             tts=tts,
             instructions=instructions,

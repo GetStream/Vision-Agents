@@ -6,20 +6,19 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.contact import Contact
 from ...models.error import Error
-from ...models.modality import Modality
-from ...models.provider import Provider
 from ...types import Response
 
 
 def _get_kwargs(
-    modality: Modality,
+    id: str,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/{modality}/providers".format(
-            modality=quote(str(modality), safe=""),
+        "url": "/v1/agents/campaigns/{id}/contacts".format(
+            id=quote(str(id), safe=""),
         ),
     }
 
@@ -28,16 +27,21 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[Provider] | None:
+) -> Error | list[Contact] | None:
     if response.status_code == 200:
         response_200 = []
         _response_200 = response.json()
         for response_200_item_data in _response_200:
-            response_200_item = Provider.from_dict(response_200_item_data)
+            response_200_item = Contact.from_dict(response_200_item_data)
 
             response_200.append(response_200_item)
 
         return response_200
+
+    if response.status_code == 400:
+        response_400 = Error.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Error.from_dict(response.json())
@@ -57,7 +61,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[Provider]]:
+) -> Response[Error | list[Contact]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -67,29 +71,25 @@ def _build_response(
 
 
 def sync_detailed(
-    modality: Modality,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | list[Provider]]:
-    """List the providers configured for a modality and their live health
+) -> Response[Error | list[Contact]]:
+    """Who a campaign is ringing, and how far it has got
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
-             Example: tts.
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[Provider]]
+        Response[Error | list[Contact]]
     """
 
     kwargs = _get_kwargs(
-        modality=modality,
+        id=id,
     )
 
     response = client.get_httpx_client().request(
@@ -100,57 +100,49 @@ def sync_detailed(
 
 
 def sync(
-    modality: Modality,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Error | list[Provider] | None:
-    """List the providers configured for a modality and their live health
+) -> Error | list[Contact] | None:
+    """Who a campaign is ringing, and how far it has got
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
-             Example: tts.
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[Provider]
+        Error | list[Contact]
     """
 
     return sync_detailed(
-        modality=modality,
+        id=id,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
-    modality: Modality,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Error | list[Provider]]:
-    """List the providers configured for a modality and their live health
+) -> Response[Error | list[Contact]]:
+    """Who a campaign is ringing, and how far it has got
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
-             Example: tts.
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[Provider]]
+        Response[Error | list[Contact]]
     """
 
     kwargs = _get_kwargs(
-        modality=modality,
+        id=id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -159,30 +151,26 @@ async def asyncio_detailed(
 
 
 async def asyncio(
-    modality: Modality,
+    id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Error | list[Provider] | None:
-    """List the providers configured for a modality and their live health
+) -> Error | list[Contact] | None:
+    """Who a campaign is ringing, and how far it has got
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
-             Example: tts.
+        id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[Provider]
+        Error | list[Contact]
     """
 
     return (
         await asyncio_detailed(
-            modality=modality,
+            id=id,
             client=client,
         )
     ).parsed

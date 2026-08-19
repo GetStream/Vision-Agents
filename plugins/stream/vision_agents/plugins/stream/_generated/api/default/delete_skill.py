@@ -15,8 +15,8 @@ def _get_kwargs(
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
-        "method": "get",
-        "url": "/v1/agents/sessions/{id}/events".format(
+        "method": "delete",
+        "url": "/v1/agents/skills/{id}".format(
             id=quote(str(id), safe=""),
         ),
     }
@@ -27,9 +27,14 @@ def _get_kwargs(
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> Any | Error | None:
-    if response.status_code == 101:
-        response_101 = cast(Any, None)
-        return response_101
+    if response.status_code == 204:
+        response_204 = cast(Any, None)
+        return response_204
+
+    if response.status_code == 400:
+        response_400 = Error.from_dict(response.json())
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = Error.from_dict(response.json())
@@ -63,17 +68,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Error]:
-    """Watch the conversation and answer the model's tool calls
-
-     A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
-    `type` and the fields of that event.
-    The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded`, `spoke`, `turn`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`,
-    `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `error` and `left`.
-    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
-    `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
-    answered: everything else is a report.
+    """Delete a skill
 
     Args:
         id (str):
@@ -102,17 +97,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Error | None:
-    """Watch the conversation and answer the model's tool calls
-
-     A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
-    `type` and the fields of that event.
-    The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded`, `spoke`, `turn`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`,
-    `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `error` and `left`.
-    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
-    `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
-    answered: everything else is a report.
+    """Delete a skill
 
     Args:
         id (str):
@@ -136,17 +121,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Error]:
-    """Watch the conversation and answer the model's tool calls
-
-     A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
-    `type` and the fields of that event.
-    The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded`, `spoke`, `turn`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`,
-    `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `error` and `left`.
-    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
-    `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
-    answered: everything else is a report.
+    """Delete a skill
 
     Args:
         id (str):
@@ -173,17 +148,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Error | None:
-    """Watch the conversation and answer the model's tool calls
-
-     A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
-    `type` and the fields of that event.
-    The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded`, `spoke`, `turn`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`,
-    `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
-    `conversation_compacted`, `error` and `left`.
-    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
-    `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
-    answered: everything else is a report.
+    """Delete a skill
 
     Args:
         id (str):

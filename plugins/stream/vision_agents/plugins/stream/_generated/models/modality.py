@@ -2,6 +2,7 @@ from enum import Enum
 
 
 class Modality(str, Enum):
+    KNOWLEDGE = "knowledge"
     LLM = "llm"
     MEMORY = "memory"
     PHONE = "phone"
