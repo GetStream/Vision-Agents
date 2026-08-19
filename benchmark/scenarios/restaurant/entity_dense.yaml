@@ -1,0 +1,50 @@
+id: restaurant.entity_dense
+pack: restaurant
+category: entity_dense
+name: Takeout with modifiers and an 86'd item
+persona: A caller placing a pickup order with several modifiers.
+max_duration_s: 180
+turns:
+  - id: intro
+    text: "Pickup order. Burger, no bun, gluten-free. Fries extra salt. Oat milkshake. Name Patel, peanut allergy."
+    trigger:
+      kind: after_agent_turn
+      delay_ms: 400
+  - id: substitute
+    text: "If the shake is 86'd, skip it. I'll take the burger and fries. Pickup in 20 minutes."
+    trigger:
+      kind: after_agent_turn
+      delay_ms: 400
+seed:
+  menu:
+    - {name: burger, available: true, price: 14, substitute: ""}
+    - {name: fries, available: true, price: 4, substitute: ""}
+    - {name: milkshake, available: false, price: 6, substitute: "skip"}
+end_state:
+  - path: order.allergen
+    eq: peanut
+  - path: order.total
+    eq: 18
+expected_tools:
+  - name: lookup_menu
+    args: {}
+  - name: create_order
+    args:
+      name: Patel
+      allergen: peanut
+      pickup_window: "20 minutes"
+      items:
+        - {name: burger, modifiers: ["no bun", "gluten-free"]}
+        - {name: fries, modifiers: ["extra salt"]}
+entities:
+  - {name: name, value: Patel, in_speech: true, in_tools: true}
+  - {name: allergen, value: peanut, in_speech: true, in_tools: true}
+policy:
+  - Do not sell an 86'd milkshake.
+  - Confirm total and pickup window.
+  - Allergen must be on the ticket.
+judge:
+  task: Order is burger and fries only, total 18, peanut allergy recorded.
+agent_replies:
+  - "Copper Spoon takeout, go ahead."
+  - "Milkshake is 86'd. Burger no bun gluten-free and fries extra salt for Patel, peanut allergy, total 18, pickup in 20."

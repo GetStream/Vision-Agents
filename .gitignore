@@ -97,6 +97,10 @@ plugins/*/example/uv.lock
 /acceleration/say
 /acceleration/transcribe
 
+/benchmark/voicebench
+/benchmark/out/
+/benchmark/cache/
+
 # Artifacts / assets
 *.pt
 *.kef

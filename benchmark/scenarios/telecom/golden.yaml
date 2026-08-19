@@ -1,0 +1,57 @@
+id: telecom.golden
+pack: telecom
+category: golden
+name: Internet down since 6, reboot then ticket
+persona: A residential subscriber whose modem has been offline.
+max_duration_s: 180
+turns:
+  - id: intro
+    text: "Internet's been down since 6. Can you send someone?"
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: identity
+    text: "PIN 4471, last four 9821, service address 14 Cedar Lane. Gateway error 840."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: reboot
+    text: "Okay I rebooted it, still down. Please send a tech."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  outage: false
+  reboot_succeeds: false
+  gateway_error: "840"
+  credit_eligible: false
+  accounts:
+    - {id: acc1, pin: "4471", last4: "9821", address: "14 Cedar Lane", plan: "fiber-500"}
+end_state:
+  - path: reboot_attempted
+    eq: true
+  - path: ticket.id
+    exists: true
+  - path: dispatch.window
+    exists: true
+expected_tools:
+  - name: verify_account
+    args: {pin: "4471", last4: "9821", address: "14 Cedar Lane"}
+  - name: check_outage
+    args: {}
+  - name: walk_reboot
+    args: {}
+  - name: create_ticket
+    args: {reason: "no-service", address: "14 Cedar Lane"}
+  - name: dispatch_tech
+    args: {window: "am", ticket_id: "T-1842"}
+tool_order:
+  - {before: walk_reboot, after: dispatch_tech}
+  - {before: verify_account, after: create_ticket}
+entities:
+  - {name: pin, value: "4471", in_tools: true, in_speech: false}
+  - {name: last4, value: "9821", in_tools: true, in_speech: true}
+  - {name: error, value: "840", in_speech: true, in_tools: false}
+policy:
+  - Reboot before a truck roll.
+  - Read the ticket number back.
+judge:
+  task: Outage check, reboot, then ticket and dispatch. Read T-1842.
+agent_replies:
+  - "Regional internet support."
+  - "No area outage. Let's reboot. PIN verified for 14 Cedar Lane."
+  - "Still down after reboot, ticket T-1842, tech window in the morning, error 840 logged, last four 9821."

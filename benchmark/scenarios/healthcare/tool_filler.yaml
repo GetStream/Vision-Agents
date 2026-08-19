@@ -1,0 +1,29 @@
+id: healthcare.tool_filler
+pack: healthcare
+category: checklist
+name: Delayed appointment lookup filler
+max_duration_s: 180
+tool_delay_ms:
+  lookup_appointment: 3000
+turns:
+  - id: intro
+    text: "Maya Chen, March 4 1987, ABC123456. What appointments do I have?"
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  patients:
+    - {id: p1, name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456}
+  appointments:
+    - {id: a1, patient_id: p1, clinician: "Dr Chen", date: "Thursday", time: "2pm", location: "Main clinic"}
+end_state:
+  - path: identity_verified
+    eq: true
+expected_tools:
+  - name: verify_identity
+    args: {name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456}
+  - name: lookup_appointment
+    args: {}
+policy:
+  - Speak a filler while the chart lookup is delayed.
+agent_replies:
+  - "One moment, checking the chart."
+  - "Maya Chen, Thursday 2pm with Dr Chen at Main clinic."

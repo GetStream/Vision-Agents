@@ -1,0 +1,70 @@
+id: healthcare.coherence
+pack: healthcare
+category: checklist
+name: Two minute reschedule stays coherent
+persona: A patient who confirms identity and appointment details slowly.
+max_duration_s: 240
+judge:
+  coherence: true
+  task: After two minutes the listener should still know Maya's Thursday 2pm moved to Tuesday morning and insurance was updated. Do not mix in Leo Chen.
+  must_not_disclose:
+    - Leo Chen
+turns:
+  - id: intro
+    text: "I need to reschedule my Thursday 2pm with Dr Chen. I also have a new insurance card I should put on file while I have you."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: identity
+    text: "Maya Chen, date of birth March 4 1987, member ID ABC123456. Please verify that before you pull the chart."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: slot
+    text: "The visit I mean is Thursday at 2pm with Dr Chen at the main clinic. I want Tuesday morning instead if that is open."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: insurance
+    text: "New member ID is XYZ987654, Blue Ridge Health. Pharmacy is still Oak Street Pharmacy."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: confirm_day
+    text: "Tuesday morning, not Thursday afternoon, and not Friday. Can you say the new date and time back?"
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: location
+    text: "Is it still the main clinic location after the move, or do I go somewhere else Tuesday morning?"
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: pharmacy
+    text: "Please leave Oak Street Pharmacy on the file. I do not want that swapped when you save the insurance."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: insurance_again
+    text: "The new card is Blue Ridge Health, member XYZ987654. The old ABC number should not stay as primary."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: readback
+    text: "Read back my name, Tuesday morning, main clinic, and the new member ID one more time so I know we did not drift."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: thanks
+    text: "That matches. Thank you for walking through it slowly."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  patients:
+    - {id: p1, name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456, phone: "512-555-0100", pharmacy: "Oak Street Pharmacy"}
+    - {id: p2, name: "Leo Chen", dob: "2014-06-11", member_id: ABC000111, phone: "512-555-0101"}
+  appointments:
+    - {id: a1, patient_id: p1, clinician: "Dr Chen", date: "Thursday", time: "2pm", location: "Main clinic"}
+    - {id: a2, patient_id: p2, clinician: "Dr Chen", date: "Friday", time: "10am", location: "Main clinic"}
+end_state:
+  - path: identity_verified
+    eq: true
+  - path: appointment.date
+    eq: Tuesday
+  - path: appointment.time
+    eq: morning
+expected_tools:
+  - name: verify_identity
+    args: {name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456}
+  - name: reschedule_appointment
+    args: {appointment_id: a1, new_date: Tuesday, new_time: morning}
+  - name: update_insurance
+    args: {member_id: XYZ987654, payer: "Blue Ridge Health"}
+entities:
+  - {name: member, value: XYZ987654, in_tools: true, in_speech: true}
+policy:
+  - Verify identity before PHI. Do not disclose Leo Chen. Do not lose the Tuesday morning move.
+agent_replies:
+  - "Clinic after hours. I need to verify you first."
+  - "Maya Chen, Thursday 2pm moves to Tuesday morning at Main clinic, insurance XYZ987654 Blue Ridge Health."

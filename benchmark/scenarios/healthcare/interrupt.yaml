@@ -1,0 +1,46 @@
+id: healthcare.interrupt
+pack: healthcare
+category: interrupt
+name: Wrong chart mid-readback, switch to the caller's appointment
+persona: A parent who almost confirms a child's appointment as their own.
+max_duration_s: 180
+turns:
+  - id: intro
+    text: "Reschedule Thursday 2pm with Dr Chen. I'm Maya Chen, born March 4 1987, member ABC123456."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: stop
+    text: "Wait, that's my son's appointment, mine is Friday."
+    trigger: {kind: barge_in_after_ms, after_ms: 800}
+  - id: confirm
+    text: "Keep Maya's Friday 10am with Dr Chen, just move it to Tuesday morning."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  patients:
+    - {id: p1, name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456, phone: "512-555-0100"}
+    - {id: p2, name: "Leo Chen", dob: "2014-06-11", member_id: ABC000111, phone: "512-555-0101"}
+  appointments:
+    - {id: a1, patient_id: p2, clinician: "Dr Chen", date: "Thursday", time: "2pm", location: "Main clinic"}
+    - {id: a2, patient_id: p1, clinician: "Dr Chen", date: "Friday", time: "10am", location: "Main clinic"}
+end_state:
+  - path: appointment.id
+    eq: a2
+  - path: appointment.date
+    eq: Tuesday
+expected_tools:
+  - name: verify_identity
+    args: {name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456}
+  - name: reschedule_appointment
+    args: {appointment_id: a2, new_date: Tuesday, new_time: morning}
+entities:
+  - {name: appointment, value: a2, in_tools: true, in_speech: false}
+policy:
+  - Do not mix Maya and Leo records after the barge-in.
+  - Never reschedule the son's Thursday slot as the mother's.
+judge:
+  task: Only Maya's Friday appointment moves. Leo's Thursday slot is untouched.
+  must_not_disclose:
+    - Leo's member ID
+agent_replies:
+  - "After hours clinic, verify your name and date of birth."
+  - "Thursday 2pm with Dr Chen—"
+  - "Understood. Maya's Friday 10am moves to Tuesday morning, appointment a2. Son's Thursday slot is unchanged."

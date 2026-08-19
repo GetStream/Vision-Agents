@@ -1,0 +1,60 @@
+id: restaurant.golden
+pack: restaurant
+category: golden
+name: Saturday patio for four with peanut allergy
+persona: A parent booking dinner at The Copper Spoon.
+max_duration_s: 180
+instructions: Book a patio table for 4 on Saturday at 7:30 with a high chair and a peanut allergy.
+turns:
+  - id: intro
+    text: "Hi, I'd like to book a table for four this Saturday at 7:30, patio if you have it, a high chair, and one of us has a peanut allergy."
+    trigger:
+      kind: after_agent_turn
+      delay_ms: 400
+  - id: name
+    text: "Last name is Alvarez, A-L-V-A-R-E-Z. Callback is 512-555-0142."
+    trigger:
+      kind: after_agent_turn
+      delay_ms: 350
+  - id: confirm
+    text: "Yes, Saturday 7:30, patio, peanut allergy on the ticket. That's all, thanks."
+    trigger:
+      kind: after_agent_turn
+      delay_ms: 400
+seed:
+  slots:
+    - {time: "7:30", patio: true, available: true, capacity: 6}
+    - {time: "6:45", patio: true, available: true, capacity: 6}
+    - {time: "8:15", patio: true, available: true, capacity: 6}
+end_state:
+  - path: reservation.party_size
+    eq: 4
+  - path: reservation.allergen
+    eq: peanut
+  - path: reservation.time
+    eq: "7:30"
+expected_tools:
+  - name: check_availability
+    args: {time: "7:30", party_size: 4, patio: true}
+  - name: create_reservation
+    args:
+      time: "7:30"
+      party_size: 4
+      patio: true
+      high_chair: true
+      allergen: peanut
+      name: Alvarez
+      phone: "512-555-0142"
+entities:
+  - {name: last_name, value: Alvarez, in_speech: true, in_tools: true}
+  - {name: time, value: "7:30", in_speech: true, in_tools: true}
+  - {name: allergen, value: peanut, in_speech: true, in_tools: true}
+policy:
+  - Do not invent a table that is not in inventory.
+  - Allergen must be recorded on the reservation.
+judge:
+  task: Confirm the patio booking matches the ticket, including peanut allergy.
+agent_replies:
+  - "Thanks for calling The Copper Spoon, how can I help you?"
+  - "Saturday at 7:30 for four on the patio with a high chair, peanut allergy noted. Name please?"
+  - "Booked Alvarez Saturday 7:30 patio, peanut allergy on the ticket, 512-555-0142."

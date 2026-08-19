@@ -1,0 +1,49 @@
+id: restaurant.selectivity
+pack: restaurant
+category: checklist
+name: Ignore background talk and keep talking through a cough
+persona: Caller in a busy room with another conversation nearby.
+max_duration_s: 180
+noise: conversation
+snr_db: 10
+turns:
+  - id: intro
+    text: "Hi, table for two tonight at 7:30, no allergies, name Chen."
+    trigger:
+      kind: after_agent_turn
+      delay_ms: 400
+  - id: cough
+    overlap_sound: cough
+    trigger:
+      kind: during_agent_after_ms
+      after_ms: 400
+  - id: talker
+    overlap_sound: talker
+    trigger:
+      kind: during_agent_after_ms
+      after_ms: 500
+  - id: confirm
+    text: "Yes, Chen, two people, 7:30, no allergies. That other table is not talking to you."
+    trigger:
+      kind: after_agent_turn
+      delay_ms: 400
+seed:
+  slots:
+    - {time: "7:30", patio: false, available: true, capacity: 2}
+end_state:
+  - path: reservation.name
+    eq: Chen
+  - path: reservation.allergen
+    eq: none
+expected_tools:
+  - name: create_reservation
+    args: {time: "7:30", party_size: 2, allergen: none, name: Chen}
+entities:
+  - {name: name, value: Chen, in_speech: true, in_tools: true}
+policy:
+  - Do not treat the cough or side conversation as a new request. Do not stop the current reply for a cough.
+judge:
+  task: Agent should keep talking through the cough and ignore the background talker.
+agent_replies:
+  - "Copper Spoon, reservations."
+  - "Two at 7:30 for Chen, no allergies, done."

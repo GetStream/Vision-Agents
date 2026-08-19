@@ -1,0 +1,38 @@
+id: healthcare.entity_dense
+pack: healthcare
+category: entity_dense
+name: Spell a long last name, member ID, and pharmacy
+persona: A patient with a long last name.
+max_duration_s: 180
+turns:
+  - id: intro
+    text: "I need to confirm my Tuesday morning with Dr Chen and update pharmacy."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: identity
+    text: "Name is Priyanka Radhakrishnan, R-A-D-H-A-K-R-I-S-H-N-A-N. Date of birth 1991-11-02. Member ID QW4T9-8821. Pharmacy Westlake Compounding."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  patients:
+    - {id: p3, name: "Priyanka Radhakrishnan", dob: "1991-11-02", member_id: "QW4T9-8821", pharmacy: "Westlake Compounding"}
+  appointments:
+    - {id: a3, patient_id: p3, clinician: "Dr Chen", date: "Tuesday", time: "morning", location: "Main clinic"}
+end_state:
+  - path: identity_verified
+    eq: true
+expected_tools:
+  - name: verify_identity
+    args: {name: "Priyanka Radhakrishnan", dob: "1991-11-02", member_id: "QW4T9-8821"}
+  - name: lookup_appointment
+    args: {}
+entities:
+  - {name: last_name, value: Radhakrishnan, in_speech: true, in_tools: true}
+  - {name: member, value: "QW4T9-8821", in_speech: true, in_tools: true}
+  - {name: pharmacy, value: Westlake, in_speech: true, in_tools: false}
+policy:
+  - Wrong digit on the member ID is a fail.
+  - Do not invent a visit.
+judge:
+  task: Every identifier is captured exactly.
+agent_replies:
+  - "Clinic after hours, I will verify you."
+  - "Priyanka Radhakrishnan, member QW4T9-8821, Westlake Compounding, Tuesday morning with Dr Chen at Main clinic."

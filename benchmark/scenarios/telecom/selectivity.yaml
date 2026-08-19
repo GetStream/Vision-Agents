@@ -1,0 +1,40 @@
+id: telecom.selectivity
+pack: telecom
+category: checklist
+name: Keep talking through a cough during account verify
+persona: Subscriber with a TV on in the next room.
+max_duration_s: 180
+noise: conversation
+snr_db: 10
+turns:
+  - id: intro
+    text: "PIN 4471 last four 9821, 14 Cedar Lane. Internet is down since 6, error 840."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: cough
+    overlap_sound: cough
+    trigger: {kind: during_agent_after_ms, after_ms: 400}
+  - id: confirm
+    text: "That was just a cough. Still my line, please keep going with the outage check."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  outage: false
+  reboot_succeeds: true
+  accounts:
+    - {id: acc1, pin: "4471", last4: "9821", address: "14 Cedar Lane"}
+end_state:
+  - path: identity_verified
+    eq: true
+expected_tools:
+  - name: verify_account
+    args: {pin: "4471", last4: "9821", address: "14 Cedar Lane"}
+  - name: check_outage
+    args: {}
+entities:
+  - {name: last4, value: "9821", in_tools: true, in_speech: true}
+policy:
+  - Do not abandon the reply for a cough. Ignore the other room.
+judge:
+  task: Agent should continue through the cough and verify the account.
+agent_replies:
+  - "Internet support."
+  - "Account verified for 14 Cedar Lane, last four 9821, no area outage."

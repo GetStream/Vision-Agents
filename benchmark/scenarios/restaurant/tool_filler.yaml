@@ -1,0 +1,34 @@
+id: restaurant.tool_filler
+pack: restaurant
+category: checklist
+name: Delayed availability lookup must not stall the call
+persona: Caller waiting while the host checks the book.
+max_duration_s: 180
+tool_delay_ms:
+  check_availability: 3000
+turns:
+  - id: intro
+    text: "Can you check Saturday 7:30 for four on the patio, peanut allergy, name Alvarez."
+    trigger:
+      kind: after_agent_turn
+      delay_ms: 400
+seed:
+  slots:
+    - {time: "7:30", patio: true, available: true, capacity: 6}
+end_state:
+  - path: reservation.allergen
+    eq: peanut
+expected_tools:
+  - name: check_availability
+    args: {time: "7:30", party_size: 4, patio: true}
+  - name: create_reservation
+    args: {time: "7:30", party_size: 4, patio: true, allergen: peanut, name: Alvarez}
+entities:
+  - {name: allergen, value: peanut, in_speech: true, in_tools: true}
+policy:
+  - Say a filler such as one moment while the tool runs. Do not go silent for 3 seconds.
+judge:
+  task: Agent should keep the floor with a filler during the delayed tool call.
+agent_replies:
+  - "Copper Spoon, one moment, checking the book."
+  - "7:30 patio is open. Booked Alvarez with peanut allergy."
