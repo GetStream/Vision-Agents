@@ -2,6 +2,10 @@
 
 ## New Features
 
+### `gemini` plugin: Gemini 3.7 speech-to-text
+
+Adds `gemini.STT` using Gemini Live transcription (`gemini-3.7-transcribe-live` by default). It streams 16 kHz PCM, supports `language_codes` and `custom_vocabulary`, and emits standard transcript and turn events. Automatic language detection is the default (omit `language_codes` or pass `[]`).
+
 ### `speechify` plugin: Speechify TTS
 
 Adds a new `speechify` plugin exposing `speechify.TTS`, backed by Speechify's streaming API. It streams raw PCM audio, defaults to the `simba-3.2` model with the `geffen_32` voice, and reads `SPEECHIFY_API_KEY` from the environment. Install with `vision-agents[speechify]`.

@@ -13,7 +13,7 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt import Transcript
 from vision_agents.core.turn_detection import TurnEnded, TurnStarted
 from vision_agents.plugins import gemini
-from vision_agents.plugins.gemini.stt import DEFAULT_MODEL
+from vision_agents.plugins.gemini.stt import DEFAULT_MODEL, FILE_TRANSCRIBE_MODEL
 
 
 class TestGeminiSTT:
@@ -33,10 +33,19 @@ class TestGeminiSTT:
         )
 
         assert stt.model == DEFAULT_MODEL
+        assert DEFAULT_MODEL == "gemini-3.7-transcribe-live"
+        assert FILE_TRANSCRIBE_MODEL == "gemini-3.7-transcribe"
         assert stt.turn_detection
         assert stt._config["input_audio_transcription"] == {
             "language_codes": ["en-US"],
             "custom_vocabulary": ["Vision Agents"],
+        }
+
+    def test_automatic_language_detection(self):
+        stt = gemini.STT(api_key="fake")
+
+        assert stt._config["input_audio_transcription"] == {
+            "language_codes": [],
         }
 
     def test_requires_credentials(self, monkeypatch):

@@ -84,7 +84,7 @@ async def create_agent(**kwargs) -> Agent:
 ```
 
 Gemini automatically detects the spoken language by default. You can provide
-BCP-47 language hints and vocabulary that should be recognized accurately:
+BCP-47 language codes and vocabulary that should be recognized accurately:
 
 ```python
 stt = gemini.STT(
@@ -93,10 +93,11 @@ stt = gemini.STT(
 )
 ```
 
-`gemini.STT` defaults to the preview model
-`gemini-3.5-transcribe-live-preview`. It streams 16 kHz PCM audio to Gemini and
-emits standard partial, final, and turn events for the Vision Agents pipeline.
-For a full runnable example, see
+`gemini.STT` defaults to the Live model `gemini-3.7-transcribe-live`. It
+streams 16 kHz PCM audio to Gemini and emits standard partial, final, and turn
+events for the Vision Agents pipeline. Google also publishes
+`gemini-3.7-transcribe` for unary/file transcription; this plugin uses the
+Live model. For a full runnable example, see
 `plugins/gemini/example/gemini_stt_example.py`.
 
 ### Gemini Vision (VLM)
