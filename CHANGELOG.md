@@ -2,6 +2,10 @@
 
 ## Breaking Changes
 
+### `sarvam` plugin: drop `sarvam-30b` from supported LLM models
+
+`sarvam.LLM` no longer accepts `sarvam-30b`. Use `sarvam-m` or `sarvam-105b` instead.
+
 ### `deepgram` plugin: TTS defaults to Flux (`/v2/speak`)
 
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
