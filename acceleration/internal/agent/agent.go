@@ -49,6 +49,12 @@ const sentenceSuffix = "#"
 // participant rather than once for the call.
 type Options struct {
 	Edge Edge
+	// Text holds the conversation in writing rather than on a call. Nothing is
+	// transcribed, nothing is spoken and no call is joined, so the edge and the two
+	// speech routers are not needed and are not used. Everything between hearing and
+	// answering is the same, which is the point: the harness, the skills and the tools
+	// are what a text agent is being asked for.
+	Text bool
 	// Instructions is the system prompt, sent with every turn.
 	Instructions string
 	// CustomerID owns every request the agent makes. It is what the usage is billed to.
@@ -239,17 +245,21 @@ type queuedCandidate struct {
 
 // New validates the options and returns an Agent. It opens nothing; Join does that.
 func New(options Options) (*Agent, error) {
-	if options.Edge == nil {
-		return nil, errors.New("agent: an edge is required")
-	}
 	if options.LLM == nil {
 		return nil, errors.New("agent: an llm router is required")
 	}
-	if options.STT == nil {
-		return nil, errors.New("agent: an stt router is required")
-	}
-	if options.TTS == nil {
-		return nil, errors.New("agent: a tts router is required")
+	// A conversation in writing has nowhere to listen and nothing to speak with, so the
+	// three that carry a voice are only required when there is one.
+	if !options.Text {
+		if options.Edge == nil {
+			return nil, errors.New("agent: an edge is required")
+		}
+		if options.STT == nil {
+			return nil, errors.New("agent: an stt router is required")
+		}
+		if options.TTS == nil {
+			return nil, errors.New("agent: a tts router is required")
+		}
 	}
 	if options.CustomerID == "" {
 		return nil, errors.New("agent: a customer id is required")
@@ -408,19 +418,21 @@ func (a *Agent) Join(ctx context.Context) error {
 		return err
 	}
 
-	voice, err := a.options.TTS.Start(a.ctx, ttsrouter.Request{
-		CustomerID:    a.options.CustomerID,
-		AgentID:       a.options.AgentID,
-		CallID:        a.options.CallID,
-		Tags:          a.options.Tags,
-		Target:        a.options.TTSTarget,
-		LanguageHints: a.options.LanguageHints,
-		Voice:         a.options.Voice,
-	})
-	if err != nil {
-		return fmt.Errorf("agent: start tts: %w", err)
+	if !a.options.Text {
+		voice, err := a.options.TTS.Start(a.ctx, ttsrouter.Request{
+			CustomerID:    a.options.CustomerID,
+			AgentID:       a.options.AgentID,
+			CallID:        a.options.CallID,
+			Tags:          a.options.Tags,
+			Target:        a.options.TTSTarget,
+			LanguageHints: a.options.LanguageHints,
+			Voice:         a.options.Voice,
+		})
+		if err != nil {
+			return fmt.Errorf("agent: start tts: %w", err)
+		}
+		a.tts = voice
 	}
-	a.tts = voice
 
 	// What earlier conversations established is fetched before the call starts, so the
 	// first turn is already answered in the light of it rather than the second.
@@ -428,8 +440,10 @@ func (a *Agent) Join(ctx context.Context) error {
 		a.recalled = memory.Prompt(a.memory.Recall(a.ctx, a.options.RecallLimit))
 	}
 
-	if err := a.options.Edge.Join(a.ctx); err != nil {
-		return fmt.Errorf("agent: join edge: %w", err)
+	if !a.options.Text {
+		if err := a.options.Edge.Join(a.ctx); err != nil {
+			return fmt.Errorf("agent: join edge: %w", err)
+		}
 	}
 
 	a.mu.Lock()
@@ -437,17 +451,26 @@ func (a *Agent) Join(ctx context.Context) error {
 	a.lastSpokeAt = time.Now()
 	a.mu.Unlock()
 
-	a.running.Add(6)
+	a.running.Add(2)
 	go a.consumeLLM()
-	go a.consumeTTS()
-	go a.consumeEdge()
 	go a.consumeHarness()
-	go a.consumeCadence()
-	go a.consumePresence()
+	// The other four all begin at a microphone or end at a speaker, so a conversation
+	// held in writing runs none of them.
+	if !a.options.Text {
+		a.running.Add(4)
+		go a.consumeTTS()
+		go a.consumeEdge()
+		go a.consumeCadence()
+		go a.consumePresence()
+	}
 
-	a.logger.Info("joined",
-		"llm", a.llm.Provider()+"/"+a.llm.Model(),
-		"tts", a.tts.Provider()+"/"+a.tts.Model())
+	if a.options.Text {
+		a.logger.Info("joined", "llm", a.llm.Provider()+"/"+a.llm.Model())
+	} else {
+		a.logger.Info("joined",
+			"llm", a.llm.Provider()+"/"+a.llm.Model(),
+			"tts", a.tts.Provider()+"/"+a.tts.Model())
+	}
 	a.emitter.Send(Joined{At: time.Now()})
 	return nil
 }
@@ -462,12 +485,20 @@ func (a *Agent) SimpleResponse(ctx context.Context, text string) error {
 // Say speaks a piece of text without asking the model. A greeting is exactly this: the
 // agent already knows what it wants to say, so a model would only add latency and cost.
 func (a *Agent) Say(ctx context.Context, text string) error {
+	turnID := fmt.Sprintf("say-%d", time.Now().UnixNano())
+
+	// A conversation in writing has no voice to say it with, so it is reported as said
+	// instead: what a caller would have heard is what a reader reads.
+	if a.options.Text {
+		a.emitter.Send(Responded{TurnID: turnID, Text: text})
+		return nil
+	}
+
 	a.mu.Lock()
 	if a.tts == nil {
 		a.mu.Unlock()
 		return errors.New("agent: not joined")
 	}
-	turnID := fmt.Sprintf("say-%d", time.Now().UnixNano())
 	a.speakingTurn = turnID
 	a.mu.Unlock()
 
@@ -558,8 +589,10 @@ func (a *Agent) close() error {
 
 	// The edge leaves first: it is the source of the audio that keeps the rest busy.
 	var failures []error
-	if err := a.options.Edge.Leave(); err != nil {
-		failures = append(failures, fmt.Errorf("leave edge: %w", err))
+	if a.options.Edge != nil {
+		if err := a.options.Edge.Leave(); err != nil {
+			failures = append(failures, fmt.Errorf("leave edge: %w", err))
+		}
 	}
 	for _, listener := range listeners {
 		if err := listener.Close(); err != nil {
@@ -1035,6 +1068,11 @@ func (a *Agent) say(turnID, delta string) {
 	a.replying = turnID
 	a.spoken.WriteString(speech)
 	a.emitter.Send(ResponseDelta{TurnID: turnID, Text: speech})
+	// The delta is the whole of the reply when there is no voice: a reader has already
+	// been given it, and cutting it into sentences would only be for the speaking.
+	if a.options.Text {
+		return
+	}
 
 	for _, sentence := range a.chunk.Add(speech) {
 		if err := a.speakSentence(turnID, sentence); err != nil {
@@ -1049,19 +1087,28 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 	// ever text, so it is spoken.
 	tail := a.harness.Flush()
 	a.spoken.WriteString(tail)
-	for _, sentence := range a.chunk.Add(tail) {
-		if err := a.speakSentence(typed.CompletionID, sentence); err != nil {
+	if a.options.Text {
+		// There is no voice to release it to, so the held text is reported as the last
+		// of the reply. Without this a reader would be missing whatever the harness was
+		// still deciding about when the model stopped.
+		if tail != "" {
+			a.emitter.Send(ResponseDelta{TurnID: typed.CompletionID, Text: tail})
+		}
+	} else {
+		for _, sentence := range a.chunk.Add(tail) {
+			if err := a.speakSentence(typed.CompletionID, sentence); err != nil {
+				a.fail(err, "tts")
+			}
+		}
+		// Whatever did not end in punctuation is still worth saying.
+		if remainder := a.chunk.Flush(); remainder != "" {
+			if err := a.speakSentence(typed.CompletionID, remainder); err != nil {
+				a.fail(err, "tts")
+			}
+		}
+		if err := a.closeUtterance(typed.CompletionID); err != nil {
 			a.fail(err, "tts")
 		}
-	}
-	// Whatever did not end in punctuation is still worth saying.
-	if remainder := a.chunk.Flush(); remainder != "" {
-		if err := a.speakSentence(typed.CompletionID, remainder); err != nil {
-			a.fail(err, "tts")
-		}
-	}
-	if err := a.closeUtterance(typed.CompletionID); err != nil {
-		a.fail(err, "tts")
 	}
 	// How many syntheses the turn produces is only settled once the reply is, and it is
 	// what tells the tracker when the turn has finished being spoken.

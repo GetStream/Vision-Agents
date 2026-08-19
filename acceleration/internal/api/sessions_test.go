@@ -290,6 +290,10 @@ func (s *SessionAPISuite) creates(request CreateSessionRequest) Session {
 	return created
 }
 
+// callID is the call to join, which the wire carries as optional because a text session
+// joins none.
+func callID(id string) *string { return &id }
+
 // watches opens the events socket for a session.
 func (s *SessionAPISuite) watches(id, customerID string) *websocket.Conn {
 	address := "ws" + strings.TrimPrefix(s.server.URL, "http") + "/v1/agents/sessions/" + id + "/events"
@@ -319,7 +323,7 @@ func (s *SessionAPISuite) await(connection *websocket.Conn, wanted string) map[s
 }
 
 func (s *SessionAPISuite) TestCreatingASessionJoinsTheCallAndDescribesIt() {
-	created := s.creates(CreateSessionRequest{CallId: "call-7"})
+	created := s.creates(CreateSessionRequest{CallId: callID("call-7")})
 
 	s.NotEmpty(created.Id)
 	s.Equal("call-7", created.CallId)
@@ -340,15 +344,32 @@ func (s *SessionAPISuite) TestASessionNeedsACallToJoin() {
 	s.Contains(failure.Error, "call id is required")
 }
 
+func (s *SessionAPISuite) TestATextSessionNeedsNoCallAndNoSpeechTargets() {
+	target := "en-low-latency"
+	text := true
+
+	response := s.send(http.MethodPost, "/v1/agents/sessions", "acme",
+		CreateSessionRequest{Text: &text, Llm: &target})
+
+	s.Require().Equal(http.StatusCreated, response.StatusCode)
+	var created Session
+	s.decodeBody(response, &created)
+	s.Empty(created.CallId, "a conversation in writing joins no call")
+	s.NotEmpty(created.AgentId, "it is still keyed by an agent id of its own")
+	s.Require().NotNil(created.Text)
+	s.True(*created.Text)
+	s.Nil(created.Tts, "nothing speaks for it")
+}
+
 func (s *SessionAPISuite) TestSessionsRequireTheCustomerHeader() {
-	response := s.send(http.MethodPost, "/v1/agents/sessions", "", CreateSessionRequest{CallId: "call-1"})
+	response := s.send(http.MethodPost, "/v1/agents/sessions", "", CreateSessionRequest{CallId: callID("call-1")})
 
 	s.Equal(http.StatusUnauthorized, response.StatusCode)
 }
 
 func (s *SessionAPISuite) TestAnotherCustomersSessionIsNotFound() {
 	// Reporting it as forbidden would confirm the id was real to somebody who guessed it.
-	created := s.creates(CreateSessionRequest{CallId: "call-1"})
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
 
 	response := s.send(http.MethodGet, "/v1/agents/sessions/"+created.Id, "other", nil)
 
@@ -357,7 +378,7 @@ func (s *SessionAPISuite) TestAnotherCustomersSessionIsNotFound() {
 }
 
 func (s *SessionAPISuite) TestASessionIsListedForTheCustomerRunningIt() {
-	created := s.creates(CreateSessionRequest{CallId: "call-1"})
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
 
 	listed := s.listed("acme")
 
@@ -366,7 +387,7 @@ func (s *SessionAPISuite) TestASessionIsListedForTheCustomerRunningIt() {
 }
 
 func (s *SessionAPISuite) TestClosingASessionEndsIt() {
-	created := s.creates(CreateSessionRequest{CallId: "call-1"})
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
 
 	response := s.send(http.MethodDelete, "/v1/agents/sessions/"+created.Id, "acme", nil)
 
@@ -378,7 +399,7 @@ func (s *SessionAPISuite) TestClosingASessionEndsIt() {
 }
 
 func (s *SessionAPISuite) TestSayingSomethingSpeaksItWithoutTheModel() {
-	created := s.creates(CreateSessionRequest{CallId: "call-1"})
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
 
 	response := s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/say", "acme",
 		SayRequest{Text: "Hi, I'm listening."})
@@ -391,7 +412,7 @@ func (s *SessionAPISuite) TestSayingSomethingSpeaksItWithoutTheModel() {
 }
 
 func (s *SessionAPISuite) TestSayingNothingIsRefused() {
-	created := s.creates(CreateSessionRequest{CallId: "call-1"})
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
 
 	response := s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/say", "acme",
 		SayRequest{Text: ""})
@@ -400,7 +421,7 @@ func (s *SessionAPISuite) TestSayingNothingIsRefused() {
 }
 
 func (s *SessionAPISuite) TestTheEventsSocketCarriesWhatTheConversationDid() {
-	created := s.creates(CreateSessionRequest{CallId: "call-1"})
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
 	connection := s.watches(created.Id, "acme")
 
 	s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/respond", "acme",
@@ -418,7 +439,7 @@ func (s *SessionAPISuite) TestTheSocketAsksTheCallerToRunItsOwnToolsAndUsesTheAn
 	}}
 	parameters := map[string]any{"type": "object"}
 	created := s.creates(CreateSessionRequest{
-		CallId: "call-1",
+		CallId: callID("call-1"),
 		Tools: &[]SessionTool{{
 			Name:        "lookup_order",
 			Description: "find an order by its number",
@@ -449,7 +470,7 @@ func (s *SessionAPISuite) TestTheSocketAsksTheCallerToRunItsOwnToolsAndUsesTheAn
 func (s *SessionAPISuite) TestAToolTheCallerCouldNotRunIsToldToTheModelInWords() {
 	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: "{}"}}
 	created := s.creates(CreateSessionRequest{
-		CallId: "call-1",
+		CallId: callID("call-1"),
 		Tools:  &[]SessionTool{{Name: "lookup_order", Description: "find an order"}},
 	})
 	connection := s.watches(created.Id, "acme")
@@ -471,7 +492,7 @@ func (s *SessionAPISuite) TestAToolTheCallerCouldNotRunIsToldToTheModelInWords()
 }
 
 func (s *SessionAPISuite) TestTheSocketCanSpeakAndEndTheCall() {
-	created := s.creates(CreateSessionRequest{CallId: "call-1"})
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
 	connection := s.watches(created.Id, "acme")
 
 	s.Require().NoError(connection.WriteJSON(map[string]any{
@@ -495,7 +516,7 @@ func (s *SessionAPISuite) TestTheSocketCanSpeakAndEndTheCall() {
 }
 
 func (s *SessionAPISuite) TestAnotherCustomerCannotWatchASession() {
-	created := s.creates(CreateSessionRequest{CallId: "call-1"})
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
 	address := "ws" + strings.TrimPrefix(s.server.URL, "http") +
 		"/v1/agents/sessions/" + created.Id + "/events"
 
@@ -583,7 +604,7 @@ func (s *SessionAPISuite) TestAConfigFillsInWhatTheRequestLeftOut() {
 		Tags:               map[string]string{"agent": "support"},
 	}
 
-	spec := specOf(CreateSessionRequest{CallId: "call-1"}, "acme", config)
+	spec := specOf(CreateSessionRequest{CallId: callID("call-1")}, "acme", config)
 
 	s.Equal("config-1", spec.ConfigID)
 	s.Equal("config-stt", spec.STTTarget)
@@ -606,7 +627,7 @@ func (s *SessionAPISuite) TestTheRequestWinsOverTheConfigItNamed() {
 	instructions := "be thorough"
 
 	spec := specOf(CreateSessionRequest{
-		CallId:       "call-1",
+		CallId:       callID("call-1"),
 		Instructions: &instructions,
 		Tags:         &map[string]string{"tier": "silver", "call": "42"},
 	}, "acme", config)
@@ -618,12 +639,35 @@ func (s *SessionAPISuite) TestTheRequestWinsOverTheConfigItNamed() {
 	s.Equal("42", spec.Tags["call"])
 }
 
+func (s *SessionAPISuite) TestATextSessionTakesItsSkillsAndKnowledgeFromItsConfig() {
+	// Delegating and looking things up are the reason to hold a conversation in writing at
+	// all, and both are configured on the agent rather than repeated on every request.
+	config := &store.AgentConfig{
+		ID:                 "config-1",
+		LLM:                "config-llm",
+		Subagent:           "config-subagent",
+		STT:                "config-stt",
+		TTS:                "config-tts",
+		Skills:             []string{"explain"},
+		KnowledgeNamespace: "docs",
+	}
+	text := true
+
+	spec := specOf(CreateSessionRequest{Text: &text}, "acme", config)
+	s.Require().NoError(spec.Normalize())
+
+	s.Empty(spec.CallID, "a conversation in writing joins no call")
+	s.Equal([]string{"explain"}, spec.SkillNames)
+	s.Equal("docs", spec.KnowledgeNamespace)
+	s.Equal("config-subagent", spec.SubagentTarget, "and there is somebody to hand work to")
+}
+
 func (s *SessionAPISuite) TestNamingAConfigWithoutADatabaseIsRefused() {
 	// The deployment under test has no store, so a config could only ever be ignored,
 	// and a session that quietly ran on the wrong model is worse than one that failed.
 	configID := "config-1"
 	response := s.send(http.MethodPost, "/v1/agents/sessions", "acme",
-		CreateSessionRequest{CallId: "call-1", ConfigId: &configID})
+		CreateSessionRequest{CallId: callID("call-1"), ConfigId: &configID})
 
 	s.Equal(http.StatusBadRequest, response.StatusCode)
 

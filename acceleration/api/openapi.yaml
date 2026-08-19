@@ -1705,11 +1705,19 @@ components:
 
     CreateSessionRequest:
       type: object
-      required: [call_id]
       properties:
         call_id:
           type: string
-          description: The call to join.
+          description: The call to join. Required unless the session is text.
+        text:
+          type: boolean
+          default: false
+          description: >
+            Hold the conversation in writing rather than on a call. Nothing is transcribed
+            and nothing is spoken, so no call is joined and neither speech target is used.
+            Everything between hearing and answering is unchanged: a text session has the
+            same skills, knowledge and tools a call would have had, and its replies arrive
+            as response_delta and responded events on the session's socket.
         config_id:
           type: string
           description: >
@@ -1824,6 +1832,10 @@ components:
           type: string
         call_id:
           type: string
+          description: Empty for a text session, which joins no call.
+        text:
+          type: boolean
+          description: The conversation is held in writing rather than on a call.
         call_type:
           type: string
         user_id:

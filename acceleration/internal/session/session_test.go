@@ -353,6 +353,52 @@ func (s *SessionSuite) TestASessionIsListedAndFoundByTheCustomerRunningIt() {
 	s.Len(s.manager.List("acme"), 1)
 }
 
+// writes creates a session that holds the conversation in writing.
+func (s *SessionSuite) writes(spec Spec) *Session {
+	spec.Text = true
+	if spec.CustomerID == "" {
+		spec.CustomerID = "acme"
+	}
+	if spec.LLMTarget == "" {
+		spec.LLMTarget = "en-low-latency"
+	}
+
+	created, err := s.manager.Create(s.ctx, spec)
+	s.Require().NoError(err)
+	return created
+}
+
+func (s *SessionSuite) TestATextSessionOpensNoEdgeBecauseThereIsNoCall() {
+	s.manages()
+
+	created := s.writes(Spec{})
+
+	s.Equal(Live, created.State())
+	s.Empty(created.Spec().CallID)
+	s.NotEmpty(created.Spec().AgentID, "a text session is keyed by an agent id of its own")
+	s.Empty(s.edges, "a conversation held in writing joins nothing")
+}
+
+func (s *SessionSuite) TestATextSessionCannotAlsoJoinACall() {
+	s.manages()
+
+	_, err := s.manager.Create(s.ctx, Spec{Text: true, CallID: "call-1", CustomerID: "acme"})
+
+	s.ErrorContains(err, "holds no call")
+}
+
+func (s *SessionSuite) TestATextSessionAnswersInWriting() {
+	s.manages()
+	created := s.writes(Spec{})
+
+	events, detach := created.Watch()
+	defer detach()
+	s.Require().NoError(created.Respond(s.ctx, "hello"))
+
+	s.Equal("Hello.", awaitReply(events))
+	s.Empty(s.voice.spoken(), "nothing is synthesised for a reader")
+}
+
 func (s *SessionSuite) TestAnotherCustomersSessionDoesNotExist() {
 	// Two customers sharing a router must not be able to reach each other's calls, and a
 	// session that reported itself as forbidden would confirm the id was real.
@@ -675,6 +721,25 @@ func (s *SessionSuite) TestShutdownEndsEveryCallRatherThanDroppingIt() {
 
 // awaitToolCall waits for the model to ask for a tool, skipping the conversation events
 // that arrive alongside it.
+// awaitReply returns the text of the first finished reply a watcher sees, or empty if the
+// session said nothing before the deadline.
+func awaitReply(events <-chan Event) string {
+	deadline := time.After(settleFor)
+	for {
+		select {
+		case event, open := <-events:
+			if !open {
+				return ""
+			}
+			if answered, ok := event.(agent.Responded); ok {
+				return answered.Text
+			}
+		case <-deadline:
+			return ""
+		}
+	}
+}
+
 func awaitToolCall(events <-chan Event) *ToolCall {
 	deadline := time.After(settleFor)
 	for {

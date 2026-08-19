@@ -220,8 +220,9 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if config != nil {
 		spec = session.FromConfig(*config)
 	}
-	spec.CallID = request.CallId
+	spec.CallID = value(request.CallId)
 	spec.CustomerID = customerID
+	spec.Text = value(request.Text)
 
 	spec.CallType = override(spec.CallType, request.CallType)
 	spec.UserID = override(spec.UserID, request.UserId)
@@ -315,6 +316,9 @@ func sessionOf(found *session.Session) Session {
 		AgentId:   spec.AgentID,
 		State:     SessionState(found.State()),
 		CreatedAt: found.CreatedAt(),
+	}
+	if spec.Text {
+		rendered.Text = &spec.Text
 	}
 	if model != "" {
 		rendered.Llm = &model

@@ -16,8 +16,13 @@ import (
 // difference is only who is deciding: a flag becomes a field, and the process that used to
 // be started per call becomes a session in a process that is already running.
 type Spec struct {
-	// CallID is the call to join. It is the one thing with no sensible default.
+	// CallID is the call to join. It is the one thing with no sensible default, and the
+	// one thing a text session does not have.
 	CallID string
+	// Text holds the conversation in writing: no call is joined, nothing is transcribed
+	// and nothing is spoken. Everything between hearing and answering is unchanged, so a
+	// text session has the same skills, knowledge and tools a call would have had.
+	Text bool
 	// CallType defaults to "default".
 	CallType string
 	// UserID is who the agent joins the call as.
@@ -139,7 +144,10 @@ func FromConfig(config store.AgentConfig) Spec {
 // Normalize fills in the defaults a caller left out and reports what cannot be defaulted.
 func (s *Spec) Normalize() error {
 	s.CallID = strings.TrimSpace(s.CallID)
-	if s.CallID == "" {
+	switch {
+	case s.Text && s.CallID != "":
+		return errors.New("session: a text session holds no call, so it cannot join one")
+	case !s.Text && s.CallID == "":
 		return errors.New("session: a call id is required")
 	}
 	if s.CustomerID == "" {
@@ -155,17 +163,26 @@ func (s *Spec) Normalize() error {
 	if s.UserName == "" {
 		s.UserName = defaultUserName
 	}
+	// The agent id keys the transcript and the timings, so a text session is given one of
+	// its own rather than the call id it does not have.
 	if s.AgentID == "" {
 		s.AgentID = s.CallID
+		if s.Text {
+			s.AgentID = newID()
+		}
 	}
 	if s.LLMTarget == "" {
 		s.LLMTarget = defaultLLMTarget
 	}
-	if s.STTTarget == "" {
-		s.STTTarget = defaultSTTTarget
-	}
-	if s.TTSTarget == "" {
-		s.TTSTarget = defaultTTSTarget
+	// Neither speech target means anything without a voice, and defaulting them would
+	// have a text session refused by a deployment that routes only a model.
+	if !s.Text {
+		if s.STTTarget == "" {
+			s.STTTarget = defaultSTTTarget
+		}
+		if s.TTSTarget == "" {
+			s.TTSTarget = defaultTTSTarget
+		}
 	}
 
 	if err := s.Tags.Validate(); err != nil {

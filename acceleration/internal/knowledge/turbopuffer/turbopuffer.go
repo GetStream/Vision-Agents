@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,6 +33,9 @@ const (
 const (
 	defaultRegion = "gcp-us-central1"
 	defaultLimit  = 5
+	// upsertBatch caps how many passages go in one write, so ingesting a large body of
+	// documentation is several requests rather than one that is refused for its size.
+	upsertBatch = 256
 	// defaultTimeout is short because a lookup happens while somebody is waiting on the
 	// phone. A search that has not answered by now is worth less than the pause it costs.
 	defaultTimeout = 5 * time.Second
@@ -157,6 +161,51 @@ func (s *Store) Search(ctx context.Context, query knowledge.Query) ([]knowledge.
 	return documents, nil
 }
 
+// Upsert writes passages into a namespace, replacing any that already have those ids.
+//
+// It is what fills a knowledge base rather than what an agent does with one, which is why
+// it is here rather than on knowledge.Store: reading is the same everywhere and writing is
+// the provider's own. The schema is declared on every write because turbopuffer creates a
+// namespace on first use, and a passage nobody indexed for BM25 could not be found again.
+func (s *Store) Upsert(ctx context.Context, namespace string, documents []knowledge.Document) error {
+	if strings.TrimSpace(namespace) == "" {
+		return errors.New("turbopuffer: a namespace is required")
+	}
+
+	path := "/v2/namespaces/" + url.PathEscape(namespace)
+	for batch := range slices.Chunk(documents, upsertBatch) {
+		rows := make([]upsertRow, 0, len(batch))
+		for _, document := range batch {
+			if document.ID == "" || strings.TrimSpace(document.Text) == "" {
+				return errors.New("turbopuffer: every passage needs an id and something to read")
+			}
+			rows = append(rows, upsertRow{
+				ID:     document.ID,
+				Text:   document.Text,
+				Source: document.Source,
+			})
+		}
+
+		body := writeRequest{
+			UpsertRows: rows,
+			Schema: writeSchema{
+				Text:   attributeSchema{Type: "string", FullTextSearch: true},
+				Source: attributeSchema{Type: "string"},
+			},
+		}
+		var response writeResponse
+		found, err := s.call(ctx, path, body, &response)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("turbopuffer: %s does not exist and was not created", namespace)
+		}
+		s.logger.Debug("wrote passages", "namespace", namespace, "rows", response.RowsUpserted)
+	}
+	return nil
+}
+
 // Provider is the name this store is recorded under.
 func (s *Store) Provider() string { return "turbopuffer" }
 
@@ -240,4 +289,33 @@ type queryRequest struct {
 
 type queryResponse struct {
 	Rows []map[string]json.RawMessage `json:"rows"`
+}
+
+type writeRequest struct {
+	UpsertRows []upsertRow `json:"upsert_rows"`
+	Schema     writeSchema `json:"schema"`
+}
+
+// upsertRow is one passage. There is no vector on it, which is what lets the namespace be
+// written without an embedding provider and read with BM25 alone.
+type upsertRow struct {
+	ID     string `json:"id"`
+	Text   string `json:"text"`
+	Source string `json:"source"`
+}
+
+// writeSchema is what a knowledge namespace holds: the passage, indexed for full-text
+// search, and where it was read from.
+type writeSchema struct {
+	Text   attributeSchema `json:"text"`
+	Source attributeSchema `json:"source"`
+}
+
+type attributeSchema struct {
+	Type           string `json:"type"`
+	FullTextSearch bool   `json:"full_text_search,omitempty"`
+}
+
+type writeResponse struct {
+	RowsUpserted int `json:"rows_upserted"`
 }

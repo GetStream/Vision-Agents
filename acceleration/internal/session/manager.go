@@ -141,9 +141,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, err
 	}
 
-	edge, err := m.options.Edge(spec, m.logger)
-	if err != nil {
-		return nil, err
+	// A text session joins nothing, so no edge is opened for it. Everything downstream
+	// treats a missing edge as the conversation having no call rather than as a failure.
+	var edge agent.Edge
+	if !spec.Text {
+		edge, err = m.options.Edge(spec, m.logger)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	line, err := m.line(spec)
@@ -178,6 +183,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 
 	created.voiceAgent, err = agent.New(agent.Options{
 		Edge:               edge,
+		Text:               spec.Text,
 		Instructions:       spec.prompt(),
 		CustomerID:         spec.CustomerID,
 		AgentID:            spec.AgentID,

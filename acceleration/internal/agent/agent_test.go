@@ -442,6 +442,70 @@ func (s *AgentSuite) delegates() {
 	}}}
 }
 
+// reasoner is the model router the agent answers through. The agent opens the voice
+// model, the flow controller and the optional subagent from it, in that order.
+func (s *AgentSuite) reasoner(logger *slog.Logger) *llmrouter.Router {
+	models := []llm.LLM{s.model, s.flow}
+	if s.subagent != nil {
+		models = append(models, s.subagent)
+	}
+	var opened int
+	reasoning := llmrouter.NewRegistry()
+	reasoning.Register("stub", func(routing.Spec) (llm.LLM, error) {
+		provider := models[min(opened, len(models)-1)]
+		opened++
+		return provider, nil
+	})
+	reasoner, err := llmrouter.New(llmrouter.Options{
+		Config: stubConfig(), Registry: reasoning, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(reasoner.Close)
+	return reasoner
+}
+
+// joinText builds an agent that holds the conversation in writing. It is given the model
+// alone: a text agent joins no call and opens neither speech router.
+func (s *AgentSuite) joinText() {
+	s.model = newStubLLM()
+	s.flow = newStubLLM()
+	s.model.reply = []string{"Hello there. ", "How are you?"}
+
+	logger := slog.New(slog.DiscardHandler)
+
+	var subagentTarget string
+	if s.subagent != nil {
+		subagentTarget = "en-low-latency"
+	}
+	var reading knowledge.Store
+	if s.knows != nil {
+		reading = s.knows
+	}
+
+	agent, err := New(Options{
+		Text:               true,
+		Instructions:       "be brief",
+		CustomerID:         "acme",
+		AgentID:            s.agentID,
+		SubagentTarget:     subagentTarget,
+		Skills:             s.skills,
+		Tools:              s.tools,
+		LLM:                s.reasoner(logger),
+		LLMTarget:          "en-low-latency",
+		Knowledge:          reading,
+		KnowledgeNamespace: s.namespace,
+		Logger:             logger,
+	})
+	s.Require().NoError(err)
+	s.agent = agent
+
+	s.Require().NoError(agent.Join(s.ctx))
+
+	s.events = collect(agent)
+	s.T().Cleanup(func() { <-s.events.done })
+	s.T().Cleanup(func() { _ = agent.Close() })
+}
+
 // join builds an agent over the stubs and joins the loopback call.
 func (s *AgentSuite) join(streamingVoice bool) {
 	s.edge = newLoopbackEdge()
@@ -462,23 +526,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	s.Require().NoError(err)
 	s.T().Cleanup(transcriber.Close)
 
-	// The agent opens the voice model, flow controller and optional subagent in order.
-	models := []llm.LLM{s.model, s.flow}
-	if s.subagent != nil {
-		models = append(models, s.subagent)
-	}
-	var opened int
-	reasoning := llmrouter.NewRegistry()
-	reasoning.Register("stub", func(routing.Spec) (llm.LLM, error) {
-		provider := models[min(opened, len(models)-1)]
-		opened++
-		return provider, nil
-	})
-	reasoner, err := llmrouter.New(llmrouter.Options{
-		Config: stubConfig(), Registry: reasoning, Logger: logger,
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(reasoner.Close)
+	reasoner := s.reasoner(logger)
 
 	var subagentTarget string
 	if s.subagent != nil {
@@ -624,10 +672,21 @@ func firstOf[E Event](events []Event) (E, bool) {
 	return zero, false
 }
 
-func (s *AgentSuite) TestAnEdgeIsRequired() {
-	_, err := New(Options{CustomerID: "acme"})
+func (s *AgentSuite) TestAnEdgeIsRequiredToHoldTheConversationOnACall() {
+	_, err := New(Options{
+		CustomerID: "acme",
+		LLM:        &llmrouter.Router{},
+		STT:        &sttrouter.Router{},
+		TTS:        &ttsrouter.Router{},
+	})
 
 	s.ErrorContains(err, "edge")
+}
+
+func (s *AgentSuite) TestAConversationInWritingNeedsNoCallAndNoVoice() {
+	_, err := New(Options{Text: true, CustomerID: "acme", LLM: &llmrouter.Router{}})
+
+	s.NoError(err)
 }
 
 func (s *AgentSuite) TestEveryModalityIsRequired() {
@@ -1477,4 +1536,60 @@ func (s *AgentSuite) TestSayingSomethingBeforeJoiningFails() {
 
 	s.ErrorContains(agent.Say(s.ctx, "hello"), "not joined")
 	s.ErrorContains(agent.SimpleResponse(s.ctx, "hello"), "not joined")
+}
+
+func (s *AgentSuite) TestAnAnswerInWritingIsReportedRatherThanSpoken() {
+	s.joinText()
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "hello"))
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal("Hello there. How are you?", responded.Text)
+	s.Positive(countOf[ResponseDelta](s.reported()), "the reply should stream as it is written")
+	s.Zero(countOf[Spoke](s.reported()), "there is no voice in a conversation held in writing")
+}
+
+func (s *AgentSuite) TestAGreetingInWritingIsReportedAsSaid() {
+	s.joinText()
+
+	s.Require().NoError(s.agent.Say(s.ctx, "Good morning."))
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the greeting never arrived")
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal("Good morning.", responded.Text)
+}
+
+func (s *AgentSuite) TestAReaderNeverSeesTheRequestForHelpEither() {
+	s.delegates()
+	s.joinText()
+	s.model.reply = []string{"Let me check that. ", `<ask skill="think">15% of 84.20</ask>`}
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "what is 15% of 84.20"))
+
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "nothing was handed over")
+	s.Equal("think it through", s.subagent.requests()[0].Instructions)
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal("Let me check that.", responded.Text)
+	for _, event := range s.reported() {
+		if delta, ok := event.(ResponseDelta); ok {
+			s.NotContains(delta.Text, "ask skill", "the reader must never see the request itself")
+		}
+	}
+}
+
+func (s *AgentSuite) TestAConversationInWritingLooksThingsUpTheSameWay() {
+	s.reads(knowledge.Document{Text: "Refunds are given within 30 days.", Source: "handbook.md"})
+	s.joinText()
+	s.model.reply = []string{"Let me check that."}
+	s.asksFor("lookup", `{"query":"refund window"}`)
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how long do I have to ask for a refund"))
+
+	s.eventually(func() bool { return countOf[LookedUp](s.reported()) == 1 }, "nothing was looked up")
+	looked, _ := firstOf[LookedUp](s.reported())
+	s.Equal("refund window", looked.Query)
+	s.Equal(1, looked.Documents)
 }

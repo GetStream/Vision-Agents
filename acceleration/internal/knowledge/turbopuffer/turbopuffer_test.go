@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -18,10 +19,13 @@ import (
 type search struct {
 	server *httptest.Server
 
-	path    string
-	auth    string
-	body    map[string]any
-	status  int
+	path   string
+	auth   string
+	body   map[string]any
+	status int
+	// bodies is every request the stub was sent, so a test can tell one write from
+	// several.
+	bodies  []map[string]any
 	respond string
 }
 
@@ -34,6 +38,7 @@ func newSearch() *search {
 		raw, _ := io.ReadAll(r.Body)
 		stub.body = map[string]any{}
 		_ = json.Unmarshal(raw, &stub.body)
+		stub.bodies = append(stub.bodies, stub.body)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(stub.status)
@@ -136,6 +141,52 @@ func (s *TurbopufferSuite) TestSearchingWithoutANamespaceIsRejectedBeforeTheNetw
 
 	s.ErrorContains(err, "namespace")
 	s.Empty(s.search.path, "an unscoped search would answer out of somebody else's handbook")
+}
+
+func (s *TurbopufferSuite) TestWrittenPassagesAreIndexedForFullTextSearch() {
+	// Nothing embeds anything here, so a passage that was not indexed for BM25 could be
+	// written and never found again.
+	err := s.store.Upsert(s.ctx, "handbook", []knowledge.Document{
+		{ID: "shipping_0", Text: "Delivery is free over $50.", Source: "shipping.md"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("/v2/namespaces/handbook", s.search.path)
+	rows := s.search.body["upsert_rows"].([]any)
+	s.Require().Len(rows, 1)
+	s.Equal(map[string]any{
+		"id":     "shipping_0",
+		"text":   "Delivery is free over $50.",
+		"source": "shipping.md",
+	}, rows[0])
+
+	text := s.search.body["schema"].(map[string]any)["text"].(map[string]any)
+	s.Equal(true, text["full_text_search"])
+	s.NotContains(s.search.body, "distance_metric", "a namespace with no vectors needs none")
+}
+
+func (s *TurbopufferSuite) TestALargeIngestIsWrittenInSeveralRequests() {
+	documents := make([]knowledge.Document, upsertBatch+1)
+	for i := range documents {
+		documents[i] = knowledge.Document{ID: strconv.Itoa(i), Text: "a passage"}
+	}
+
+	s.Require().NoError(s.store.Upsert(s.ctx, "handbook", documents))
+
+	s.Len(s.search.bodies, 2, "one request for a whole body of documentation would be refused")
+}
+
+func (s *TurbopufferSuite) TestAPassageWithNothingToReadIsRejectedBeforeTheNetwork() {
+	err := s.store.Upsert(s.ctx, "handbook", []knowledge.Document{{ID: "empty", Text: "  "}})
+
+	s.ErrorContains(err, "something to read")
+	s.Empty(s.search.path, "a passage the model cannot read is not worth storing")
+}
+
+func (s *TurbopufferSuite) TestWritingWithoutANamespaceIsRejected() {
+	err := s.store.Upsert(s.ctx, "", []knowledge.Document{{ID: "1", Text: "a passage"}})
+
+	s.ErrorContains(err, "namespace")
 }
 
 func (s *TurbopufferSuite) TestAFailureCarriesWhatTheServiceSaid() {

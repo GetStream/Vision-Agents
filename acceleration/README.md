@@ -27,6 +27,7 @@ and billing as a direct API call.
 | `internal/agent/streamedge` | The agent's transport: a Stream call over WebRTC             |
 | `internal/chatlog`   | Writes what was said into a Stream Chat channel                     |
 | `internal/memory`    | What an agent remembers between calls; `mem0/` is the one provider  |
+| `internal/knowledge` | What the business wrote down; `turbopuffer/` is the one provider    |
 | `internal/phone`     | Telephony: the vendor contract, the Stream SIP trunk, the service   |
 | `internal/phone/twilio`, `internal/phone/telnyx` | The two implemented vendors    |
 | `internal/store`     | Postgres via bun, plus the goose migrations in `migrations/`        |
@@ -38,6 +39,7 @@ and billing as a direct API call.
 | `cmd/chat`           | Types a line, reads the answer                                      |
 | `cmd/agent`          | Joins a Stream call and holds a conversation                        |
 | `cmd/phone`          | Buys numbers, points them at an agent, and transfers live calls     |
+| `cmd/knowledge`      | Reads documents into a knowledge base an agent can look things up in |
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
 | `deploy/gemma-4`     | The Gemma 4 vLLM Truss, written and validated but not yet pushed    |
@@ -357,6 +359,27 @@ leaves the model to carry on without it rather than leaving the call silent.
 Sessions are keyed by customer. A session id that exists but belongs to somebody else is
 reported as not existing at all, since a forbidden would confirm it was real.
 
+### Conversations held in writing
+
+`"text": true` and no `call_id` holds the conversation in writing instead. No call is
+joined, nothing is transcribed and nothing is spoken, so neither speech target is used:
+
+```bash
+curl -s localhost:8080/v1/agents/sessions -H 'X-Customer-Id: acme' \
+  -H 'Content-Type: application/json' -d '{"text": true, "config_id": "..."}'
+```
+
+Everything between hearing a question and answering it is unchanged, which is the point. A
+text session has the same instructions, the same skills handed to the same slower model and
+the same knowledge base as a call would have had, so an agent can be built and argued with
+in writing before anybody rings it, and a documentation agent or a support chat is the voice
+agent with the voice left off.
+
+It is driven over the session's own socket: `respond` goes in, `response_delta` and
+`responded` come back, along with `looked_up`, `delegated` and `task_settled` as the agent
+works. `say` and `interrupt` do nothing useful here, since there is nothing being spoken to
+interrupt.
+
 ## Agents that are configured rather than spelled out
 
 A session can be created from a stored configuration instead of a caller repeating the
@@ -384,6 +407,24 @@ runtime lookup is unchanged.
 question about prices or opening hours is answered out of the handbook rather than guessed
 at. Each search is a `requests` row with modality `knowledge`, like everything else that
 costs money.
+
+`cmd/knowledge` fills one from files:
+
+```bash
+go run ./cmd/knowledge -namespace docs ../docs ../README.md
+```
+
+Markdown is cut at its headings, a section too long to be one passage is cut again at
+paragraph breaks, and each piece keeps the heading it was found under so it still says what
+it is about when it comes back on its own. A section that is only a heading is skipped:
+retrieving a title tells the model nothing. Passages are keyed by the file and the position
+they came from, so reading a directory again after editing it replaces that file's passages
+rather than leaving two versions of them to be found. `-dry-run` prints what would be
+written without writing it.
+
+Search is BM25 only. There are no embeddings here, and nothing to keep in step with a model
+that generates them: documentation and handbooks are answered well by the words in them, and
+a lookup on the answering path has to be fast.
 
 **A call outlives the session that ran it.** Sessions live in a map in memory, which
 answers what is happening now and nothing at all about last Tuesday. A `calls` row is
