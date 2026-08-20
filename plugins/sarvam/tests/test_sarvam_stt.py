@@ -118,7 +118,7 @@ class TestSarvamSTT:
         assert message["event"] == "audio_input"
         assert isinstance(message["audio"], str)
 
-    async def test_process_audio_legacy_uses_pcm_s16le_codec(self):
+    async def test_process_audio_legacy_sends_wav_encoding(self):
         class FakeWebSocket:
             def __init__(self) -> None:
                 self.closed = False
@@ -159,6 +159,7 @@ class TestSarvamSTT:
                 "language": "en-IN",
             }
         )
+        stt._handle_message({"event": "vad.speech_end", "utterance_idx": 0})
         stt._handle_message(
             {
                 "event": "transcript.final",
@@ -167,7 +168,6 @@ class TestSarvamSTT:
                 "language": "en-IN",
             }
         )
-        stt._handle_message({"event": "vad.speech_end", "utterance_idx": 0})
 
         items = await stt.output.collect(timeout=0)
         assert isinstance(items[0], TurnStarted)
@@ -176,6 +176,23 @@ class TestSarvamSTT:
         assert isinstance(items[2], Transcript) and items[2].final
         assert items[2].text == "hello there"
         assert isinstance(items[3], TurnEnded)
+
+    async def test_realtime_turn_ends_after_final_without_partial(self):
+        stt = STT(api_key="sk_test")
+        participant = Participant({}, user_id="user-1", id="user-1")
+        stt._current_participant = participant
+
+        stt._handle_message({"event": "vad.speech_start", "utterance_idx": 0})
+        stt._handle_message({"event": "vad.speech_end", "utterance_idx": 0})
+        stt._handle_message(
+            {"event": "transcript.final", "utterance_idx": 0, "text": "hello there"}
+        )
+
+        items = await stt.output.collect(timeout=0)
+        assert isinstance(items[0], TurnStarted)
+        assert isinstance(items[1], Transcript) and items[1].final
+        assert items[1].text == "hello there"
+        assert isinstance(items[2], TurnEnded)
 
 
 @pytest.mark.skipif(not os.getenv("SARVAM_API_KEY"), reason="SARVAM_API_KEY not set")

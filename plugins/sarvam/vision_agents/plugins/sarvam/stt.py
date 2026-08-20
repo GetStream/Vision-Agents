@@ -118,7 +118,7 @@ class STT(stt.STT):
 
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
-        self._receive_task: Optional[asyncio.Task[Any]] = None
+        self._receive_task: Optional[asyncio.Task[None]] = None
         self._keepalive_task: Optional[asyncio.Task[None]] = None
         self._connection_ready = asyncio.Event()
         self._current_participant: Optional[Participant] = None
@@ -212,16 +212,22 @@ class STT(stt.STT):
             self._audio_start_time = time.perf_counter()
 
         if self._is_realtime:
-            message: dict[str, Any] = {"event": "audio_input", "audio": audio_b64}
-        else:
-            message = {
-                "audio": {
-                    "data": audio_b64,
-                    "encoding": "audio/wav",
-                    "sample_rate": self.sample_rate,
+            await self._ws.send_str(
+                json.dumps({"event": "audio_input", "audio": audio_b64})
+            )
+            return
+
+        await self._ws.send_str(
+            json.dumps(
+                {
+                    "audio": {
+                        "data": audio_b64,
+                        "encoding": "audio/wav",
+                        "sample_rate": self.sample_rate,
+                    }
                 }
-            }
-        await self._ws.send_str(json.dumps(message))
+            )
+        )
 
     async def _receive_loop(self) -> None:
         ws = self._ws
@@ -283,15 +289,16 @@ class STT(stt.STT):
 
         if event == "vad.speech_start":
             self._in_speech = True
+            self._turn_end_pending = False
             if participant is not None and self.vad_signals:
                 self._emit_turn_started_event(participant)
             return
 
         if event == "vad.speech_end":
             self._in_speech = False
-            self._audio_start_time = None
-            if participant is not None and self.vad_signals:
-                self._emit_turn_ended_event(participant)
+            # The realtime endpoint sends vad.speech_end before
+            # transcript.final, so the turn end waits for that transcript.
+            self._turn_end_pending = True
             return
 
         if event not in ("transcript.partial", "transcript.final"):
@@ -320,8 +327,18 @@ class STT(stt.STT):
             processing_time_ms=processing_time_ms,
             audio_duration_ms=audio_duration_ms,
         )
-        mode = "final" if event == "transcript.final" else "replacement"
-        self._emit_transcript_event(transcript_text, participant, response, mode=mode)
+        if event == "transcript.partial":
+            self._emit_transcript_event(
+                transcript_text, participant, response, mode="replacement"
+            )
+            return
+
+        self._emit_transcript_event(transcript_text, participant, response)
+        self._audio_start_time = None
+        if self._turn_end_pending:
+            self._turn_end_pending = False
+            if self.vad_signals:
+                self._emit_turn_ended_event(participant)
 
     def _handle_legacy_message(self, data: dict[str, Any]) -> None:
         """Dispatch a parsed legacy Sarvam WebSocket message.
@@ -429,8 +446,9 @@ class STT(stt.STT):
         try:
             while True:
                 await asyncio.sleep(KEEPALIVE_INTERVAL_S)
-                if self._ws is not None and not self._ws.closed:
-                    await self._ws.send_str(json.dumps({"event": "ping"}))
+                if self._ws is None or self._ws.closed:
+                    return
+                await self._ws.send_str(json.dumps({"event": "ping"}))
         except asyncio.CancelledError:
             pass
         except (aiohttp.ClientError, ConnectionError):
