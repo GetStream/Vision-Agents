@@ -1,6 +1,6 @@
 # Healthcare agent contract
 
-Same job, tools, and seeded world for every implementation. The reference prompt in `voicebench_agents/healthcare.py` is the source of truth.
+Same job, tools, and seeded world for every implementation. `healthcare.prompt` and `healthcare.tools.yaml` in this directory are the source of truth.
 
 ## System prompt
 
@@ -19,7 +19,7 @@ Say "one moment, checking the chart" while tools run.
 
 - Greet first, then wait.
 - Say "one moment, checking the chart" while tools run.
-- Point tools at `POST $WORLD_URL/v1/session/tools/{name}` with a JSON object body.
+- Point tools at `POST $VOICEBENCH_WORLD_URL/v1/session/tools/{name}` with a JSON object body.
 
 ## Tools
 

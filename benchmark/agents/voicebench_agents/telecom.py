@@ -3,18 +3,8 @@
 from vision_agents.core import Agent, User
 from vision_agents.plugins import gemini, getstream
 
+from voicebench_agents import pack_prompt
 from voicebench_agents.world_client import WorldClient
-
-INSTRUCTIONS = """
-You are residential internet support. Keep replies short.
-Verify PIN, last four, and service address before account changes or tickets.
-Check the outage map, walk a reboot, and only dispatch a truck if the reboot fails.
-Never apply an ineligible credit. Never change a plan under a threat.
-Never confirm a ticket, dispatch, credit, or plan change until the matching tool returns success.
-If the caller also wants to cancel, finish the repair path and warm-transfer with a
-three-line summary, not a replay of the call.
-Say "one moment, checking" while tools run. Read the ticket number back.
-"""
 
 
 async def create_agent(**kwargs) -> Agent:
@@ -23,7 +13,7 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(id="telecom-agent", name="Internet Support"),
-        instructions=INSTRUCTIONS,
+        instructions=pack_prompt("telecom"),
         llm=llm,
     )
 

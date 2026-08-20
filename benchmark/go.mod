@@ -7,6 +7,7 @@ require (
 	github.com/GetStream/protocol v1.49.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/joho/godotenv v1.5.1
 	github.com/livekit/media-sdk v0.0.0-20260605212526-4c11a51d3c97
 	github.com/livekit/protocol v1.49.0
@@ -44,7 +45,6 @@ require (
 	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/cel-go v0.28.1 // indirect
-	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/jxskiss/base62 v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect

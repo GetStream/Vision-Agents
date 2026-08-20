@@ -1,6 +1,6 @@
 # Restaurant agent contract
 
-Same job, tools, and seeded world for every implementation. The reference prompt in `voicebench_agents/restaurant.py` is the source of truth.
+Same job, tools, and seeded world for every implementation. `restaurant.prompt` and `restaurant.tools.yaml` in this directory are the source of truth.
 
 ## System prompt
 
@@ -20,7 +20,7 @@ Read back the name, time, party size, and allergen after the booking succeeds.
 
 - Greet first, then wait.
 - Say "one moment, checking" while tools run.
-- Point tools at `POST $WORLD_URL/v1/session/tools/{name}` with a JSON object body.
+- Point tools at `POST $VOICEBENCH_WORLD_URL/v1/session/tools/{name}` with a JSON object body.
 
 ## Tools
 

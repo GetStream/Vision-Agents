@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,7 +39,11 @@ type Config struct {
 	UserID     string
 	System     string
 	SpawnAgent bool
+	SpawnAccel bool
+	AccelBin   string
+	AccelURL   string
 	AgentPort  int
+	WorldURL   string
 	SkipSTT    bool
 	SkipJudge  bool
 	Logger     *slog.Logger
@@ -61,12 +66,38 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 	if cfg.System == "" {
 		cfg.System = "vision-agents"
 	}
+	if cfg.SpawnAgent && cfg.SpawnAccel {
+		return report.Summary{}, fmt.Errorf("run: --spawn-agent and --spawn-accel cannot both be set")
+	}
 	if cfg.SpawnAgent {
 		if cfg.AgentPort <= 0 {
 			cfg.AgentPort = 8000
 		}
 		if cfg.AgentURL == "" {
 			cfg.AgentURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.AgentPort)
+		}
+	}
+	if cfg.SpawnAccel || cfg.AccelURL != "" {
+		if cfg.System == "vision-agents" {
+			cfg.System = "acceleration"
+		}
+	}
+	if cfg.SpawnAccel {
+		if cfg.AccelURL == "" {
+			cfg.AccelURL = "http://127.0.0.1:8080"
+		}
+		if cfg.AccelBin == "" {
+			cfg.AccelBin = os.Getenv("ACCEL_ROUTER")
+		}
+		if cfg.AccelBin == "" {
+			return report.Summary{}, fmt.Errorf(
+				"run: --accel-bin or ACCEL_ROUTER is required with --spawn-accel (CGO_ENABLED=1 go build -o /tmp/accel-router ./cmd/router)")
+		}
+	}
+
+	if cfg.SpawnAccel || cfg.AccelURL != "" {
+		if _, _, err := loadPackContract(cfg.Root, cfg.Pack); err != nil {
+			return report.Summary{}, err
 		}
 	}
 
@@ -93,7 +124,7 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 		return report.Summary{}, err
 	}
 	defer worldSrv.Close()
-	worldURL := "http://" + worldSrv.Addr
+	cfg.WorldURL = "http://" + worldSrv.Addr
 
 	runID := time.Now().UTC().Format("20060102T150405Z")
 	out := cfg.OutDir
@@ -105,7 +136,14 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 	}
 
 	if cfg.SpawnAgent {
-		stop, err := startAgentProc(ctx, cfg, worldURL)
+		stop, err := startAgentProc(ctx, cfg, cfg.WorldURL)
+		if err != nil {
+			return report.Summary{}, err
+		}
+		defer stop()
+	}
+	if cfg.SpawnAccel {
+		stop, err := startRouterProc(ctx, cfg)
 		if err != nil {
 			return report.Summary{}, err
 		}
@@ -247,12 +285,12 @@ func startAgentProc(ctx context.Context, cfg Config, worldURL string) (func(), e
 	cmd.Dir = filepath.Join(cfg.Root, "agents")
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "WORLD_URL=") {
+		if strings.HasPrefix(e, "VOICEBENCH_WORLD_URL=") || strings.HasPrefix(e, "WORLD_URL=") {
 			continue
 		}
 		env = append(env, e)
 	}
-	cmd.Env = append(env, "WORLD_URL="+worldURL)
+	cmd.Env = append(env, "VOICEBENCH_WORLD_URL="+worldURL)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -275,30 +313,82 @@ func startAgentProc(ctx context.Context, cfg Config, worldURL string) (func(), e
 		}
 	}
 	readyURL := fmt.Sprintf("http://127.0.0.1:%d/ready", port)
+	if err := waitHTTP(ctx, readyURL, 120*time.Second); err != nil {
+		stop()
+		return nil, fmt.Errorf("run: agent did not become ready at %s: %w", readyURL, err)
+	}
+	cfg.Logger.Info("spawned agent ready", "url", cfg.AgentURL)
+	return stop, nil
+}
+
+func startRouterProc(ctx context.Context, cfg Config) (func(), error) {
+	if cfg.AccelBin == "" {
+		return nil, fmt.Errorf("run: --accel-bin is required with --spawn-accel")
+	}
+	addr := "127.0.0.1:8080"
+	if parsed, err := url.Parse(cfg.AccelURL); err == nil && parsed.Host != "" {
+		addr = parsed.Host
+	}
+	cmd := exec.CommandContext(ctx, cfg.AccelBin)
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "ROUTER_ADDR=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env, "ROUTER_ADDR="+addr)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("run: spawn accel router: %w", err)
+	}
+	stop := func() {
+		if cmd.Process == nil {
+			return
+		}
+		_ = cmd.Process.Signal(os.Interrupt)
+		done := make(chan struct{})
+		go func() {
+			_ = cmd.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+		}
+	}
+	readyURL := strings.TrimRight(cfg.AccelURL, "/") + "/health"
+	if err := waitHTTP(ctx, readyURL, 120*time.Second); err != nil {
+		stop()
+		return nil, fmt.Errorf("run: accel router did not become ready at %s: %w", readyURL, err)
+	}
+	cfg.Logger.Info("spawned accel router", "url", cfg.AccelURL)
+	return stop, nil
+}
+
+func waitHTTP(ctx context.Context, readyURL string, timeout time.Duration) error {
 	client := &http.Client{Timeout: time.Second}
-	deadline := time.Now().Add(120 * time.Second)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
-			stop()
-			return nil, err
+			return err
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, readyURL, nil)
 		if err != nil {
-			stop()
-			return nil, err
+			return err
 		}
 		resp, err := client.Do(req)
 		if err == nil {
 			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				cfg.Logger.Info("spawned agent ready", "url", cfg.AgentURL)
-				return stop, nil
+			if resp.StatusCode < 500 {
+				return nil
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	stop()
-	return nil, fmt.Errorf("run: agent did not become ready at %s", readyURL)
+	return fmt.Errorf("timed out")
 }
 
 func webrtcCallID(cfg Config, sc scenario.Scenario, trial int) string {

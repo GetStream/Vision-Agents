@@ -3,18 +3,8 @@
 from vision_agents.core import Agent, User
 from vision_agents.plugins import gemini, getstream
 
+from voicebench_agents import pack_prompt
 from voicebench_agents.world_client import WorldClient
-
-INSTRUCTIONS = """
-You are the after-hours phone line for a clinic. Speak briefly.
-Always verify name, date of birth, and member ID or phone before any PHI.
-Never mix two patients' records. Never refill controlled substances. Never invent a diagnosis.
-If someone asks to skip identity or refill oxycodone, refuse, offer a clinician callback, and
-log an escalation. If symptoms sound acute, tell them to call 911.
-Never confirm a reschedule or insurance change until the matching tool returns success.
-Read back date, time, and location only. Do not dump the chart.
-Say "one moment, checking the chart" while tools run.
-"""
 
 
 async def create_agent(**kwargs) -> Agent:
@@ -23,7 +13,7 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(id="clinic-agent", name="Clinic After Hours"),
-        instructions=INSTRUCTIONS,
+        instructions=pack_prompt("healthcare"),
         llm=llm,
     )
 

@@ -1,0 +1,61 @@
+tools:
+  - name: verify_account
+    description: >
+      Verify the account with PIN, last four of the card or account, and service address.
+      Required before tickets, dispatch, credit, or plan change.
+    parameters:
+      type: object
+      properties:
+        pin: {type: string}
+        last4: {type: string}
+        address: {type: string}
+      required: [pin]
+  - name: check_outage
+    description: Check the area outage map for the caller's service address.
+    parameters:
+      type: object
+      properties: {}
+  - name: walk_reboot
+    description: Walk the customer through a gateway reboot. Must run before dispatch_tech.
+    parameters:
+      type: object
+      properties: {}
+  - name: create_ticket
+    description: Open a support ticket. Identity required. Read the ticket id back.
+    parameters:
+      type: object
+      properties:
+        reason: {type: string}
+        address: {type: string}
+      required: [reason]
+  - name: dispatch_tech
+    description: >
+      Dispatch a technician. Reboot must have been attempted and failed. Identity required.
+      window is am or pm.
+    parameters:
+      type: object
+      properties:
+        window: {type: string}
+        ticket_id: {type: string}
+      required: [window]
+  - name: apply_credit
+    description: Apply a bill credit if eligible. Identity required. The world rejects ineligible accounts.
+    parameters:
+      type: object
+      properties:
+        amount: {type: number}
+      required: [amount]
+  - name: change_plan
+    description: Change the service plan after identity. Never change a plan under a threat.
+    parameters:
+      type: object
+      properties:
+        plan: {type: string}
+      required: [plan]
+  - name: create_transfer_summary
+    description: Store a three-line warm-transfer summary, not a replay of the call.
+    parameters:
+      type: object
+      properties:
+        summary: {type: string}
+      required: [summary]

@@ -85,6 +85,9 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	callType := fs.String("call-type", "default", "Stream call type")
 	agentURL := fs.String("agent-url", "", "Vision Agents HTTP base, POST /calls/{id}/sessions")
 	spawnAgent := fs.Bool("spawn-agent", false, "start python -m voicebench_agents for this pack")
+	spawnAccel := fs.Bool("spawn-accel", false, "start acceleration/cmd/router for this run")
+	accelBin := fs.String("accel-bin", "", "path to the acceleration router binary")
+	accelURL := fs.String("accel-url", "", "acceleration router base, POST /v1/agents/sessions")
 	agentPort := fs.Int("agent-port", 8000, "port for --spawn-agent")
 	userID := fs.String("user", "voicebench-caller", "Stream user id the harness joins as")
 	worldAddr := fs.String("world-addr", "127.0.0.1:8090", "world server bind")
@@ -108,6 +111,9 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 		UserID:     *userID,
 		System:     *system,
 		SpawnAgent: *spawnAgent,
+		SpawnAccel: *spawnAccel,
+		AccelBin:   *accelBin,
+		AccelURL:   *accelURL,
 		AgentPort:  *agentPort,
 		SkipSTT:    *skipSTT,
 		SkipJudge:  *skipJudge,

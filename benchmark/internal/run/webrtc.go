@@ -29,6 +29,14 @@ func runWebRTC(ctx context.Context, cfg Config, sc scenario.Scenario, audioMap m
 	}
 	defer media.Close()
 
+	if cfg.AccelURL != "" {
+		stop, err := startAccelSession(ctx, cfg, callID, callType)
+		if err != nil {
+			return caller.Result{}, err
+		}
+		defer stop()
+	}
+
 	if cfg.AgentURL != "" {
 		sessionID, err := startAgentSession(ctx, cfg.AgentURL, callID, callType)
 		if err != nil {

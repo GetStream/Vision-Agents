@@ -1,0 +1,62 @@
+tools:
+  - name: check_availability
+    description: >
+      Check table availability. time is h:mm 12-hour, like 7:30.
+    parameters:
+      type: object
+      properties:
+        time: {type: string}
+        party_size: {type: integer}
+        patio: {type: boolean}
+      required: [time, party_size]
+  - name: create_reservation
+    description: >
+      Book the table. Call this before telling the caller they are booked.
+      allergen is required. time is h:mm 12-hour, like 7:30.
+    parameters:
+      type: object
+      properties:
+        time: {type: string}
+        party_size: {type: integer}
+        name: {type: string}
+        allergen: {type: string}
+        patio: {type: boolean}
+        high_chair: {type: boolean}
+        phone: {type: string}
+        notes: {type: string}
+      required: [time, party_size, name, allergen]
+  - name: update_reservation
+    description: Update an existing reservation. time is h:mm 12-hour, like 7:30.
+    parameters:
+      type: object
+      properties:
+        time: {type: string}
+        party_size: {type: integer}
+        allergen: {type: string}
+        name: {type: string}
+        phone: {type: string}
+        patio: {type: boolean}
+        high_chair: {type: boolean}
+  - name: lookup_menu
+    description: Look up the menu, including 86'd items.
+    parameters:
+      type: object
+      properties: {}
+  - name: create_order
+    description: Place a pickup order. allergen is required.
+    parameters:
+      type: object
+      properties:
+        name: {type: string}
+        allergen: {type: string}
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              name: {type: string}
+        pickup_window: {type: string}
+        modifiers:
+          type: array
+          items: {type: string}
+      required: [name, allergen, items]

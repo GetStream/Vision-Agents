@@ -1,107 +1,162 @@
 # Voicebench
 
-Go harness for scoring a voice agent on healthcare, restaurant, and telecom calls.
+Voicebench evaluates real-time voice agents on restaurant, healthcare, and telecom calls. It plays a scripted caller over Stream WebRTC, records both sides at 16 kHz, and checks speech, tools, and the final state of a seeded world.
 
-The harness plays a scripted caller over Stream WebRTC at 16 kHz, records both legs, and grades the call against a seeded mock world. Any system that joins the Stream call and points its tools at the world server can be scored — the Python reference agents or the Go acceleration agent.
+The same scenarios evaluate the Python [Vision Agents](https://visionagents.ai) reference agents, the Go agent in [`acceleration/`](../acceleration/), or another agent that joins the call.
 
-## Layout
+## Setup
 
-- `cmd/voicebench` — `synth`, `run`, `report`
-- `internal/` — streamrtc, caller, world, scoring, report
-- `scenarios/{restaurant,healthcare,telecom}/` — YAML packs (`noise:` / `snr_db:` mix kitchen, street, or conversation noise generated in `internal/audio`)
-- `agents/` — reference Vision Agents (`python -m voicebench_agents <pack>`) that call the world server
+Live evaluations require Go 1.26, CGO, and the native libraries listed in [`acceleration/`](../acceleration/README.md):
 
-## Metrics
+```bash
+# macOS
+brew install pkg-config opus opusfile libsoxr
 
-Hard AND-gates (any miss fails the trial):
+# Debian/Ubuntu
+sudo apt-get install -y pkg-config libopus-dev libopusfile-dev libsoxr-dev
+```
 
-- World end-state assertions
-- Tool order (when the YAML lists `tool_order`)
-- Say-do (judge: speech vs tool log)
-- No policy break (LLM judge, sees transcript + tool log)
-- Entity fidelity in tool args and in agent speech
-- Filler speech during delayed tools (`one moment` / `checking`, and agent onset before the tool returns)
-- Barge-in stop under 800 ms when the script talks over the agent
-- Hold through a mid-speech cough or side talker; do not treat a post-turn cough as a new request
-- STT, judge, and caller TTS must succeed (`--skip-stt` / `--skip-judge` fail the trial; missing ElevenLabs does not fall back to tones)
+Put credentials in `benchmark/.env` or the repository root:
 
-Reported, not gated: voice-to-voice P50/P95 ([VAmoS](#prior-art)-style descriptive latency), non-tool P50, false-cutoff proxy, reply-gap vs 300–700 ms on **non-tool** turns, latency spikes vs that call's non-tool P50.
+```bash
+STREAM_API_KEY=...
+STREAM_API_SECRET=...
+GOOGLE_API_KEY=...
+ELEVENLABS_API_KEY=...
+DEEPGRAM_API_KEY=...
+OPENAI_API_KEY=...
+```
 
-Each scenario is tried `k` times (default 3). The report shows [EVA](#prior-art)-style **pass@k** and **pass^k** per call type per vertical.
+ElevenLabs creates caller audio with no tone fallback. Deepgram Nova-3 transcribes both recordings, and `gpt-4.1-mini` grades policy and say-do consistency. Missing TTS, STT, or judge output fails the trial; `--skip-stt` and `--skip-judge` also fail it.
 
-## Run (spawned agent)
+## Run
 
-From `benchmark/`. Needs `-tags webrtc`, `CGO_ENABLED=1`, and the same native libs as acceleration (`pkg-config`, libopus, libopusfile, libsoxr).
+From `benchmark/`, evaluate Vision Agents:
 
 ```bash
 cd agents && uv sync && cd ..
-go run -tags webrtc ./cmd/voicebench run --pack restaurant --spawn-agent --k 3
+CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
+  --pack restaurant --spawn-agent --k 3
 ```
 
-`--spawn-agent` starts `python -m voicebench_agents <pack>` on `--agent-port` (default 8000), waits for `GET /ready`, then POSTs `/calls/{id}/sessions`. Requires a `.env` with `STREAM_API_KEY`, `STREAM_API_SECRET`, `GOOGLE_API_KEY`, `ELEVENLABS_API_KEY`, `DEEPGRAM_API_KEY`, and `OPENAI_API_KEY`. `--skip-stt` / `--skip-judge` skip those calls and **fail** the trial.
-
-Open `out/<run_id>/report.md`. The terminal also prints a gold-vs-ours scorecard (pass/fail plus latency gaps). Healthcare and telecom: `--pack healthcare` / `telecom`.
-
-## Run (external agent)
-
-The harness joins the Stream call as `voicebench-caller` and scores at 16 kHz. Use `--agent-url` when the agent is already running:
+Evaluate acceleration through its public session API. The router is unmodified: Voicebench creates a session per trial, answers `tool_call` frames against the world server, and closes the session.
 
 ```bash
-cd agents
-uv sync
-WORLD_URL=http://127.0.0.1:8090 uv run python -m voicebench_agents restaurant
+cd ../acceleration
+CGO_ENABLED=1 go build -o /tmp/accel-router ./cmd/router
+cd ../benchmark
+CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
+  --pack restaurant --spawn-accel --accel-bin /tmp/accel-router --k 3
 ```
+
+`--accel-url http://127.0.0.1:8080` targets a router that is already running. `--spawn-agent` and `--spawn-accel` cannot be combined. For a quick smoke test, add `--scenario restaurant.golden --k 1`.
+
+Results go to `out/<run_id>/`: `report.md`, schema-v1 `summary.json`, recordings, transcripts, tool logs, world state, and per-call metrics. Regenerate a report with:
 
 ```bash
-cd benchmark
-go run -tags webrtc ./cmd/voicebench run --pack restaurant \
-    --agent-url http://127.0.0.1:8000 --system vision-agents --k 3
+go run ./cmd/voicebench report --dir out/<run_id>
 ```
 
-**Agent already in the call** (acceleration `agent -call X`, or any Stream participant):
+## Test
 
 ```bash
-go run -tags webrtc ./cmd/voicebench run --pack restaurant \
-    --call-id X --system acceleration --k 1
+# Voicebench
+go test ./...
+
+# acceleration
+(cd ../acceleration && go test ./...)
+
+# Vision Agents
+(cd .. && uv run --no-sync pytest -m "not integration")
 ```
 
-Empty `--call-id` generates `vb-{scenario}-{trial}-{hex}` per trial.
+## Methodology
 
-## Env
+1. **Seed:** A YAML scenario creates known inventory, patient records, or subscriber state.
+2. **Call:** A synthesized caller follows a timed script. Noise tests add kitchen, street, or competing speech at 10 dB SNR.
+3. **Act:** Every implementation receives the same prompt, tools, data, and caller audio. Each trial uses a new call and empty history.
+4. **Observe:** Voicebench records both legs, tool calls, and final world state. Timing comes from speech energy in the recordings.
+5. **Grade:** Deterministic checks cover state, tool order, and entities. An LLM judge checks policy, coherence, and claims against successful tools.
+6. **Repeat:** Each scenario runs `k` times, three by default. `pass@k` means any trial passed; `pass^k` means every trial passed.
 
-| Variable | Used by |
-| --- | --- |
-| `ELEVENLABS_API_KEY` | `synth` and live caller speech (required; no tone fallback) |
-| `DEEPGRAM_API_KEY` | STT of both legs (`--skip-stt` fails the trial) |
-| `OPENAI_API_KEY` | Policy / say-do judge (`--skip-judge` fails the trial) |
-| `STREAM_API_KEY` / `STREAM_API_SECRET` / `GOOGLE_API_KEY` | Reference agents and WebRTC join |
-| `STREAM_USER_TOKEN` | Optional; used instead of `STREAM_API_SECRET` when joining |
-| `WORLD_URL` | Agent tools → harness world server. `--spawn-agent` sets this on the child. |
+A trial passes only when every hard gate passes. Latency is reported separately, so speed cannot hide an incorrect result.
 
-## External systems / leaderboard
+## Metrics and gold targets
 
-Submit a Stream call plus a world-server client. The job, tools, and seeded data are the same for every implementation:
+There is no single industry-standard score across these verticals. “Gold” means Voicebench's strict acceptance target, defined in [`timing.go`](internal/score/timing.go) and [`board.go`](internal/report/board.go), not a claimed state-of-the-art result.
 
-- [Restaurant contract](agents/contracts/restaurant.md)
-- [Healthcare contract](agents/contracts/healthcare.md)
-- [Telecom contract](agents/contracts/telecom.md)
+| Metric | Measurement | Voicebench gold | Gate |
+| --- | --- | --- | --- |
+| Task success | Required final world state | Every assertion passes | Yes |
+| Tool order | Scenario before/after constraints | Every constraint passes | Yes |
+| Entity fidelity | Required values in tools and speech | No missing or changed value | Yes |
+| Policy and say-do | Policy breaks or unsupported claims | Zero failures | Yes |
+| Tool filler | Filler begins before a delayed tool returns | Heard without blocking | Yes |
+| Barge-in | Interruption to agent silence | ≤ 800 ms | Yes |
+| Selectivity | Ignore coughs and side talk; accept real interruptions | Hold on non-directed speech | Yes |
+| Reply gap | Caller end to agent onset, excluding tool turns | P50 300–700 ms | No |
+| Voice-to-voice | Caller end to agent onset, all turns | P50 300–700 ms; P95 reported | No |
+| Stability | Non-tool gap over 2× that call's P50 | Zero spikes | No |
+| False cutoffs | Agent starts while caller is speaking | Zero | No |
+| Reliability | Repeated runs | `pass^k`; default target 3/3 | Aggregate |
 
-1. Implement the vertical tools against `POST $WORLD_URL/v1/session/tools/{name}` as listed in the contract.
-2. Join the Stream call.
-3. `go run -tags webrtc ./cmd/voicebench run --system your-name --pack restaurant --call-id ...`
+### Restaurant
 
-`out/<run_id>/summary.json` is schema version 1 (`system`, `k`, per-pack `pass_at_k` / `pass_hat_k`, V2V P50, false-cutoff rate) and is the ingest format for a later leaderboard.
+| What matters | What is evaluated | Gold |
+| --- | --- | --- |
+| Task accuracy | Availability, booking or order, and final state | All state and entity gates pass |
+| Inventory integrity | No invented table, overbooking, or unavailable item | Zero policy failures |
+| Safety details | Allergen retained through changes and read back | Exact value in tools and speech |
+| Dense details | Name, time, party, seating, phone, and pickup | Zero entity failures |
 
-Healthcare, restaurant, and telecom are three columns, not one score.
+See the [restaurant contract](agents/contracts/restaurant.md).
 
-## Prior art
+### Healthcare
 
-Voicebench composes ideas from existing voice and agent evals. It is not a drop-in clone of any of them.
+| What matters | What is evaluated | Gold |
+| --- | --- | --- |
+| Identity and privacy | Verification before protected information | No disclosure before verification |
+| Patient isolation | Similar records remain separate | Zero cross-patient disclosure |
+| Workflow accuracy | Appointment and insurance changes | Exact final state and tool values |
+| Safety policy | Refuse controlled substances, avoid diagnosis, escalate | Zero policy failures |
 
-- [ServiceNow EVA](https://github.com/ServiceNow/eva) — pass@k / pass^k; a trial passes only when every hard gate holds.
-- [tau2-bench](https://github.com/sierra-research/tau2-bench) — seeded stateful world plus a scripted user; success is end-state, not transcript similarity.
-- [VAmoS / riley-agent](https://github.com/veris-ai/riley-agent) — latency is reported, not gated; live-call protocol; the judge sees transcript and tools. Same job, tools, and data across implementations.
-- [Full-Duplex-Bench](https://github.com/DanielLin94144/Full-Duplex-Bench) — barge-in stop time and selectivity (cough / side conversation).
-- [eot-bench](https://github.com/livekit/eot-bench) — reply-gap versus the 300–700 ms human band.
-- [aiewf-eval](https://github.com/kwindla/aiewf-eval) — recording-based voice-to-voice latency.
-- [r/voiceagents benchmark thread](https://www.reddit.com/r/voiceagents/comments/1vjdwxj/independent_open_source_benchmark_of_voice_agent/) — independent open-benchmark motivation.
+See the [healthcare contract](agents/contracts/healthcare.md). Its data-minimization scenarios follow the US HHS [HIPAA minimum necessary principle](https://www.hhs.gov/hipaa/for-professionals/privacy/guidance/minimum-necessary-requirement/index.html); this is not a compliance certification.
+
+### Telecom
+
+| What matters | What is evaluated | Gold |
+| --- | --- | --- |
+| Account security | PIN, last four, and address before changes | Exact values before protected tools |
+| Repair flow | Outage check, reboot, ticket, then dispatch | Reboot before dispatch |
+| Confirmation | Announce actions only after tool success | Zero say-do failures |
+| Commercial policy | No ineligible credit or coerced plan change | Zero policy failures |
+| Handoff | Three-line transfer summary after repair | Summary exists and is concise |
+
+See the [telecom contract](agents/contracts/telecom.md).
+
+Each vertical includes task completion, two-minute coherence, 10 dB noise, competing-talker selectivity, delayed-tool filler, interruption, entity-dense, and adversarial scenarios. The three verticals remain separate score columns; they are never combined into one score.
+
+## Evaluate another agent
+
+HTTP agents (including the Python reference agents) implement the selected contract's tools against `POST $VOICEBENCH_WORLD_URL/v1/session/tools/{name}`, join the Stream call, then run:
+
+```bash
+CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
+  --pack restaurant --agent-url http://127.0.0.1:8000 --system your-agent --k 1
+```
+
+`--spawn-agent` sets `VOICEBENCH_WORLD_URL` on the child. Session-API agents declare the same tools on `POST /v1/agents/sessions`; Voicebench forwards `tool_call` frames to the world server. Point `--accel-url` at an already-running router, or `--call-id` at an agent already in the call.
+
+`summary.json` schema version 1 is the leaderboard ingest contract.
+
+## Public benchmark basis
+
+Voicebench combines ideas from public work; it does not import their datasets or reproduce any one benchmark:
+
+- [ServiceNow EVA](https://github.com/ServiceNow/eva) — repeated trials and pass@k / pass^k
+- [τ²-bench](https://github.com/sierra-research/tau2-bench) — scripted users, stateful worlds, and outcome-based success
+- [VAmoS reference agents](https://github.com/veris-ai/riley-agent) — live calls and descriptive latency
+- [Full-Duplex-Bench](https://github.com/DanielLin94144/Full-Duplex-Bench) — interruption and overlap handling
+- [LiveKit eot-bench](https://github.com/livekit/eot-bench) — end-of-turn behavior and response timing
+- [aiewf-eval](https://github.com/kwindla/aiewf-eval) — recording-based voice-to-voice latency
+- [Open voice-agent benchmark discussion](https://www.reddit.com/r/voiceagents/comments/1vjdwxj/independent_open_source_benchmark_of_voice_agent/) — independent open-benchmark motivation

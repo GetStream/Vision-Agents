@@ -3,19 +3,8 @@
 from vision_agents.core import Agent, User
 from vision_agents.plugins import gemini, getstream
 
+from voicebench_agents import pack_prompt
 from voicebench_agents.world_client import WorldClient
-
-INSTRUCTIONS = """
-You are the host at The Copper Spoon, answering the restaurant phone.
-Keep replies short. Collect name, party size, time, patio preference, high chair, and allergen.
-Allergen is required on every reservation and order. Never invent a table that check_availability
-did not return. If a slot is full, offer an alternate. If an item is 86'd, substitute or skip it,
-then confirm total and pickup window. While tools run, say "one moment, checking".
-Do not overbook. Do not drop an allergen after a change of mind.
-Never say a reservation is booked until create_reservation returns success. After you have
-name, time, party size, and allergen, call create_reservation, then confirm from that result.
-Read back the name, time, party size, and allergen after the booking succeeds.
-"""
 
 
 async def create_agent(**kwargs) -> Agent:
@@ -24,7 +13,7 @@ async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(id="restaurant-agent", name="Copper Spoon Host"),
-        instructions=INSTRUCTIONS,
+        instructions=pack_prompt("restaurant"),
         llm=llm,
     )
 

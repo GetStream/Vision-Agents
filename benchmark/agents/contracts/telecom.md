@@ -1,6 +1,6 @@
 # Telecom agent contract
 
-Same job, tools, and seeded world for every implementation. The reference prompt in `voicebench_agents/telecom.py` is the source of truth.
+Same job, tools, and seeded world for every implementation. `telecom.prompt` and `telecom.tools.yaml` in this directory are the source of truth.
 
 ## System prompt
 
@@ -19,7 +19,7 @@ Say "one moment, checking" while tools run. Read the ticket number back.
 
 - Greet first, then wait.
 - Say "one moment, checking" while tools run.
-- Point tools at `POST $WORLD_URL/v1/session/tools/{name}` with a JSON object body.
+- Point tools at `POST $VOICEBENCH_WORLD_URL/v1/session/tools/{name}` with a JSON object body.
 
 ## Tools
 
