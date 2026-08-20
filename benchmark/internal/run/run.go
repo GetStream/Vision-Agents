@@ -1,19 +1,14 @@
 package run
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/synth"
+	benchtarget "github.com/GetStream/Vision-Agents/benchmark/internal/target"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/world"
 )
 
@@ -44,6 +40,7 @@ type Config struct {
 	AccelURL   string
 	AgentPort  int
 	WorldURL   string
+	Target     benchtarget.Target
 	SkipSTT    bool
 	SkipJudge  bool
 	Logger     *slog.Logger
@@ -95,12 +92,6 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 		}
 	}
 
-	if cfg.SpawnAccel || cfg.AccelURL != "" {
-		if _, _, err := loadPackContract(cfg.Root, cfg.Pack); err != nil {
-			return report.Summary{}, err
-		}
-	}
-
 	packDir := filepath.Join(cfg.Root, "scenarios", cfg.Pack)
 	scenarios, err := scenario.LoadPack(packDir)
 	if err != nil {
@@ -135,20 +126,14 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 		return report.Summary{}, err
 	}
 
-	if cfg.SpawnAgent {
-		stop, err := startAgentProc(ctx, cfg, cfg.WorldURL)
-		if err != nil {
-			return report.Summary{}, err
-		}
-		defer stop()
+	if cfg.Target == nil {
+		cfg.Target = buildTarget(cfg)
 	}
-	if cfg.SpawnAccel {
-		stop, err := startRouterProc(ctx, cfg)
-		if err != nil {
-			return report.Summary{}, err
-		}
-		defer stop()
+	stopTarget, err := cfg.Target.Prepare(ctx)
+	if err != nil {
+		return report.Summary{}, err
 	}
+	defer stopTarget()
 
 	var calls []report.CallResult
 	for _, sc := range scenarios {
@@ -167,6 +152,32 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 	}
 	cfg.Logger.Info("wrote report", "dir", out)
 	return sum, nil
+}
+
+func buildTarget(cfg Config) benchtarget.Target {
+	if cfg.SpawnAccel || cfg.AccelURL != "" {
+		return &benchtarget.Acceleration{
+			Root:     cfg.Root,
+			Pack:     cfg.Pack,
+			URL:      cfg.AccelURL,
+			Spawn:    cfg.SpawnAccel,
+			Bin:      cfg.AccelBin,
+			WorldURL: cfg.WorldURL,
+			Logger:   cfg.Logger,
+		}
+	}
+	if cfg.SpawnAgent || cfg.AgentURL != "" {
+		return &benchtarget.Python{
+			Root:     cfg.Root,
+			Pack:     cfg.Pack,
+			URL:      cfg.AgentURL,
+			Spawn:    cfg.SpawnAgent,
+			Port:     cfg.AgentPort,
+			WorldURL: cfg.WorldURL,
+			Logger:   cfg.Logger,
+		}
+	}
+	return benchtarget.Noop{}
 }
 
 func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenario.Scenario, trial int, out string) (report.CallResult, error) {
@@ -205,7 +216,20 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 	sess := worldSrv.Snapshot()
 	metrics := score.Metrics{}
 	metrics.V2V = score.TimingFromRecording(rec)
+	if rec.Rate > 0 {
+		metrics.CallDurationMS = len(rec.Caller) * 1000 / rec.Rate
+	}
 	if sess != nil {
+		metrics.ToolCount = len(sess.Tools)
+		for _, tool := range sess.Tools {
+			if tool.Error != "" {
+				metrics.ToolErrorCount++
+			}
+			metrics.ToolWaitMS += tool.DurationMS
+			if tool.DurationMS > metrics.MaxToolWaitMS {
+				metrics.MaxToolWaitMS = tool.DurationMS
+			}
+		}
 		score.MarkToolTurns(&metrics, rec, sess.Tools)
 	}
 	score.SummarizeTiming(&metrics)
@@ -240,7 +264,7 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 		if sess != nil {
 			tools = sess.Tools
 		}
-		verdict, jerr := score.Judge(sc, callerText, agentText, tools)
+		verdict, jerr := score.Judge(sc, sc.CallerTranscript(), agentText, tools)
 		if jerr != nil {
 			metrics.ScoringFail = append(metrics.ScoringFail, "judge")
 			cfg.Logger.Warn("judge failed", "err", jerr)
@@ -254,7 +278,7 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 	}
 
 	score.ScoreFiller(&metrics, sc, rec, sess, agentText)
-	score.ApplyGates(&metrics)
+	score.ApplyGates(&metrics, sc)
 	result.Metrics = metrics
 	result.Passed = metrics.Passed
 
@@ -278,119 +302,6 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 	return result, nil
 }
 
-func startAgentProc(ctx context.Context, cfg Config, worldURL string) (func(), error) {
-	port := cfg.AgentPort
-	cmd := exec.CommandContext(ctx, "uv", "run", "python", "-m", "voicebench_agents", cfg.Pack,
-		"--host", "127.0.0.1", "--port", strconv.Itoa(port))
-	cmd.Dir = filepath.Join(cfg.Root, "agents")
-	env := make([]string, 0, len(os.Environ())+1)
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "VOICEBENCH_WORLD_URL=") || strings.HasPrefix(e, "WORLD_URL=") {
-			continue
-		}
-		env = append(env, e)
-	}
-	cmd.Env = append(env, "VOICEBENCH_WORLD_URL="+worldURL)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("run: spawn agent: %w", err)
-	}
-	stop := func() {
-		if cmd.Process == nil {
-			return
-		}
-		_ = cmd.Process.Signal(os.Interrupt)
-		done := make(chan struct{})
-		go func() {
-			_ = cmd.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			_ = cmd.Process.Kill()
-		}
-	}
-	readyURL := fmt.Sprintf("http://127.0.0.1:%d/ready", port)
-	if err := waitHTTP(ctx, readyURL, 120*time.Second); err != nil {
-		stop()
-		return nil, fmt.Errorf("run: agent did not become ready at %s: %w", readyURL, err)
-	}
-	cfg.Logger.Info("spawned agent ready", "url", cfg.AgentURL)
-	return stop, nil
-}
-
-func startRouterProc(ctx context.Context, cfg Config) (func(), error) {
-	if cfg.AccelBin == "" {
-		return nil, fmt.Errorf("run: --accel-bin is required with --spawn-accel")
-	}
-	addr := "127.0.0.1:8080"
-	if parsed, err := url.Parse(cfg.AccelURL); err == nil && parsed.Host != "" {
-		addr = parsed.Host
-	}
-	cmd := exec.CommandContext(ctx, cfg.AccelBin)
-	env := make([]string, 0, len(os.Environ())+1)
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "ROUTER_ADDR=") {
-			continue
-		}
-		env = append(env, e)
-	}
-	cmd.Env = append(env, "ROUTER_ADDR="+addr)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("run: spawn accel router: %w", err)
-	}
-	stop := func() {
-		if cmd.Process == nil {
-			return
-		}
-		_ = cmd.Process.Signal(os.Interrupt)
-		done := make(chan struct{})
-		go func() {
-			_ = cmd.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			_ = cmd.Process.Kill()
-		}
-	}
-	readyURL := strings.TrimRight(cfg.AccelURL, "/") + "/health"
-	if err := waitHTTP(ctx, readyURL, 120*time.Second); err != nil {
-		stop()
-		return nil, fmt.Errorf("run: accel router did not become ready at %s: %w", readyURL, err)
-	}
-	cfg.Logger.Info("spawned accel router", "url", cfg.AccelURL)
-	return stop, nil
-}
-
-func waitHTTP(ctx context.Context, readyURL string, timeout time.Duration) error {
-	client := &http.Client{Timeout: time.Second}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, readyURL, nil)
-		if err != nil {
-			return err
-		}
-		resp, err := client.Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode < 500 {
-				return nil
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	return fmt.Errorf("timed out")
-}
-
 func webrtcCallID(cfg Config, sc scenario.Scenario, trial int) string {
 	if cfg.CallID != "" {
 		if cfg.K > 1 {
@@ -400,77 +311,6 @@ func webrtcCallID(cfg Config, sc scenario.Scenario, trial int) string {
 	}
 	id := strings.ReplaceAll(sc.ID, ".", "-")
 	return fmt.Sprintf("vb-%s-%d-%s", id, trial, randomToken())
-}
-
-func startAgentSession(ctx context.Context, agentURL, callID, callType string) (string, error) {
-	base := strings.TrimRight(agentURL, "/")
-	body, _ := json.Marshal(map[string]string{"call_type": callType})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/calls/"+callID+"/sessions", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("run: start agent session: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("run: start agent session: HTTP %d", resp.StatusCode)
-	}
-	var parsed struct {
-		SessionID string `json:"session_id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", fmt.Errorf("run: start agent session: %w", err)
-	}
-	if parsed.SessionID == "" {
-		return "", fmt.Errorf("run: start agent session: missing session_id")
-	}
-	return parsed.SessionID, nil
-}
-
-func closeAgentSession(ctx context.Context, logger *slog.Logger, agentURL, callID, sessionID string) {
-	if sessionID == "" {
-		return
-	}
-	if logger == nil {
-		logger = slog.Default()
-	}
-	base := strings.TrimRight(agentURL, "/")
-	url := base + "/calls/" + callID + "/sessions/" + sessionID
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
-	if err != nil {
-		logger.Warn("close agent session", "err", err)
-		return
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		logger.Warn("close agent session", "err", err)
-		return
-	}
-	_ = resp.Body.Close()
-
-	client := &http.Client{Timeout: time.Second}
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		if err := ctx.Err(); err != nil {
-			return
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return
-		}
-		resp, err := client.Do(req)
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusNotFound {
-				return
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	logger.Warn("agent session still open after close", "session", sessionID, "call", callID)
 }
 
 func writeJSON(path string, v any) error {

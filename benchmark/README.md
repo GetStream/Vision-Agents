@@ -36,7 +36,7 @@ From `benchmark/`, evaluate Vision Agents:
 ```bash
 cd agents && uv sync && cd ..
 CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
-  --pack restaurant --spawn-agent --k 3
+  --pack restaurant --target python --spawn --k 3
 ```
 
 Evaluate acceleration through its public session API. The router is unmodified: Voicebench creates a session per trial, answers `tool_call` frames against the world server, and closes the session.
@@ -46,10 +46,10 @@ cd ../acceleration
 CGO_ENABLED=1 go build -o /tmp/accel-router ./cmd/router
 cd ../benchmark
 CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
-  --pack restaurant --spawn-accel --accel-bin /tmp/accel-router --k 3
+  --pack restaurant --target acceleration --spawn --bin /tmp/accel-router --k 3
 ```
 
-`--accel-url http://127.0.0.1:8080` targets a router that is already running. `--spawn-agent` and `--spawn-accel` cannot be combined. For a quick smoke test, add `--scenario restaurant.golden --k 1`.
+`--target acceleration --target-url http://127.0.0.1:8080` targets a router that is already running. `--target python --target-url http://127.0.0.1:8000` targets a Python Vision Agents server that is already running. Legacy `--spawn-agent`, `--agent-url`, `--spawn-accel`, `--accel-url`, and `--accel-bin` flags still work. For a quick smoke test, add `--scenario restaurant.golden --k 1`.
 
 Results go to `out/<run_id>/`: `report.md`, schema-v1 `summary.json`, recordings, transcripts, tool logs, world state, and per-call metrics. Regenerate a report with:
 
@@ -76,20 +76,20 @@ go test ./...
 2. **Call:** A synthesized caller follows a timed script. Noise tests add kitchen, street, or competing speech at 10 dB SNR.
 3. **Act:** Every implementation receives the same prompt, tools, data, and caller audio. Each trial uses a new call and empty history.
 4. **Observe:** Voicebench records both legs, tool calls, and final world state. Timing comes from speech energy in the recordings.
-5. **Grade:** Deterministic checks cover state, tool order, and entities. An LLM judge checks policy, coherence, and claims against successful tools.
+5. **Grade:** Deterministic checks cover state, expected tools and arguments, tool order, and entities. An LLM judge checks policy, coherence, and claims against successful tools. The scripted caller text is the canonical caller transcript for judging; caller STT remains a diagnostic artifact.
 6. **Repeat:** Each scenario runs `k` times, three by default. `pass@k` means any trial passed; `pass^k` means every trial passed.
 
 A trial passes only when every hard gate passes. Latency is reported separately, so speed cannot hide an incorrect result.
 
-## Metrics and gold targets
+## Metrics and Voicebench targets
 
-There is no single industry-standard score across these verticals. “Gold” means Voicebench's strict acceptance target, defined in [`timing.go`](internal/score/timing.go) and [`board.go`](internal/report/board.go), not a claimed state-of-the-art result.
+There is no single industry-standard score across these verticals. Voicebench targets are fixed acceptance thresholds for this suite, defined in [`timing.go`](internal/score/timing.go) and [`board.go`](internal/report/board.go). They are not universal industry standards, compliance certification, or claims of state of the art.
 
-| Metric | Measurement | Voicebench gold | Gate |
+| Metric | Measurement | Voicebench target | Gate |
 | --- | --- | --- | --- |
 | Task success | Required final world state | Every assertion passes | Yes |
 | Tool order | Scenario before/after constraints | Every constraint passes | Yes |
-| Entity fidelity | Required values in tools and speech | No missing or changed value | Yes |
+| Entity fidelity | Required values in tool arguments and speech | No missing or changed value | Yes |
 | Policy and say-do | Policy breaks or unsupported claims | Zero failures | Yes |
 | Tool filler | Filler begins before a delayed tool returns | Heard without blocking | Yes |
 | Barge-in | Interruption to agent silence | ≤ 800 ms | Yes |
@@ -102,7 +102,7 @@ There is no single industry-standard score across these verticals. “Gold” me
 
 ### Restaurant
 
-| What matters | What is evaluated | Gold |
+| What matters | What is evaluated | Target |
 | --- | --- | --- |
 | Task accuracy | Availability, booking or order, and final state | All state and entity gates pass |
 | Inventory integrity | No invented table, overbooking, or unavailable item | Zero policy failures |
@@ -113,7 +113,7 @@ See the [restaurant contract](agents/contracts/restaurant.md).
 
 ### Healthcare
 
-| What matters | What is evaluated | Gold |
+| What matters | What is evaluated | Target |
 | --- | --- | --- |
 | Identity and privacy | Verification before protected information | No disclosure before verification |
 | Patient isolation | Similar records remain separate | Zero cross-patient disclosure |
@@ -124,7 +124,7 @@ See the [healthcare contract](agents/contracts/healthcare.md). Its data-minimiza
 
 ### Telecom
 
-| What matters | What is evaluated | Gold |
+| What matters | What is evaluated | Target |
 | --- | --- | --- |
 | Account security | PIN, last four, and address before changes | Exact values before protected tools |
 | Repair flow | Outage check, reboot, ticket, then dispatch | Reboot before dispatch |
@@ -136,18 +136,26 @@ See the [telecom contract](agents/contracts/telecom.md).
 
 Each vertical includes task completion, two-minute coherence, 10 dB noise, competing-talker selectivity, delayed-tool filler, interruption, entity-dense, and adversarial scenarios. The three verticals remain separate score columns; they are never combined into one score.
 
+## Scenario world
+
+Voicebench starts a local world server for every run. Each scenario seeds that server with restaurant, healthcare, or telecom state. Tool calls mutate the world, and final scoring checks both the recorded conversation and the final world state. Python Vision Agents call the world server directly through `VOICEBENCH_WORLD_URL`; acceleration emits websocket `tool_call` events, and Voicebench forwards those calls to the same world server before returning `tool_result` frames.
+
 ## Evaluate another agent
 
 HTTP agents (including the Python reference agents) implement the selected contract's tools against `POST $VOICEBENCH_WORLD_URL/v1/session/tools/{name}`, join the Stream call, then run:
 
 ```bash
 CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
-  --pack restaurant --agent-url http://127.0.0.1:8000 --system your-agent --k 1
+  --pack restaurant --target python --target-url http://127.0.0.1:8000 --system your-agent --k 1
 ```
 
 `--spawn-agent` sets `VOICEBENCH_WORLD_URL` on the child. Session-API agents declare the same tools on `POST /v1/agents/sessions`; Voicebench forwards `tool_call` frames to the world server. Point `--accel-url` at an already-running router, or `--call-id` at an agent already in the call.
 
 `summary.json` schema version 1 is the leaderboard ingest contract.
+
+## Comparing runs
+
+A comparable run should use the same Voicebench commit, schema version, methodology version, scenario files, packs, `k`, target mode, region/network conditions, and provider configuration. `summary.json` records the benchmark and methodology versions plus the default external providers used for caller TTS, STT, and judging. Voicebench scores are directly comparable to other Voicebench runs under the same setup; they are not directly comparable to EVA, τ²-bench, eot-bench, or other benchmark scores.
 
 ## Public benchmark basis
 

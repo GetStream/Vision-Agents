@@ -20,7 +20,7 @@ var (
 	headStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 )
 
-// Table renders a gold-vs-ours scorecard for the terminal.
+// Table renders a target-vs-ours scorecard for the terminal.
 func Table(s Summary) string {
 	rows := Scorecard(s)
 	t := table.New().
@@ -35,9 +35,9 @@ func Table(s Summary) string {
 			}
 			return verdictStyle(rows[row].Verdict)
 		}).
-		Headers("BENCHMARK", "GOLD", "OURS", "GAP")
+		Headers("BENCHMARK", "TARGET", "OURS", "GAP")
 	for _, r := range rows {
-		t.Row(r.Name, r.Gold, r.Ours, r.Gap)
+		t.Row(r.Name, r.Target, r.Ours, r.Gap)
 	}
 
 	var b strings.Builder

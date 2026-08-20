@@ -8,7 +8,7 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 )
 
-// Verdict is how a scorecard row compares to gold.
+// Verdict is how a scorecard row compares to the Voicebench target.
 type Verdict int
 
 const (
@@ -18,10 +18,10 @@ const (
 	VerdictSkip
 )
 
-// Row is one gold-vs-ours line on the scorecard.
+// Row is one target-vs-ours line on the scorecard.
 type Row struct {
 	Name    string
-	Gold    string
+	Target  string
 	Ours    string
 	Gap     string
 	Verdict Verdict
@@ -30,21 +30,21 @@ type Row struct {
 type scenarioBench struct {
 	Name   string
 	Needle string
-	Gold   string
+	Target string
 }
 
 var scenarioBenches = []scenarioBench{
-	{Name: "Task completion", Needle: ".golden", Gold: "pass"},
-	{Name: "Coherence (2 min)", Needle: "coherence", Gold: "pass"},
-	{Name: "Noise", Needle: "noise", Gold: "pass"},
-	{Name: "Ignore other talkers", Needle: "selectivity", Gold: "hold"},
-	{Name: "Tool filler", Needle: "tool_filler", Gold: "pass"},
-	{Name: "Barge-in / interrupt", Needle: "interrupt", Gold: "pass"},
-	{Name: "Entity fidelity", Needle: "entity_dense", Gold: "pass"},
-	{Name: "Policy", Needle: "adversarial", Gold: "pass"},
+	{Name: "Task completion", Needle: ".golden", Target: "pass"},
+	{Name: "Coherence (2 min)", Needle: "coherence", Target: "pass"},
+	{Name: "Noise", Needle: "noise", Target: "pass"},
+	{Name: "Ignore other talkers", Needle: "selectivity", Target: "hold"},
+	{Name: "Tool filler", Needle: "tool_filler", Target: "pass"},
+	{Name: "Barge-in / interrupt", Needle: "interrupt", Target: "pass"},
+	{Name: "Entity fidelity", Needle: "entity_dense", Target: "pass"},
+	{Name: "Policy", Needle: "adversarial", Target: "pass"},
 }
 
-// Scorecard compares each checklist benchmark and latency metric to gold.
+// Scorecard compares each checklist benchmark and latency metric to the Voicebench target.
 func Scorecard(s Summary) []Row {
 	var rows []Row
 	for _, b := range scenarioBenches {
@@ -57,7 +57,7 @@ func Scorecard(s Summary) []Row {
 func scenarioRow(s Summary, b scenarioBench) Row {
 	calls := matchCalls(s.Calls, b.Needle)
 	if len(calls) == 0 {
-		return Row{Name: b.Name, Gold: b.Gold, Ours: "—", Gap: "not run", Verdict: VerdictSkip}
+		return Row{Name: b.Name, Target: b.Target, Ours: "—", Gap: "not run", Verdict: VerdictSkip}
 	}
 	passed := 0
 	for _, c := range calls {
@@ -70,11 +70,11 @@ func scenarioRow(s Summary, b scenarioBench) Row {
 		gap := "ok"
 		if !score.PassHatK(passedFlags(calls)) {
 			gap = "flaky"
-			return Row{Name: b.Name, Gold: b.Gold, Ours: ours, Gap: gap, Verdict: VerdictWarn}
+			return Row{Name: b.Name, Target: b.Target, Ours: ours, Gap: gap, Verdict: VerdictWarn}
 		}
-		return Row{Name: b.Name, Gold: b.Gold, Ours: ours, Gap: gap, Verdict: VerdictOK}
+		return Row{Name: b.Name, Target: b.Target, Ours: ours, Gap: gap, Verdict: VerdictOK}
 	}
-	return Row{Name: b.Name, Gold: b.Gold, Ours: ours, Gap: "miss", Verdict: VerdictMiss}
+	return Row{Name: b.Name, Target: b.Target, Ours: ours, Gap: "miss", Verdict: VerdictMiss}
 }
 
 func latencyRows(s Summary) []Row {
@@ -115,12 +115,12 @@ func latencyRows(s Summary) []Row {
 }
 
 func msBandRow(name string, samples []int, lo, hi int) Row {
-	gold := fmt.Sprintf("%d–%d ms", lo, hi)
+	target := fmt.Sprintf("%d–%d ms", lo, hi)
 	if len(samples) == 0 {
-		return Row{Name: name, Gold: gold, Ours: "—", Gap: "not run", Verdict: VerdictSkip}
+		return Row{Name: name, Target: target, Ours: "—", Gap: "not run", Verdict: VerdictSkip}
 	}
 	ours := median(samples)
-	row := Row{Name: name, Gold: gold, Ours: fmt.Sprintf("%d ms", ours)}
+	row := Row{Name: name, Target: target, Ours: fmt.Sprintf("%d ms", ours)}
 	if ours >= lo && ours <= hi {
 		row.Gap = "ok"
 		row.Verdict = VerdictOK
@@ -137,12 +137,12 @@ func msBandRow(name string, samples []int, lo, hi int) Row {
 }
 
 func msCapRow(name string, samples []int, capMS int) Row {
-	gold := fmt.Sprintf("≤ %d ms", capMS)
+	target := fmt.Sprintf("≤ %d ms", capMS)
 	if len(samples) == 0 {
-		return Row{Name: name, Gold: gold, Ours: "—", Gap: "not run", Verdict: VerdictSkip}
+		return Row{Name: name, Target: target, Ours: "—", Gap: "not run", Verdict: VerdictSkip}
 	}
 	ours := maxInt(samples)
-	row := Row{Name: name, Gold: gold, Ours: fmt.Sprintf("%d ms", ours)}
+	row := Row{Name: name, Target: target, Ours: fmt.Sprintf("%d ms", ours)}
 	if ours <= capMS {
 		row.Gap = "ok"
 		row.Verdict = VerdictOK
@@ -153,26 +153,26 @@ func msCapRow(name string, samples []int, capMS int) Row {
 	return row
 }
 
-func countRow(name string, ours, gold int) Row {
-	row := Row{Name: name, Gold: fmt.Sprintf("%d", gold), Ours: fmt.Sprintf("%d", ours)}
-	if ours <= gold {
+func countRow(name string, ours, target int) Row {
+	row := Row{Name: name, Target: fmt.Sprintf("%d", target), Ours: fmt.Sprintf("%d", ours)}
+	if ours <= target {
 		row.Gap = "ok"
 		row.Verdict = VerdictOK
 		return row
 	}
-	row.Gap = fmt.Sprintf("+%d", ours-gold)
+	row.Gap = fmt.Sprintf("+%d", ours-target)
 	row.Verdict = VerdictMiss
 	return row
 }
 
-func rateRow(name string, ours, gold float64) Row {
-	row := Row{Name: name, Gold: fmt.Sprintf("%.2f", gold), Ours: fmt.Sprintf("%.2f", ours)}
-	if ours <= gold {
+func rateRow(name string, ours, target float64) Row {
+	row := Row{Name: name, Target: fmt.Sprintf("%.2f", target), Ours: fmt.Sprintf("%.2f", ours)}
+	if ours <= target {
 		row.Gap = "ok"
 		row.Verdict = VerdictOK
 		return row
 	}
-	row.Gap = fmt.Sprintf("+%.2f", ours-gold)
+	row.Gap = fmt.Sprintf("+%.2f", ours-target)
 	row.Verdict = VerdictMiss
 	return row
 }

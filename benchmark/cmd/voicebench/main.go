@@ -83,6 +83,10 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	k := fs.Int("k", 3, "trials per scenario")
 	callID := fs.String("call-id", "", "Stream call id. Empty generates one per trial")
 	callType := fs.String("call-type", "default", "Stream call type")
+	target := fs.String("target", "", "target system (python, acceleration). Legacy flags still work.")
+	targetURL := fs.String("target-url", "", "target HTTP base URL")
+	spawn := fs.Bool("spawn", false, "start the selected target for this run")
+	bin := fs.String("bin", "", "target binary, used by --target acceleration --spawn")
 	agentURL := fs.String("agent-url", "", "Vision Agents HTTP base, POST /calls/{id}/sessions")
 	spawnAgent := fs.Bool("spawn-agent", false, "start python -m voicebench_agents for this pack")
 	spawnAccel := fs.Bool("spawn-accel", false, "start acceleration/cmd/router for this run")
@@ -97,6 +101,21 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	skipJudge := fs.Bool("skip-judge", false, "skip LLM judge (fails the trial)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *target != "" {
+		switch *target {
+		case "python":
+			*agentURL = *targetURL
+			*spawnAgent = *spawn
+		case "acceleration":
+			*accelURL = *targetURL
+			*spawnAccel = *spawn
+			if *bin != "" {
+				*accelBin = *bin
+			}
+		default:
+			return fmt.Errorf("run: unknown --target %s", *target)
+		}
 	}
 	sum, err := run.Run(ctx, run.Config{
 		Root:       root,

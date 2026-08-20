@@ -27,6 +27,11 @@ type Timing struct {
 // Metrics is the per-call scorecard.
 type Metrics struct {
 	V2V                []Timing `json:"v2v"`
+	CallDurationMS     int      `json:"call_duration_ms"`
+	ToolCount          int      `json:"tool_count"`
+	ToolErrorCount     int      `json:"tool_error_count"`
+	ToolWaitMS         int      `json:"tool_wait_ms"`
+	MaxToolWaitMS      int      `json:"max_tool_wait_ms"`
 	V2VP50             int      `json:"v2v_p50_ms"`
 	V2VP95             int      `json:"v2v_p95_ms"`
 	V2VMax             int      `json:"v2v_max_ms"`
@@ -43,6 +48,7 @@ type Metrics struct {
 	FillerFail         []string `json:"filler_fail"`
 	ScoringFail        []string `json:"scoring_fail"`
 	EndStateFail       []string `json:"end_state_fail"`
+	ExpectedToolFail   []string `json:"expected_tool_fail"`
 	ToolOrderFail      []string `json:"tool_order_fail"`
 	EntityToolFail     []string `json:"entity_tool_fail"`
 	EntitySpeechFail   []string `json:"entity_speech_fail"`
@@ -374,10 +380,13 @@ func EntityInSpeech(agentTranscript string, entities []scenario.Entity) []string
 }
 
 // ApplyGates sets Passed from hard AND-gates.
-func ApplyGates(m *Metrics) {
+func ApplyGates(m *Metrics, sc scenario.Scenario) {
 	var notes []string
 	if len(m.EndStateFail) > 0 {
 		notes = append(notes, "end_state")
+	}
+	if len(m.ExpectedToolFail) > 0 {
+		notes = append(notes, "expected_tools")
 	}
 	if len(m.PolicyFail) > 0 {
 		notes = append(notes, "policy")
@@ -400,7 +409,9 @@ func ApplyGates(m *Metrics) {
 	if len(m.ScoringFail) > 0 {
 		notes = append(notes, m.ScoringFail...)
 	}
-	if m.BargeInStopMS > MaxBargeInStopMS {
+	if sc.HasBargeIn() && m.BargeInStopMS < 0 {
+		notes = append(notes, "barge_in")
+	} else if m.BargeInStopMS > MaxBargeInStopMS {
 		notes = append(notes, "barge_in")
 	}
 	if !m.SelectivityHold {
@@ -443,6 +454,7 @@ func WorldGates(m *Metrics, sc scenario.Scenario, sess *world.Session, agentText
 		return
 	}
 	m.EndStateFail = world.CheckAssertions(sess.State, sc.EndState)
+	m.ExpectedToolFail = world.CheckExpectedTools(sess.Tools, sc.ExpectedTools)
 	m.ToolOrderFail = world.CheckToolOrder(sess.Tools, sc.ToolOrder)
 	m.EntityToolFail = world.EntityInTools(sess.Tools, sc.Entities)
 	m.EntitySpeechFail = EntityInSpeech(agentText, sc.Entities)

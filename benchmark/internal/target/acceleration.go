@@ -1,4 +1,4 @@
-package run
+package target
 
 import (
 	"bytes"
@@ -21,14 +21,14 @@ import (
 
 const accelCustomer = "voicebench"
 
-type accelTool struct {
+type AccelTool struct {
 	Name        string         `yaml:"name" json:"name"`
 	Description string         `yaml:"description" json:"description"`
 	Parameters  map[string]any `yaml:"parameters,omitempty" json:"parameters,omitempty"`
 }
 
 type accelToolsFile struct {
-	Tools []accelTool `yaml:"tools"`
+	Tools []AccelTool `yaml:"tools"`
 }
 
 type accelSessionRequest struct {
@@ -37,7 +37,7 @@ type accelSessionRequest struct {
 	UserID       string      `json:"user_id,omitempty"`
 	Instructions string      `json:"instructions,omitempty"`
 	Greeting     string      `json:"greeting,omitempty"`
-	Tools        []accelTool `json:"tools"`
+	Tools        []AccelTool `json:"tools"`
 }
 
 type accelSession struct {
@@ -46,50 +46,77 @@ type accelSession struct {
 }
 
 type accelConn struct {
-	conn   *websocket.Conn
-	write  sync.Mutex
-	cancel context.CancelFunc
-	done   chan struct{}
+	conn  *websocket.Conn
+	write sync.Mutex
+	done  chan struct{}
 }
 
-func loadPackContract(root, pack string) (instructions string, tools []accelTool, err error) {
-	promptRaw, err := os.ReadFile(filepath.Join(root, "agents", "contracts", pack+".prompt"))
-	if err != nil {
-		return "", nil, fmt.Errorf("run: accel instructions: %w", err)
-	}
-	raw, err := os.ReadFile(filepath.Join(root, "agents", "contracts", pack+".tools.yaml"))
-	if err != nil {
-		return "", nil, fmt.Errorf("run: accel tools: %w", err)
-	}
-	var file accelToolsFile
-	if err := yaml.Unmarshal(raw, &file); err != nil {
-		return "", nil, fmt.Errorf("run: accel tools: %w", err)
-	}
-	if len(file.Tools) == 0 {
-		return "", nil, fmt.Errorf("run: accel tools: %s.tools.yaml has no tools", pack)
-	}
-	return strings.TrimSpace(string(promptRaw)), file.Tools, nil
+// Acceleration starts and controls the Go acceleration router.
+type Acceleration struct {
+	Root         string
+	Pack         string
+	URL          string
+	Spawn        bool
+	Bin          string
+	WorldURL     string
+	Instructions string
+	Tools        []AccelTool
+	Logger       *slog.Logger
 }
 
-func startAccelSession(ctx context.Context, cfg Config, callID, callType string) (func(), error) {
-	instructions, tools, err := loadPackContract(cfg.Root, cfg.Pack)
-	if err != nil {
-		return nil, err
+func (a *Acceleration) Prepare(ctx context.Context) (func(), error) {
+	if a.Instructions == "" || len(a.Tools) == 0 {
+		instructions, tools, err := LoadPackContract(a.Root, a.Pack)
+		if err != nil {
+			return nil, err
+		}
+		a.Instructions = instructions
+		a.Tools = tools
 	}
+	if !a.Spawn {
+		return func() {}, nil
+	}
+	if a.URL == "" {
+		a.URL = "http://127.0.0.1:8080"
+	}
+	if a.Bin == "" {
+		a.Bin = os.Getenv("ACCEL_ROUTER")
+	}
+	if a.Bin == "" {
+		return nil, fmt.Errorf("run: --accel-bin or ACCEL_ROUTER is required with --spawn-accel (CGO_ENABLED=1 go build -o /tmp/accel-router ./cmd/router)")
+	}
+	addr := "127.0.0.1:8080"
+	if parsed, err := url.Parse(a.URL); err == nil && parsed.Host != "" {
+		addr = parsed.Host
+	}
+	stop, err := StartProcess(ctx, Process{
+		Command:      a.Bin,
+		Env:          []string{"ROUTER_ADDR=" + addr},
+		DropEnv:      []string{"ROUTER_ADDR="},
+		ReadyURL:     strings.TrimRight(a.URL, "/") + "/health",
+		ReadyTimeout: 120 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("run: spawn accel router: %w", err)
+	}
+	a.logger().Info("spawned accel router", "url", a.URL)
+	return stop, nil
+}
 
+func (a *Acceleration) StartCall(ctx context.Context, callID string, callType string) (func(), error) {
 	body, err := json.Marshal(accelSessionRequest{
 		CallID:       callID,
 		CallType:     callType,
 		UserID:       "accel-agent",
-		Instructions: instructions,
+		Instructions: a.Instructions,
 		Greeting:     "Hello, how can I help?",
-		Tools:        tools,
+		Tools:        a.Tools,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	base := strings.TrimRight(cfg.AccelURL, "/")
+	base := strings.TrimRight(a.URL, "/")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/agents/sessions", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -115,24 +142,24 @@ func startAccelSession(ctx context.Context, cfg Config, callID, callType string)
 		return nil, fmt.Errorf("run: create accel session: missing id")
 	}
 
-	wsURL, err := accelEventsURL(base, created.ID)
+	wsURL, err := AccelEventsURL(base, created.ID)
 	if err != nil {
-		closeAccelSession(context.Background(), cfg, created.ID)
+		closeAccelSession(context.Background(), a, created.ID)
 		return nil, err
 	}
 	header := http.Header{}
 	header.Set("X-Customer-Id", accelCustomer)
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, header)
 	if err != nil {
-		closeAccelSession(context.Background(), cfg, created.ID)
+		closeAccelSession(context.Background(), a, created.ID)
 		return nil, fmt.Errorf("run: accel events socket: %w", err)
 	}
 
 	watchCtx, cancel := context.WithCancel(ctx)
-	session := &accelConn{conn: conn, cancel: cancel, done: make(chan struct{})}
-	go session.serveTools(watchCtx, cfg.WorldURL)
+	session := &accelConn{conn: conn, done: make(chan struct{})}
+	go session.serveTools(watchCtx, a.WorldURL)
 
-	cfg.Logger.Info("accel session ready", "session", created.ID, "call", callID)
+	a.logger().Info("accel session ready", "session", created.ID, "call", callID)
 	return func() {
 		cancel()
 		_ = session.writeJSON(map[string]any{"type": "close"})
@@ -143,8 +170,34 @@ func startAccelSession(ctx context.Context, cfg Config, callID, callType string)
 		}
 		closeCtx, closeCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer closeCancel()
-		closeAccelSession(closeCtx, cfg, created.ID)
+		closeAccelSession(closeCtx, a, created.ID)
 	}, nil
+}
+
+func (a *Acceleration) logger() *slog.Logger {
+	if a.Logger == nil {
+		return slog.Default()
+	}
+	return a.Logger
+}
+
+func LoadPackContract(root, pack string) (instructions string, tools []AccelTool, err error) {
+	promptRaw, err := os.ReadFile(filepath.Join(root, "agents", "contracts", pack+".prompt"))
+	if err != nil {
+		return "", nil, fmt.Errorf("run: accel instructions: %w", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "agents", "contracts", pack+".tools.yaml"))
+	if err != nil {
+		return "", nil, fmt.Errorf("run: accel tools: %w", err)
+	}
+	var file accelToolsFile
+	if err := yaml.Unmarshal(raw, &file); err != nil {
+		return "", nil, fmt.Errorf("run: accel tools: %w", err)
+	}
+	if len(file.Tools) == 0 {
+		return "", nil, fmt.Errorf("run: accel tools: %s.tools.yaml has no tools", pack)
+	}
+	return strings.TrimSpace(string(promptRaw)), file.Tools, nil
 }
 
 func (s *accelConn) serveTools(ctx context.Context, worldURL string) {
@@ -176,7 +229,7 @@ func (s *accelConn) serveTools(ctx context.Context, worldURL string) {
 				}
 			}
 		}
-		output, fail := callWorldTool(ctx, worldURL, name, args)
+		output, fail := CallWorldTool(ctx, worldURL, name, args)
 		result := map[string]any{"type": "tool_result", "tool_call_id": id}
 		if fail != "" {
 			result["error"] = fail
@@ -196,7 +249,7 @@ func (s *accelConn) writeJSON(v any) error {
 	return s.conn.WriteJSON(v)
 }
 
-func callWorldTool(ctx context.Context, worldURL, name, args string) (string, string) {
+func CallWorldTool(ctx context.Context, worldURL, name, args string) (string, string) {
 	url := strings.TrimRight(worldURL, "/") + "/v1/session/tools/" + name
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(args))
 	if err != nil {
@@ -225,29 +278,26 @@ func callWorldTool(ctx context.Context, worldURL, name, args string) (string, st
 	return body, ""
 }
 
-func closeAccelSession(ctx context.Context, cfg Config, id string) {
-	if id == "" || cfg.AccelURL == "" {
+func closeAccelSession(ctx context.Context, cfg *Acceleration, id string) {
+	if id == "" || cfg.URL == "" {
 		return
 	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
-	}
-	base := strings.TrimRight(cfg.AccelURL, "/")
+	base := strings.TrimRight(cfg.URL, "/")
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, base+"/v1/agents/sessions/"+id, nil)
 	if err != nil {
-		cfg.Logger.Warn("close accel session", "err", err)
+		cfg.logger().Warn("close accel session", "err", err)
 		return
 	}
 	req.Header.Set("X-Customer-Id", accelCustomer)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		cfg.Logger.Warn("close accel session", "err", err)
+		cfg.logger().Warn("close accel session", "err", err)
 		return
 	}
 	_ = resp.Body.Close()
 }
 
-func accelEventsURL(httpBase, sessionID string) (string, error) {
+func AccelEventsURL(httpBase, sessionID string) (string, error) {
 	parsed, err := url.Parse(httpBase)
 	if err != nil {
 		return "", err

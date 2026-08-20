@@ -1,8 +1,10 @@
-package run
+package target
 
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -18,7 +20,7 @@ func TestLoadPackContract(t *testing.T) {
 		{"healthcare", 5, "verify_identity"},
 	}
 	for _, tc := range cases {
-		instructions, tools, err := loadPackContract(root, tc.pack)
+		instructions, tools, err := LoadPackContract(root, tc.pack)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -35,14 +37,14 @@ func TestLoadPackContract(t *testing.T) {
 }
 
 func TestAccelEventsURL(t *testing.T) {
-	got, err := accelEventsURL("http://127.0.0.1:8080", "sess-1")
+	got, err := AccelEventsURL("http://127.0.0.1:8080", "sess-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != "ws://127.0.0.1:8080/v1/agents/sessions/sess-1/events" {
 		t.Fatalf("got %s", got)
 	}
-	got, err = accelEventsURL("https://router.example", "abc")
+	got, err = AccelEventsURL("https://router.example", "abc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +63,30 @@ func TestCallWorldTool(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	out, fail := callWorldTool(t.Context(), srv.URL, "check_outage", "{}")
+	out, fail := CallWorldTool(t.Context(), srv.URL, "check_outage", "{}")
 	if fail != "" {
 		t.Fatal(fail)
 	}
 	if out != `{"outage":false}` {
 		t.Fatalf("got %s", out)
+	}
+}
+
+func findTestRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := wd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "scenarios", "restaurant")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("scenarios not found")
+		}
+		dir = parent
 	}
 }

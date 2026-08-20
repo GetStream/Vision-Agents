@@ -184,6 +184,21 @@ func (s Scenario) SpeechTexts() []string {
 	return out
 }
 
+// CallerTranscript returns the scripted caller text used as canonical judge input.
+func (s Scenario) CallerTranscript() string {
+	return strings.Join(s.SpeechTexts(), "\n")
+}
+
+// HasBargeIn reports whether the scenario expects a measurable interruption.
+func (s Scenario) HasBargeIn() bool {
+	for _, turn := range s.Turns {
+		if turn.Trigger.Kind == TriggerBargeIn {
+			return true
+		}
+	}
+	return false
+}
+
 // Packs is the known vertical set.
 func Packs() []string {
 	return []string{"restaurant", "healthcare", "telecom"}

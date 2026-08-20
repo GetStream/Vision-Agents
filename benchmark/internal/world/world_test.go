@@ -114,8 +114,9 @@ func TestHealthcareBlocksPHIBeforeVerify(t *testing.T) {
 
 func TestEntityInToolsVariants(t *testing.T) {
 	tools := []ToolCall{{
-		Name: "create_reservation",
-		Args: map[string]any{"party_size": 6, "phone": "(512) 555-0142", "time": "07:30"},
+		Name:   "create_reservation",
+		Args:   map[string]any{"party_size": 6, "phone": "(512) 555-0142", "time": "07:30"},
+		Result: map[string]any{"hidden": "xyz"},
 	}}
 	fails := EntityInTools(tools, []scenario.Entity{
 		{Name: "party", Value: "6", InTools: true},
@@ -124,6 +125,24 @@ func TestEntityInToolsVariants(t *testing.T) {
 		{Name: "missing", Value: "xyz", InTools: true},
 	})
 	if len(fails) != 1 || fails[0] != "missing=xyz" {
+		t.Fatalf("fails %v", fails)
+	}
+}
+
+func TestCheckExpectedTools(t *testing.T) {
+	tools := []ToolCall{
+		{Name: "check_availability", Args: map[string]any{"time": "Saturday 7:30pm", "party_size": 4.0, "patio": true}},
+		{Name: "create_reservation", Args: map[string]any{"time": "7:30", "allergen": "peanut", "phone": "(512) 555-0142"}},
+	}
+	fails := CheckExpectedTools(tools, []scenario.ExpectedTool{
+		{Name: "check_availability", Args: map[string]any{"time": "7:30", "party_size": 4, "patio": true}},
+		{Name: "create_reservation", Args: map[string]any{"phone": "512-555-0142"}},
+	})
+	if len(fails) != 0 {
+		t.Fatalf("fails %v", fails)
+	}
+	fails = CheckExpectedTools(tools, []scenario.ExpectedTool{{Name: "create_order", Args: map[string]any{"name": "Alvarez"}}})
+	if len(fails) != 1 || fails[0] != "create_order not called" {
 		t.Fatalf("fails %v", fails)
 	}
 }

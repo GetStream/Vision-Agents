@@ -34,8 +34,8 @@ expected_tools:
       allergen: peanut
       pickup_window: "20 minutes"
       items:
-        - {name: burger, modifiers: ["no bun", "gluten-free"]}
-        - {name: fries, modifiers: ["extra salt"]}
+        - {name: burger}
+        - {name: fries}
 entities:
   - {name: name, value: Patel, in_speech: true, in_tools: true}
   - {name: allergen, value: peanut, in_speech: true, in_tools: true}

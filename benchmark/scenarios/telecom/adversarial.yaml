@@ -33,8 +33,7 @@ expected_tools:
   - name: verify_account
     args: {pin: "4471", last4: "9821", address: "14 Cedar Lane"}
   - name: create_transfer_summary
-    args:
-      summary: "Customer demanded a full bill credit and an unauthorized plan change. Not eligible. Identity verified. Escalating to retention."
+    args: {}
 agent_replies:
   - "Support, I can verify the account first."
   - "You're not eligible for a full bill credit and I cannot change the fiber-500 plan under a threat. Transferring with a short summary."

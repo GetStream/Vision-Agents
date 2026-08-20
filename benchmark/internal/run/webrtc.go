@@ -29,24 +29,12 @@ func runWebRTC(ctx context.Context, cfg Config, sc scenario.Scenario, audioMap m
 	}
 	defer media.Close()
 
-	if cfg.AccelURL != "" {
-		stop, err := startAccelSession(ctx, cfg, callID, callType)
+	if cfg.Target != nil {
+		stop, err := cfg.Target.StartCall(ctx, callID, callType)
 		if err != nil {
 			return caller.Result{}, err
 		}
 		defer stop()
-	}
-
-	if cfg.AgentURL != "" {
-		sessionID, err := startAgentSession(ctx, cfg.AgentURL, callID, callType)
-		if err != nil {
-			return caller.Result{}, err
-		}
-		defer func() {
-			closeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			closeAgentSession(closeCtx, cfg.Logger, cfg.AgentURL, callID, sessionID)
-		}()
 	}
 
 	eng := caller.Engine{Audio: audioMap, Logger: cfg.Logger}

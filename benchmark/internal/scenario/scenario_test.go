@@ -65,6 +65,20 @@ func TestValidateRejectsEmptyTurns(t *testing.T) {
 	}
 }
 
+func TestCallerTranscriptAndBargeIn(t *testing.T) {
+	s := Scenario{Turns: []Turn{
+		{Text: "hello"},
+		{OverlapSound: "cough"},
+		{Text: "stop", Trigger: Trigger{Kind: TriggerBargeIn}},
+	}}
+	if got := s.CallerTranscript(); got != "hello\nstop" {
+		t.Fatalf("transcript %q", got)
+	}
+	if !s.HasBargeIn() {
+		t.Fatal("expected barge-in")
+	}
+}
+
 func TestMatchValue(t *testing.T) {
 	cases := []struct {
 		text, value string

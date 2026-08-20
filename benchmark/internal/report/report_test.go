@@ -35,7 +35,7 @@ func TestMarkdownAndSummary(t *testing.T) {
 	}
 }
 
-func TestScorecardGoldVsOurs(t *testing.T) {
+func TestScorecardTargetVsOurs(t *testing.T) {
 	sum := BuildSummary("vision-agents", "run1", 2, []CallResult{
 		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Passed: true, Metrics: score.Metrics{NonToolP50: 420, V2VP50: 450}},
 		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 2, Passed: false, Metrics: score.Metrics{NonToolP50: 900, V2VP50: 900, SpikeCount: 1}},

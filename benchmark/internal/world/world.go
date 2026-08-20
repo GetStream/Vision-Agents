@@ -403,7 +403,11 @@ func CheckToolOrder(tools []ToolCall, rules []scenario.OrderConstraint) []string
 // EntityInTools reports which required entities never appeared in tool args.
 func EntityInTools(tools []ToolCall, entities []scenario.Entity) []string {
 	var fails []string
-	blob, _ := json.Marshal(tools)
+	var args []map[string]any
+	for _, tool := range tools {
+		args = append(args, tool.Args)
+	}
+	blob, _ := json.Marshal(args)
 	text := string(blob)
 	for _, e := range entities {
 		if !e.InTools {
@@ -414,4 +418,102 @@ func EntityInTools(tools []ToolCall, entities []scenario.Entity) []string {
 		}
 	}
 	return fails
+}
+
+// CheckExpectedTools verifies required tool calls and expected argument subsets.
+func CheckExpectedTools(tools []ToolCall, expected []scenario.ExpectedTool) []string {
+	var fails []string
+	used := map[int]bool{}
+	for _, want := range expected {
+		matched := -1
+		var closest []string
+		for i, got := range tools {
+			if used[i] || got.Name != want.Name {
+				continue
+			}
+			argFails := expectedArgFails(got.Args, want)
+			if len(argFails) == 0 {
+				matched = i
+				break
+			}
+			if closest == nil {
+				closest = argFails
+			}
+		}
+		if matched >= 0 {
+			used[matched] = true
+			continue
+		}
+		if closest != nil {
+			fails = append(fails, closest...)
+			continue
+		}
+		fails = append(fails, want.Name+" not called")
+	}
+	return fails
+}
+
+func expectedArgFails(args map[string]any, want scenario.ExpectedTool) []string {
+	var fails []string
+	for key, wantValue := range want.Args {
+		gotValue, ok := args[key]
+		if !ok {
+			fails = append(fails, want.Name+"."+key+" missing")
+			continue
+		}
+		if !MatchExpectedValue(gotValue, wantValue) {
+			fails = append(fails, fmt.Sprintf("%s.%s want %v got %v", want.Name, key, wantValue, gotValue))
+		}
+	}
+	return fails
+}
+
+// MatchExpectedValue compares expected tool args with normalization for common phone-call forms.
+func MatchExpectedValue(got any, want any) bool {
+	switch w := want.(type) {
+	case map[string]any:
+		g, ok := got.(map[string]any)
+		if !ok {
+			return false
+		}
+		for key, wantValue := range w {
+			gotValue, ok := g[key]
+			if !ok || !MatchExpectedValue(gotValue, wantValue) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		g, ok := got.([]any)
+		if !ok || len(g) < len(w) {
+			return false
+		}
+		for i, wantValue := range w {
+			if !MatchExpectedValue(g[i], wantValue) {
+				return false
+			}
+		}
+		return true
+	case bool:
+		g, ok := got.(bool)
+		return ok && g == w
+	case string:
+		return matchScalar(got, w)
+	case int, int64, float64:
+		return matchNumber(got, w)
+	default:
+		return fmt.Sprint(normalize(got)) == fmt.Sprint(normalize(want))
+	}
+}
+
+func matchScalar(got any, want string) bool {
+	gotText := asString(got)
+	if normalizeTime(gotText) == normalizeTime(want) {
+		return true
+	}
+	return scenario.MatchValue(gotText, want)
+}
+
+func matchNumber(got any, want any) bool {
+	return fmt.Sprint(normalize(got)) == fmt.Sprint(normalize(want)) || matchScalar(got, fmt.Sprint(want))
 }

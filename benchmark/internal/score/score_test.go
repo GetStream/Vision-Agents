@@ -75,12 +75,12 @@ func TestBargeInStopMSMeasured(t *testing.T) {
 
 func TestApplyGates(t *testing.T) {
 	m := Metrics{SelectivityHold: true, HoldThroughOverlap: true}
-	ApplyGates(&m)
+	ApplyGates(&m, scenario.Scenario{})
 	if !m.Passed {
 		t.Fatalf("notes %v", m.GateNotes)
 	}
 	m.EndStateFail = []string{"reservation.allergen"}
-	ApplyGates(&m)
+	ApplyGates(&m, scenario.Scenario{})
 	if m.Passed {
 		t.Fatal("expected fail")
 	}
@@ -88,7 +88,7 @@ func TestApplyGates(t *testing.T) {
 
 func TestApplyGatesToolOrderAndFiller(t *testing.T) {
 	m := Metrics{SelectivityHold: true, HoldThroughOverlap: true, ToolOrderFail: []string{"walk_reboot"}, FillerFail: []string{"no filler"}}
-	ApplyGates(&m)
+	ApplyGates(&m, scenario.Scenario{})
 	if m.Passed {
 		t.Fatal("expected fail")
 	}
@@ -100,9 +100,22 @@ func TestApplyGatesToolOrderAndFiller(t *testing.T) {
 
 func TestApplyGatesBargeIn(t *testing.T) {
 	m := Metrics{SelectivityHold: true, HoldThroughOverlap: true, BargeInStopMS: 1200}
-	ApplyGates(&m)
+	ApplyGates(&m, scenario.Scenario{})
 	if m.Passed {
 		t.Fatal("expected barge_in fail")
+	}
+	m = Metrics{SelectivityHold: true, HoldThroughOverlap: true, BargeInStopMS: -1}
+	ApplyGates(&m, scenario.Scenario{Turns: []scenario.Turn{{Trigger: scenario.Trigger{Kind: scenario.TriggerBargeIn}}}})
+	if m.Passed {
+		t.Fatal("expected unmeasured barge_in fail")
+	}
+}
+
+func TestApplyGatesExpectedTools(t *testing.T) {
+	m := Metrics{SelectivityHold: true, HoldThroughOverlap: true, ExpectedToolFail: []string{"create_order not called"}}
+	ApplyGates(&m, scenario.Scenario{})
+	if m.Passed || !strings.Contains(strings.Join(m.GateNotes, ","), "expected_tools") {
+		t.Fatalf("notes %v", m.GateNotes)
 	}
 }
 

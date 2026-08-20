@@ -37,8 +37,7 @@ expected_tools:
   - name: dispatch_tech
     args: {window: "am"}
   - name: create_transfer_summary
-    args:
-      summary: "Outage not area-wide. Reboot failed. Ticket opened. Customer requests cancellation after third failure. No credit applied."
+    args: {}
 tool_order:
   - {before: walk_reboot, after: dispatch_tech}
 policy:
