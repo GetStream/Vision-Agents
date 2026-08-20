@@ -177,7 +177,7 @@ class TestSarvamSTT:
         assert items[2].text == "hello there"
         assert isinstance(items[3], TurnEnded)
 
-    async def test_realtime_turn_ends_after_final_without_partial(self):
+    async def test_realtime_turn_ends_after_final_without_partial(self) -> None:
         stt = STT(api_key="sk_test")
         participant = Participant({}, user_id="user-1", id="user-1")
         stt._current_participant = participant
