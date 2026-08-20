@@ -250,10 +250,11 @@ class TTS(Component):
             total_audio_bytes = 0
             total_audio_ms = 0.0
             chunk_index = 0
+            time_to_first_audio_s: float | None = None
 
-            # Fast-path: single buffer -> mark final
-            synthesis_time = time.perf_counter() - start_time
             if isinstance(response, PcmData):
+                # Single buffer: TTFA equals total synthesis time.
+                time_to_first_audio_s = time.perf_counter() - start_time
                 bytes_len, duration_ms = len(response.samples), response.duration_ms
                 yield TTSOutputChunk(
                     data=response,
@@ -269,9 +270,8 @@ class TTS(Component):
                 async for pcm in self._iter_pcm(response):
                     if epoch != self._epoch:
                         return
-                    # Register the synthesis time only when we get the first chunk
                     if chunk_index == 0:
-                        synthesis_time = time.perf_counter() - start_time
+                        time_to_first_audio_s = time.perf_counter() - start_time
 
                     bytes_len, duration_ms = len(pcm.samples), pcm.duration_ms
                     yield TTSOutputChunk(
@@ -297,11 +297,18 @@ class TTS(Component):
                         text=text,
                     )
 
-            # Use accumulated PcmData duration for total audio duration
+            # Total wall-clock time from request start to synthesis complete.
+            synthesis_time_s = time.perf_counter() - start_time
             estimated_audio_duration_ms = total_audio_ms
+            synthesis_time_ms = synthesis_time_s * 1000
+            ttfa_ms = (
+                time_to_first_audio_s * 1000
+                if time_to_first_audio_s is not None
+                else None
+            )
 
             real_time_factor = (
-                (synthesis_time * 1000) / estimated_audio_duration_ms
+                synthesis_time_ms / estimated_audio_duration_ms
                 if estimated_audio_duration_ms > 0
                 else None
             )
@@ -313,7 +320,8 @@ class TTS(Component):
                     text=text,
                     participant=participant,
                     total_audio_bytes=total_audio_bytes,
-                    synthesis_time_ms=synthesis_time * 1000,
+                    synthesis_time_ms=synthesis_time_ms,
+                    time_to_first_audio_ms=ttfa_ms,
                     audio_duration_ms=estimated_audio_duration_ms,
                     chunk_count=chunk_index,
                     real_time_factor=real_time_factor,
@@ -321,7 +329,8 @@ class TTS(Component):
             )
             self.metrics.on_tts_synthesis(
                 provider=self.provider_name,
-                synthesis_time_ms=synthesis_time * 1000,
+                synthesis_time_ms=synthesis_time_ms,
+                time_to_first_audio_ms=ttfa_ms,
                 audio_duration_ms=estimated_audio_duration_ms,
                 character_count=len(text),
             )

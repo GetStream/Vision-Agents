@@ -158,6 +158,10 @@ class TestTTS:
         assert tts.metrics.agent_metrics.tts_characters__total.value() == 5
         assert tts.metrics.agent_metrics.tts_audio_duration_ms__total.value() > 0
         assert tts.metrics.agent_metrics.tts_latency_ms__avg.value() is not None
+        assert (
+            tts.metrics.agent_metrics.tts_time_to_first_audio_ms__avg.value()
+            is not None
+        )
 
     async def test_send_iter_error_raises(self):
         tts = DummyTTSError()

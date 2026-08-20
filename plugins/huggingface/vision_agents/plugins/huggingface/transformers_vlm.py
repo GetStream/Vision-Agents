@@ -247,6 +247,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                     provider=self.provider_name,
                     model=self.model_id,
                     latency_ms=item.latency_ms,
+                    time_to_first_token_ms=item.time_to_first_token_ms,
                     input_tokens=item.input_tokens,
                     output_tokens=item.output_tokens,
                     frames_processed=len(frames_snapshot),
@@ -353,6 +354,7 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
             )
             if not tool_calls:
                 response_id = str(uuid.uuid4())
+                # Batch generate returns all tokens at once, so TTFT ≈ latency.
                 if output_text:
                     yield LLMResponseDelta(
                         content_index=None,
@@ -361,13 +363,14 @@ class TransformersVLM(VideoLLM, Warmable[VLMResources]):
                         sequence_number=0,
                         delta=output_text,
                         is_first_chunk=True,
-                        time_to_first_token_ms=None,
+                        time_to_first_token_ms=latency_ms,
                     )
                 yield LLMResponseFinal(
                     original=outputs,
                     text=output_text,
                     item_id=response_id,
                     latency_ms=latency_ms,
+                    time_to_first_token_ms=latency_ms,
                     model=self.model_id,
                 )
                 return

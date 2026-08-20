@@ -40,6 +40,7 @@ class TTSSynthesisCompleteEvent(PluginBaseEvent):
     text: Optional[str] = None
     total_audio_bytes: int = 0
     synthesis_time_ms: float = 0.0
+    time_to_first_audio_ms: Optional[float] = None
     audio_duration_ms: Optional[float] = None
     chunk_count: int = 1
     real_time_factor: Optional[float] = None
