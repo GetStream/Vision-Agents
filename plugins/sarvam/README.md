@@ -5,12 +5,13 @@ AI models built for Indian languages.
 
 ## Features
 
-- **STT**: WebSocket streaming speech-to-text (Saarika / Saaras) with Voice
+- **STT**: WebSocket streaming speech-to-text (Saaras) with Voice
   Activity Detection for turn events.
 - **TTS**: WebSocket streaming text-to-speech (Bulbul) with configurable
   speaker, pace, and language.
-- **LLM**: OpenAI-compatible chat completions (Sarvam-30B / Sarvam-105B /
-  Sarvam-M) via the existing `ChatCompletionsLLM` from the OpenAI plugin.
+- **LLM**: OpenAI-compatible chat completions (`sarvam-105b` /
+  `sarvam-105b-conversations`) via the existing `ChatCompletionsLLM` from the
+  OpenAI plugin.
 
 ## Installation
 
@@ -28,7 +29,7 @@ agent = Agent(
     edge=getstream.Edge(),
     agent_user=User(name="Sarvam AI"),
     instructions="Reply in Hindi or English, whichever the user speaks",
-    llm=sarvam.LLM(model="sarvam-30b"),
+    llm=sarvam.LLM(model="sarvam-105b"),
     stt=sarvam.STT(language="hi-IN"),
     tts=sarvam.TTS(speaker="shubh"),
     turn_detection=smart_turn.TurnDetection(),
