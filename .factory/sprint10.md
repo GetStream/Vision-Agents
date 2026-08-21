@@ -1,45 +1,54 @@
+# Go SDK
 
+Create agents-core-go for our go SDK
 
-## Synthetic LLM testing
+## Folder
 
-In the database store a list of questions to ask the LLM
-together with an evaluation prompt for the answer
+Every agent should support defining an agent directory. 
 
-Support either contains for simple checks.
-And evaluations by a simple AI model for more complicated checks
+agents/myagentname/
+- skills
+- knowledge
+- instructions.md
 
-## Synthetic voice testing
+## OpenAPI
 
-Use the same tests as above. But route it through either a pre-recorder or TTS generated full audio pipeline
+It should be partially generated from the acceleration endpoints' openAPI definitions
 
+## Text example
 
-## Real call evaluations
+Here's the python version. Do something similar in Golang
 
-1. WER tracking
-   If a call/agent is being evaluated enable recording in the stream call
-   After the call is completed run a slower and more accurate STT model
-   Use that to evaluate what the faster STT did during the call
+llm=stream.Accelerated(“jean”) // routes to what you have configured
 
-2. After the call completed store a summary
+@llm.register_function(description="Get current weather for a location")
+async def get_weather(location: str) -> Dict[str, Any]:
+return await get_weather_by_location(location)
 
-Evaluate the summary against an evaluation script this customer has set up
+agent = Agent(
+name=”jean”,
+llm=llm,
+harness=DefaultHarness(),
+cost_tracking={“customer_id”: 123}
+memory_filter={“user_id”, 123}
+)
 
-## Benchmarks
+## Voice example
 
-### Latency bench
+llm=stream.Accelerated(tts="sonic36", stt="parakeet", llm="gemma4", thinking="openai_sol" ) // qwen, fish, gemma4 for the conversation, openAI sol for thinking
 
-For each telephony provider we want to simulate calls from UK, California and NYC. And then we want to measure
+agent = Agent(
+name=”jean”,
+llm=llm,
+)
 
-- The region their data center connects us to for those calls
-- The call delay metrics, average, p95 and p99
+// how to listen to an incoming call
+number = agent.purchase_any_number()
+with agent.wait_for_call(number=number):
+agent.simple_reply(“say hello to the user and let them know you’re a voice AI”)
+agent.open_monitoring()
 
-### Restaurant eval
+// open the monitoring interface for calls
 
-### Dentist eval
-
-### Salon eval
-
-### 
-
-competitive benchmarks
-
+// or call someone
+agent.start_call(number=”yourcell”)
