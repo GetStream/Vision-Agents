@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ type Loopback struct {
 	toCaller  chan Frame
 	mu        sync.Mutex
 	closed    bool
+	dropped   int
 	AgentRecv <-chan Frame
 }
 
@@ -29,6 +31,16 @@ func (l *Loopback) Send(pcm []int16) error {
 }
 
 func (l *Loopback) Recv() <-chan Frame { return l.toCaller }
+
+// Dropped counts frames the caller leg was too slow to take.
+func (l *Loopback) Dropped() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.dropped
+}
+
+// WaitForAgent returns immediately: the fake agent is in the pipe from the start.
+func (l *Loopback) WaitForAgent(context.Context) error { return nil }
 
 func (l *Loopback) SendAgent(pcm []int16) error {
 	return l.push(l.toCaller, pcm, true)
@@ -56,6 +68,9 @@ func (l *Loopback) push(dst chan Frame, pcm []int16, pace bool) error {
 			select {
 			case dst <- Frame{PCM: chunk}:
 			default:
+				if pace {
+					l.dropped++
+				}
 			}
 		}
 		l.mu.Unlock()

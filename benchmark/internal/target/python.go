@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -26,14 +27,23 @@ type Python struct {
 
 func (p *Python) Prepare(ctx context.Context) (func(), error) {
 	if !p.Spawn {
+		if p.URL == "" {
+			return nil, fmt.Errorf("run: --target-url is required for a Python target without --spawn")
+		}
 		return func() {}, nil
 	}
-	if p.Port <= 0 {
-		p.Port = 8000
-	}
 	if p.URL == "" {
-		p.URL = fmt.Sprintf("http://127.0.0.1:%d", p.Port)
+		p.URL = "http://127.0.0.1:8000"
 	}
+	parsed, err := url.Parse(p.URL)
+	if err != nil || parsed.Port() == "" {
+		return nil, fmt.Errorf("run: spawned python target needs an HTTP URL with a port: %s", p.URL)
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		return nil, fmt.Errorf("run: spawned python target port: %w", err)
+	}
+	p.Port = port
 	stop, err := StartProcess(ctx, Process{
 		Command: "uv",
 		Args: []string{"run", "python", "-m", "voicebench_agents", p.Pack,
@@ -41,7 +51,7 @@ func (p *Python) Prepare(ctx context.Context) (func(), error) {
 		Dir:          filepath.Join(p.Root, "agents"),
 		Env:          []string{"VOICEBENCH_WORLD_URL=" + p.WorldURL},
 		DropEnv:      []string{"VOICEBENCH_WORLD_URL=", "WORLD_URL="},
-		ReadyURL:     fmt.Sprintf("http://127.0.0.1:%d/ready", p.Port),
+		ReadyURL:     strings.TrimRight(p.URL, "/") + "/ready",
 		ReadyTimeout: 120 * time.Second,
 	})
 	if err != nil {

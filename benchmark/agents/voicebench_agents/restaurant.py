@@ -1,7 +1,7 @@
 """Restaurant tools and agent factory."""
 
 from vision_agents.core import Agent, User
-from vision_agents.plugins import gemini, getstream
+from vision_agents.plugins import getstream, openai
 
 from voicebench_agents import pack_prompt
 from voicebench_agents.world_client import WorldClient
@@ -9,7 +9,7 @@ from voicebench_agents.world_client import WorldClient
 
 async def create_agent(**kwargs) -> Agent:
     world = WorldClient()
-    llm = gemini.Realtime()
+    llm = openai.Realtime()
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(id="restaurant-agent", name="Copper Spoon Host"),
@@ -17,11 +17,19 @@ async def create_agent(**kwargs) -> Agent:
         llm=llm,
     )
 
-    @llm.register_function(description="Check table availability. time is h:mm 12-hour, like 7:30")
-    async def check_availability(time: str, party_size: int, patio: bool = False) -> dict:
-        return world.call("check_availability", time=time, party_size=party_size, patio=patio)
+    @llm.register_function(
+        description="Check table availability. time is h:mm 12-hour, like 7:30"
+    )
+    async def check_availability(
+        time: str, party_size: int, patio: bool = False
+    ) -> dict:
+        return world.call(
+            "check_availability", time=time, party_size=party_size, patio=patio
+        )
 
-    @llm.register_function(description="Book the table. Call this before telling the caller they are booked. allergen is required. time is h:mm 12-hour, like 7:30")
+    @llm.register_function(
+        description="Book the table. Call this before telling the caller they are booked. allergen is required. time is h:mm 12-hour, like 7:30"
+    )
     async def create_reservation(
         time: str,
         party_size: int,
@@ -44,7 +52,9 @@ async def create_agent(**kwargs) -> Agent:
             notes=notes,
         )
 
-    @llm.register_function(description="Update an existing reservation. time is h:mm 12-hour, like 7:30")
+    @llm.register_function(
+        description="Update an existing reservation. time is h:mm 12-hour, like 7:30"
+    )
     async def update_reservation(
         time: str = "",
         party_size: int = 0,
@@ -77,7 +87,7 @@ async def create_agent(**kwargs) -> Agent:
     async def create_order(
         name: str,
         allergen: str,
-        items: list[str],
+        items: list[dict[str, str]],
         pickup_window: str = "",
         modifiers: list[str] | None = None,
     ) -> dict:

@@ -28,6 +28,8 @@ entities:
     value: "7:30"
     in_speech: true
     in_tools: true
+    tool: create_reservation
+    arg: time
 `)
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
@@ -101,6 +103,30 @@ func TestMatchValue(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("MatchValue(%q, %q)=%v want %v", tc.text, tc.value, got, tc.want)
 		}
+	}
+}
+
+func TestMatchValueRejectsPartialIdentifiers(t *testing.T) {
+	if MatchValue("member QW4T9-88210", "QW4T9-8821") {
+		t.Fatal("partial member id matched")
+	}
+	if MatchValue("call 512-555-01420", "512-555-0142") {
+		t.Fatal("partial phone number matched")
+	}
+	if MatchValue("party 16", "6") {
+		t.Fatal("numeric substring matched")
+	}
+}
+
+func TestMatchStructuredValue(t *testing.T) {
+	if !MatchStructuredValue("Saturday at 7:30pm", "7:30") {
+		t.Fatal("equivalent clock values did not match")
+	}
+	if !MatchStructuredValue("QW4T9 8821", "QW4T9-8821") {
+		t.Fatal("identifier punctuation should be harmless")
+	}
+	if MatchStructuredValue("QW4T9-88210", "QW4T9-8821") {
+		t.Fatal("extra identifier digit matched")
 	}
 }
 

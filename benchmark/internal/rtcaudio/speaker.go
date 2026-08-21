@@ -1,6 +1,6 @@
 //go:build cgo && webrtc
 
-package streamrtc
+package rtcaudio
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GetStream/getstream-go-webrtc/track"
 	"github.com/livekit/media-sdk"
 	"github.com/livekit/media-sdk/opus"
 	protoLogger "github.com/livekit/protocol/logger"
@@ -19,19 +18,22 @@ import (
 )
 
 const (
-	opusSampleRate         = 48_000
-	opusFrameDuration      = 20 * time.Millisecond
-	opusFrameSamples       = opusSampleRate / 50
-	opusNegotiatedChannels = 2
-	playoutFrames          = 20
-	audioLevelSilent       = 127
-	audioLevelSpeaking     = 20
+	// OpusSampleRate is the clock rate the encoder negotiates.
+	OpusSampleRate = 48_000
+	// OpusFrameDuration is the duration of one encoded frame.
+	OpusFrameDuration = 20 * time.Millisecond
+
+	opusFrameSamples   = OpusSampleRate / 50
+	playoutFrames      = 20
+	audioLevelSilent   = 127
+	audioLevelSpeaking = 20
 )
 
 var silenceFrame = []byte{0xf8, 0xff, 0xfe}
 
-type speaker struct {
-	track.BaseSampleProvider
+// Speaker encodes caller speech to opus and hands frames to a WebRTC SDK on demand.
+// It satisfies the SampleProvider interface of both the Stream and the LiveKit SDK.
+type Speaker struct {
 	mu        sync.Mutex
 	drained   *sync.Cond
 	frames    [][]byte
@@ -41,25 +43,26 @@ type speaker struct {
 	closed    bool
 }
 
-func newSpeaker() *speaker {
-	talker := &speaker{}
+func NewSpeaker() *Speaker {
+	talker := &Speaker{}
 	talker.drained = sync.NewCond(&talker.mu)
 	return talker
 }
 
-func (s *speaker) Write(pcm audio.PCM) error {
+// Write encodes pcm and blocks while the playout queue is full.
+func (s *Speaker) Write(pcm audio.PCM) error {
 	if len(pcm.Samples) == 0 {
 		return nil
 	}
 	if pcm.Rate <= 0 {
-		return fmt.Errorf("streamrtc: audio has no sample rate")
+		return fmt.Errorf("rtcaudio: audio has no sample rate")
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.closed {
-		return errors.New("streamrtc: the call has been left")
+		return errors.New("rtcaudio: the call has been left")
 	}
 	if s.pipeline == nil || s.inputRate != pcm.Rate {
 		pipeline, err := s.encoderFor(pcm.Rate)
@@ -69,7 +72,7 @@ func (s *speaker) Write(pcm audio.PCM) error {
 		s.pipeline, s.inputRate = pipeline, pcm.Rate
 	}
 	if err := s.pipeline.WriteSample(media.PCM16Sample(pcm.Samples)); err != nil {
-		return fmt.Errorf("streamrtc: encode speech: %w", err)
+		return fmt.Errorf("rtcaudio: encode speech: %w", err)
 	}
 	for len(s.frames) > playoutFrames && !s.closed {
 		s.drained.Wait()
@@ -77,7 +80,7 @@ func (s *speaker) Write(pcm audio.PCM) error {
 	return nil
 }
 
-func (s *speaker) NextSample(ctx context.Context) (webrtcmedia.Sample, error) {
+func (s *Speaker) NextSample(ctx context.Context) (webrtcmedia.Sample, error) {
 	if err := ctx.Err(); err != nil {
 		return webrtcmedia.Sample{}, err
 	}
@@ -85,16 +88,16 @@ func (s *speaker) NextSample(ctx context.Context) (webrtcmedia.Sample, error) {
 	defer s.mu.Unlock()
 	if len(s.frames) == 0 {
 		s.speaking = false
-		return webrtcmedia.Sample{Data: silenceFrame, Duration: opusFrameDuration}, nil
+		return webrtcmedia.Sample{Data: silenceFrame, Duration: OpusFrameDuration}, nil
 	}
 	frame := s.frames[0]
 	s.frames = s.frames[1:]
 	s.speaking = true
 	s.drained.Signal()
-	return webrtcmedia.Sample{Data: frame, Duration: opusFrameDuration}, nil
+	return webrtcmedia.Sample{Data: frame, Duration: OpusFrameDuration}, nil
 }
 
-func (s *speaker) CurrentAudioLevel() uint8 {
+func (s *Speaker) CurrentAudioLevel() uint8 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.speaking {
@@ -103,7 +106,11 @@ func (s *speaker) CurrentAudioLevel() uint8 {
 	return audioLevelSilent
 }
 
-func (s *speaker) Close() error {
+func (s *Speaker) OnBind() error { return nil }
+
+func (s *Speaker) OnUnbind() error { return nil }
+
+func (s *Speaker) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -120,20 +127,20 @@ func (s *speaker) Close() error {
 	return pipeline.Close()
 }
 
-func (s *speaker) encoderFor(inputRate int) (media.PCM16Writer, error) {
+func (s *Speaker) encoderFor(inputRate int) (media.PCM16Writer, error) {
 	encoder, err := opus.Encode(&frameSink{speaker: s}, 1, protoLogger.GetLogger())
 	if err != nil {
-		return nil, fmt.Errorf("streamrtc: build opus encoder: %w", err)
+		return nil, fmt.Errorf("rtcaudio: build opus encoder: %w", err)
 	}
 	return media.ResampleWriter(media.FullFrames(encoder, opusFrameSamples), inputRate), nil
 }
 
 type frameSink struct {
-	speaker *speaker
+	speaker *Speaker
 }
 
-func (f *frameSink) String() string  { return "streamrtc.speaker" }
-func (f *frameSink) SampleRate() int { return opusSampleRate }
+func (f *frameSink) String() string  { return "rtcaudio.speaker" }
+func (f *frameSink) SampleRate() int { return OpusSampleRate }
 func (f *frameSink) Close() error    { return nil }
 
 func (f *frameSink) WriteSample(frame opus.Sample) error {

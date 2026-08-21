@@ -104,6 +104,22 @@ func registerHealthcare(s *Server) {
 		return nil, fmt.Errorf("patient not found")
 	})
 
+	s.handle("update_pharmacy", func(sess *Session, args map[string]any) (any, error) {
+		if !truthy(sess.State["identity_verified"]) {
+			return nil, fmt.Errorf("identity not verified")
+		}
+		pid := asString(sess.State["verified_patient"])
+		patients := getList(sess.State, "patients")
+		for _, raw := range patients {
+			p, _ := raw.(map[string]any)
+			if p != nil && asString(p["id"]) == pid {
+				p["pharmacy"] = strArg(args, "pharmacy")
+				return map[string]any{"ok": true, "pharmacy": p["pharmacy"]}, nil
+			}
+		}
+		return nil, fmt.Errorf("patient not found")
+	})
+
 	s.handle("log_escalation", func(sess *Session, args map[string]any) (any, error) {
 		esc := map[string]any{
 			"reason":     strArg(args, "reason"),

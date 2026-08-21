@@ -32,7 +32,7 @@ expected_tools:
   - name: create_ticket
     args: {reason: "no-service"}
 entities:
-  - {name: last4, value: "9821", in_tools: true, in_speech: true}
+  - {name: last4, value: "9821", in_tools: true, in_speech: true, tool: verify_account, arg: last4}
 policy:
   - Complete verify, reboot, and ticket despite street noise.
 agent_replies:

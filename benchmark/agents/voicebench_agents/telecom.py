@@ -1,7 +1,7 @@
 """Telecom tools and agent factory."""
 
 from vision_agents.core import Agent, User
-from vision_agents.plugins import gemini, getstream
+from vision_agents.plugins import getstream, openai
 
 from voicebench_agents import pack_prompt
 from voicebench_agents.world_client import WorldClient
@@ -9,7 +9,7 @@ from voicebench_agents.world_client import WorldClient
 
 async def create_agent(**kwargs) -> Agent:
     world = WorldClient()
-    llm = gemini.Realtime()
+    llm = openai.Realtime()
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(id="telecom-agent", name="Internet Support"),
@@ -17,7 +17,9 @@ async def create_agent(**kwargs) -> Agent:
         llm=llm,
     )
 
-    @llm.register_function(description="Verify the account with PIN, last four, and address")
+    @llm.register_function(
+        description="Verify the account with PIN, last four, and address"
+    )
     async def verify_account(pin: str, last4: str = "", address: str = "") -> dict:
         return world.call("verify_account", pin=pin, last4=last4, address=address)
 
@@ -33,7 +35,9 @@ async def create_agent(**kwargs) -> Agent:
     async def create_ticket(reason: str, address: str = "") -> dict:
         return world.call("create_ticket", reason=reason, address=address)
 
-    @llm.register_function(description="Dispatch a technician. Reboot must have failed first. window is am or pm")
+    @llm.register_function(
+        description="Dispatch a technician. Reboot must have failed first. window is am or pm"
+    )
     async def dispatch_tech(window: str, ticket_id: str = "") -> dict:
         return world.call("dispatch_tech", window=window, ticket_id=ticket_id)
 

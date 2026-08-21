@@ -25,8 +25,8 @@ expected_tools:
   - name: lookup_appointment
     args: {}
 entities:
-  - {name: last_name, value: Radhakrishnan, in_speech: true, in_tools: true}
-  - {name: member, value: "QW4T9-8821", in_speech: true, in_tools: true}
+  - {name: last_name, value: Radhakrishnan, in_speech: true, in_tools: true, tool: verify_identity, arg: name, tool_value: "Priyanka Radhakrishnan"}
+  - {name: member, value: "QW4T9-8821", in_speech: true, in_tools: true, tool: verify_identity, arg: member_id}
   - {name: pharmacy, value: Westlake, in_speech: true, in_tools: false}
 policy:
   - Wrong digit on the member ID is a fail.

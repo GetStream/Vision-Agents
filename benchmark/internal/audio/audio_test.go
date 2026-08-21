@@ -73,6 +73,11 @@ func TestConversationNoiseAndTalker(t *testing.T) {
 		t.Fatalf("talker too short: %d", len(talker))
 	}
 	bed := ScaleNoiseForSNR(babble, 10)
+	signal := Tone(Rate, 200, 12000)
+	measuredBed := ScaleNoiseForSignalSNR(babble, signal, 10)
+	if snr := MeasuredSNRDB(signal, measuredBed); snr < 9.9 || snr > 10.1 {
+		t.Fatalf("measured SNR %.2f dB", snr)
+	}
 	frame := Tone(FrameSamples, 200, 8000)
 	orig10, orig40 := frame[10], frame[40]
 	mixed := Add(frame, bed, 0)

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,29 +22,39 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/world"
 )
 
+// Transports Voicebench can run the scripted caller over.
+const (
+	transportStream  = "stream"
+	transportLiveKit = "livekit"
+)
+
 // Config is a benchmark run.
 type Config struct {
-	Root       string
-	OutDir     string
-	Pack       string
-	ScenarioID string
-	K          int
-	WorldAddr  string
-	CallID     string
-	CallType   string
-	AgentURL   string
-	UserID     string
-	System     string
-	SpawnAgent bool
-	SpawnAccel bool
-	AccelBin   string
-	AccelURL   string
-	AgentPort  int
-	WorldURL   string
-	Target     benchtarget.Target
-	SkipSTT    bool
-	SkipJudge  bool
-	Logger     *slog.Logger
+	Root              string
+	OutDir            string
+	Pack              string
+	ScenarioID        string
+	K                 int
+	WorldAddr         string
+	CallID            string
+	CallType          string
+	Transport         string
+	UserID            string
+	System            string
+	TargetName        string
+	TargetURL         string
+	TargetModel       string
+	TargetVoice       string
+	TargetBin         string
+	SpawnTarget       bool
+	LiveKitAgentName  string
+	LiveKitDeployment string
+	WorldURL          string
+	NetworkProfile    string
+	Target            benchtarget.Target
+	SkipSTT           bool
+	SkipJudge         bool
+	Logger            *slog.Logger
 }
 
 // Run executes a pack and writes a report.
@@ -60,36 +71,18 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 	if cfg.WorldAddr == "" {
 		cfg.WorldAddr = "127.0.0.1:8090"
 	}
+	if cfg.TargetName != "" {
+		definition, ok := benchtarget.Lookup(cfg.TargetName)
+		if !ok {
+			return report.Summary{}, fmt.Errorf("run: unknown --target %s", cfg.TargetName)
+		}
+		cfg.Transport = definition.Transport
+		if cfg.System == "" {
+			cfg.System = definition.System
+		}
+	}
 	if cfg.System == "" {
-		cfg.System = "vision-agents"
-	}
-	if cfg.SpawnAgent && cfg.SpawnAccel {
-		return report.Summary{}, fmt.Errorf("run: --spawn-agent and --spawn-accel cannot both be set")
-	}
-	if cfg.SpawnAgent {
-		if cfg.AgentPort <= 0 {
-			cfg.AgentPort = 8000
-		}
-		if cfg.AgentURL == "" {
-			cfg.AgentURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.AgentPort)
-		}
-	}
-	if cfg.SpawnAccel || cfg.AccelURL != "" {
-		if cfg.System == "vision-agents" {
-			cfg.System = "acceleration"
-		}
-	}
-	if cfg.SpawnAccel {
-		if cfg.AccelURL == "" {
-			cfg.AccelURL = "http://127.0.0.1:8080"
-		}
-		if cfg.AccelBin == "" {
-			cfg.AccelBin = os.Getenv("ACCEL_ROUTER")
-		}
-		if cfg.AccelBin == "" {
-			return report.Summary{}, fmt.Errorf(
-				"run: --accel-bin or ACCEL_ROUTER is required with --spawn-accel (CGO_ENABLED=1 go build -o /tmp/accel-router ./cmd/router)")
-		}
+		cfg.System = "external"
 	}
 
 	packDir := filepath.Join(cfg.Root, "scenarios", cfg.Pack)
@@ -115,9 +108,38 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 		return report.Summary{}, err
 	}
 	defer worldSrv.Close()
-	cfg.WorldURL = "http://" + worldSrv.Addr
+	if cfg.WorldURL == "" {
+		cfg.WorldURL = "http://" + worldSrv.Addr
+	}
 
-	runID := time.Now().UTC().Format("20060102T150405Z")
+	if cfg.Target == nil {
+		if cfg.TargetName == "" {
+			cfg.Target = benchtarget.Noop{}
+		} else {
+			cfg.Target, err = benchtarget.Build(cfg.TargetName, benchtarget.Config{
+				Root:              cfg.Root,
+				Pack:              cfg.Pack,
+				URL:               cfg.TargetURL,
+				Bin:               cfg.TargetBin,
+				WorldURL:          cfg.WorldURL,
+				Spawn:             cfg.SpawnTarget,
+				LiveKitAgentName:  cfg.LiveKitAgentName,
+				LiveKitDeployment: cfg.LiveKitDeployment,
+				Logger:            cfg.Logger,
+			})
+			if err != nil {
+				return report.Summary{}, fmt.Errorf("run: %w", err)
+			}
+		}
+	}
+	stopTarget, err := cfg.Target.Prepare(ctx)
+	if err != nil {
+		return report.Summary{}, err
+	}
+	defer stopTarget()
+
+	started := time.Now().UTC()
+	runID := started.Format("20060102T150405Z")
 	out := cfg.OutDir
 	if out == "" {
 		out = filepath.Join(cfg.Root, "out", runID)
@@ -126,58 +148,41 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 		return report.Summary{}, err
 	}
 
-	if cfg.Target == nil {
-		cfg.Target = buildTarget(cfg)
-	}
-	stopTarget, err := cfg.Target.Prepare(ctx)
-	if err != nil {
-		return report.Summary{}, err
-	}
-	defer stopTarget()
-
 	var calls []report.CallResult
 	for _, sc := range scenarios {
 		for trial := 1; trial <= cfg.K; trial++ {
 			res, err := runOnce(ctx, cfg, worldSrv, sc, trial, out)
 			if err != nil {
-				cfg.Logger.Error("trial failed", "scenario", sc.ID, "trial", trial, "err", err)
 				res.Error = err.Error()
+				var targetErr targetFailure
+				if errors.As(err, &targetErr) {
+					cfg.Logger.Error("target failed", "scenario", sc.ID, "trial", trial, "err", err)
+					res.Outcome = report.OutcomeFail
+					res.Metrics.GateNotes = append(res.Metrics.GateNotes, "target")
+				} else {
+					cfg.Logger.Error("trial invalid", "scenario", sc.ID, "trial", trial, "err", err)
+					res.Outcome = report.OutcomeInvalid
+					res.InvalidReason = append(res.InvalidReason, err.Error())
+				}
+			}
+			if persistErr := persistTrialResult(res); persistErr != nil {
+				cfg.Logger.Error("persist trial result", "scenario", sc.ID, "trial", trial, "err", persistErr)
+				res.Error = persistErr.Error()
+				res.Outcome = report.OutcomeInvalid
+				res.Passed = false
+				res.InvalidReason = append(res.InvalidReason, persistErr.Error())
 			}
 			calls = append(calls, res)
 		}
 	}
 	sum := report.BuildSummary(cfg.System, runID, cfg.K, calls)
+	sum.Started = started
+	sum.Manifest = buildManifest(cfg, scenarios)
 	if err := report.Write(out, sum); err != nil {
 		return sum, err
 	}
 	cfg.Logger.Info("wrote report", "dir", out)
 	return sum, nil
-}
-
-func buildTarget(cfg Config) benchtarget.Target {
-	if cfg.SpawnAccel || cfg.AccelURL != "" {
-		return &benchtarget.Acceleration{
-			Root:     cfg.Root,
-			Pack:     cfg.Pack,
-			URL:      cfg.AccelURL,
-			Spawn:    cfg.SpawnAccel,
-			Bin:      cfg.AccelBin,
-			WorldURL: cfg.WorldURL,
-			Logger:   cfg.Logger,
-		}
-	}
-	if cfg.SpawnAgent || cfg.AgentURL != "" {
-		return &benchtarget.Python{
-			Root:     cfg.Root,
-			Pack:     cfg.Pack,
-			URL:      cfg.AgentURL,
-			Spawn:    cfg.SpawnAgent,
-			Port:     cfg.AgentPort,
-			WorldURL: cfg.WorldURL,
-			Logger:   cfg.Logger,
-		}
-	}
-	return benchtarget.Noop{}
 }
 
 func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenario.Scenario, trial int, out string) (report.CallResult, error) {
@@ -198,28 +203,29 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 		audioMap[text] = pcm
 	}
 
-	rec, err := runWebRTC(ctx, cfg, sc, audioMap, trial)
-	if err != nil {
-		return result, err
-	}
-
-	if err := audio.WriteWAV(filepath.Join(callDir, "caller.wav"), audio.PCM{Rate: rec.Rate, Samples: rec.Caller}); err != nil {
-		return result, err
-	}
-	if err := audio.WriteWAV(filepath.Join(callDir, "agent.wav"), audio.PCM{Rate: rec.Rate, Samples: rec.Agent}); err != nil {
-		return result, err
-	}
-	if err := audio.WriteStereoWAV(filepath.Join(callDir, "mixed.wav"), rec.Rate, rec.Caller, rec.Agent); err != nil {
-		return result, err
+	rec, callErr := runWebRTC(ctx, cfg, sc, audioMap, trial)
+	if rec.Rate > 0 {
+		if err := audio.WriteWAV(filepath.Join(callDir, "caller.wav"), audio.PCM{Rate: rec.Rate, Samples: rec.Caller}); err != nil {
+			return result, err
+		}
+		if err := audio.WriteWAV(filepath.Join(callDir, "agent.wav"), audio.PCM{Rate: rec.Rate, Samples: rec.Agent}); err != nil {
+			return result, err
+		}
+		if err := audio.WriteStereoWAV(filepath.Join(callDir, "mixed.wav"), rec.Rate, rec.Caller, rec.Agent); err != nil {
+			return result, err
+		}
 	}
 
 	sess := worldSrv.Snapshot()
 	metrics := score.Metrics{}
-	metrics.V2V = score.TimingFromRecording(rec)
-	if rec.Rate > 0 {
-		metrics.CallDurationMS = len(rec.Caller) * 1000 / rec.Rate
-	}
+	metrics.V2V, metrics.Dropped = score.TimingFromRecording(rec)
+	metrics.CallDurationMS = rec.DurationMS()
+	metrics.ClockDriftMS = rec.ClockDriftMS()
+	metrics.InboundDropped = rec.InboundDropped
+	metrics.RequestedSNRDB = rec.RequestedSNRDB
+	metrics.MeasuredSNRDB = rec.MeasuredSNRDB
 	if sess != nil {
+		metrics.WorldContact = sess.Contacted
 		metrics.ToolCount = len(sess.Tools)
 		for _, tool := range sess.Tools {
 			if tool.Error != "" {
@@ -234,60 +240,12 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 	}
 	score.SummarizeTiming(&metrics)
 	metrics.BargeInStopMS = score.BargeInStopMS(rec)
-	metrics.SelectivityHold = score.SelectivityHold(rec)
-	metrics.HoldThroughOverlap = score.HoldThroughOverlap(rec)
+	metrics.OverlapChecks = score.ScoreOverlaps(rec)
+	metrics.SelectivityHold = score.SelectivityHold(metrics.OverlapChecks)
+	metrics.HoldThroughOverlap = score.HoldThroughOverlap(metrics.OverlapChecks)
 	metrics.FalseCutoff = score.FalseCutoff(rec)
-
-	agentText := ""
-	callerText := ""
-	if cfg.SkipSTT {
-		metrics.ScoringFail = append(metrics.ScoringFail, "stt")
-	} else {
-		var err error
-		agentText, err = score.TranscribeDeepgram(audio.PCM{Rate: rec.Rate, Samples: rec.Agent})
-		if err != nil {
-			metrics.ScoringFail = append(metrics.ScoringFail, "stt")
-			cfg.Logger.Warn("stt failed", "leg", "agent", "err", err)
-		}
-		callerText, err = score.TranscribeDeepgram(audio.PCM{Rate: rec.Rate, Samples: rec.Caller})
-		if err != nil {
-			metrics.ScoringFail = append(metrics.ScoringFail, "stt")
-			cfg.Logger.Warn("stt failed", "leg", "caller", "err", err)
-		}
-	}
-	score.WorldGates(&metrics, sc, sess, agentText)
-
-	if cfg.SkipJudge {
-		metrics.ScoringFail = append(metrics.ScoringFail, "judge")
-	} else {
-		var tools []world.ToolCall
-		if sess != nil {
-			tools = sess.Tools
-		}
-		verdict, jerr := score.Judge(sc, sc.CallerTranscript(), agentText, tools)
-		if jerr != nil {
-			metrics.ScoringFail = append(metrics.ScoringFail, "judge")
-			cfg.Logger.Warn("judge failed", "err", jerr)
-		} else {
-			metrics.PolicyFail = verdict.PolicyFail
-			metrics.SayDoFail = verdict.SayDoFail
-			if sc.Judge.Coherence && !verdict.Coherent {
-				metrics.PolicyFail = append(metrics.PolicyFail, "incoherent")
-			}
-		}
-	}
-
-	score.ScoreFiller(&metrics, sc, rec, sess, agentText)
-	score.ApplyGates(&metrics, sc)
 	result.Metrics = metrics
-	result.Passed = metrics.Passed
 
-	if err := writeJSON(filepath.Join(callDir, "metrics.json"), metrics); err != nil {
-		return result, err
-	}
-	if err := writeJSON(filepath.Join(callDir, "result.json"), result); err != nil {
-		return result, err
-	}
 	if sess != nil {
 		if err := writeJSON(filepath.Join(callDir, "tools.json"), sess.Tools); err != nil {
 			return result, err
@@ -296,10 +254,88 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 			return result, err
 		}
 	}
-	if err := writeJSON(filepath.Join(callDir, "transcript.json"), map[string]string{"caller": callerText, "agent": agentText}); err != nil {
+	if err := writeJSON(filepath.Join(callDir, "events.json"), rec.Events); err != nil {
 		return result, err
 	}
+	if callErr != nil {
+		return result, callErr
+	}
+
+	agentTranscript := score.Transcript{}
+	callerTranscript := score.Transcript{}
+	if cfg.SkipSTT {
+		result.InvalidReason = append(result.InvalidReason, "agent stt skipped")
+	} else {
+		var err error
+		agentTranscript, err = score.TranscribeDeepgram(audio.PCM{Rate: rec.Rate, Samples: rec.Agent})
+		if err != nil {
+			result.InvalidReason = append(result.InvalidReason, "agent stt: "+err.Error())
+			cfg.Logger.Warn("stt failed", "leg", "agent", "err", err)
+		}
+		callerTranscript, err = score.TranscribeDeepgram(audio.PCM{Rate: rec.Rate, Samples: rec.Caller})
+		if err != nil {
+			result.Warnings = append(result.Warnings, "diagnostic caller stt failed: "+err.Error())
+			cfg.Logger.Warn("diagnostic stt failed", "leg", "caller", "err", err)
+		}
+	}
+	if rec.InboundDropped > 0 {
+		result.InvalidReason = append(result.InvalidReason, fmt.Sprintf("inbound audio dropped %d frame(s)", rec.InboundDropped))
+	}
+	score.WorldGates(&metrics, sc, sess, agentTranscript.Text)
+
+	var judgeVerdict *score.JudgeVerdict
+	if cfg.SkipJudge {
+		result.InvalidReason = append(result.InvalidReason, "judge skipped")
+	} else {
+		var tools []world.ToolCall
+		if sess != nil {
+			tools = sess.Tools
+		}
+		verdict, jerr := score.Judge(sc, sc.CallerTranscript(), agentTranscript.Text, tools)
+		if jerr != nil {
+			result.InvalidReason = append(result.InvalidReason, "judge: "+jerr.Error())
+			cfg.Logger.Warn("judge failed", "err", jerr)
+		} else {
+			judgeVerdict = &verdict
+			metrics.PolicyFail = verdict.PolicyFail
+			metrics.SayDoFail = verdict.SayDoFail
+			if sc.Judge.Coherence && !verdict.Coherent {
+				metrics.PolicyFail = append(metrics.PolicyFail, "incoherent")
+			}
+		}
+	}
+
+	score.ScoreFiller(&metrics, sc, rec, sess, agentTranscript)
+	score.ApplyGates(&metrics, sc)
+	result.Metrics = metrics
+	result.Passed = metrics.Passed && len(result.InvalidReason) == 0
+	if len(result.InvalidReason) > 0 {
+		result.Outcome = report.OutcomeInvalid
+	} else if result.Passed {
+		result.Outcome = report.OutcomePass
+	} else {
+		result.Outcome = report.OutcomeFail
+	}
+	if !metrics.WorldContact && len(sc.ExpectedTools) > 0 {
+		result.Warnings = append(result.Warnings, "target never contacted the world server: verify it received the contract and can reach "+cfg.WorldURL)
+	}
+
+	if err := writeJSON(filepath.Join(callDir, "transcript.json"), map[string]score.Transcript{"caller": callerTranscript, "agent": agentTranscript}); err != nil {
+		return result, err
+	}
+	if judgeVerdict != nil {
+		if err := writeJSON(filepath.Join(callDir, "judge.json"), judgeVerdict); err != nil {
+			return result, err
+		}
+	}
 	return result, nil
+}
+
+func persistTrialResult(result report.CallResult) error {
+	if err := writeJSON(filepath.Join(result.Dir, "metrics.json"), result.Metrics); err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join(result.Dir, "result.json"), result)
 }
 
 func webrtcCallID(cfg Config, sc scenario.Scenario, trial int) string {

@@ -74,6 +74,9 @@ func (a *Acceleration) Prepare(ctx context.Context) (func(), error) {
 		a.Tools = tools
 	}
 	if !a.Spawn {
+		if a.URL == "" {
+			return nil, fmt.Errorf("run: --target-url is required for an acceleration target without --spawn")
+		}
 		return func() {}, nil
 	}
 	if a.URL == "" {
@@ -83,7 +86,7 @@ func (a *Acceleration) Prepare(ctx context.Context) (func(), error) {
 		a.Bin = os.Getenv("ACCEL_ROUTER")
 	}
 	if a.Bin == "" {
-		return nil, fmt.Errorf("run: --accel-bin or ACCEL_ROUTER is required with --spawn-accel (CGO_ENABLED=1 go build -o /tmp/accel-router ./cmd/router)")
+		return nil, fmt.Errorf("run: --bin or ACCEL_ROUTER is required with --target acceleration --spawn")
 	}
 	addr := "127.0.0.1:8080"
 	if parsed, err := url.Parse(a.URL); err == nil && parsed.Host != "" {

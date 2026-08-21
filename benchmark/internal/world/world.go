@@ -37,6 +37,9 @@ type Session struct {
 	State      map[string]any
 	Tools      []ToolCall
 	Delays     map[string]time.Duration
+	// Contacted records whether the target reached the world server at all.
+	// Voicebench itself reads state in process, so only a target sets this.
+	Contacted bool
 }
 
 // Server holds the active session and HTTP routes.
@@ -129,7 +132,17 @@ func (s *Server) Close() error {
 	return s.http.Close()
 }
 
+// markContacted records that a target called the world server.
+func (s *Server) markContacted() {
+	s.mu.Lock()
+	if s.session != nil {
+		s.session.Contacted = true
+	}
+	s.mu.Unlock()
+}
+
 func (s *Server) getActive(w http.ResponseWriter, r *http.Request) {
+	s.markContacted()
 	sess := s.Snapshot()
 	if sess == nil {
 		http.Error(w, "no active session", http.StatusNotFound)
@@ -139,6 +152,7 @@ func (s *Server) getActive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getState(w http.ResponseWriter, r *http.Request) {
+	s.markContacted()
 	sess := s.Snapshot()
 	if sess == nil {
 		http.Error(w, "no active session", http.StatusNotFound)
@@ -148,6 +162,7 @@ func (s *Server) getState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getTools(w http.ResponseWriter, r *http.Request) {
+	s.markContacted()
 	sess := s.Snapshot()
 	if sess == nil {
 		http.Error(w, "no active session", http.StatusNotFound)
@@ -157,6 +172,7 @@ func (s *Server) getTools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postTool(w http.ResponseWriter, r *http.Request) {
+	s.markContacted()
 	name := strings.TrimPrefix(r.URL.Path, "/v1/session/tools/")
 	name = strings.Trim(name, "/")
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -184,6 +200,12 @@ func (s *Server) postTool(w http.ResponseWriter, r *http.Request) {
 	if d := sess.Delays[name]; d > 0 {
 		time.Sleep(d)
 	}
+	s.mu.Lock()
+	if s.session != sess {
+		s.mu.Unlock()
+		http.Error(w, "session changed", http.StatusConflict)
+		return
+	}
 	result, err := fn(sess, args)
 	ended := time.Now()
 	call := ToolCall{
@@ -198,10 +220,7 @@ func (s *Server) postTool(w http.ResponseWriter, r *http.Request) {
 		call.Error = err.Error()
 		call.Result = map[string]any{"error": err.Error()}
 	}
-	s.mu.Lock()
-	if s.session == sess {
-		sess.Tools = append(sess.Tools, call)
-	}
+	sess.Tools = append(sess.Tools, call)
 	s.mu.Unlock()
 	writeJSON(w, call.Result)
 }
@@ -400,24 +419,61 @@ func CheckToolOrder(tools []ToolCall, rules []scenario.OrderConstraint) []string
 	return fails
 }
 
-// EntityInTools reports which required entities never appeared in tool args.
+// EntityInTools reports which required entities never appeared exactly in the
+// configured tool argument, or in any scalar argument when no scope is configured.
 func EntityInTools(tools []ToolCall, entities []scenario.Entity) []string {
 	var fails []string
-	var args []map[string]any
-	for _, tool := range tools {
-		args = append(args, tool.Args)
-	}
-	blob, _ := json.Marshal(args)
-	text := string(blob)
-	for _, e := range entities {
-		if !e.InTools {
+	for _, entity := range entities {
+		if !entity.InTools {
 			continue
 		}
-		if !scenario.MatchValue(text, e.Value) {
-			fails = append(fails, e.Name+"="+e.Value)
+		matched := false
+		want := entity.Value
+		if entity.ToolValue != "" {
+			want = entity.ToolValue
+		}
+		for _, tool := range tools {
+			if entity.Tool != "" && tool.Name != entity.Tool {
+				continue
+			}
+			if entity.Arg != "" {
+				value, ok := tool.Args[entity.Arg]
+				if ok && scenario.MatchStructuredValue(asString(value), want) {
+					matched = true
+					break
+				}
+				continue
+			}
+			if structuredValueIn(tool.Args, want) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			fails = append(fails, entity.Name+"="+entity.Value)
 		}
 	}
 	return fails
+}
+
+func structuredValueIn(value any, want string) bool {
+	switch node := value.(type) {
+	case map[string]any:
+		for _, item := range node {
+			if structuredValueIn(item, want) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range node {
+			if structuredValueIn(item, want) {
+				return true
+			}
+		}
+	default:
+		return scenario.MatchStructuredValue(asString(node), want)
+	}
+	return false
 }
 
 // CheckExpectedTools verifies required tool calls and expected argument subsets.
@@ -432,6 +488,9 @@ func CheckExpectedTools(tools []ToolCall, expected []scenario.ExpectedTool) []st
 				continue
 			}
 			argFails := expectedArgFails(got.Args, want)
+			if got.Error != "" {
+				argFails = append(argFails, want.Name+" failed: "+got.Error)
+			}
 			if len(argFails) == 0 {
 				matched = i
 				break
@@ -485,7 +544,7 @@ func MatchExpectedValue(got any, want any) bool {
 		return true
 	case []any:
 		g, ok := got.([]any)
-		if !ok || len(g) < len(w) {
+		if !ok || len(g) != len(w) {
 			return false
 		}
 		for i, wantValue := range w {
@@ -507,11 +566,7 @@ func MatchExpectedValue(got any, want any) bool {
 }
 
 func matchScalar(got any, want string) bool {
-	gotText := asString(got)
-	if normalizeTime(gotText) == normalizeTime(want) {
-		return true
-	}
-	return scenario.MatchValue(gotText, want)
+	return scenario.MatchStructuredValue(asString(got), want)
 }
 
 func matchNumber(got any, want any) bool {

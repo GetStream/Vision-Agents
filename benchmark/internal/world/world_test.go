@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,6 +115,40 @@ func TestHealthcareBlocksPHIBeforeVerify(t *testing.T) {
 	postTool(t, srv.Addr, "lookup_appointment", map[string]any{})
 }
 
+func TestUpdatePharmacyRequiresVerifyAndStoresOnThePatient(t *testing.T) {
+	srv := New(nil)
+	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	time.Sleep(20 * time.Millisecond)
+	srv.Seed(scenario.Scenario{
+		ID: "h", Pack: "healthcare",
+		Seed: map[string]any{
+			"patients": []any{
+				map[string]any{"id": "p1", "name": "Maya Chen", "dob": "1987-03-04", "member_id": "ABC123456", "pharmacy": "Old Town Drugs"},
+				map[string]any{"id": "p2", "name": "Leo Chen", "dob": "2014-06-11", "member_id": "ABC000111"},
+			},
+		},
+	})
+	if resp := postToolRaw(t, srv.Addr, "update_pharmacy", map[string]any{"pharmacy": "Oak Street Pharmacy"}); resp["error"] == nil {
+		t.Fatal("expected identity error before verification")
+	}
+	postTool(t, srv.Addr, "verify_identity", map[string]any{
+		"name": "Maya Chen", "dob": "1987-03-04", "member_id": "ABC123456",
+	})
+	postTool(t, srv.Addr, "update_pharmacy", map[string]any{"pharmacy": "Oak Street Pharmacy"})
+
+	state := srv.Snapshot().State
+	got, ok := Lookup(state, "patients.0.pharmacy")
+	if !ok || got != "Oak Street Pharmacy" {
+		t.Fatalf("verified patient pharmacy is %v", got)
+	}
+	if _, ok := Lookup(state, "patients.1.pharmacy"); ok {
+		t.Fatal("the other patient's chart was touched")
+	}
+}
+
 func TestEntityInToolsVariants(t *testing.T) {
 	tools := []ToolCall{{
 		Name:   "create_reservation",
@@ -144,6 +181,11 @@ func TestCheckExpectedTools(t *testing.T) {
 	fails = CheckExpectedTools(tools, []scenario.ExpectedTool{{Name: "create_order", Args: map[string]any{"name": "Alvarez"}}})
 	if len(fails) != 1 || fails[0] != "create_order not called" {
 		t.Fatalf("fails %v", fails)
+	}
+	failed := []ToolCall{{Name: "check_availability", Args: map[string]any{"time": "7:30"}, Error: "backend unavailable"}}
+	fails = CheckExpectedTools(failed, []scenario.ExpectedTool{{Name: "check_availability", Args: map[string]any{"time": "7:30"}}})
+	if len(fails) != 1 || !strings.Contains(fails[0], "failed") {
+		t.Fatalf("failed tool counted as successful: %v", fails)
 	}
 }
 
@@ -255,4 +297,85 @@ func postToolRaw(t *testing.T, addr, name string, args map[string]any) map[strin
 		out = map[string]any{}
 	}
 	return out
+}
+
+func TestExpectedScenarioTracesReachTheirEndState(t *testing.T) {
+	root := worldTestRoot(t)
+	srv := New(nil)
+	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	for _, pack := range scenario.Packs() {
+		scenarios, err := scenario.LoadPack(filepath.Join(root, "scenarios", pack))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, sc := range scenarios {
+			t.Run(sc.ID, func(t *testing.T) {
+				session := srv.Seed(sc)
+				session.Delays = map[string]time.Duration{}
+				for _, expected := range sc.ExpectedTools {
+					postTool(t, srv.Addr, expected.Name, expected.Args)
+				}
+				snapshot := srv.Snapshot()
+				if failures := CheckAssertions(snapshot.State, sc.EndState); len(failures) > 0 {
+					t.Fatalf("reference trace misses end state: %v", failures)
+				}
+				if failures := CheckExpectedTools(snapshot.Tools, sc.ExpectedTools); len(failures) > 0 {
+					t.Fatalf("reference trace misses tools: %v", failures)
+				}
+				if failures := CheckToolOrder(snapshot.Tools, sc.ToolOrder); len(failures) > 0 {
+					t.Fatalf("reference trace violates order: %v", failures)
+				}
+				if failures := EntityInTools(snapshot.Tools, sc.Entities); len(failures) > 0 {
+					t.Fatalf("reference trace misses entities: %v", failures)
+				}
+			})
+		}
+	}
+}
+
+func worldTestRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "scenarios")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("scenarios not found")
+		}
+		dir = parent
+	}
+}
+
+func TestSessionContactedTracksTargetCalls(t *testing.T) {
+	srv := New(nil)
+	if err := srv.ListenAndServe("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	time.Sleep(20 * time.Millisecond)
+
+	sc := scenario.Scenario{ID: "healthcare.golden", Pack: "healthcare", Seed: map[string]any{
+		"patients": []any{map[string]any{"id": "p1", "name": "Maya Chen", "dob": "1987-03-04", "member_id": "ABC123456"}},
+	}}
+	srv.Seed(sc)
+	if srv.Snapshot().Contacted {
+		t.Fatal("seeded session is already marked contacted")
+	}
+	postToolRaw(t, srv.Addr, "verify_identity", map[string]any{"name": "Maya Chen", "dob": "1987-03-04", "member_id": "ABC123456"})
+	if !srv.Snapshot().Contacted {
+		t.Fatal("tool call did not mark the session contacted")
+	}
+	srv.Seed(sc)
+	if srv.Snapshot().Contacted {
+		t.Fatal("contact leaked into the next trial")
+	}
 }

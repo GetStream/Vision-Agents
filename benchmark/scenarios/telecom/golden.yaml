@@ -43,8 +43,8 @@ tool_order:
   - {before: walk_reboot, after: dispatch_tech}
   - {before: verify_account, after: create_ticket}
 entities:
-  - {name: pin, value: "4471", in_tools: true, in_speech: false}
-  - {name: last4, value: "9821", in_tools: true, in_speech: true}
+  - {name: pin, value: "4471", in_tools: true, in_speech: false, tool: verify_account, arg: pin}
+  - {name: last4, value: "9821", in_tools: true, in_speech: true, tool: verify_account, arg: last4}
   - {name: error, value: "840", in_speech: true, in_tools: false}
 policy:
   - Reboot before a truck roll.

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"slices"
 	"sync"
 
@@ -17,29 +16,28 @@ import (
 	sfu_models "github.com/GetStream/protocol/protobuf/video/sfu/models"
 	"github.com/GetStream/protocol/protobuf/video/sfu/signal_rpc"
 	"github.com/google/uuid"
-	"github.com/livekit/media-sdk"
-	lkmedia "github.com/livekit/server-sdk-go/v2/pkg/media"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/rtcaudio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/transport"
 )
 
 type rtcCall struct {
 	options Options
 	logger  *slog.Logger
-	recv    chan transport.Frame
-	speaker *speaker
+	inbound *rtcaudio.Inbound
+	speaker *rtcaudio.Speaker
 
 	client *videosdk.Client
 	call   *videosdk.Call
 
-	mu         sync.Mutex
-	listening  map[string]*lkmedia.PCMRemoteTrack
-	subscribed []*signal_rpc.TrackSubscriptionDetails
-	unregister func()
-	closed     bool
-	pending    []int16
+	mu             sync.Mutex
+	subscribed     []*signal_rpc.TrackSubscriptionDetails
+	unregister     func()
+	closed         bool
+	agentTrack     chan struct{}
+	agentTrackOnce sync.Once
 }
 
 func join(ctx context.Context, options Options) (transport.Media, error) {
@@ -55,31 +53,19 @@ func join(ctx context.Context, options Options) (transport.Media, error) {
 	if options.UserName == "" {
 		options.UserName = options.UserID
 	}
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
-	}
-	if options.APISecret == "" {
-		options.APISecret = os.Getenv(apiSecretEnvVar)
-	}
-	if options.UserToken == "" {
-		options.UserToken = os.Getenv(userTokenEnvVar)
-	}
-	if options.APIKey == "" {
-		return nil, fmt.Errorf("streamrtc: %s is not set", apiKeyEnvVar)
-	}
-	if options.APISecret == "" && options.UserToken == "" {
-		return nil, fmt.Errorf("streamrtc: set %s or %s", userTokenEnvVar, apiSecretEnvVar)
+	if err := options.Resolve(); err != nil {
+		return nil, err
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
 
 	c := &rtcCall{
-		options:   options,
-		logger:    options.Logger.With("call", options.CallType+":"+options.CallID),
-		recv:      make(chan transport.Frame, 64),
-		speaker:   newSpeaker(),
-		listening: map[string]*lkmedia.PCMRemoteTrack{},
+		options:    options,
+		logger:     options.Logger.With("call", options.CallType+":"+options.CallID),
+		inbound:    rtcaudio.NewInbound(),
+		speaker:    rtcaudio.NewSpeaker(),
+		agentTrack: make(chan struct{}),
 	}
 	if err := c.connect(ctx); err != nil {
 		return nil, err
@@ -131,7 +117,7 @@ func (c *rtcCall) publish() error {
 	}
 	voice, err := sdktrack.NewAudioTrack(info, c.speaker, webrtc.RTPCodecCapability{
 		MimeType:  webrtc.MimeTypeOpus,
-		ClockRate: opusSampleRate,
+		ClockRate: rtcaudio.OpusSampleRate,
 		Channels:  opusNegotiatedChannels,
 	})
 	if err != nil {
@@ -150,25 +136,11 @@ func (c *rtcCall) listen(remote videosdk.OnTrackReceived) {
 	if string(remote.ParticipantID.UserID) == c.options.UserID {
 		return
 	}
-	decoder, err := lkmedia.NewPCMRemoteTrack(remote.Track, &listener{call: c},
-		lkmedia.WithTargetSampleRate(audio.Rate),
-		lkmedia.WithTargetChannels(1),
-	)
-	if err != nil {
+	if err := c.inbound.Track(remote.Track); err != nil {
 		c.logger.Error("could not decode agent audio", "error", err)
 		return
 	}
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		decoder.Close()
-		return
-	}
-	if previous, ok := c.listening[remote.Track.ID()]; ok {
-		previous.Close()
-	}
-	c.listening[remote.Track.ID()] = decoder
-	c.mu.Unlock()
+	c.agentTrackOnce.Do(func() { close(c.agentTrack) })
 	c.logger.Info("listening to agent audio")
 }
 
@@ -222,41 +194,23 @@ func audioSubscriptions(state *sfu_models.CallState, selfUserID string) []*signa
 	return subscriptions
 }
 
-type listener struct {
-	call *rtcCall
-}
-
-func (l *listener) WriteSample(sample media.PCM16Sample) error {
-	return l.call.pushInbound(sample)
-}
-
-func (l *listener) Close() error { return nil }
-
-func (c *rtcCall) pushInbound(sample media.PCM16Sample) error {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return nil
-	}
-	c.pending = append(c.pending, sample...)
-	for len(c.pending) >= audio.FrameSamples {
-		chunk := append([]int16(nil), c.pending[:audio.FrameSamples]...)
-		c.pending = c.pending[audio.FrameSamples:]
-		frame := transport.Frame{PCM: chunk}
-		select {
-		case c.recv <- frame:
-		default:
-		}
-	}
-	c.mu.Unlock()
-	return nil
-}
-
 func (c *rtcCall) Send(pcm []int16) error {
 	return c.speaker.Write(audio.PCM{Rate: audio.Rate, Samples: pcm})
 }
 
-func (c *rtcCall) Recv() <-chan transport.Frame { return c.recv }
+func (c *rtcCall) Recv() <-chan transport.Frame { return c.inbound.Recv() }
+
+func (c *rtcCall) Dropped() int { return c.inbound.Dropped() }
+
+// WaitForAgent blocks until the target publishes an audio track.
+func (c *rtcCall) WaitForAgent(ctx context.Context) error {
+	select {
+	case <-c.agentTrack:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("streamrtc: agent published no audio track: %w", ctx.Err())
+	}
+}
 
 func (c *rtcCall) Close() error {
 	c.mu.Lock()
@@ -266,21 +220,15 @@ func (c *rtcCall) Close() error {
 	}
 	c.closed = true
 	unregister := c.unregister
-	decoders := make([]*lkmedia.PCMRemoteTrack, 0, len(c.listening))
-	for _, decoder := range c.listening {
-		decoders = append(decoders, decoder)
-	}
-	c.listening = map[string]*lkmedia.PCMRemoteTrack{}
 	c.mu.Unlock()
 
 	if unregister != nil {
 		unregister()
 	}
-	close(c.recv)
-	for _, decoder := range decoders {
-		decoder.Close()
-	}
 	var failures []error
+	if err := c.inbound.Close(); err != nil {
+		failures = append(failures, err)
+	}
 	if err := c.speaker.Close(); err != nil {
 		failures = append(failures, err)
 	}

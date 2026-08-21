@@ -15,7 +15,21 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
 )
 
-const defaultVoice = "VR6AewLTigWG4xSOukaG"
+const (
+	defaultVoice = "VR6AewLTigWG4xSOukaG"
+	CallerModel  = "eleven_flash_v2_5"
+)
+
+// VoiceID resolves the configured caller voice without exposing credentials.
+func VoiceID(voice string) string {
+	if voice != "" {
+		return voice
+	}
+	if configured := os.Getenv("ELEVENLABS_VOICE_ID"); configured != "" {
+		return configured
+	}
+	return defaultVoice
+}
 
 func cacheDir(root string) string {
 	return filepath.Join(root, "cache", "tts")
@@ -32,12 +46,7 @@ func pathFor(root, voice, text string) string {
 
 // LoadOrSynth returns 16 kHz PCM for text, synthesizing via ElevenLabs on a miss.
 func LoadOrSynth(root, voice, text string) ([]int16, error) {
-	if voice == "" {
-		voice = os.Getenv("ELEVENLABS_VOICE_ID")
-	}
-	if voice == "" {
-		voice = defaultVoice
-	}
+	voice = VoiceID(voice)
 	path := pathFor(root, voice, text)
 	if pcm, err := audio.ReadWAV(path); err == nil && pcm.Rate == audio.Rate {
 		return pcm.Samples, nil
@@ -75,7 +84,7 @@ func elevenLabs(voice, text string) (audio.PCM, error) {
 	url := fmt.Sprintf("https://api.elevenlabs.io/v1/text-to-speech/%s?output_format=pcm_16000", voice)
 	body, err := json.Marshal(map[string]string{
 		"text":     text,
-		"model_id": "eleven_flash_v2_5",
+		"model_id": CallerModel,
 	})
 	if err != nil {
 		return audio.PCM{}, err

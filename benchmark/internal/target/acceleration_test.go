@@ -1,10 +1,12 @@
 package target
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,7 +19,7 @@ func TestLoadPackContract(t *testing.T) {
 	}{
 		{"telecom", 8, "verify_account"},
 		{"restaurant", 5, "check_availability"},
-		{"healthcare", 5, "verify_identity"},
+		{"healthcare", 6, "verify_identity"},
 	}
 	for _, tc := range cases {
 		instructions, tools, err := LoadPackContract(root, tc.pack)
@@ -88,5 +90,44 @@ func findTestRoot(t *testing.T) string {
 			t.Fatal("scenarios not found")
 		}
 		dir = parent
+	}
+}
+
+func TestLiveKitRejectsUnreachableWorldURL(t *testing.T) {
+	root := findTestRoot(t)
+	t.Setenv("LIVEKIT_URL", "wss://example.livekit.cloud")
+	t.Setenv("LIVEKIT_API_KEY", "key")
+	t.Setenv("LIVEKIT_API_SECRET", "secret")
+
+	target := &LiveKit{Root: root, Pack: "healthcare", AgentName: "assistant-164d", WorldURL: "http://127.0.0.1:8090"}
+	_, err := target.Prepare(context.Background())
+	if err == nil {
+		t.Fatal("a loopback world URL is unreachable for a remote worker and must fail before the call")
+	}
+	if !strings.Contains(err.Error(), "--world-url") {
+		t.Fatalf("error does not point at the fix: %v", err)
+	}
+
+	target = &LiveKit{Root: root, Pack: "healthcare", AgentName: "assistant-164d", WorldURL: "http://10.0.0.4:8090"}
+	stop, err := target.Prepare(context.Background())
+	if err != nil {
+		t.Fatalf("routable world URL rejected: %v", err)
+	}
+	stop()
+}
+
+func TestLiveKitSpawnIgnoresAmbientAgentName(t *testing.T) {
+	t.Setenv("LIVEKIT_URL", "wss://example.livekit.cloud")
+	t.Setenv("LIVEKIT_API_KEY", "key")
+	t.Setenv("LIVEKIT_API_SECRET", "secret")
+	t.Setenv("LIVEKIT_AGENT_NAME", "assistant-164d")
+
+	target := &LiveKit{Root: t.TempDir(), Pack: "healthcare", WorldURL: "http://127.0.0.1:8090", Spawn: true,
+		Instructions: "be brief", Tools: []AccelTool{{Name: "verify_identity"}}}
+	if _, err := target.Prepare(context.Background()); err == nil {
+		t.Fatal("spawning from a directory without the worker should fail")
+	}
+	if target.AgentName != LiveKitWorkerAgentName {
+		t.Fatalf("spawned worker dispatched to %q instead of the reference worker", target.AgentName)
 	}
 }

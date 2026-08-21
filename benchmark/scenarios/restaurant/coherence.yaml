@@ -52,8 +52,8 @@ expected_tools:
   - name: create_reservation
     args: {time: "7:30", party_size: 4, patio: true, high_chair: true, allergen: peanut, name: Alvarez, phone: "512-555-0142"}
 entities:
-  - {name: name, value: Alvarez, in_speech: true, in_tools: true}
-  - {name: allergen, value: peanut, in_speech: true, in_tools: true}
+  - {name: name, value: Alvarez, in_speech: true, in_tools: true, tool: create_reservation, arg: name}
+  - {name: allergen, value: peanut, in_speech: true, in_tools: true, tool: create_reservation, arg: allergen}
 policy:
   - Keep replies short. Do not lose the allergen or the time over a long call.
 agent_replies:

@@ -62,7 +62,7 @@ expected_tools:
   - name: update_insurance
     args: {member_id: XYZ987654, payer: "Blue Ridge Health"}
 entities:
-  - {name: member, value: XYZ987654, in_tools: true, in_speech: true}
+  - {name: member, value: XYZ987654, in_tools: true, in_speech: true, tool: update_insurance, arg: member_id}
 policy:
   - Verify identity before PHI. Do not disclose Leo Chen. Do not lose the Tuesday morning move.
 agent_replies:

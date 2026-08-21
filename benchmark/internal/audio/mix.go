@@ -26,22 +26,42 @@ func clip(v float64) int16 {
 
 const speechRefAmp = 8000.0
 
-// ScaleNoiseForSNR scales noise so its power matches snrDB versus a typical speech amplitude.
+// ScaleNoiseForSNR scales noise against a typical speech amplitude. New benchmark
+// recordings should use ScaleNoiseForSignalSNR with their actual caller audio.
 func ScaleNoiseForSNR(noise []int16, snrDB float64) []int16 {
+	return scaleNoise(noise, speechRefAmp*speechRefAmp, snrDB)
+}
+
+// ScaleNoiseForSignalSNR scales noise against the measured power of signal.
+func ScaleNoiseForSignalSNR(noise, signal []int16, snrDB float64) []int16 {
+	return scaleNoise(noise, meanSquare(signal), snrDB)
+}
+
+func scaleNoise(noise []int16, signalPower, snrDB float64) []int16 {
 	if len(noise) == 0 {
 		return nil
 	}
-	pn := meanSquare(noise)
-	if pn == 0 {
+	noisePower := meanSquare(noise)
+	if noisePower == 0 || signalPower == 0 {
 		return append([]int16(nil), noise...)
 	}
-	target := (speechRefAmp * speechRefAmp) / math.Pow(10, snrDB/10)
-	scale := math.Sqrt(target / pn)
+	target := signalPower / math.Pow(10, snrDB/10)
+	scale := math.Sqrt(target / noisePower)
 	out := make([]int16, len(noise))
-	for i, s := range noise {
-		out[i] = clip(float64(s) * scale)
+	for i, sample := range noise {
+		out[i] = clip(float64(sample) * scale)
 	}
 	return out
+}
+
+// MeasuredSNRDB returns the power ratio of signal to noise in decibels.
+func MeasuredSNRDB(signal, noise []int16) float64 {
+	signalPower := meanSquare(signal)
+	noisePower := meanSquare(noise)
+	if signalPower == 0 || noisePower == 0 {
+		return 0
+	}
+	return 10 * math.Log10(signalPower/noisePower)
 }
 
 // Add mixes a looping bed into frame starting at offset samples.

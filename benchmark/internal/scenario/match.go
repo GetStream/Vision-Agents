@@ -22,26 +22,110 @@ var wordToNum = func() map[string]int {
 	return m
 }()
 
-var timeRe = regexp.MustCompile(`^(\d{1,2}):(\d{2})$`)
+var (
+	timeRe        = regexp.MustCompile(`^(\d{1,2}):(\d{2})$`)
+	clockInTextRe = regexp.MustCompile(`(?i)(\d{1,2}):(\d{2})\s*(?:a\.?m\.?|p\.?m\.?)?`)
+)
 
-// MatchValue reports whether text contains value, allowing common spoken and
-// punctuation variants (six/6, 7:30/seven thirty, phone dashes vs digits).
+// MatchValue reports whether speech contains a value, allowing common spoken and
+// punctuation variants without accepting partial identifiers or numeric substrings.
 func MatchValue(text, value string) bool {
-	text = strings.ToLower(text)
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
 		return true
 	}
-	for _, v := range valueVariants(value) {
-		if strings.Contains(text, v) {
+	textTokens := tokens(text)
+	for _, variant := range valueVariants(value) {
+		want := tokens(variant)
+		if containsTokens(textTokens, want) {
+			return true
+		}
+		compact := alnum(variant)
+		if compact == "" {
+			continue
+		}
+		for _, token := range textTokens {
+			if token == compact {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// MatchStructuredValue compares structured strings exactly after harmless case,
+// whitespace, punctuation, and spoken-time normalization.
+func MatchStructuredValue(got, want string) bool {
+	got = strings.TrimSpace(got)
+	want = strings.TrimSpace(want)
+	if got == "" || want == "" {
+		return got == want
+	}
+	if normalizedTime, ok := clockValue(want); ok {
+		gotTime, gotOK := clockValue(got)
+		return gotOK && gotTime == normalizedTime
+	}
+	return alnum(got) == alnum(want)
+}
+
+func containsTokens(text, want []string) bool {
+	if len(want) == 0 || len(want) > len(text) {
+		return false
+	}
+	for i := 0; i+len(want) <= len(text); i++ {
+		matched := true
+		for j := range want {
+			if text[i+j] != want[j] {
+				matched = false
+				break
+			}
+		}
+		if matched {
 			return true
 		}
 	}
-	want := alnum(value)
-	if want != "" && want != value && strings.Contains(alnum(text), want) {
-		return true
-	}
 	return false
+}
+
+func tokens(s string) []string {
+	var out []string
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		out = append(out, b.String())
+		b.Reset()
+	}
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		} else {
+			flush()
+		}
+	}
+	flush()
+	return out
+}
+
+func clockValue(s string) (string, bool) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	m := clockInTextRe.FindStringSubmatch(s)
+	if m == nil {
+		return "", false
+	}
+	hour, _ := strconv.Atoi(m[1])
+	minute, _ := strconv.Atoi(m[2])
+	if hour > 23 || minute > 59 {
+		return "", false
+	}
+	if hour >= 13 {
+		hour -= 12
+	}
+	if hour == 0 {
+		hour = 12
+	}
+	return fmt.Sprintf("%d:%02d", hour, minute), true
 }
 
 func valueVariants(value string) []string {

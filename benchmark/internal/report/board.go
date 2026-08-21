@@ -60,15 +60,28 @@ func scenarioRow(s Summary, b scenarioBench) Row {
 		return Row{Name: b.Name, Target: b.Target, Ours: "—", Gap: "not run", Verdict: VerdictSkip}
 	}
 	passed := 0
-	for _, c := range calls {
-		if c.Passed {
+	invalid := 0
+	var valid []CallResult
+	for _, call := range calls {
+		if callOutcome(call) == OutcomeInvalid {
+			invalid++
+			continue
+		}
+		valid = append(valid, call)
+		if callOutcome(call) == OutcomePass {
 			passed++
 		}
 	}
-	ours := fmt.Sprintf("%d/%d pass", passed, len(calls))
-	if score.PassAtK(passedFlags(calls)) {
+	ours := fmt.Sprintf("%d/%d pass", passed, len(valid))
+	if invalid > 0 {
+		return Row{Name: b.Name, Target: b.Target, Ours: ours, Gap: fmt.Sprintf("%d invalid", invalid), Verdict: VerdictWarn}
+	}
+	if len(calls) != s.K {
+		return Row{Name: b.Name, Target: b.Target, Ours: ours, Gap: "incomplete", Verdict: VerdictWarn}
+	}
+	if score.PassAtK(passedFlags(valid)) {
 		gap := "ok"
-		if !score.PassHatK(passedFlags(calls)) {
+		if !score.PassHatK(passedFlags(valid)) {
 			gap = "flaky"
 			return Row{Name: b.Name, Target: b.Target, Ours: ours, Gap: gap, Verdict: VerdictWarn}
 		}
@@ -83,15 +96,18 @@ func latencyRows(s Summary) []Row {
 	cutoffs := 0
 	n := 0
 	for _, c := range s.Calls {
-		if c.Error != "" && c.Metrics.V2VP50 == 0 && c.Metrics.NonToolP50 == 0 {
+		if callOutcome(c) == OutcomeInvalid {
 			continue
 		}
 		n++
-		if c.Metrics.NonToolP50 > 0 {
-			nonTool = append(nonTool, c.Metrics.NonToolP50)
-		}
-		if c.Metrics.V2VP50 > 0 {
-			v2v = append(v2v, c.Metrics.V2VP50)
+		for _, t := range c.Metrics.V2V {
+			if t.V2VMS < 0 {
+				continue
+			}
+			v2v = append(v2v, t.V2VMS)
+			if !t.Tool {
+				nonTool = append(nonTool, t.V2VMS)
+			}
 		}
 		if strings.Contains(c.ScenarioID, "interrupt") && c.Metrics.BargeInStopMS >= 0 {
 			barge = append(barge, c.Metrics.BargeInStopMS)
@@ -119,8 +135,10 @@ func msBandRow(name string, samples []int, lo, hi int) Row {
 	if len(samples) == 0 {
 		return Row{Name: name, Target: target, Ours: "—", Gap: "not run", Verdict: VerdictSkip}
 	}
-	ours := median(samples)
-	row := Row{Name: name, Target: target, Ours: fmt.Sprintf("%d ms", ours)}
+	sort.Ints(samples)
+	ours := score.Percentile(samples, 50)
+	// n travels with the figure: a P50 over two samples is not the same claim as one over fifty.
+	row := Row{Name: name, Target: target, Ours: fmt.Sprintf("%d ms (n=%d)", ours, len(samples))}
 	if ours >= lo && ours <= hi {
 		row.Gap = "ok"
 		row.Verdict = VerdictOK
@@ -195,15 +213,10 @@ func matchCalls(calls []CallResult, needle string) []CallResult {
 
 func passedFlags(calls []CallResult) []bool {
 	out := make([]bool, len(calls))
-	for i, c := range calls {
-		out[i] = c.Passed
+	for i, call := range calls {
+		out[i] = callOutcome(call) == OutcomePass
 	}
 	return out
-}
-
-func median(vals []int) int {
-	sort.Ints(vals)
-	return vals[len(vals)/2]
 }
 
 func maxInt(vals []int) int {

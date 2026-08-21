@@ -32,7 +32,7 @@ expected_tools:
   - name: reschedule_appointment
     args: {appointment_id: a2, new_date: Tuesday, new_time: morning}
 entities:
-  - {name: appointment, value: a2, in_tools: true, in_speech: false}
+  - {name: appointment, value: a2, in_tools: true, in_speech: false, tool: reschedule_appointment, arg: appointment_id}
 policy:
   - Do not mix Maya and Leo records after the barge-in.
   - Never reschedule the son's Thursday slot as the mother's.

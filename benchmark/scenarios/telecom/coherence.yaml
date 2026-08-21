@@ -64,7 +64,7 @@ expected_tools:
 tool_order:
   - {before: walk_reboot, after: dispatch_tech}
 entities:
-  - {name: last4, value: "9821", in_tools: true, in_speech: true}
+  - {name: last4, value: "9821", in_tools: true, in_speech: true, tool: verify_account, arg: last4}
   - {name: error, value: "840", in_speech: true, in_tools: false}
 policy:
   - Reboot before a truck roll. Read the ticket number back. Stay coherent over a long call.

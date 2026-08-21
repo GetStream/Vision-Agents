@@ -34,6 +34,13 @@ tools:
         member_id: {type: string}
         payer: {type: string}
       required: [member_id, payer]
+  - name: update_pharmacy
+    description: Set the preferred pharmacy for the verified patient.
+    parameters:
+      type: object
+      properties:
+        pharmacy: {type: string}
+      required: [pharmacy]
   - name: log_escalation
     description: Log an escalation or clinician callback.
     parameters:

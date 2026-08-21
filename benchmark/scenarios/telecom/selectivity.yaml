@@ -30,7 +30,7 @@ expected_tools:
   - name: check_outage
     args: {}
 entities:
-  - {name: last4, value: "9821", in_tools: true, in_speech: true}
+  - {name: last4, value: "9821", in_tools: true, in_speech: true, tool: verify_account, arg: last4}
 policy:
   - Do not abandon the reply for a cough. Ignore the other room.
 judge:

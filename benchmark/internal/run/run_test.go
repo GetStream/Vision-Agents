@@ -35,6 +35,36 @@ func TestWebRTCCallID(t *testing.T) {
 	}
 }
 
+func TestBuildManifestRecordsComparableInputs(t *testing.T) {
+	manifest := buildManifest(Config{
+		Root:           findTestRoot(t),
+		Pack:           "restaurant",
+		Transport:      "stream",
+		TargetName:     "python",
+		TargetModel:    "custom-model",
+		TargetVoice:    "custom-voice",
+		NetworkProfile: "us-west-wired",
+	}, []scenario.Scenario{{ID: "restaurant.golden", Pack: "restaurant", Category: scenario.Golden}})
+	if manifest.ScenarioHash == "" || manifest.ContractHash == "" {
+		t.Fatalf("missing hashes: %+v", manifest)
+	}
+	if manifest.TargetModel != "custom-model" || manifest.TargetVoice != "custom-voice" {
+		t.Fatalf("target configuration missing: %+v", manifest)
+	}
+	if manifest.CallerModel == "" || manifest.CallerVoice == "" {
+		t.Fatalf("caller configuration missing: %+v", manifest)
+	}
+	if manifest.NetworkProfile != "us-west-wired" {
+		t.Fatalf("network profile missing: %+v", manifest)
+	}
+	if manifest.JudgeCalibrationHash == "" {
+		t.Fatalf("judge calibration fingerprint missing: %+v", manifest)
+	}
+	if len(manifest.Command) == 0 || manifest.Command[0] != "voicebench" {
+		t.Fatalf("command is not reproducible: %+v", manifest.Command)
+	}
+}
+
 func TestWebRTCJoinFailsWithoutCredentials(t *testing.T) {
 	t.Setenv("STREAM_API_KEY", "")
 	t.Setenv("STREAM_API_SECRET", "")

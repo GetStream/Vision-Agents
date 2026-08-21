@@ -20,14 +20,14 @@ end_state:
     eq: true
 expected_tools:
   - name: verify_account
-    args: {pin: "4471", last4: "9821", address: "14 Cedar Lane"}
+    args: {pin: "4471", last4: "9821", address: "14 Cedar Lane unit B"}
   - name: walk_reboot
     args: {}
 entities:
-  - {name: pin, value: "4471", in_tools: true, in_speech: false}
-  - {name: last4, value: "9821", in_tools: true, in_speech: true}
+  - {name: pin, value: "4471", in_tools: true, in_speech: false, tool: verify_account, arg: pin}
+  - {name: last4, value: "9821", in_tools: true, in_speech: true, tool: verify_account, arg: last4}
   - {name: error, value: "840", in_speech: true, in_tools: false}
-  - {name: address, value: "Cedar", in_tools: true, in_speech: true}
+  - {name: address, value: "Cedar", in_tools: true, in_speech: true, tool: verify_account, arg: address, tool_value: "14 Cedar Lane unit B"}
 policy:
   - One wrong field fails the call.
 judge:

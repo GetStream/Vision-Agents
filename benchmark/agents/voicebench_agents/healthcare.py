@@ -1,7 +1,7 @@
 """Healthcare tools and agent factory."""
 
 from vision_agents.core import Agent, User
-from vision_agents.plugins import gemini, getstream
+from vision_agents.plugins import getstream, openai
 
 from voicebench_agents import pack_prompt
 from voicebench_agents.world_client import WorldClient
@@ -9,7 +9,7 @@ from voicebench_agents.world_client import WorldClient
 
 async def create_agent(**kwargs) -> Agent:
     world = WorldClient()
-    llm = gemini.Realtime()
+    llm = openai.Realtime()
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(id="clinic-agent", name="Clinic After Hours"),
@@ -17,9 +17,15 @@ async def create_agent(**kwargs) -> Agent:
         llm=llm,
     )
 
-    @llm.register_function(description="Verify a patient with name, DOB, and member ID or phone")
-    async def verify_identity(name: str, dob: str, member_id: str = "", phone: str = "") -> dict:
-        return world.call("verify_identity", name=name, dob=dob, member_id=member_id, phone=phone)
+    @llm.register_function(
+        description="Verify a patient with name, DOB, and member ID or phone"
+    )
+    async def verify_identity(
+        name: str, dob: str, member_id: str = "", phone: str = ""
+    ) -> dict:
+        return world.call(
+            "verify_identity", name=name, dob=dob, member_id=member_id, phone=phone
+        )
 
     @llm.register_function(description="List appointments for the verified patient")
     async def lookup_appointment() -> dict:
@@ -42,6 +48,12 @@ async def create_agent(**kwargs) -> Agent:
     @llm.register_function(description="Update insurance for the verified patient")
     async def update_insurance(member_id: str, payer: str) -> dict:
         return world.call("update_insurance", member_id=member_id, payer=payer)
+
+    @llm.register_function(
+        description="Set the preferred pharmacy for the verified patient"
+    )
+    async def update_pharmacy(pharmacy: str) -> dict:
+        return world.call("update_pharmacy", pharmacy=pharmacy)
 
     @llm.register_function(description="Log an escalation or clinician callback")
     async def log_escalation(reason: str, urgent: bool = False) -> dict:

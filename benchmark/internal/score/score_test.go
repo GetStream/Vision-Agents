@@ -73,6 +73,23 @@ func TestBargeInStopMSMeasured(t *testing.T) {
 	}
 }
 
+func TestBargeInStopMSToleratesFrameAlignment(t *testing.T) {
+	rate := audio.Rate
+	agent := audio.Concat(audio.Silence(450*rate/1000), audio.Tone(300*rate/1000, 220, 12000))
+	rec := caller.Result{
+		Agent: agent,
+		Rate:  rate,
+		Events: []caller.Event{{
+			BargeIn:    true,
+			Kind:       scenario.TriggerBargeIn,
+			RecStartMs: 400,
+		}},
+	}
+	if got := BargeInStopMS(rec); got < 300 || got > 400 {
+		t.Fatalf("stop %dms", got)
+	}
+}
+
 func TestApplyGates(t *testing.T) {
 	m := Metrics{SelectivityHold: true, HoldThroughOverlap: true}
 	ApplyGates(&m, scenario.Scenario{})
@@ -173,7 +190,14 @@ func TestScoreFiller(t *testing.T) {
 		Ended:   start.Add(3100 * time.Millisecond),
 	}}}
 	m := &Metrics{}
-	ScoreFiller(m, sc, rec, sess, "One moment, checking the book.")
+	ScoreFiller(m, sc, rec, sess, Transcript{
+		Text: "One moment, checking the book.",
+		Words: []TranscriptWord{
+			{Text: "One", StartMS: 200, EndMS: 260},
+			{Text: "moment", StartMS: 270, EndMS: 350},
+			{Text: "checking", StartMS: 360, EndMS: 450},
+		},
+	})
 	if !m.FillerHeard || !m.FillerNonBlocking {
 		t.Fatalf("filler %+v", m)
 	}
@@ -189,17 +213,54 @@ func TestHoldThroughOverlap(t *testing.T) {
 		Agent: agent,
 		Rate:  rate,
 		Events: []caller.Event{{
-			Kind:       scenario.TriggerDuringAgent,
-			RecStartMs: 400,
-			RecEndMs:   600,
+			Kind:         scenario.TriggerDuringAgent,
+			RecStartMs:   400,
+			RecEndMs:     600,
+			OverlapSound: "cough",
 		}},
 	}
-	if !HoldThroughOverlap(rec) {
+	if !HoldThroughOverlap(ScoreOverlaps(rec)) {
 		t.Fatal("agent continued through cough")
 	}
 	rec.Agent = audio.Concat(audio.Tone(rate/5, 220, 12000), audio.Silence(rate))
-	if HoldThroughOverlap(rec) {
+	if HoldThroughOverlap(ScoreOverlaps(rec)) {
 		t.Fatal("agent stopped at cough")
+	}
+}
+
+func TestScoreOverlapsChecksEverySound(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Agent: audio.Concat(audio.Silence(rate/10), audio.Tone(rate, 220, 12000)),
+		Rate:  rate,
+		Events: []caller.Event{
+			{TurnID: "cough", Kind: scenario.TriggerDuringAgent, RecStartMs: 300, RecEndMs: 400, OverlapSound: "cough"},
+			{TurnID: "talker", Kind: scenario.TriggerDuringAgent, RecStartMs: 600, RecEndMs: 700, OverlapSound: "talker"},
+		},
+	}
+	checks := ScoreOverlaps(rec)
+	if len(checks) != 2 {
+		t.Fatalf("checks %d", len(checks))
+	}
+	if !HoldThroughOverlap(checks) || !SelectivityHold(checks) {
+		t.Fatalf("checks %+v", checks)
+	}
+}
+
+func TestFalseCutoffUsesScriptIntervalsNotCallerVAD(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Caller: audio.Tone(rate, 180, 12000),
+		Agent:  audio.Concat(audio.Silence(rate/2), audio.Tone(rate/10, 220, 12000)),
+		Rate:   rate,
+		Events: []caller.Event{{TurnID: "intro", RecStartMs: 100, RecEndMs: 300}},
+	}
+	if got := FalseCutoff(rec); got != 0 {
+		t.Fatalf("noise outside the scripted interval produced %d false cutoff(s)", got)
+	}
+	rec.Events[0].RecEndMs = 800
+	if got := FalseCutoff(rec); got != 1 {
+		t.Fatalf("agent start inside caller interval produced %d false cutoff(s)", got)
 	}
 }
 
@@ -213,7 +274,7 @@ func TestTimingFromRecording(t *testing.T) {
 		Rate:   rate,
 		Events: []caller.Event{{TurnID: "intro", RecEndMs: 300}},
 	}
-	got := TimingFromRecording(rec)
+	got, _ := TimingFromRecording(rec)
 	if len(got) != 1 {
 		t.Fatalf("got %d samples", len(got))
 	}
@@ -230,7 +291,7 @@ func TestTimingIgnoresMergedEarlierAgentSpan(t *testing.T) {
 		Rate:   rate,
 		Events: []caller.Event{{TurnID: "intro", RecEndMs: 400}},
 	}
-	got := TimingFromRecording(rec)
+	got, _ := TimingFromRecording(rec)
 	if len(got) != 1 {
 		t.Fatalf("got %d", len(got))
 	}
@@ -252,5 +313,103 @@ func TestWorldGates(t *testing.T) {
 	WorldGates(m, sc, sess, "peanut allergy noted")
 	if len(m.EndStateFail)+len(m.EntityToolFail)+len(m.EntitySpeechFail) != 0 {
 		t.Fatalf("%+v", m)
+	}
+}
+
+func TestViolationsDropsNonViolations(t *testing.T) {
+	got := violations([]finding{
+		{Rule: "say_do", Evidence: "claimed the update but no tool call", Violation: true},
+		{Rule: "say_do", Evidence: "no attempt to update pharmacy, so this is consistent", Violation: false},
+		{Rule: "policy", Violation: true},
+	})
+	want := []string{"say_do: claimed the update but no tool call", "policy"}
+	if len(got) != len(want) {
+		t.Fatalf("violations %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("violations[%d] = %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestStaffNamesFromSeed(t *testing.T) {
+	seed := map[string]any{
+		"patients": []any{
+			map[string]any{"name": "Maya Chen"},
+			map[string]any{"name": "Leo Chen"},
+		},
+		"appointments": []any{
+			map[string]any{"clinician": "Dr Chen"},
+			map[string]any{"clinician": "Dr Adeyemi"},
+			map[string]any{"clinician": "Dr Chen"},
+		},
+	}
+	got := staffNames(seed)
+	if len(got) != 2 || got[0] != "Dr Adeyemi" || got[1] != "Dr Chen" {
+		t.Fatalf("staffNames %v", got)
+	}
+}
+
+// Tool timestamps are wall time; RecEndMs is recording time, which advances one 20 ms frame per
+// pacer tick and falls behind under load. Subtracting StartedAt compares the two directly, so a
+// tool that ran inside a reply gap can land outside it and the turn is scored as a non-tool turn.
+func TestMarkToolTurnsMapsWallTimeOntoRecordingTime(t *testing.T) {
+	start := time.Now()
+	rec := caller.Result{
+		Caller:       make([]int16, audio.Rate*10),
+		Rate:         audio.Rate,
+		Events:       []caller.Event{{TurnID: "a", RecEndMs: 5000}},
+		StartedAt:    start,
+		FirstFrameAt: start,
+		// 10 s of recording took 12 s of wall time.
+		LastFrameAt: start.Add(12 * time.Second),
+	}
+	if got := rec.SampleMs(start.Add(6600 * time.Millisecond)); got != 5500 {
+		t.Fatalf("SampleMs %d, want 5500", got)
+	}
+	if got := rec.ClockDriftMS(); got != 2000 {
+		t.Fatalf("clock drift %d, want 2000", got)
+	}
+
+	m := &Metrics{V2V: []Timing{{TurnID: "a", V2VMS: 1000}}}
+	MarkToolTurns(m, rec, []world.ToolCall{{
+		Name:    "lookup_appointment",
+		Started: start.Add(6600 * time.Millisecond),
+		Ended:   start.Add(6660 * time.Millisecond),
+	}})
+	if !m.V2V[0].Tool {
+		t.Fatal("tool ran inside the reply gap but the turn was scored as a non-tool turn")
+	}
+}
+
+func TestTimingReportsWhyATurnWasNotMeasured(t *testing.T) {
+	rate := audio.Rate
+	rec := caller.Result{
+		Caller: audio.Silence(rate),
+		Agent:  audio.Silence(rate),
+		Rate:   rate,
+		Events: []caller.Event{
+			{TurnID: "barge", RecEndMs: 100, BargeIn: true},
+			{TurnID: "over", RecEndMs: 200, Overlap: true},
+			{TurnID: "silent", RecEndMs: 300},
+		},
+	}
+	got, dropped := TimingFromRecording(rec)
+	if len(got) != 0 {
+		t.Fatalf("measured %d turns on a silent agent leg", len(got))
+	}
+	want := []DroppedTurn{
+		{TurnID: "barge", Reason: DropBargeIn},
+		{TurnID: "over", Reason: DropOverlap},
+		{TurnID: "silent", Reason: DropNoOnset},
+	}
+	if len(dropped) != len(want) {
+		t.Fatalf("dropped %+v", dropped)
+	}
+	for i := range want {
+		if dropped[i] != want[i] {
+			t.Errorf("dropped[%d] = %+v want %+v", i, dropped[i], want[i])
+		}
 	}
 }

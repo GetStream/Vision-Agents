@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,6 +41,9 @@ type Scenario struct {
 	Entities      []Entity          `yaml:"entities"`
 	Policy        []string          `yaml:"policy"`
 	Judge         JudgeSpec         `yaml:"judge"`
+	// AgentReplies is the gold reference reply, scored against the text gates in tests
+	// so a scenario cannot ask for something its own reference answer does not do.
+	AgentReplies []string `yaml:"agent_replies"`
 }
 
 // Turn is one caller utterance or overlap sound.
@@ -86,10 +90,13 @@ type OrderConstraint struct {
 
 // Entity must appear in speech, tools, or both.
 type Entity struct {
-	Name     string `yaml:"name"`
-	Value    string `yaml:"value"`
-	InSpeech bool   `yaml:"in_speech"`
-	InTools  bool   `yaml:"in_tools"`
+	Name      string `yaml:"name"`
+	Value     string `yaml:"value"`
+	InSpeech  bool   `yaml:"in_speech"`
+	InTools   bool   `yaml:"in_tools"`
+	Tool      string `yaml:"tool"`
+	Arg       string `yaml:"arg"`
+	ToolValue string `yaml:"tool_value"`
 }
 
 // JudgeSpec is extra prompt material for the LLM judge.
@@ -107,7 +114,9 @@ func LoadFile(path string) (Scenario, error) {
 		return Scenario{}, err
 	}
 	var s Scenario
-	if err := yaml.Unmarshal(raw, &s); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&s); err != nil {
 		return Scenario{}, fmt.Errorf("scenario: parse %s: %w", path, err)
 	}
 	if s.MaxDurationS <= 0 {
@@ -156,7 +165,15 @@ func (s Scenario) Validate() error {
 	if len(s.Turns) == 0 {
 		return fmt.Errorf("at least one turn is required")
 	}
+	turnIDs := map[string]bool{}
 	for i, turn := range s.Turns {
+		if turn.ID == "" {
+			return fmt.Errorf("turn %d: id is required", i)
+		}
+		if turnIDs[turn.ID] {
+			return fmt.Errorf("turn %d: duplicate id %q", i, turn.ID)
+		}
+		turnIDs[turn.ID] = true
 		if turn.Text == "" && turn.OverlapSound == "" {
 			return fmt.Errorf("turn %d needs text or overlap_sound", i)
 		}
@@ -168,6 +185,14 @@ func (s Scenario) Validate() error {
 		case TriggerAfterAgent, TriggerBargeIn, TriggerDuringAgent, TriggerImmediate:
 		default:
 			return fmt.Errorf("turn %d: unknown trigger %q", i, kind)
+		}
+	}
+	for i, entity := range s.Entities {
+		if entity.Name == "" || entity.Value == "" {
+			return fmt.Errorf("entity %d: name and value are required", i)
+		}
+		if entity.InTools && (entity.Tool == "" || entity.Arg == "") {
+			return fmt.Errorf("entity %s: tool and arg are required for tool matching", entity.Name)
 		}
 	}
 	return nil

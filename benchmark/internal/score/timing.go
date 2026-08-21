@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 	"github.com/GetStream/Vision-Agents/benchmark/internal/caller"
@@ -24,59 +25,97 @@ type Timing struct {
 	Tool   bool   `json:"tool,omitempty"`
 }
 
-// Metrics is the per-call scorecard.
-type Metrics struct {
-	V2V                []Timing `json:"v2v"`
-	CallDurationMS     int      `json:"call_duration_ms"`
-	ToolCount          int      `json:"tool_count"`
-	ToolErrorCount     int      `json:"tool_error_count"`
-	ToolWaitMS         int      `json:"tool_wait_ms"`
-	MaxToolWaitMS      int      `json:"max_tool_wait_ms"`
-	V2VP50             int      `json:"v2v_p50_ms"`
-	V2VP95             int      `json:"v2v_p95_ms"`
-	V2VMax             int      `json:"v2v_max_ms"`
-	NonToolP50         int      `json:"non_tool_p50_ms"`
-	SpikeCount         int      `json:"spike_count"`
-	InHumanBandPct     float64  `json:"in_human_band_pct"`
-	FalseCutoff        int      `json:"false_cutoff"`
-	BargeInStopMS      int      `json:"barge_in_stop_ms"`
-	SelectivityHold    bool     `json:"selectivity_hold"`
-	HoldThroughOverlap bool     `json:"hold_through_overlap"`
-	FillerBeforeMS     int      `json:"filler_before_tool_ms"`
-	FillerHeard        bool     `json:"filler_heard"`
-	FillerNonBlocking  bool     `json:"filler_non_blocking"`
-	FillerFail         []string `json:"filler_fail"`
-	ScoringFail        []string `json:"scoring_fail"`
-	EndStateFail       []string `json:"end_state_fail"`
-	ExpectedToolFail   []string `json:"expected_tool_fail"`
-	ToolOrderFail      []string `json:"tool_order_fail"`
-	EntityToolFail     []string `json:"entity_tool_fail"`
-	EntitySpeechFail   []string `json:"entity_speech_fail"`
-	PolicyFail         []string `json:"policy_fail"`
-	SayDoFail          []string `json:"say_do_fail"`
-	Passed             bool     `json:"passed"`
-	GateNotes          []string `json:"gate_notes"`
+// DroppedTurn is a scripted turn that produced no V2V sample, and why. Without it a call that
+// measured three turns and a call that measured one look identical in the report.
+type DroppedTurn struct {
+	TurnID string `json:"turn_id"`
+	Reason string `json:"reason"`
 }
 
-// TimingFromRecording measures V2V from caller-turn end to the next agent onset.
-func TimingFromRecording(rec caller.Result) []Timing {
+// OverlapCheck records how the agent handled one non-directed overlap sound.
+type OverlapCheck struct {
+	TurnID      string `json:"turn_id"`
+	Sound       string `json:"sound"`
+	Continued   bool   `json:"continued"`
+	StartedTurn bool   `json:"started_turn"`
+}
+
+// Why a turn produced no V2V sample.
+const (
+	DropBargeIn = "barge_in"
+	DropOverlap = "overlap"
+	DropNoOnset = "no_onset"
+)
+
+// Metrics is the per-call scorecard.
+type Metrics struct {
+	V2V                []Timing       `json:"v2v"`
+	Dropped            []DroppedTurn  `json:"dropped_turns,omitempty"`
+	CallDurationMS     int            `json:"call_duration_ms"`
+	ToolCount          int            `json:"tool_count"`
+	ToolErrorCount     int            `json:"tool_error_count"`
+	WorldContact       bool           `json:"world_contact"`
+	ToolWaitMS         int            `json:"tool_wait_ms"`
+	MaxToolWaitMS      int            `json:"max_tool_wait_ms"`
+	V2VP50             int            `json:"v2v_p50_ms"`
+	V2VP95             int            `json:"v2v_p95_ms"`
+	V2VMax             int            `json:"v2v_max_ms"`
+	NonToolP50         int            `json:"non_tool_p50_ms"`
+	SpikeCount         int            `json:"spike_count"`
+	InHumanBandPct     float64        `json:"in_human_band_pct"`
+	FalseCutoff        int            `json:"false_cutoff"`
+	ClockDriftMS       int            `json:"clock_drift_ms"`
+	InboundDropped     int            `json:"inbound_dropped"`
+	RequestedSNRDB     float64        `json:"requested_snr_db,omitempty"`
+	MeasuredSNRDB      float64        `json:"measured_snr_db,omitempty"`
+	BargeInStopMS      int            `json:"barge_in_stop_ms"`
+	OverlapChecks      []OverlapCheck `json:"overlap_checks,omitempty"`
+	SelectivityHold    bool           `json:"selectivity_hold"`
+	HoldThroughOverlap bool           `json:"hold_through_overlap"`
+	FillerBeforeMS     int            `json:"filler_before_tool_ms"`
+	FillerHeard        bool           `json:"filler_heard"`
+	FillerNonBlocking  bool           `json:"filler_non_blocking"`
+	FillerFail         []string       `json:"filler_fail"`
+	ScoringFail        []string       `json:"scoring_fail"`
+	EndStateFail       []string       `json:"end_state_fail"`
+	ExpectedToolFail   []string       `json:"expected_tool_fail"`
+	ToolOrderFail      []string       `json:"tool_order_fail"`
+	EntityToolFail     []string       `json:"entity_tool_fail"`
+	EntitySpeechFail   []string       `json:"entity_speech_fail"`
+	PolicyFail         []string       `json:"policy_fail"`
+	SayDoFail          []string       `json:"say_do_fail"`
+	Passed             bool           `json:"passed"`
+	GateNotes          []string       `json:"gate_notes"`
+}
+
+// TimingFromRecording measures V2V from caller-turn end to the next agent onset, and reports
+// the turns it could not measure. A turn played over a still-speaking agent has no meaningful
+// reply gap; one with no later onset never drew a reply at all.
+func TimingFromRecording(rec caller.Result) ([]Timing, []DroppedTurn) {
 	rate := rec.Rate
 	if rate <= 0 {
 		rate = audio.Rate
 	}
 	var out []Timing
+	var dropped []DroppedTurn
 	for _, ev := range rec.Events {
-		if ev.BargeIn || ev.Overlap {
+		switch {
+		case ev.BargeIn:
+			dropped = append(dropped, DroppedTurn{TurnID: ev.TurnID, Reason: DropBargeIn})
+			continue
+		case ev.Overlap:
+			dropped = append(dropped, DroppedTurn{TurnID: ev.TurnID, Reason: DropOverlap})
 			continue
 		}
 		cEnd := ev.RecEndMs
 		next := firstOnsetAfter(rec.Agent, rate, cEnd, audio.DefaultSpeechThreshold)
 		if next < 0 {
+			dropped = append(dropped, DroppedTurn{TurnID: ev.TurnID, Reason: DropNoOnset})
 			continue
 		}
 		out = append(out, Timing{TurnID: ev.TurnID, V2VMS: next - cEnd})
 	}
-	return out
+	return out, dropped
 }
 
 func firstOnsetAfter(samples []int16, rate, afterMs int, threshold float64) int {
@@ -125,8 +164,8 @@ func MarkToolTurns(m *Metrics, rec caller.Result, tools []world.ToolCall) {
 		}
 		onset := cEnd + t.V2VMS
 		for _, tool := range tools {
-			startMs := int(tool.Started.Sub(rec.StartedAt).Milliseconds())
-			endMs := int(tool.Ended.Sub(rec.StartedAt).Milliseconds())
+			startMs := rec.SampleMs(tool.Started)
+			endMs := rec.SampleMs(tool.Ended)
 			if startMs < onset && endMs > cEnd {
 				m.V2V[i].Tool = true
 				break
@@ -152,15 +191,15 @@ func SummarizeTiming(m *Metrics) {
 		return
 	}
 	sort.Ints(vals)
-	m.V2VP50 = percentile(vals, 50)
-	m.V2VP95 = percentile(vals, 95)
+	m.V2VP50 = Percentile(vals, 50)
+	m.V2VP95 = Percentile(vals, 95)
 	m.V2VMax = vals[len(vals)-1]
 	bandSrc := nonTool
 	if len(bandSrc) == 0 {
 		bandSrc = vals
 	} else {
 		sort.Ints(nonTool)
-		m.NonToolP50 = percentile(nonTool, 50)
+		m.NonToolP50 = Percentile(nonTool, 50)
 	}
 	inBand := 0
 	p50 := m.NonToolP50
@@ -178,7 +217,10 @@ func SummarizeTiming(m *Metrics) {
 	m.InHumanBandPct = 100 * float64(inBand) / float64(len(bandSrc))
 }
 
-func percentile(sorted []int, p int) int {
+// Percentile is the nearest-rank percentile of an already sorted slice. It is the only
+// percentile convention in the benchmark: report and board both call it, so a P50 means the
+// same thing wherever it is printed.
+func Percentile(sorted []int, p int) int {
 	if len(sorted) == 0 {
 		return 0
 	}
@@ -194,6 +236,7 @@ func percentile(sorted []int, p int) int {
 
 // BargeInStopMS is time from barge-in start until agent energy drops.
 func BargeInStopMS(rec caller.Result) int {
+	const alignmentToleranceMS = 120
 	var barge caller.Event
 	found := false
 	for _, ev := range rec.Events {
@@ -208,7 +251,7 @@ func BargeInStopMS(rec caller.Result) int {
 	}
 	spans := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, 80)
 	for _, s := range spans {
-		if s.StartMs < barge.RecStartMs && s.EndMs > barge.RecStartMs {
+		if s.StartMs <= barge.RecStartMs+alignmentToleranceMS && s.EndMs > barge.RecStartMs {
 			stop := s.EndMs - barge.RecStartMs
 			if stop < 0 {
 				return 0
@@ -219,59 +262,61 @@ func BargeInStopMS(rec caller.Result) int {
 	return -1
 }
 
-// SelectivityHold is true when a cough/backchannel did not produce a new agent turn.
-func SelectivityHold(rec caller.Result) bool {
-	var overlap *caller.Event
-	for i := range rec.Events {
-		ev := rec.Events[i]
-		if ev.BargeIn && ev.Kind != scenario.TriggerBargeIn && ev.Kind != scenario.TriggerDuringAgent {
-			overlap = &rec.Events[i]
-			break
-		}
-	}
-	if overlap == nil {
-		return true
-	}
+// ScoreOverlaps evaluates every non-directed sound in the script.
+func ScoreOverlaps(rec caller.Result) []OverlapCheck {
 	agent := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
-	for _, s := range agent {
-		if s.StartMs >= overlap.RecStartMs && s.StartMs <= overlap.RecEndMs+200 {
+	var checks []OverlapCheck
+	for _, event := range rec.Events {
+		if event.OverlapSound == "" {
+			continue
+		}
+		check := OverlapCheck{TurnID: event.TurnID, Sound: event.OverlapSound}
+		for _, span := range agent {
+			if span.StartMs >= event.RecStartMs && span.StartMs <= event.RecEndMs+200 {
+				check.StartedTurn = true
+			}
+			if event.Kind == scenario.TriggerDuringAgent && span.StartMs < event.RecStartMs && span.EndMs > event.RecEndMs+150 {
+				check.Continued = true
+			}
+		}
+		checks = append(checks, check)
+	}
+	return checks
+}
+
+// SelectivityHold is true when no overlap sound produced a new agent turn.
+func SelectivityHold(checks []OverlapCheck) bool {
+	for _, check := range checks {
+		if check.StartedTurn {
 			return false
 		}
 	}
 	return true
 }
 
-// HoldThroughOverlap is true when a mid-speech cough/talker did not stop the agent.
-func HoldThroughOverlap(rec caller.Result) bool {
-	var overlap *caller.Event
-	for i := range rec.Events {
-		ev := rec.Events[i]
-		if ev.Kind == scenario.TriggerDuringAgent {
-			overlap = &rec.Events[i]
-			break
+// HoldThroughOverlap is true when the agent continued through every mid-speech overlap.
+func HoldThroughOverlap(checks []OverlapCheck) bool {
+	for _, check := range checks {
+		if !check.Continued {
+			return false
 		}
 	}
-	if overlap == nil {
-		return true
-	}
-	agent := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
-	for _, s := range agent {
-		if s.StartMs < overlap.RecStartMs && s.EndMs > overlap.RecEndMs+150 {
-			return true
-		}
-	}
-	return false
+	return true
 }
 
-// FalseCutoff counts agent starts that overlap a non-barge caller utterance.
+// FalseCutoff counts agent starts inside scripted, non-barge caller utterances.
+// Script intervals remain authoritative when the caller leg also contains a noise bed.
 func FalseCutoff(rec caller.Result) int {
-	callerSpans := audio.DetectSpeech(rec.Caller, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
 	agentSpans := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
 	n := 0
-	for _, a := range agentSpans {
-		for _, c := range callerSpans {
-			if a.StartMs > c.StartMs+80 && a.StartMs < c.EndMs-80 {
+	for _, agent := range agentSpans {
+		for _, event := range rec.Events {
+			if event.BargeIn || event.OverlapSound != "" {
+				continue
+			}
+			if agent.StartMs > event.RecStartMs+80 && agent.StartMs < event.RecEndMs-80 {
 				n++
+				break
 			}
 		}
 	}
@@ -286,12 +331,43 @@ var fillerPhrases = []string{
 // ContainsFiller reports whether the transcript has a filler phrase.
 func ContainsFiller(text string) bool {
 	low := strings.ToLower(text)
-	for _, p := range fillerPhrases {
-		if strings.Contains(low, p) {
+	for _, phrase := range fillerPhrases {
+		if strings.Contains(low, phrase) {
 			return true
 		}
 	}
 	return false
+}
+
+func containsTimedFiller(words []TranscriptWord, startMS, endMS int) bool {
+	for _, phrase := range fillerPhrases {
+		parts := strings.Fields(phrase)
+		for i := 0; i+len(parts) <= len(words); i++ {
+			if words[i].StartMS < startMS || words[i].StartMS >= endMS {
+				continue
+			}
+			matched := true
+			for j, part := range parts {
+				if normalizedWord(words[i+j].Text) != part || words[i+j].StartMS >= endMS {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizedWord(word string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, word)
 }
 
 // DelayedToolNames returns tools that the scenario delays, preferring expected_tools order.
@@ -315,16 +391,12 @@ func DelayedToolNames(sc scenario.Scenario) []string {
 }
 
 // ScoreFiller checks filler speech during a delayed tool window.
-func ScoreFiller(m *Metrics, sc scenario.Scenario, rec caller.Result, sess *world.Session, agentText string) {
+func ScoreFiller(m *Metrics, sc scenario.Scenario, rec caller.Result, sess *world.Session, transcript Transcript) {
 	names := DelayedToolNames(sc)
 	if len(names) == 0 {
 		return
 	}
 	name := names[0]
-	m.FillerHeard = ContainsFiller(agentText)
-	if !m.FillerHeard {
-		m.FillerFail = append(m.FillerFail, "no filler speech")
-	}
 	if sess == nil {
 		m.FillerFail = append(m.FillerFail, "no session")
 		return
@@ -343,10 +415,14 @@ func ScoreFiller(m *Metrics, sc scenario.Scenario, rec caller.Result, sess *worl
 	if rec.StartedAt.IsZero() {
 		return
 	}
-	startMs := int(tool.Started.Sub(rec.StartedAt).Milliseconds())
-	endMs := int(tool.Ended.Sub(rec.StartedAt).Milliseconds())
+	startMs := rec.SampleMs(tool.Started)
+	endMs := rec.SampleMs(tool.Ended)
 	if startMs < 0 {
 		startMs = 0
+	}
+	m.FillerHeard = containsTimedFiller(transcript.Words, startMs, endMs)
+	if !m.FillerHeard {
+		m.FillerFail = append(m.FillerFail, "no filler phrase during delayed tool")
 	}
 	onset := firstOnsetAfter(rec.Agent, rec.Rate, startMs, audio.DefaultSpeechThreshold)
 	if onset < 0 {

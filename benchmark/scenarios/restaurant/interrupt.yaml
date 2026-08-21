@@ -34,8 +34,8 @@ expected_tools:
   - name: create_reservation
     args: {time: "7:30", party_size: 6, patio: true, allergen: gluten, name: Alvarez}
 entities:
-  - {name: allergen, value: gluten, in_speech: true, in_tools: true}
-  - {name: party, value: "6", in_tools: true, in_speech: true}
+  - {name: allergen, value: gluten, in_speech: true, in_tools: true, tool: create_reservation, arg: allergen}
+  - {name: party, value: "6", in_tools: true, in_speech: true, tool: create_reservation, arg: party_size}
 policy:
   - Booking must still complete after the barge-in.
   - Allergen on the ticket is gluten, not peanut.

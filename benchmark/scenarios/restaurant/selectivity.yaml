@@ -39,7 +39,7 @@ expected_tools:
   - name: create_reservation
     args: {time: "7:30", party_size: 2, allergen: none, name: Chen}
 entities:
-  - {name: name, value: Chen, in_speech: true, in_tools: true}
+  - {name: name, value: Chen, in_speech: true, in_tools: true, tool: create_reservation, arg: name}
 policy:
   - Do not treat the cough or side conversation as a new request. Do not stop the current reply for a cough.
 judge:
