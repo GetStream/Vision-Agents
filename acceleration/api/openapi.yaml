@@ -719,6 +719,38 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/knowledge:
+    post:
+      operationId: ingestKnowledge
+      summary: Fill a knowledge base with what the business wrote down
+      description: >
+        The writing half of the lookup a config's knowledge_namespace gives an agent. Each
+        document is cut into passages here rather than by the caller, so a file read off
+        disk by the command and one posted by an SDK are cut the same way and can replace
+        each other.
+
+        Passages are keyed by the source and the position they came from, so posting a
+        document again after editing it replaces that document's passages rather than
+        leaving two versions of them to be found. A namespace is never shared between
+        agents, and the caller names it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestKnowledgeRequest"
+      responses:
+        "200":
+          description: The passages were written
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestedKnowledge"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/agents/campaigns:
     get:
       operationId: listCampaigns
@@ -1524,6 +1556,55 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    KnowledgeDocument:
+      type: object
+      required: [source, text]
+      properties:
+        source:
+          type: string
+          description: >
+            Where the document came from, as a reader would recognise it. Passage ids are
+            keyed by it, so posting the same source again replaces what it wrote before.
+          example: pricing.md
+        text:
+          type: string
+          description: The document, whole. It is cut into passages here.
+
+    IngestKnowledgeRequest:
+      type: object
+      required: [namespace, documents]
+      properties:
+        namespace:
+          type: string
+          description: >
+            The knowledge base to write into, which is what a config's
+            knowledge_namespace names. Knowledge is never shared, so there is no default.
+          example: docs
+        documents:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/KnowledgeDocument"
+        chunk_size:
+          type: integer
+          description: >
+            Characters per passage. Zero is the default, which is small enough that several
+            passages fit in front of a model and large enough that one still answers the
+            question on its own.
+
+    IngestedKnowledge:
+      type: object
+      required: [namespace, documents, passages]
+      properties:
+        namespace:
+          type: string
+        documents:
+          type: integer
+          description: How many documents were read.
+        passages:
+          type: integer
+          description: How many passages they were cut into and written as.
 
     CampaignRequest:
       type: object

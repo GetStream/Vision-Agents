@@ -61,6 +61,15 @@ type Store interface {
 	Close() error
 }
 
+// Writer fills a knowledge base, which Store only ever reads.
+//
+// It is separate because almost nothing writes: a conversation looks things up and never
+// puts anything there, so the reading half is what a session is given.
+type Writer interface {
+	// Upsert writes passages, replacing whatever is already stored under their ids.
+	Upsert(ctx context.Context, namespace string, documents []Document) error
+}
+
 // Prompt renders passages as the answer to a lookup, which is what the model is handed.
 // It says so plainly when there is nothing, because a model given an empty answer invents
 // one.

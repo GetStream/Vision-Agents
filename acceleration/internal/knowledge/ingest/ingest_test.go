@@ -1,4 +1,4 @@
-package main
+package ingest
 
 import (
 	"os"
@@ -27,7 +27,7 @@ An agent holds a conversation.
 A skill is handed to a slower model.
 `
 
-	passages := split("agents.md", content, defaultChunk)
+	passages := split("agents.md", content, DefaultChunk)
 
 	s.Require().Len(passages, 2)
 	s.Equal("agents.md > Agents", passages[0].source)
@@ -56,7 +56,7 @@ func (s *DocumentsSuite) TestASectionThatIsOnlyANameIsNotWorthStoring() {
 	// gives the model a title where it needed something to read.
 	content := "# Events\n\n## Sending\n\nCall send with the event.\n"
 
-	passages := split("events.md", content, defaultChunk)
+	passages := split("events.md", content, DefaultChunk)
 
 	s.Require().Len(passages, 1)
 	s.Equal("events.md > Sending", passages[0].source)
@@ -83,7 +83,7 @@ func (s *DocumentsSuite) TestATableIsCutAtItsRowsBecauseItHasNoParagraphs() {
 func (s *DocumentsSuite) TestFencedCodeIsKeptWhole() {
 	content := "## Usage\n\n```go\nfunc main() {\n\n\tprintln(\"hello\")\n}\n```\n"
 
-	passages := split("usage.md", content, defaultChunk)
+	passages := split("usage.md", content, DefaultChunk)
 
 	s.Require().Len(passages, 1)
 	s.Contains(passages[0].text, "func main()")
@@ -96,7 +96,7 @@ func (s *DocumentsSuite) TestPassagesAreIdentifiedByWhereTheyCameFrom() {
 	directory := s.T().TempDir()
 	s.write(directory, "guide.md", "# One\n\nfirst\n\n# Two\n\nsecond\n")
 
-	documents, err := read([]string{directory}, defaultChunk)
+	documents, err := Read([]string{directory}, DefaultChunk)
 	s.Require().NoError(err)
 
 	s.Require().Len(documents, 2)
@@ -111,7 +111,7 @@ func (s *DocumentsSuite) TestOnlyProseIsIngested() {
 	s.write(directory, "logo.png", "not a document")
 	s.write(filepath.Join(directory, ".git"), "config", "# One\n\nnot documentation\n")
 
-	documents, err := read([]string{directory}, defaultChunk)
+	documents, err := Read([]string{directory}, DefaultChunk)
 	s.Require().NoError(err)
 
 	s.Require().Len(documents, 1)
@@ -122,7 +122,7 @@ func (s *DocumentsSuite) TestNestedDocumentsKeepThePathTheyWereFoundAt() {
 	directory := s.T().TempDir()
 	s.write(filepath.Join(directory, "reference"), "api.md", "# API\n\nthe endpoints\n")
 
-	documents, err := read([]string{directory}, defaultChunk)
+	documents, err := Read([]string{directory}, DefaultChunk)
 	s.Require().NoError(err)
 
 	s.Require().Len(documents, 1)

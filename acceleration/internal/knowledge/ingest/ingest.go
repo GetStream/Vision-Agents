@@ -1,4 +1,9 @@
-package main
+// Package ingest cuts documents into the passages a knowledge base is filled with.
+//
+// It is the writing half of internal/knowledge, which only ever reads. Both the command
+// that reads a docs tree off disk and the endpoint an SDK posts one to go through here, so
+// the same file is cut the same way whichever way it arrives.
+package ingest
 
 import (
 	"fmt"
@@ -10,10 +15,15 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 )
 
-// idSeparator divides the file a passage came from from its place in that file. Keeping
+// DefaultChunk is how much of a document goes in one passage. It is small enough that
+// several can be put in front of a model without crowding out the conversation, and large
+// enough that a passage still answers the question on its own.
+const DefaultChunk = 1200
+
+// IDSeparator divides the file a passage came from from its place in that file. Keeping
 // the path in the id is what makes ingesting the same documentation twice an update
 // rather than a second copy of it.
-const idSeparator = "#"
+const IDSeparator = "#"
 
 // readable are the files worth putting in front of a model. Anything else in a docs tree
 // is an image, a lockfile or a build artefact, none of which answer a question.
@@ -26,8 +36,8 @@ var readable = map[string]struct{}{
 	".yml":  {},
 }
 
-// read turns the named files and directories into passages, ready to be written.
-func read(paths []string, size int) ([]knowledge.Document, error) {
+// Read turns the named files and directories into passages, ready to be written.
+func Read(paths []string, size int) ([]knowledge.Document, error) {
 	var documents []knowledge.Document
 	for _, path := range paths {
 		info, err := os.Stat(path)
@@ -84,17 +94,34 @@ func readFile(path, name string, size int) ([]knowledge.Document, error) {
 	if err != nil {
 		return nil, err
 	}
+	return Split(name, string(content), size), nil
+}
 
-	pieces := split(name, string(content), size)
+// Split cuts one document into the passages it will be stored as.
+//
+// The name is what a passage says it came from and what its id is keyed by, so it is the
+// path as a reader would recognise it rather than wherever the file happened to be.
+func Split(name, content string, size int) []knowledge.Document {
+	pieces := split(name, content, size)
 	documents := make([]knowledge.Document, 0, len(pieces))
 	for index, piece := range pieces {
 		documents = append(documents, knowledge.Document{
-			ID:     fmt.Sprintf("%s%s%d", name, idSeparator, index),
+			ID:     fmt.Sprintf("%s%s%d", name, IDSeparator, index),
 			Text:   piece.text,
 			Source: piece.source,
 		})
 	}
-	return documents, nil
+	return documents
+}
+
+// Files is how many documents a set of passages came from.
+func Files(documents []knowledge.Document) int {
+	seen := map[string]struct{}{}
+	for _, document := range documents {
+		file, _, _ := strings.Cut(document.ID, IDSeparator)
+		seen[file] = struct{}{}
+	}
+	return len(seen)
 }
 
 // passage is one piece of a document: what it says, and where a reader would find it.

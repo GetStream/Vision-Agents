@@ -23,14 +23,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 )
-
-// defaultChunk is how much of a document goes in one passage. It is small enough that
-// several can be put in front of a model without crowding out the conversation, and large
-// enough that a passage still answers the question on its own.
-const defaultChunk = 1200
 
 // writeTimeout is generous because ingesting is not on anybody's conversation: the store's
 // own default is tuned for a lookup somebody is waiting on.
@@ -38,7 +33,7 @@ const writeTimeout = 60 * time.Second
 
 func main() {
 	namespace := flag.String("namespace", "", "knowledge base to write into")
-	size := flag.Int("chunk", defaultChunk, "characters per passage")
+	size := flag.Int("chunk", ingest.DefaultChunk, "characters per passage")
 	dryRun := flag.Bool("dry-run", false, "print the passages instead of writing them")
 	verbose := flag.Bool("verbose", false, "log what is written")
 	flag.Parse()
@@ -73,7 +68,7 @@ func run(options options, paths []string, logger *slog.Logger) error {
 		return errors.New("a passage needs room for something to read")
 	}
 
-	documents, err := read(paths, options.size)
+	documents, err := ingest.Read(paths, options.size)
 	if err != nil {
 		return err
 	}
@@ -104,16 +99,6 @@ func run(options options, paths []string, logger *slog.Logger) error {
 		return err
 	}
 	fmt.Printf("wrote %d passages from %d files to %s\n",
-		len(documents), files(documents), options.namespace)
+		len(documents), ingest.Files(documents), options.namespace)
 	return nil
-}
-
-// files is how many documents the passages came from, for the line printed at the end.
-func files(documents []knowledge.Document) int {
-	seen := map[string]struct{}{}
-	for _, document := range documents {
-		file, _, _ := strings.Cut(document.ID, idSeparator)
-		seen[file] = struct{}{}
-	}
-	return len(seen)
 }

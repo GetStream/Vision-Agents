@@ -146,10 +146,20 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
+	// Without a turbopuffer key an agent knows only what its instructions say: the lookup
+	// tool is offered to no session, and there is nothing to fill either.
+	var base *turbopuffer.Store
+	if search, err := turbopuffer.New(turbopuffer.Options{Logger: logger}); err != nil {
+		logger.Debug("nothing will be looked up or written down", "error", err)
+	} else {
+		base = search
+		defer base.Close()
+	}
+
 	// Conversations need all three modalities, so a deployment configured for only one
 	// still inspects routing and reports statistics while the session paths say there
 	// are none.
-	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, logger)
+	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, logger)
 	if err != nil {
 		return err
 	}
@@ -182,7 +192,7 @@ func run(logger *slog.Logger) error {
 		transcripts = reader
 	}
 
-	server, err := api.NewServer(api.Options{
+	options := api.Options{
 		Routers:     routers,
 		Store:       pgStore,
 		Live:        liveClient,
@@ -192,7 +202,14 @@ func run(logger *slog.Logger) error {
 		Transcripts: transcripts,
 		Campaigns:   campaigns,
 		Logger:      logger,
-	})
+	}
+	// A nil *turbopuffer.Store in an interface is not a nil interface, so the absence has
+	// to stay absent rather than becoming a value that says it is there.
+	if base != nil {
+		options.Knowledge = base
+	}
+
+	server, err := api.NewServer(options)
 	if err != nil {
 		return err
 	}
@@ -241,6 +258,7 @@ func buildSessions(
 	pgStore *store.Store,
 	liveClient *live.Client,
 	telephony *phone.Service,
+	base *turbopuffer.Store,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.STT == nil || streams.TTS == nil || streams.LLM == nil {
@@ -257,13 +275,9 @@ func buildSessions(
 		remembering = recall
 	}
 
-	// Without a turbopuffer key an agent knows only what its instructions say, and the
-	// lookup tool is not offered to any session.
 	var reading knowledge.Store
-	if search, err := turbopuffer.New(turbopuffer.Options{Logger: logger}); err != nil {
-		logger.Debug("sessions will not be able to look anything up", "error", err)
-	} else {
-		reading = search
+	if base != nil {
+		reading = base
 	}
 
 	return session.NewManager(session.ManagerOptions{

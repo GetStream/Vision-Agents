@@ -17,6 +17,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -53,6 +54,10 @@ type Options struct {
 	// Campaigns rings lists of people. Absent without telephony or sessions, in which
 	// case a campaign can be written down but not run.
 	Campaigns *campaign.Runner
+	// Knowledge fills the bases a config's knowledge_namespace has an agent read from.
+	// Absent when the deployment has no knowledge provider, in which case there is nothing
+	// to fill and the path says so.
+	Knowledge knowledge.Writer
 	Logger    *slog.Logger
 }
 
@@ -66,6 +71,7 @@ type Server struct {
 	streams     *Streams
 	transcripts *chatlog.Reader
 	campaigns   *campaign.Runner
+	knowledge   knowledge.Writer
 	logger      *slog.Logger
 }
 
@@ -93,6 +99,7 @@ func NewServer(options Options) (*Server, error) {
 		streams:     options.Streams,
 		transcripts: options.Transcripts,
 		campaigns:   options.Campaigns,
+		knowledge:   options.Knowledge,
 		logger:      logger,
 	}, nil
 }

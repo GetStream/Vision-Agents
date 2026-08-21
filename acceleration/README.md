@@ -28,6 +28,7 @@ and billing as a direct API call.
 | `internal/chatlog`   | Writes what was said into a Stream Chat channel                     |
 | `internal/memory`    | What an agent remembers between calls; `mem0/` is the one provider  |
 | `internal/knowledge` | What the business wrote down; `turbopuffer/` is the one provider    |
+| `internal/knowledge/ingest` | Cutting documents into passages, for both the command and the endpoint |
 | `internal/phone`     | Telephony: the vendor contract, the Stream SIP trunk, the service   |
 | `internal/phone/twilio`, `internal/phone/telnyx` | The two implemented vendors    |
 | `internal/store`     | Postgres via bun, plus the goose migrations in `migrations/`        |
@@ -394,6 +395,7 @@ inline in the request overrides it, so a config can be reused and one call still
 | `GET /v1/agents/calls/{id}`                 | One call, with what a model made of it       |
 | `GET /v1/agents/calls/{id}/transcript`      | What was said                                |
 | `GET /v1/agents/calls/{id}/timeline`        | Each exchange, said and measured together    |
+| `POST /v1/agents/knowledge`                 | Fill a knowledge base from documents         |
 | `/v1/agents/campaigns`                      | Lists of people to ring, and how far they got |
 
 **Skills are named rather than spelled out.** A config carries skill names, and they are
@@ -412,6 +414,19 @@ costs money.
 
 ```bash
 go run ./cmd/knowledge -namespace docs ../docs ../README.md
+```
+
+`POST /v1/agents/knowledge` fills one from a caller that has no access to this machine's
+disk, which is what an SDK pushing an agent directory needs. Documents are cut into passages
+by the server, in `internal/knowledge/ingest`, so a file read off disk by the command and one
+posted over HTTP are cut the same way and replace each other.
+
+```bash
+curl -s localhost:8080/v1/agents/knowledge -H 'X-Customer-Id: acme' \
+  -H 'Content-Type: application/json' -d '{
+    "namespace": "docs",
+    "documents": [{"source": "pricing.md", "text": "# Pricing\n\nA call costs..."}]
+  }'
 ```
 
 Markdown is cut at its headings, a section too long to be one passage is cut again at

@@ -30,7 +30,10 @@ from .granularity import Granularity
 from .health_status import HealthStatus
 from .health_status_dependencies import HealthStatusDependencies
 from .health_status_status import HealthStatusStatus
+from .ingest_knowledge_request import IngestKnowledgeRequest
+from .ingested_knowledge import IngestedKnowledge
 from .instructions_request import InstructionsRequest
+from .knowledge_document import KnowledgeDocument
 from .modality import Modality
 from .phone_capability import PhoneCapability
 from .phone_number import PhoneNumber
@@ -95,7 +98,10 @@ __all__ = (
     "HealthStatus",
     "HealthStatusDependencies",
     "HealthStatusStatus",
+    "IngestKnowledgeRequest",
+    "IngestedKnowledge",
     "InstructionsRequest",
+    "KnowledgeDocument",
     "Modality",
     "PhoneCapability",
     "PhoneNumber",
