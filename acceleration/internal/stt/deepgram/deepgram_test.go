@@ -86,6 +86,78 @@ func (s *DeepgramSuite) TestStartOfTurnDoesNotEnterTheSharedContract() {
 	s.Empty(s.drain(provider))
 }
 
+func (s *DeepgramSuite) TestOneRunOfSpeechKeepsOneUtteranceNumber() {
+	// Flux revises the same words many times over, and whoever is deciding when to answer
+	// has to be able to tell that from the speaker saying them again.
+	provider := s.newSTT(Options{})
+
+	for range 3 {
+		provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+			EventType:  msginterfaces.TurnEventUpdate,
+			Transcript: "hey",
+		})
+	}
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType:  msginterfaces.TurnEventEndOfTurn,
+		Transcript: "Hey.",
+	})
+
+	for _, event := range s.drain(provider) {
+		transcript, ok := event.(stt.Transcript)
+		s.Require().True(ok)
+		s.Equal(int64(1), transcript.Utterance)
+	}
+}
+
+func (s *DeepgramSuite) TestASecondRunOfSpeechIsNumberedApartFromTheFirst() {
+	provider := s.newSTT(Options{})
+
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType:  msginterfaces.TurnEventUpdate,
+		Transcript: "hey",
+	})
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType:  msginterfaces.TurnEventEndOfTurn,
+		Transcript: "Hey.",
+	})
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType: msginterfaces.TurnEventStartOfTurn,
+	})
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType:  msginterfaces.TurnEventUpdate,
+		Transcript: "hey",
+	})
+
+	events := s.drain(provider)
+	s.Require().Len(events, 3)
+	s.Equal(int64(1), events[0].(stt.Transcript).Utterance)
+	s.Equal(int64(1), events[1].(stt.Transcript).Utterance,
+		"the end of a run belongs to the run it ends")
+	s.Equal(int64(2), events[2].(stt.Transcript).Utterance,
+		"an end followed by a start is one boundary, not two")
+}
+
+func (s *DeepgramSuite) TestAResumedTurnStaysTheSameUtterance() {
+	// Flux revokes an eager end of turn when the speaker was only pausing, and what
+	// follows is the same sentence carrying on rather than a new one.
+	provider := s.newSTT(Options{EagerEotThreshold: 0.5})
+
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType:  msginterfaces.TurnEventEagerEndOfTurn,
+		Transcript: "book a table",
+	})
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{EventType: msginterfaces.TurnEventTurnResumed})
+	provider.handleTurnInfo(&msginterfaces.TurnInfoResponse{
+		EventType:  msginterfaces.TurnEventUpdate,
+		Transcript: "book a table for four",
+	})
+
+	events := s.drain(provider)
+	s.Require().Len(events, 2)
+	s.Equal(int64(1), events[0].(stt.Transcript).Utterance)
+	s.Equal(int64(1), events[1].(stt.Transcript).Utterance)
+}
+
 func (s *DeepgramSuite) TestUpdateProducesAReplacementTranscript() {
 	provider := s.newSTT(Options{})
 	speaker := stt.Participant{ID: "p1", UserID: "u1"}

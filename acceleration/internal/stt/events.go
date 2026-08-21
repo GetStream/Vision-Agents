@@ -13,8 +13,14 @@ type Event interface {
 
 // Transcript carries recognised text. Mode says whether it supersedes the previous one.
 type Transcript struct {
-	Participant      Participant
-	Mode             Mode
+	Participant Participant
+	Mode        Mode
+	// Utterance numbers the stretch of speech this text belongs to, counting from one and
+	// moving on when the provider reports that one run of speech ended and another began.
+	// It is what tells a provider going over words again apart from the speaker saying
+	// them again, which no amount of looking at the words can settle. Providers that
+	// cannot see where an utterance ends leave it zero.
+	Utterance        int64
 	Text             string
 	Confidence       float64
 	Language         string

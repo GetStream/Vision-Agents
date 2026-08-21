@@ -72,8 +72,12 @@ type STT struct {
 	// lastAudioAt is when audio was last handed to Deepgram, so latency can be
 	// reported as the delay between sending audio and hearing about it.
 	lastAudioAt time.Time
-	started     bool
-	closed      bool
+	// utterance counts the runs of speech seen so far, and ended marks that the current
+	// one is over so the next transcript starts a new one.
+	utterance int64
+	ended     bool
+	started   bool
+	closed    bool
 }
 
 // New validates the options and returns an unstarted provider.
@@ -252,7 +256,12 @@ func (s *STT) handleTurnInfo(turn *msginterfaces.TurnInfoResponse) {
 		s.sendTranscript(participant, turn, text, stt.ModeReplacement, latencyMs)
 	case msginterfaces.TurnEventEndOfTurn:
 		s.sendTranscript(participant, turn, text, stt.ModeFinal, latencyMs)
-	case msginterfaces.TurnEventStartOfTurn, msginterfaces.TurnEventTurnResumed:
+		s.endUtterance()
+	case msginterfaces.TurnEventStartOfTurn:
+		s.endUtterance()
+	case msginterfaces.TurnEventTurnResumed:
+		// A resumed turn is the same run of speech carrying on after Flux thought it had
+		// ended, so it keeps the number it already had.
 		return
 	default:
 		s.logger.Debug("unhandled turn event", "event", turn.EventType)
@@ -273,6 +282,7 @@ func (s *STT) sendTranscript(
 	s.emitter.Send(stt.Transcript{
 		Participant:      participant,
 		Mode:             mode,
+		Utterance:        s.utteranceID(),
 		Text:             text,
 		Confidence:       turn.EndOfTurnConfidence,
 		Language:         firstLanguage(turn.Languages),
@@ -281,6 +291,29 @@ func (s *STT) sendTranscript(
 		ProcessingTimeMs: latencyMs,
 		AudioDurationMs:  audioWindowMs(turn),
 	})
+}
+
+// endUtterance marks the current run of speech as over.
+//
+// The count moves on the next transcript rather than here, so the end and the start Flux
+// sends between two utterances are one boundary between them rather than two.
+func (s *STT) endUtterance() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.ended = true
+}
+
+// utteranceID numbers the run of speech the next transcript belongs to.
+func (s *STT) utteranceID() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.utterance == 0 || s.ended {
+		s.utterance++
+		s.ended = false
+	}
+	return s.utterance
 }
 
 // audioWindowMs converts the turn's audio window, reported in seconds, to milliseconds.

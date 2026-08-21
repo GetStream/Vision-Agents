@@ -125,6 +125,24 @@ func (s *ParakeetSuite) TestFinalProducesAFinalTranscript() {
 	s.InDelta(9800.0, transcript.AudioDurationMs, 0.001)
 }
 
+func (s *ParakeetSuite) TestPartialsShareTheUtteranceOfTheFinalTheyBecome() {
+	provider := s.newSTT()
+
+	provider.handleMessage(serverMessage{Type: messagePartial, Text: "in a quiet"})
+	provider.handleMessage(serverMessage{Type: messagePartial, Text: "in a quiet village"})
+	provider.handleMessage(serverMessage{Type: messageFinal, Text: "In a quiet village."})
+	provider.handleMessage(serverMessage{Type: messageStartOfTurn})
+	provider.handleMessage(serverMessage{Type: messagePartial, Text: "forgotten"})
+
+	events := s.drain(provider)
+	s.Require().Len(events, 4)
+	s.Equal(int64(1), events[0].(stt.Transcript).Utterance)
+	s.Equal(int64(1), events[1].(stt.Transcript).Utterance)
+	s.Equal(int64(1), events[2].(stt.Transcript).Utterance)
+	s.Equal(int64(2), events[3].(stt.Transcript).Utterance,
+		"a final followed by a start of turn is one boundary, not two")
+}
+
 func (s *ParakeetSuite) TestEmptyTranscriptsAreNotEmitted() {
 	provider := s.newSTT()
 

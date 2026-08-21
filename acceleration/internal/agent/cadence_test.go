@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"log/slog"
 	"testing"
 	"time"
 
@@ -19,7 +20,8 @@ func TestCadenceSuite(t *testing.T) {
 }
 
 func (s *CadenceSuite) SetupTest() {
-	s.cadence = newCadence(5*time.Millisecond, 10*time.Millisecond, 100*time.Millisecond)
+	s.cadence = newCadence(5*time.Millisecond, 10*time.Millisecond, 100*time.Millisecond,
+		slog.New(slog.DiscardHandler))
 	s.T().Cleanup(s.cadence.Close)
 }
 
@@ -92,6 +94,45 @@ func (s *CadenceSuite) TestSayingTheSameThingAgainLaterIsHeardAgain() {
 
 	repeated := s.ready()
 	s.Equal("yes", repeated.Text)
+	s.NotEqual(answered.ID, repeated.ID)
+}
+
+func (s *CadenceSuite) TestOneUtteranceIsAnsweredOnceHoweverLongTheTranscriberGoesOverIt() {
+	// Deepgram Flux restates a word it has settled on for as long as the track is open,
+	// which outlasts any wall clock and had the agent answering a single hello six times.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1, Text: "hey",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	for range 3 {
+		time.Sleep(80 * time.Millisecond)
+		s.Empty(s.cadence.Observe(stt.Transcript{
+			Participant: alice, Mode: stt.ModeReplacement, Utterance: 1, Text: "hey",
+		}))
+	}
+
+	s.quiet()
+}
+
+func (s *CadenceSuite) TestTheSameWordSaidAgainInANewUtteranceIsAnswered() {
+	// Somebody saying "hey" a second time is owed a second answer, even straight away,
+	// which is what the transcriber's own count settles and no amount of waiting can.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1, Text: "hey",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "hey",
+	})
+
+	repeated := s.ready()
+	s.Equal("hey", repeated.Text)
 	s.NotEqual(answered.ID, repeated.ID)
 }
 

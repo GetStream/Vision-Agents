@@ -91,8 +91,12 @@ type STT struct {
 	// lastAudioAt is when audio was last sent, so latency can be reported as the delay
 	// between sending audio and hearing about it.
 	lastAudioAt time.Time
-	started     bool
-	closed      bool
+	// utterance counts the runs of speech seen so far, and ended marks that the current
+	// one is over so the next transcript starts a new one.
+	utterance int64
+	ended     bool
+	started   bool
+	closed    bool
 }
 
 // New validates the options and returns an unstarted provider.
@@ -322,11 +326,12 @@ func (s *STT) handleMessage(message serverMessage) {
 
 	switch message.Type {
 	case messageStartOfTurn:
-		return
+		s.endUtterance()
 	case messagePartial:
 		s.sendTranscript(participant, message, stt.ModeReplacement, latencyMs)
 	case messageFinal:
 		s.sendTranscript(participant, message, stt.ModeFinal, latencyMs)
+		s.endUtterance()
 	case messageError:
 		s.emitter.Send(stt.Error{
 			Provider: ProviderName,
@@ -366,12 +371,36 @@ func (s *STT) sendTranscript(
 	s.emitter.Send(stt.Transcript{
 		Participant:      participant,
 		Mode:             mode,
+		Utterance:        s.utteranceID(),
 		Text:             text,
 		Provider:         ProviderName,
 		Model:            s.options.Model,
 		ProcessingTimeMs: processingMs,
 		AudioDurationMs:  message.AudioDurationMs,
 	})
+}
+
+// endUtterance marks the current run of speech as over.
+//
+// The count moves on the next transcript rather than here, so the final and the start of
+// turn that follows it are one boundary between utterances rather than two.
+func (s *STT) endUtterance() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.ended = true
+}
+
+// utteranceID numbers the run of speech the next transcript belongs to.
+func (s *STT) utteranceID() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.utterance == 0 || s.ended {
+		s.utterance++
+		s.ended = false
+	}
+	return s.utterance
 }
 
 // snapshot returns the current speaker and how long ago audio was last sent.
