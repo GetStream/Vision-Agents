@@ -204,6 +204,51 @@ func TestSayingSomethingSkipsTheModelEntirely(t *testing.T) {
 	}
 }
 
+func TestAHardQuestionIsHandedToTheThinkingModel(t *testing.T) {
+	// The fast model is picked for how quickly it talks, not for how well it reasons, so
+	// what makes the pairing worth having is that it knows to hand the hard ones over.
+	// Both models are named rather than left to a capability shortcut, because what is
+	// under test is the pairing itself: a fast model that knows to hand work over, and a
+	// slow one behind it.
+	agent := chatting(t, agents.Options{
+		Instructions: "You are Jean. Be brief.",
+		LLM: stream.Accelerated(stream.Config{
+			Backend: router(t),
+			LLM:     "gemini/gemini-3.5-flash-lite",
+		}),
+		Harness: &agents.Harness{
+			UseSkills: true,
+			Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
+		},
+	})
+
+	session, err := agent.Chat(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	if err := session.Respond(
+		"A train leaves at 14:05 and takes 3 hours 50 minutes, " +
+			"but loses 25 minutes at a signal. What time does it arrive? Work it out carefully.",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	delegated := waitFor(t, session, "delegated")
+	if delegated.Frame["skill"] == "" || delegated.Frame["prompt"] == "" {
+		t.Errorf("the handover named no skill or carried no question: %v", delegated.Frame)
+	}
+
+	// The answer is what the caller is waiting through the small talk for, and a task that
+	// is started and never settles is the same as one never started.
+	// 14:05 plus 3h50m is 17:55, and the signal makes it 18:20.
+	settled := waitFor(t, session, "task_settled")
+	if !strings.Contains(settled.Text, "18:20") && !strings.Contains(settled.Text, "6:20") {
+		t.Errorf("the thinking model made it %q, and the train arrives at 18:20", settled.Text)
+	}
+}
+
 func TestASessionIsRecordedAndCanBeReadBack(t *testing.T) {
 	backend := router(t)
 	agent := chatting(t, agents.Options{Instructions: "You are Jean. Be brief."})

@@ -58,10 +58,19 @@ with whatever it can reach.
 
 ```go
 llm := stream.Accelerated(stream.Config{
-    STT: "deepgram/flux-general-en", TTS: "elevenlabs/eleven_flash_v2_5", LLM: "openai/gpt-5.6-luna",
+    STT: "deepgram/flux-general-en", TTS: "cartesia/sonic-preview",
+    LLM: "gemini/gemini-3.5-flash-lite",
     Greeting: "Hey, I'm Jean. What can I do for you?",
 })
-agent, _ := agents.New(agents.Options{Name: "jean", LLM: llm})
+agent, _ := agents.New(agents.Options{
+    Name: "jean", LLM: llm,
+    // A subagent turns the built-in think, recall and explain skills on: the fast model
+    // hands the hard questions over and keeps talking while the slower one reasons.
+    Harness: &agents.Harness{
+        UseSkills: true,
+        Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
+    },
+})
 
 call, _ := agent.Join(ctx, edge.Call{})
 defer call.Close(ctx)

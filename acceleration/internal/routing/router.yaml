@@ -350,6 +350,20 @@ llm:
         per_million_cached_input_tokens: 0.02
         per_million_output_tokens: 1.20
 
+    # The fastest of the Gemini 3.5 line at around 350 output tokens a second, which is what
+    # earns it a place here: the output price is above the rest of this tier, and a turn that
+    # arrives sooner is what is being paid for. Every Gemini 3 model thinks, so the provider
+    # pins it to minimal rather than letting it reason through a conversation.
+    - provider: gemini
+      model: gemini-3.5-flash-lite
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 0.30
+        per_million_cached_input_tokens: 0.03
+        per_million_output_tokens: 2.50
+
     # Self-hosted, so there is no per-token bill: the deployment is charged by the minute.
     # The rates below convert Baseten's L4 rate of $0.01414/min at an assumed 1500 output
     # tokens per second across the batch, with prefill taken as five times cheaper than

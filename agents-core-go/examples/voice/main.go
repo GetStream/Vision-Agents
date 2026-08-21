@@ -33,22 +33,24 @@ func main() {
 	number := flag.String("number", "", "answer this number of yours; empty joins a Stream call instead")
 	dial := flag.String("call", "", "ring this number rather than waiting to be rung; needs -number")
 	buy := flag.Bool("buy", false, "buy a number to answer on, which starts a monthly charge")
+	greeting := flag.String("greeting", "Hey, I'm Jean. What can I do for you?",
+		"said on joining without asking the model; empty waits to be spoken to")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if err := run(ctx, *number, *dial, *buy); err != nil {
+	if err := run(ctx, *number, *dial, *buy, *greeting); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(ctx context.Context, number, dial string, buy bool) error {
+func run(ctx context.Context, number, dial string, buy bool, greeting string) error {
 	llm := stream.Accelerated(stream.Config{
 		STT:      "deepgram/flux-general-en",
-		TTS:      "elevenlabs/eleven_flash_v2_5",
-		LLM:      "openai/gpt-5.6-luna",
-		Greeting: "Hey, I'm Jean. What can I do for you?",
+		TTS:      "cartesia/sonic-preview",
+		LLM:      "gemini/gemini-3.5-flash-lite",
+		Greeting: greeting,
 	})
 
 	if err := agents.RegisterFunction(llm, "get_weather",
@@ -65,6 +67,14 @@ func run(ctx context.Context, number, dial string, buy bool) error {
 		Name:         "jean",
 		Instructions: "You are Jean, a voice assistant. Be brief and warm, and answer in one or two sentences.",
 		LLM:          llm,
+		// Flash-Lite keeps the conversation quick but is not the model to work an
+		// arithmetic or multi-step question out on. A subagent is what turns the
+		// built-in think, recall and explain skills on: Jean hands the hard ones to Sol
+		// and keeps talking while it reasons.
+		Harness: &agents.Harness{
+			UseSkills: true,
+			Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
+		},
 	})
 	if err != nil {
 		return err

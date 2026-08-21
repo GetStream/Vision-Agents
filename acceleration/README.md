@@ -99,6 +99,7 @@ to play audio, or `-out` to write a file instead.
 | `FISH_API_KEY`          | Fish Audio credentials                                     |
 | `FISH_VOICE_ID`         | Optional Fish reference id to clone a voice from           |
 | `OPENAI_API_KEY`        | OpenAI credentials                                         |
+| `GOOGLE_API_KEY`        | Gemini credentials, from AI Studio                         |
 | `BASETEN_API_KEY`       | Baseten credentials, for the Model APIs and both deployments |
 | `PARAKEET_WS_URL`       | The Parakeet WebSocket endpoint                            |
 | `S2PRO_WS_URL`          | The S2 Pro WebSocket endpoint. Not yet deployed, see above |
@@ -137,6 +138,7 @@ Which models those shortcuts reach for LLM, and what each is billed at per milli
 | -------------------------------- | ------------ | ------ | ------- | ------- |
 | `deepseek/DeepSeek-V4-Flash-0731` | low-latency  | $0.13  | $0.028  | $0.26   |
 | `openai/gpt-5.6-luna`             | low-latency  | $0.20  | $0.02   | $1.20   |
+| `gemini/gemini-3.5-flash-lite`    | low-latency  | $0.30  | $0.03   | $2.50   |
 | `gemma/gemma-4-E2B-it`            | low-latency  | $0.032 | -       | $0.16   |
 | `deepseek/DeepSeek-V4-Pro-0813`   | high-quality | $1.32  | $0.132  | $3.96   |
 | `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |
@@ -151,6 +153,13 @@ latency before the first word of the answer. The provider turns thinking off thr
 chat template, since that is the wrong trade for a live conversation; `Options.Thinking`
 turns it back on and the reasoning then arrives as `ReasoningDelta` events, separate from
 the answer.
+
+Gemini is reached over Google's OpenAI-compatible endpoint, so it needs no implementation of
+its own. Every Gemini 3 model thinks and none of them can be told not to, so the provider
+pins the effort to `minimal` rather than letting a conversation wait on the model's own
+default; `Options.ReasoningEffort` raises it for anything off the live path. Google reports
+the thinking as a token count rather than streaming it, so there are no `ReasoningDelta`
+events to separate out.
 
 ## Run
 
@@ -252,17 +261,6 @@ Three decisions are worth knowing about:
   shortens the current answer after speech already queued, and an acknowledgement lets it
   continue. Audio from an abandoned turn is still dropped at publication.
 
-`Edge` is four methods (`Join`, `Audio`, `PublishAudio`, `Leave`), which is what lets the
-whole flow be tested in-process against a loopback rather than only against a real call.
-`streamedge` is the real one: it joins over the private `getstream-go-webrtc` SDK, subscribes
-to the audio of everyone else in the call (joining subscribes to nothing on its own), decodes
-inbound Opus to 16 kHz mono, and encodes the agent's speech back to 48 kHz Opus.
-
-## The harness
-
-The model on the live path is chosen for how quickly it starts talking, which is not the
-same as how well it thinks. `internal/harness` is what stops that being a trade made on
-every sentence: the fast model can hand the hard part to a slower one and go on talking
 Those three decisions are where a call goes wrong, so `ROUTER_LOG_LEVEL=debug` narrates
 them: every transcript revision, when the words held still, what the flow controller was
 asked and what it answered, and why the agent then spoke, waited, murmured, queued the turn
@@ -276,6 +274,17 @@ the flow controller decided candidate=turn-1787 disposition=respond floor=contin
 answering candidate=turn-1787
 ```
 
+`Edge` is four methods (`Join`, `Audio`, `PublishAudio`, `Leave`), which is what lets the
+whole flow be tested in-process against a loopback rather than only against a real call.
+`streamedge` is the real one: it joins over the private `getstream-go-webrtc` SDK, subscribes
+to the audio of everyone else in the call (joining subscribes to nothing on its own), decodes
+inbound Opus to 16 kHz mono, and encodes the agent's speech back to 48 kHz Opus.
+
+## The harness
+
+The model on the live path is chosen for how quickly it starts talking, which is not the
+same as how well it thinks. `internal/harness` is what stops that being a trade made on
+every sentence: the fast model can hand the hard part to a slower one and go on talking
 while it runs.
 
 ```mermaid
