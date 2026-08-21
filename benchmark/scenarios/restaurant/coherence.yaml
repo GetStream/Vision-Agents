@@ -1,0 +1,62 @@
+id: restaurant.coherence
+pack: restaurant
+category: checklist
+name: Two minute booking conversation stays coherent
+persona: A chatty caller who confirms details slowly and repeats themselves.
+max_duration_s: 240
+judge:
+  coherence: true
+  task: A listener should still follow the booking after two minutes of back-and-forth. Do not drop the allergen, time, or name.
+turns:
+  - id: intro
+    text: "Hi there, I was hoping to get a table this weekend, Saturday night if possible. We have not been in a while and I want to make sure I get this right."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: details
+    text: "Four of us, 7:30, patio if you have it, and a high chair for a toddler. One of us has a peanut allergy, that has to be on the ticket."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: name
+    text: "Last name Alvarez, A L V A R E Z. Callback is 512-555-0142. Can you read the time and allergen back?"
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: parking
+    text: "Is there street parking near the patio, or should we use the garage on Second Street? We will probably arrive a few minutes early."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: chair
+    text: "Just confirming the high chair again, the toddler is two. And the peanut allergy is still the important one, not a maybe."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: day
+    text: "This is Saturday night, not Sunday, right? 7:30 on Saturday. I do not want to show up on the wrong night."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: heaters
+    text: "If the patio is chilly do you put heaters out, or should we bring jackets? We still want patio, not inside."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: party
+    text: "Still four adults plus the high chair, not six. Please keep party size at four with the peanut note."
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: readback
+    text: "Can you read back name, Saturday 7:30 patio, party of four, high chair, and peanut allergy one more time?"
+    trigger: {kind: after_agent_turn, delay_ms: 500}
+  - id: thanks
+    text: "Perfect, we will see you Saturday at 7:30. Thanks for staying with me through all that."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  slots:
+    - {time: "7:30", patio: true, available: true, capacity: 6}
+end_state:
+  - path: reservation.allergen
+    eq: peanut
+  - path: reservation.party_size
+    eq: 4
+  - path: reservation.time
+    eq: "7:30"
+expected_tools:
+  - name: create_reservation
+    args: {time: "7:30", party_size: 4, patio: true, high_chair: true, allergen: peanut, name: Alvarez, phone: "512-555-0142"}
+entities:
+  - {name: name, value: Alvarez, in_speech: true, in_tools: true, tool: create_reservation, arg: name}
+  - {name: allergen, value: peanut, in_speech: true, in_tools: true, tool: create_reservation, arg: allergen}
+policy:
+  - Keep replies short. Do not lose the allergen or the time over a long call.
+agent_replies:
+  - "Copper Spoon, Saturday reservations."
+  - "Four at 7:30 patio, high chair, peanut allergy. Name?"
+  - "Alvarez Saturday 7:30 patio, peanut allergy, 512-555-0142."

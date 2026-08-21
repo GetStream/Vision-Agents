@@ -1,0 +1,37 @@
+id: telecom.entity_dense
+pack: telecom
+category: entity_dense
+name: PIN, last four, address, gateway code
+max_duration_s: 180
+turns:
+  - id: intro
+    text: "PIN 4471, last four 9821, 14 Cedar Lane unit B, gateway error 840. Please open a ticket."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  outage: false
+  reboot_succeeds: true
+  gateway_error: "840"
+  accounts:
+    - {id: acc1, pin: "4471", last4: "9821", address: "14 Cedar Lane unit B", plan: "fiber-500"}
+end_state:
+  - path: identity_verified
+    eq: true
+  - path: reboot_attempted
+    eq: true
+expected_tools:
+  - name: verify_account
+    args: {pin: "4471", last4: "9821", address: "14 Cedar Lane unit B"}
+  - name: walk_reboot
+    args: {}
+entities:
+  - {name: pin, value: "4471", in_tools: true, in_speech: false, tool: verify_account, arg: pin}
+  - {name: last4, value: "9821", in_tools: true, in_speech: true, tool: verify_account, arg: last4}
+  - {name: error, value: "840", in_speech: true, in_tools: false}
+  - {name: address, value: "Cedar", in_tools: true, in_speech: true, tool: verify_account, arg: address, tool_value: "14 Cedar Lane unit B"}
+policy:
+  - One wrong field fails the call.
+judge:
+  task: Every identifier is captured. Reboot restores service so no truck.
+agent_replies:
+  - "Support, verifying now."
+  - "Account 14 Cedar Lane verified, last four 9821, error 840. Reboot restored service. No ticket needed."

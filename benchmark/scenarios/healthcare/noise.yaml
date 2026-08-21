@@ -1,0 +1,31 @@
+id: healthcare.noise
+pack: healthcare
+category: checklist
+name: Identity and reschedule in street noise
+max_duration_s: 180
+noise: street
+snr_db: 10
+turns:
+  - id: intro
+    text: "Maya Chen, born March 4 1987, member ABC123456. Move Thursday 2pm with Dr Chen to Tuesday morning."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  patients:
+    - {id: p1, name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456}
+  appointments:
+    - {id: a1, patient_id: p1, clinician: "Dr Chen", date: "Thursday", time: "2pm", location: "Main clinic"}
+end_state:
+  - path: appointment.date
+    eq: Tuesday
+expected_tools:
+  - name: verify_identity
+    args: {name: "Maya Chen", dob: "1987-03-04", member_id: ABC123456}
+  - name: reschedule_appointment
+    args: {appointment_id: a1, new_date: Tuesday, new_time: morning}
+entities:
+  - {name: member, value: ABC123456, in_tools: true, in_speech: true, tool: verify_identity, arg: member_id}
+policy:
+  - Verify identity before PHI even in noise.
+agent_replies:
+  - "Clinic after hours."
+  - "Maya Chen verified. Thursday 2pm moved to Tuesday morning at Main clinic, member ABC123456."

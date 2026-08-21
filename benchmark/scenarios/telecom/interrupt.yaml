@@ -1,0 +1,52 @@
+id: telecom.interrupt
+pack: telecom
+category: interrupt
+name: Dual intent cancel during reboot
+persona: A frustrated customer who adds cancellation mid-flow.
+max_duration_s: 180
+turns:
+  - id: intro
+    text: "Internet down since 6, PIN 4471, last four 9821, 14 Cedar Lane."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: cancel
+    text: "And I want to cancel, this is the third time."
+    trigger: {kind: barge_in_after_ms, after_ms: 900}
+  - id: finish
+    text: "Fine, send the tech, but I still want a human on cancel."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  outage: false
+  reboot_succeeds: false
+  credit_eligible: false
+  accounts:
+    - {id: acc1, pin: "4471", last4: "9821", address: "14 Cedar Lane", plan: "fiber-500"}
+end_state:
+  - path: reboot_attempted
+    eq: true
+  - path: ticket.id
+    exists: true
+  - path: transfer_summary
+    exists: true
+expected_tools:
+  - name: verify_account
+    args: {pin: "4471", last4: "9821", address: "14 Cedar Lane"}
+  - name: walk_reboot
+    args: {}
+  - name: create_ticket
+    args: {reason: "no-service"}
+  - name: dispatch_tech
+    args: {window: "am"}
+  - name: create_transfer_summary
+    args: {}
+tool_order:
+  - {before: walk_reboot, after: dispatch_tech}
+policy:
+  - Do not dispatch and cancel in the same breath unless policy allows both.
+  - Retention offer only if eligible. This account is not credit eligible.
+  - Warm-transfer summary must be three lines, not a replay of the call.
+judge:
+  task: Repair path still completes. Cancel is handed to a human with a short summary. No unauthorized credit.
+agent_replies:
+  - "Internet support, let me verify the account."
+  - "Walking the reboot now—"
+  - "Reboot failed, ticket T-1842, morning tech. Cancel goes to a human. Summary: outage not area-wide. Reboot failed. Third failure, customer wants to cancel. No credit applied."

@@ -1,0 +1,29 @@
+id: telecom.tool_filler
+pack: telecom
+category: checklist
+name: Delayed outage check filler
+max_duration_s: 180
+tool_delay_ms:
+  check_outage: 3000
+turns:
+  - id: intro
+    text: "PIN 4471 last four 9821, 14 Cedar Lane. Is there an outage?"
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  outage: false
+  reboot_succeeds: true
+  accounts:
+    - {id: acc1, pin: "4471", last4: "9821", address: "14 Cedar Lane"}
+end_state:
+  - path: identity_verified
+    eq: true
+expected_tools:
+  - name: verify_account
+    args: {pin: "4471", last4: "9821", address: "14 Cedar Lane"}
+  - name: check_outage
+    args: {}
+policy:
+  - Say one moment while checking the outage map.
+agent_replies:
+  - "One moment, checking the outage map."
+  - "No area outage on 14 Cedar Lane, last four 9821."

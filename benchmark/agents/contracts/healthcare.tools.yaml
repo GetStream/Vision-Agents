@@ -1,0 +1,51 @@
+tools:
+  - name: verify_identity
+    description: Verify a patient with name, DOB, and member ID or phone.
+    parameters:
+      type: object
+      properties:
+        name: {type: string}
+        dob: {type: string}
+        member_id: {type: string}
+        phone: {type: string}
+      required: [name, dob]
+  - name: lookup_appointment
+    description: List appointments for the verified patient.
+    parameters:
+      type: object
+      properties: {}
+  - name: reschedule_appointment
+    description: >
+      Reschedule an appointment. new_date is a weekday like Tuesday.
+      new_time is morning or h:mm like 2pm.
+    parameters:
+      type: object
+      properties:
+        appointment_id: {type: string}
+        new_date: {type: string}
+        new_time: {type: string}
+        location: {type: string}
+      required: [appointment_id, new_date, new_time]
+  - name: update_insurance
+    description: Update insurance for the verified patient.
+    parameters:
+      type: object
+      properties:
+        member_id: {type: string}
+        payer: {type: string}
+      required: [member_id, payer]
+  - name: update_pharmacy
+    description: Set the preferred pharmacy for the verified patient.
+    parameters:
+      type: object
+      properties:
+        pharmacy: {type: string}
+      required: [pharmacy]
+  - name: log_escalation
+    description: Log an escalation or clinician callback.
+    parameters:
+      type: object
+      properties:
+        reason: {type: string}
+        urgent: {type: boolean}
+      required: [reason]

@@ -1,0 +1,47 @@
+id: restaurant.interrupt
+pack: restaurant
+category: interrupt
+name: Change party size and allergen mid-readback
+persona: A diner who changes their mind while the host is confirming.
+max_duration_s: 180
+turns:
+  - id: intro
+    text: "Hi, table for four Saturday at 7:30, patio, peanut allergy."
+    trigger:
+      kind: after_agent_turn
+      delay_ms: 400
+  - id: change
+    text: "Wait, make it six, and one of us is gluten-free instead."
+    trigger:
+      kind: barge_in_after_ms
+      after_ms: 900
+  - id: name
+    text: "Name is Alvarez, 512-555-0142."
+    trigger:
+      kind: after_agent_turn
+      delay_ms: 350
+seed:
+  slots:
+    - {time: "7:30", patio: true, available: true, capacity: 8}
+end_state:
+  - path: reservation.party_size
+    eq: 6
+  - path: reservation.allergen
+    eq: gluten
+expected_tools:
+  - name: check_availability
+    args: {time: "7:30", party_size: 6, patio: true}
+  - name: create_reservation
+    args: {time: "7:30", party_size: 6, patio: true, allergen: gluten, name: Alvarez}
+entities:
+  - {name: allergen, value: gluten, in_speech: true, in_tools: true, tool: create_reservation, arg: allergen}
+  - {name: party, value: "6", in_tools: true, in_speech: true, tool: create_reservation, arg: party_size}
+policy:
+  - Booking must still complete after the barge-in.
+  - Allergen on the ticket is gluten, not peanut.
+judge:
+  task: The change of mind must stick. Do not keep the original party of four or peanut allergy.
+agent_replies:
+  - "The Copper Spoon, how can I help?"
+  - "Four at 7:30 patio, peanut allergy—"
+  - "Updated to six at 7:30, gluten-free noted for Alvarez."

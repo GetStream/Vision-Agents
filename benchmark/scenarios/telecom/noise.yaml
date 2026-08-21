@@ -1,0 +1,40 @@
+id: telecom.noise
+pack: telecom
+category: checklist
+name: Outage intake under street noise
+persona: Subscriber calling from outside.
+max_duration_s: 180
+noise: street
+snr_db: 10
+turns:
+  - id: intro
+    text: "PIN 4471 last four 9821, 14 Cedar Lane. Internet down since 6, gateway error 840. Send a tech if reboot fails."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+  - id: reboot
+    text: "I rebooted it, still down. Please ticket and dispatch morning."
+    trigger: {kind: after_agent_turn, delay_ms: 400}
+seed:
+  outage: false
+  reboot_succeeds: false
+  gateway_error: "840"
+  accounts:
+    - {id: acc1, pin: "4471", last4: "9821", address: "14 Cedar Lane", plan: "fiber-500"}
+end_state:
+  - path: reboot_attempted
+    eq: true
+  - path: ticket.id
+    exists: true
+expected_tools:
+  - name: verify_account
+    args: {pin: "4471", last4: "9821", address: "14 Cedar Lane"}
+  - name: walk_reboot
+    args: {}
+  - name: create_ticket
+    args: {reason: "no-service"}
+entities:
+  - {name: last4, value: "9821", in_tools: true, in_speech: true, tool: verify_account, arg: last4}
+policy:
+  - Complete verify, reboot, and ticket despite street noise.
+agent_replies:
+  - "Internet support."
+  - "Verified 14 Cedar Lane. Reboot failed, ticket T-1842, last four 9821."

@@ -1,0 +1,32 @@
+id: restaurant.noise_kitchen
+pack: restaurant
+category: checklist
+name: Golden booking under kitchen noise
+persona: Same as golden, calling from a noisy kitchen.
+max_duration_s: 180
+noise: kitchen
+snr_db: 10
+turns:
+  - id: intro
+    text: "Table for four Saturday 7:30 patio, peanut allergy. Alvarez, 512-555-0142."
+    trigger:
+      kind: after_agent_turn
+      delay_ms: 400
+seed:
+  slots:
+    - {time: "7:30", patio: true, available: true, capacity: 6}
+end_state:
+  - path: reservation.allergen
+    eq: peanut
+  - path: reservation.party_size
+    eq: 4
+expected_tools:
+  - name: create_reservation
+    args: {time: "7:30", party_size: 4, patio: true, allergen: peanut, name: Alvarez}
+entities:
+  - {name: allergen, value: peanut, in_speech: true, in_tools: true, tool: create_reservation, arg: allergen}
+policy:
+  - Complete the booking despite kitchen noise.
+agent_replies:
+  - "Copper Spoon, I can hear you, go ahead."
+  - "Booked Alvarez Saturday 7:30 patio, peanut allergy on the ticket."

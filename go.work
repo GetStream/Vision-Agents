@@ -3,4 +3,5 @@ go 1.26
 use (
 	./acceleration
 	./agents-core-go
+	./benchmark
 )
