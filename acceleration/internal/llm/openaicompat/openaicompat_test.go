@@ -162,6 +162,26 @@ func toolFrame(index int, id, name, arguments string) string {
 	}}, nil)
 }
 
+// signedToolFrame renders a call from a provider that signs what it asks for, which it
+// nests under extra_content beside the function rather than inside it.
+func signedToolFrame(index int, id, name, arguments, signature string) string {
+	return frame([]any{map[string]any{
+		"index": 0,
+		"delta": map[string]any{"tool_calls": []any{map[string]any{
+			"index": index,
+			"id":    id,
+			"type":  "function",
+			"function": map[string]any{
+				"name":      name,
+				"arguments": arguments,
+			},
+			"extra_content": map[string]any{
+				"google": map[string]any{"thought_signature": signature},
+			},
+		}}},
+	}}, nil)
+}
+
 // usageFrame reports what the completion consumed, optionally settling it with a finish
 // reason. Choices are empty when there is no finish reason, the way a terminal usage-only
 // chunk arrives.
@@ -585,6 +605,70 @@ func (s *OpenAICompatSuite) TestToolsAreOnlySentWhenOffered() {
 	parameters, ok := function["parameters"].(map[string]any)
 	s.Require().True(ok, "without the schema the model cannot fill the arguments in")
 	s.Equal("object", parameters["type"])
+}
+
+func (s *OpenAICompatSuite) TestASignedToolCallIsHandedBackSigned() {
+	// Gemini signs the calls it asks for and refuses a conversation that replays one
+	// unsigned, so dropping the signature costs the caller the answer to every question
+	// a tool was reached for: the result comes back and the turn that would speak it is
+	// rejected.
+	s.frames = []string{
+		signedToolFrame(0, "call-1", "get_weather", `{"location":"Boulder, CO"}`, "sig-abc"),
+		usageFrame(20, 0, 9, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{})
+
+	complete, _ := s.ask(provider, hello())
+	s.Require().Len(complete.ToolCalls, 1)
+	s.Equal("sig-abc", complete.ToolCalls[0].Signature)
+
+	s.frames = []string{textFrame("It is sunny."), usageFrame(30, 0, 4, 0, "stop")}
+	s.ask(provider, llm.Request{Messages: []llm.Message{
+		{Role: llm.User, Content: "how is the weather?"},
+		{Role: llm.Assistant, ToolCalls: complete.ToolCalls},
+		{Role: llm.ToolResult, ToolCallID: "call-1", Content: "20 and sunny"},
+	}})
+
+	replayed := s.sentMessages(1)
+	s.Require().Len(replayed, 3)
+
+	calls, ok := replayed[1]["tool_calls"].([]any)
+	s.Require().True(ok)
+	s.Require().Len(calls, 1)
+
+	call, ok := calls[0].(map[string]any)
+	s.Require().True(ok)
+	content, ok := call["extra_content"].(map[string]any)
+	s.Require().True(ok, "the call went back unsigned and the provider would refuse it")
+
+	google, ok := content["google"].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("sig-abc", google["thought_signature"])
+}
+
+func (s *OpenAICompatSuite) TestAnUnsignedToolCallIsReplayedWithoutAnEmptySignature() {
+	// Most providers do not sign, and sending them an empty signature would be a field
+	// they never asked for on every tool call a conversation replays.
+	s.frames = []string{
+		toolFrame(0, "call-1", "transfer", `{"to":"+15551234567"}`),
+		usageFrame(20, 0, 9, 0, "tool_calls"),
+	}
+	provider := s.provider(Options{})
+
+	complete, _ := s.ask(provider, hello())
+	s.Empty(complete.ToolCalls[0].Signature)
+
+	s.frames = []string{textFrame("done"), usageFrame(30, 0, 4, 0, "stop")}
+	s.ask(provider, llm.Request{Messages: []llm.Message{
+		{Role: llm.Assistant, ToolCalls: complete.ToolCalls},
+		{Role: llm.ToolResult, ToolCallID: "call-1", Content: "transferred"},
+	}})
+
+	calls, ok := s.sentMessages(1)[0]["tool_calls"].([]any)
+	s.Require().True(ok)
+	call, ok := calls[0].(map[string]any)
+	s.Require().True(ok)
+	s.NotContains(call, "extra_content")
 }
 
 func (s *OpenAICompatSuite) TestStreamedFragmentsAssembleIntoOneToolCall() {

@@ -140,3 +140,49 @@ func (s *GeminiIntegrationSuite) TestToolsAreReachableAlongsideTheReasoningSetti
 	s.Equal("get_weather", complete.ToolCalls[0].Name)
 	s.Contains(strings.ToLower(complete.ToolCalls[0].Arguments), "paris")
 }
+
+func (s *GeminiIntegrationSuite) TestAToolResultIsAnsweredRatherThanRefused() {
+	// Google signs every call it asks for and rejects the turn that carries the result
+	// back unless the signature comes with it. That turn is the one that says the answer
+	// out loud, so losing the signature is a caller asking a question, a tool running,
+	// and nobody ever telling them what it found.
+	provider := s.start(Options{})
+	tools := []llm.Tool{{
+		Name:        "get_weather",
+		Description: "Look up the weather somewhere",
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"city": map[string]any{"type": "string"}},
+			"required":   []string{"city"},
+		},
+	}}
+	asked := llm.Message{Role: llm.User, Content: "What is the weather in Paris?"}
+
+	s.Require().NoError(provider.Respond(llm.Request{
+		Instructions: "Use the tool to answer.",
+		Messages:     []llm.Message{asked},
+		Tools:        tools,
+		MaxTokens:    512,
+	}))
+	called, _ := s.collect(provider)
+	s.Require().Len(called.ToolCalls, 1)
+	s.NotEmpty(called.ToolCalls[0].Signature, "Google signs its calls and wants them back signed")
+
+	s.Require().NoError(provider.Respond(llm.Request{
+		Instructions: "Tell the caller what the tool found.",
+		Messages: []llm.Message{
+			asked,
+			{Role: llm.Assistant, Content: called.Text, ToolCalls: called.ToolCalls},
+			{
+				Role:       llm.ToolResult,
+				ToolCallID: called.ToolCalls[0].ID,
+				Content:    "It is 20 degrees and sunny in Paris.",
+			},
+		},
+		Tools:     tools,
+		MaxTokens: 512,
+	}))
+	answered, _ := s.collect(provider)
+
+	s.Contains(answered.Text, "20")
+}

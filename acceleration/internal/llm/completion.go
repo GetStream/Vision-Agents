@@ -36,6 +36,7 @@ type partialCall struct {
 	id        string
 	name      string
 	arguments strings.Builder
+	signature string
 }
 
 // tokens is what the provider said the completion consumed.
@@ -89,6 +90,13 @@ func (c *Completion) Reasoning(text string) ReasoningDelta {
 // what was already recorded alone, so a fragment carrying only arguments does not erase the
 // name.
 func (c *Completion) ToolCall(index int64, id, name, arguments string) ToolCallDelta {
+	return c.SignedToolCall(index, id, name, arguments, "")
+}
+
+// SignedToolCall records a fragment that carries provider state to be handed back with the
+// call, for a provider that signs what it asks for. An empty signature leaves the recorded
+// one alone, so the fragment that carries it need not be the one that carries the name.
+func (c *Completion) SignedToolCall(index int64, id, name, arguments, signature string) ToolCallDelta {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -105,6 +113,9 @@ func (c *Completion) ToolCall(index int64, id, name, arguments string) ToolCallD
 	}
 	if name != "" {
 		call.name = name
+	}
+	if signature != "" {
+		call.signature = signature
 	}
 	call.arguments.WriteString(arguments)
 
@@ -189,6 +200,7 @@ func (c *Completion) calls() []ToolCall {
 			ID:        id,
 			Name:      call.name,
 			Arguments: call.arguments.String(),
+			Signature: call.signature,
 		})
 	}
 	return assembled

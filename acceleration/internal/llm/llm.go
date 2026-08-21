@@ -64,6 +64,11 @@ type ToolCall struct {
 	// tool that knows what shape to expect. A model may produce arguments that do not
 	// parse, and the caller is better placed than this package to say what that means.
 	Arguments string
+	// Signature is provider state that has to be handed back with the call when the turn
+	// is replayed. Gemini signs the calls it makes and rejects a conversation that
+	// returns one unsigned, which is how a tool result gets answered rather than
+	// refused. It is opaque and empty for providers that do not sign.
+	Signature string
 }
 
 // Request is one completion to generate.

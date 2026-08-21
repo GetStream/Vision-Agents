@@ -129,7 +129,12 @@ func TestAConversationInWritingIsAnsweredByAModel(t *testing.T) {
 }
 
 func TestAFunctionRegisteredHereIsRunHereWhenTheModelAsksForIt(t *testing.T) {
-	llm := stream.Accelerated(stream.Config{Backend: router(t)})
+	// Pinned to Gemini because it signs the calls it asks for and refuses to answer a
+	// result handed back unsigned, which is the whole round-trip this exercises.
+	llm := stream.Accelerated(stream.Config{
+		Backend: router(t),
+		LLM:     "gemini/gemini-3.5-flash-lite",
+	})
 
 	asked := make(chan string, 4)
 	err := agents.RegisterFunction(llm, "get_weather",
@@ -159,10 +164,6 @@ func TestAFunctionRegisteredHereIsRunHereWhenTheModelAsksForIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The turn the tool was asked for in ends with nothing said: the backend folds a
-	// successful result into the history and stays quiet rather than answering out of it,
-	// which is what a tool that pressed a menu key wants. So the result is read on the
-	// next turn.
 	waitFor(t, session, "tool_ran")
 
 	select {
@@ -175,9 +176,8 @@ func TestAFunctionRegisteredHereIsRunHereWhenTheModelAsksForIt(t *testing.T) {
 		t.Fatal("the function was never run")
 	}
 
-	if err := session.Respond("So what is it like there?"); err != nil {
-		t.Fatal(err)
-	}
+	// What the tool found is said without being asked again. Somebody who asks a
+	// question and gets silence until they prompt a second time has not been answered.
 	answered := waitFor(t, session, "responded")
 	if !strings.Contains(strings.ToLower(answered.Text), "rain") &&
 		!strings.Contains(answered.Text, "20") {

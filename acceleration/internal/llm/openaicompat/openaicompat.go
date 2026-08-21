@@ -36,6 +36,14 @@ const defaultTimeout = 2 * time.Minute
 // schema, so it arrives as an extra field rather than on the delta struct.
 const reasoningField = "reasoning_content"
 
+// A signing provider nests its signature under extra_content, keyed by vendor. Gemini is
+// the one that does, and it refuses a replayed call that comes back without it.
+const (
+	signatureField  = "extra_content"
+	signatureVendor = "google"
+	signatureName   = "thought_signature"
+)
+
 // Options configures a provider served over an OpenAI-compatible endpoint.
 type Options struct {
 	// Provider is the stable name used in stats, e.g. "deepseek".
@@ -280,11 +288,12 @@ func (l *LLM) stream(ctx context.Context, request llm.Request, completion *llm.C
 				l.emitter.Send(completion.Reasoning(thinking))
 			}
 			for _, call := range choice.Delta.ToolCalls {
-				l.emitter.Send(completion.ToolCall(
+				l.emitter.Send(completion.SignedToolCall(
 					call.Index,
 					call.ID,
 					call.Function.Name,
 					call.Function.Arguments,
+					signature(call.JSON.ExtraFields),
 				))
 			}
 			if choice.FinishReason != "" {
@@ -382,15 +391,23 @@ func assistantMessage(message llm.Message) openai.ChatCompletionMessageParamUnio
 
 	calls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(message.ToolCalls))
 	for _, call := range message.ToolCalls {
-		calls = append(calls, openai.ChatCompletionMessageToolCallUnionParam{
-			OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
-				ID: call.ID,
-				Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
-					Name:      call.Name,
-					Arguments: call.Arguments,
-				},
+		function := &openai.ChatCompletionMessageFunctionToolCallParam{
+			ID: call.ID,
+			Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
+				Name:      call.Name,
+				Arguments: call.Arguments,
 			},
-		})
+		}
+		if call.Signature != "" {
+			function.SetExtraFields(map[string]any{
+				signatureField: map[string]any{
+					signatureVendor: map[string]any{
+						signatureName: call.Signature,
+					},
+				},
+			})
+		}
+		calls = append(calls, openai.ChatCompletionMessageToolCallUnionParam{OfFunction: function})
 	}
 
 	assistant := openai.ChatCompletionAssistantMessageParam{ToolCalls: calls}
@@ -438,4 +455,23 @@ func reasoning(extra map[string]respjson.Field) string {
 		return ""
 	}
 	return text
+}
+
+// signature reads the state a signing provider attached to a tool call, returning empty
+// for the providers that do not sign.
+func signature(extra map[string]respjson.Field) string {
+	field, ok := extra[signatureField]
+	if !ok {
+		return ""
+	}
+
+	var content struct {
+		Google struct {
+			ThoughtSignature string `json:"thought_signature"`
+		} `json:"google"`
+	}
+	if err := json.Unmarshal([]byte(field.Raw()), &content); err != nil {
+		return ""
+	}
+	return content.Google.ThoughtSignature
 }
