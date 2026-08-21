@@ -163,12 +163,14 @@ func (s *CartesiaSuite) generations(conn *websocket.Conn, want int) []generation
 }
 
 func (s *CartesiaSuite) TestAnIdleHangUpDoesNotCostTheAgentItsVoice() {
-	// Cartesia closes a TTS socket it has heard nothing on for five minutes, which is an
-	// ordinary length of time for a caller to spend listening. The agent used to find out
-	// only when it next tried to speak, and then stayed silent for the rest of the call.
+	// The backstop for when reopening the socket ahead of time did not work. Whoever is
+	// owed the utterance waits out a handshake, which beats never hearing anything.
+	//
+	// The reconnect that runs on its own is held off so that what answers here is the
+	// send finding a dead socket, rather than a replacement that arrived first.
 	fake := newFakeCartesia()
 	defer fake.close()
-	provider, first := s.connect(fake, Options{})
+	provider, first := s.connect(fake, Options{reconnect: time.Minute})
 	defer provider.Close()
 
 	closure := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "connection idle timeout")
@@ -190,42 +192,37 @@ func (s *CartesiaSuite) TestAnIdleHangUpDoesNotCostTheAgentItsVoice() {
 	s.Equal("Sorry about that.", s.generations(second, 1)[0].Transcript)
 }
 
-func (s *CartesiaSuite) TestTheSocketIsPingedSoItIsNotHungUpOn() {
-	// Audio the server sent does not count as activity, so a silence long enough to be
-	// hung up on is silence from this end. The ping is what fills it, without anything
-	// having been asked of the provider.
-	original := keepAlivePeriod
-	keepAlivePeriod = 20 * time.Millisecond
-	s.T().Cleanup(func() { keepAlivePeriod = original })
-
+func (s *CartesiaSuite) TestAnIdleHangUpIsReplacedBeforeAnyoneSpeaks() {
+	// Waiting for the next utterance to notice would make whoever is owed that utterance
+	// wait out a handshake, which is the latency this provider was chosen to avoid.
 	fake := newFakeCartesia()
 	defer fake.close()
-
-	pinged := make(chan struct{}, 1)
-	provider, conn := s.connect(fake, Options{})
+	provider, first := s.connect(fake, Options{reconnect: 10 * time.Millisecond})
 	defer provider.Close()
 
-	conn.SetPingHandler(func(string) error {
-		select {
-		case pinged <- struct{}{}:
-		default:
-		}
-		return nil
-	})
-	// A ping only reaches its handler while the connection is being read.
-	go func() {
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				return
-			}
-		}
-	}()
+	closure := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "connection idle timeout")
+	s.Require().NoError(first.WriteControl(
+		websocket.CloseMessage, closure, time.Now().Add(time.Second)))
+	s.Require().NoError(first.Close())
 
-	select {
-	case <-pinged:
-	case <-time.After(5 * time.Second):
-		s.Fail("the socket was left silent until Cartesia hung up on it")
-	}
+	// Waiting for the provider to say it has a voice again, rather than for the server to
+	// see a connection, so that what is spoken below cannot go to the socket it replaces.
+	s.collect(provider, func(event tts.Event) bool {
+		_, gone := event.(tts.Disconnected)
+		return gone
+	})
+	s.collect(provider, func(event tts.Event) bool {
+		_, back := event.(tts.Connected)
+		return back
+	})
+
+	second := fake.accept()
+	s.Require().NotNil(second, "the agent was left without a voice until it next spoke")
+
+	s.Require().NoError(provider.Synthesize(tts.Request{
+		ID: "u1", Text: "Still here.", Final: true,
+	}))
+	s.Equal("Still here.", s.generations(second, 1)[0].Transcript)
 }
 
 func (s *CartesiaSuite) TestNewRequiresAPIKey() {
