@@ -33,8 +33,8 @@ class TestGeminiSTT:
         )
 
         assert stt.model == DEFAULT_MODEL
-        assert DEFAULT_MODEL == "gemini-3.7-transcribe-live"
-        assert FILE_TRANSCRIBE_MODEL == "gemini-3.7-transcribe"
+        assert DEFAULT_MODEL == "gemini-3.5-transcribe-live"
+        assert FILE_TRANSCRIBE_MODEL == "gemini-3.5-transcribe"
         assert stt.turn_detection
         assert stt._config["input_audio_transcription"] == {
             "language_codes": ["en-US"],

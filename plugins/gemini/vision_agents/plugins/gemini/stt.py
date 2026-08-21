@@ -23,8 +23,8 @@ from vision_agents.core.utils.utils import cancel_and_wait
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3.7-transcribe-live"
-FILE_TRANSCRIBE_MODEL = "gemini-3.7-transcribe"
+DEFAULT_MODEL = "gemini-3.5-transcribe-live"
+FILE_TRANSCRIBE_MODEL = "gemini-3.5-transcribe"
 
 # Fallback used when Gemini never sends `input_transcription` for an utterance.
 # It must stay well above the usual interim-to-final gap, otherwise a turn is
@@ -52,7 +52,7 @@ class STT(stt.STT):
             api_key: Gemini API key. Falls back to ``GOOGLE_API_KEY`` or
                 ``GEMINI_API_KEY``.
             model: Gemini Live transcription model. Defaults to
-                ``gemini-3.7-transcribe-live``.
+                ``gemini-3.5-transcribe-live``.
             language_codes: Optional BCP-47 language codes. Omit or pass an
                 empty list for automatic language detection.
             custom_vocabulary: Optional phrases used to bias recognition.

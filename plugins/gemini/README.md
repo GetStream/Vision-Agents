@@ -93,10 +93,10 @@ stt = gemini.STT(
 )
 ```
 
-`gemini.STT` defaults to the Live model `gemini-3.7-transcribe-live`. It
+`gemini.STT` defaults to the Live model `gemini-3.5-transcribe-live`. It
 streams 16 kHz PCM audio to Gemini and emits standard partial, final, and turn
 events for the Vision Agents pipeline. Google also publishes
-`gemini-3.7-transcribe` for unary/file transcription; this plugin uses the
+`gemini-3.5-transcribe` for unary/file transcription; this plugin uses the
 Live model. For a full runnable example, see
 `plugins/gemini/example/gemini_stt_example.py`.
 

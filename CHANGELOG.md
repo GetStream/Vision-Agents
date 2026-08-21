@@ -2,9 +2,9 @@
 
 ## New Features
 
-### `gemini` plugin: Gemini 3.7 speech-to-text
+### `gemini` plugin: Gemini 3.5 speech-to-text
 
-Adds `gemini.STT` using Gemini Live transcription (`gemini-3.7-transcribe-live` by default). It streams 16 kHz PCM, supports `language_codes` and `custom_vocabulary`, and emits standard transcript and turn events. Automatic language detection is the default (omit `language_codes` or pass `[]`).
+Adds `gemini.STT` using Gemini Live transcription (`gemini-3.5-transcribe-live` by default). It streams 16 kHz PCM, supports `language_codes` and `custom_vocabulary`, and emits standard transcript and turn events. Automatic language detection is the default (omit `language_codes` or pass `[]`).
 
 ### `speechify` plugin: Speechify TTS
 
