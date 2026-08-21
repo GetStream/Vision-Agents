@@ -132,7 +132,7 @@ func New(options Options) (*Edge, error) {
 		options:   options,
 		logger:    options.Logger.With("call", options.CallType+":"+options.CallID),
 		inbound:   emit.New[agent.InboundAudio](audioBuffer),
-		speaker:   newSpeaker(),
+		speaker:   newSpeaker(options.Logger),
 		listening: map[string]*lkmedia.PCMRemoteTrack{},
 	}, nil
 }

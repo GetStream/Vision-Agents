@@ -37,19 +37,34 @@ const (
 	redisEnvVar       = "ROUTER_REDIS_ADDR"
 	configEnvVar      = "ROUTER_CONFIG"
 	phoneConfigEnvVar = "ROUTER_PHONE_CONFIG"
+	logLevelEnvVar    = "ROUTER_LOG_LEVEL"
 	defaultAddress    = ":8080"
 	shutdownGrace     = 10 * time.Second
 	readHeaderTimeout = 10 * time.Second
 )
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
 	slog.SetDefault(logger)
 
 	if err := run(logger); err != nil {
 		logger.Error("router stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+// logLevel reads ROUTER_LOG_LEVEL. Debug is where the turn-taking decisions are: what was
+// heard, what the flow controller made of it, and why the agent did or did not speak.
+func logLevel() slog.Level {
+	var level slog.Level
+	text := os.Getenv(logLevelEnvVar)
+	if text == "" {
+		return slog.LevelInfo
+	}
+	if err := level.UnmarshalText([]byte(text)); err != nil {
+		return slog.LevelInfo
+	}
+	return level
 }
 
 func run(logger *slog.Logger) error {

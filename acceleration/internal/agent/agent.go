@@ -278,7 +278,7 @@ func New(options Options) (*Agent, error) {
 		emitter:    NewEmitter(eventBuffer),
 		prompt:     options.Instructions,
 		listeners:  map[string]*sttrouter.Session{},
-		cadence:    newCadence(0, 0, 0),
+		cadence:    newCadence(0, 0, 0, logger),
 		candidates: map[string]candidate{},
 		duplex:     newDuplex(options.Duplex),
 	}
@@ -708,8 +708,14 @@ func (a *Agent) consumeSTT(session *sttrouter.Session) {
 		switch typed := event.(type) {
 		case stt.Transcript:
 			if strings.TrimSpace(typed.Text) == "" {
+				a.logger.Debug("the transcriber sent nothing but silence",
+					"provider", typed.Provider, "participant", typed.Participant.ID, "mode", typed.Mode)
 				continue
 			}
+			a.logger.Debug("transcribed",
+				"provider", typed.Provider, "model", typed.Model,
+				"participant", typed.Participant.ID, "mode", typed.Mode, "text", typed.Text,
+				"confidence", typed.Confidence, "latency_ms", typed.ProcessingTimeMs)
 			a.mu.Lock()
 			a.lastHeardAt = time.Now()
 			a.lastParticipant = typed.Participant
@@ -718,6 +724,8 @@ func (a *Agent) consumeSTT(session *sttrouter.Session) {
 				a.backchannel(typed.Participant, phrase)
 			}
 			if superseded := a.cadence.Observe(typed); superseded != "" {
+				a.logger.Debug("the caller said more, abandoning the decision in flight",
+					"candidate", superseded)
 				a.mu.Lock()
 				delete(a.candidates, superseded)
 				a.mu.Unlock()
@@ -725,6 +733,20 @@ func (a *Agent) consumeSTT(session *sttrouter.Session) {
 					a.fail(err, "flow")
 				}
 			}
+
+		case stt.Connected:
+			a.logger.Info("listening", "provider", typed.Provider, "model", typed.Model)
+
+		case stt.Disconnected:
+			// An unclean disconnect is the transcriber going away mid-call, which reads
+			// to everyone else as the caller having gone quiet.
+			if typed.Clean {
+				a.logger.Debug("the transcriber closed",
+					"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
+				continue
+			}
+			a.logger.Warn("the transcriber dropped, nothing more will be heard from it",
+				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
 
 		case stt.Error:
 			a.fail(typed.Err, "stt")
@@ -751,6 +773,10 @@ func (a *Agent) consumeCadence() {
 			speaking := a.generating || a.utterances > 0
 			current := a.harness
 			a.mu.Unlock()
+
+			a.logger.Debug("asking the flow controller what to do",
+				"candidate", ready.ID, "text", ready.Text, "speaking", speaking,
+				"confidence", ready.Confidence)
 
 			if err := current.Decide(harness.FlowTurn{
 				ID:           ready.ID,
@@ -808,8 +834,14 @@ func (a *Agent) applyDecision(decision harness.Decided) {
 	delete(a.candidates, decision.CandidateID)
 	a.mu.Unlock()
 	if !ok {
+		a.logger.Debug("a decision arrived for a turn that has moved on",
+			"candidate", decision.CandidateID)
 		return
 	}
+	a.logger.Debug("the flow controller decided",
+		"candidate", decision.CandidateID, "disposition", decision.Disposition,
+		"floor", decision.Floor, "text", ready.Text)
+
 	if decision.Err != nil || !decision.Valid() {
 		a.cadence.Resolve(decision.CandidateID, true)
 		a.fail(decision.Error(), "flow")
@@ -820,9 +852,13 @@ func (a *Agent) applyDecision(decision harness.Decided) {
 		return
 	}
 	if !a.cadence.Resolve(decision.CandidateID, false) {
+		a.logger.Debug("not answering, the words changed while the controller was deciding",
+			"candidate", decision.CandidateID)
 		return
 	}
 	if decision.Disposition == harness.Ignore {
+		a.logger.Debug("not answering, the controller read this as not meant for the agent",
+			"candidate", decision.CandidateID, "text", ready.Text)
 		return
 	}
 
@@ -843,7 +879,11 @@ func (a *Agent) applyDecision(decision harness.Decided) {
 	if !a.quiet() {
 		a.mu.Lock()
 		overlapped := a.speakingTurn
+		utterances, generating := a.utterances, a.generating
 		a.mu.Unlock()
+		a.logger.Debug("heard over the agent's own speech",
+			"candidate", decision.CandidateID, "floor", decision.Floor,
+			"overlapped", overlapped, "utterances", utterances, "generating", generating)
 		a.emitter.Send(OverlapDecided{
 			TurnID:      overlapped,
 			Participant: ready.Participant,
@@ -864,6 +904,7 @@ func (a *Agent) applyDecision(decision harness.Decided) {
 			return
 		}
 	}
+	a.logger.Debug("answering", "candidate", decision.CandidateID, "text", ready.Text)
 	if err := a.respondCandidate(ready, decision.Disposition == harness.Clarify); err != nil {
 		a.fail(err, "llm")
 	}
@@ -993,6 +1034,8 @@ func (a *Agent) backchannel(participant stt.Participant, phrase string) {
 	a.speakingTurn = turnID
 	a.mu.Unlock()
 
+	a.logger.Debug("murmuring while the caller talks",
+		"turn", turnID, "participant", participant.ID, "phrase", phrase)
 	if err := a.speakWhole(turnID, phrase); err != nil {
 		a.fail(err, "tts")
 		return
@@ -1161,12 +1204,21 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 func (a *Agent) consumeTTS() {
 	defer a.running.Done()
 
+	// Abandoned audio arrives a frame at a time, so it is reported once per utterance
+	// rather than once per frame.
+	dropping := ""
+
 	for event := range a.tts.Events() {
 		switch typed := event.(type) {
 		case tts.AudioChunk:
 			// Audio from an abandoned turn is dropped here rather than published, so
 			// barge-in silences the agent even while the provider is still sending.
 			if !a.speaking(turnOf(typed.SynthesisID)) {
+				if dropping != typed.SynthesisID {
+					dropping = typed.SynthesisID
+					a.logger.Debug("dropping audio for a turn the agent has left behind",
+						"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID))
+				}
 				continue
 			}
 			if err := a.options.Edge.PublishAudio(typed.Audio); err != nil {
@@ -1179,8 +1231,17 @@ func (a *Agent) consumeTTS() {
 			// after the publish rather than before it.
 			a.turns.firstAudio(turnOf(typed.SynthesisID), time.Now())
 
+		case tts.SynthesisStarted:
+			a.logger.Debug("the voice took an utterance",
+				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),
+				"provider", typed.Provider, "voice", typed.Voice)
+
 		case tts.SynthesisComplete:
 			a.settle()
+			a.logger.Debug("finished speaking",
+				"synthesis", typed.SynthesisID, "turn", turnOf(typed.SynthesisID),
+				"audio_ms", typed.AudioDurationMs, "ttfb_ms", typed.TimeToFirstByteMs,
+				"interrupted", typed.Interrupted)
 			a.respondQueued()
 			a.turns.spoke(turnOf(typed.SynthesisID), typed.TimeToFirstByteMs, typed.AudioDurationMs)
 			a.emitter.Send(Spoke{
@@ -1190,6 +1251,19 @@ func (a *Agent) consumeTTS() {
 			})
 			// An answer that came back while the agent was talking waited for this.
 			a.followUp()
+
+		case tts.Connected:
+			a.logger.Info("ready to speak", "provider", typed.Provider, "model", typed.Model)
+
+		case tts.Disconnected:
+			// Losing the voice mid-call is silence the caller hears as a dead line.
+			if typed.Clean {
+				a.logger.Debug("the voice closed",
+					"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
+				continue
+			}
+			a.logger.Warn("the voice dropped, the agent has lost its speech",
+				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
 
 		case tts.Error:
 			// A failure naming an utterance still settles it, since the router turns that
@@ -1429,6 +1503,9 @@ func (a *Agent) interrupt(participant stt.Participant) {
 	model, voice := a.llm, a.tts
 	a.mu.Unlock()
 
+	a.logger.Debug("stopping mid-reply, the caller took the floor",
+		"turn", turnID, "participant", participant.ID)
+
 	if voice != nil {
 		if err := voice.Interrupt(); err != nil {
 			a.fail(err, "tts")
@@ -1454,6 +1531,7 @@ func (a *Agent) shorten() {
 	if turnID == "" || strings.HasPrefix(turnID, backchannelPrefix) || model == nil {
 		return
 	}
+	a.logger.Debug("cutting the reply short, letting the audio already sent finish", "turn", turnID)
 	if err := model.Interrupt(turnID); err != nil {
 		a.fail(err, "llm")
 	}
@@ -1462,6 +1540,12 @@ func (a *Agent) shorten() {
 func (a *Agent) queue(ready candidate, clarify bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.queued != nil {
+		a.logger.Debug("dropping a turn that never got answered",
+			"candidate", a.queued.candidate.ID, "text", a.queued.candidate.Text)
+	}
+	a.logger.Debug("holding a turn until the agent stops talking",
+		"candidate", ready.ID, "text", ready.Text, "clarify", clarify)
 	a.queued = &queuedCandidate{candidate: ready, clarify: clarify}
 }
 
@@ -1475,6 +1559,8 @@ func (a *Agent) respondQueued() {
 	a.queued = nil
 	a.mu.Unlock()
 
+	a.logger.Debug("answering the turn that was waiting",
+		"candidate", queued.candidate.ID, "text", queued.candidate.Text)
 	if err := a.respondCandidate(queued.candidate, queued.clarify); err != nil {
 		a.fail(err, "llm")
 	}

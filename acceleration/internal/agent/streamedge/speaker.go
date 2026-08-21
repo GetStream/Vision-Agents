@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -51,9 +52,14 @@ var silenceFrame = []byte{0xf8, 0xff, 0xfe}
 type speaker struct {
 	track.BaseSampleProvider
 
+	logger *slog.Logger
+
 	mu sync.Mutex
 	// drained wakes a writer once the queue is back under the playout bound.
 	drained *sync.Cond
+	// pulled is set once the track has asked for its first frame. Until it does, nothing
+	// written here is going anywhere.
+	pulled bool
 	// frames are encoded and waiting to be sent, oldest first.
 	frames [][]byte
 	// pipeline resamples, frames and encodes PCM written at inputRate. It is rebuilt when
@@ -64,8 +70,11 @@ type speaker struct {
 	closed    bool
 }
 
-func newSpeaker() *speaker {
-	talker := &speaker{}
+func newSpeaker(logger *slog.Logger) *speaker {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	talker := &speaker{logger: logger}
 	talker.drained = sync.NewCond(&talker.mu)
 	return talker
 }
@@ -103,8 +112,19 @@ func (s *speaker) Write(pcm audio.PcmData) error {
 		return fmt.Errorf("streamedge: encode speech: %w", err)
 	}
 
+	if len(s.frames) <= playoutFrames || s.closed {
+		return nil
+	}
+	// Waiting here is normal: it is what paces the agent to the speed of speech. Waiting
+	// a long time is not, and means the track is not taking frames, in which case this
+	// speech is sitting in the queue rather than going out.
+	waited := time.Now()
 	for len(s.frames) > playoutFrames && !s.closed {
 		s.drained.Wait()
+	}
+	if elapsed := time.Since(waited); elapsed > time.Second {
+		s.logger.Warn("speech waited to go out, the call was not taking audio",
+			"waited", elapsed, "pulled", s.pulled)
 	}
 	return nil
 }
@@ -118,6 +138,10 @@ func (s *speaker) NextSample(ctx context.Context) (webrtcmedia.Sample, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if !s.pulled {
+		s.pulled = true
+		s.logger.Debug("the call started taking the agent's audio")
+	}
 	if len(s.frames) == 0 {
 		s.speaking = false
 		return webrtcmedia.Sample{Data: silenceFrame, Duration: opusFrameDuration}, nil

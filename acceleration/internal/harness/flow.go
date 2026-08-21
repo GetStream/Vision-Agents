@@ -184,6 +184,10 @@ func (f *flow) consume() {
 				f.logger.Warn("unusable flow decision, answering the caller anyway",
 					"error", err, "answer", typed.Text)
 				answer = flowAnswer{Disposition: Respond, Floor: Continue}
+			} else {
+				f.logger.Debug("flow controller answered",
+					"candidate", typed.CompletionID, "answer", typed.Text,
+					"took_ms", typed.TimeToFirstTokenMs)
 			}
 			f.emitter.Send(Decided{
 				CandidateID: typed.CompletionID,

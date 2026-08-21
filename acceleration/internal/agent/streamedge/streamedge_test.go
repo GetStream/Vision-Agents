@@ -3,6 +3,7 @@ package streamedge
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"math"
 	"net/url"
 	"strings"
@@ -132,7 +133,7 @@ func (s *StreamEdgeSuite) TestADemoLinkNeedsASecretToSignAToken() {
 func (s *StreamEdgeSuite) TestSpeechIsEncodedToOpusFrames() {
 	// This is the outbound path: the voice's PCM becomes the 20 ms Opus frames the track
 	// sends.
-	talker := newSpeaker()
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 100)))
@@ -148,7 +149,7 @@ func (s *StreamEdgeSuite) TestSpeechIsEncodedToOpusFrames() {
 func (s *StreamEdgeSuite) TestSilenceIsSentWhenThereIsNothingToSay() {
 	// The track is published for the whole call, so something has to go out even when the
 	// agent is listening rather than talking.
-	talker := newSpeaker()
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	sample, err := talker.NextSample(s.ctx)
@@ -160,7 +161,7 @@ func (s *StreamEdgeSuite) TestSilenceIsSentWhenThereIsNothingToSay() {
 }
 
 func (s *StreamEdgeSuite) TestTheAudioLevelSaysWhoIsTalking() {
-	talker := newSpeaker()
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() { _ = talker.Close() })
 	s.Require().NoError(talker.Write(speech(48_000, 40)))
 
@@ -175,7 +176,7 @@ func (s *StreamEdgeSuite) TestAnyInputRateIsResampled() {
 	// A voice provider's rate is its own business, and a failover mid-call can change it.
 	// The resampler holds the first chunk back by design, so speech is written twice here
 	// the way a stream of chunks would arrive.
-	talker := newSpeaker()
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	for _, rate := range []int{16_000, 24_000} {
@@ -190,7 +191,7 @@ func (s *StreamEdgeSuite) TestPublishingIsPacedByWhatIsHeard() {
 	// A voice provider streams an utterance far faster than it is spoken. Without this the
 	// whole reply would be queued in a moment, and barge-in would arrive too late to stop
 	// it.
-	talker := newSpeaker()
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	written := make(chan error, 1)
@@ -216,7 +217,7 @@ func (s *StreamEdgeSuite) TestPublishingIsPacedByWhatIsHeard() {
 }
 
 func (s *StreamEdgeSuite) TestOnlyMonoSpeechIsAccepted() {
-	talker := newSpeaker()
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	err := talker.Write(audio.PcmData{Samples: make([]int16, 100), SampleRate: 48_000, Channels: 2})
@@ -225,7 +226,7 @@ func (s *StreamEdgeSuite) TestOnlyMonoSpeechIsAccepted() {
 }
 
 func (s *StreamEdgeSuite) TestEmptySpeechIsIgnored() {
-	talker := newSpeaker()
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
 	s.T().Cleanup(func() { _ = talker.Close() })
 
 	s.NoError(talker.Write(audio.PcmData{SampleRate: 48_000, Channels: 1}))
@@ -233,7 +234,7 @@ func (s *StreamEdgeSuite) TestEmptySpeechIsIgnored() {
 }
 
 func (s *StreamEdgeSuite) TestPublishingAfterLeavingFails() {
-	talker := newSpeaker()
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
 
 	s.Require().NoError(talker.Close())
 

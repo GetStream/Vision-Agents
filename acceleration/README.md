@@ -82,6 +82,7 @@ to play audio, or `-out` to write a file instead.
 | `ROUTER_REDIS_ADDR`     | Redis `host:port`. Without it, routing ignores health      |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
+| `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
 | `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
 | `MEM0_API_KEY`          | mem0 credentials. Without it the agent remembers nothing   |
 | `TURBOPUFFER_API_KEY`   | turbopuffer credentials. Without it an agent looks nothing up |
@@ -260,6 +261,19 @@ inbound Opus to 16 kHz mono, and encodes the agent's speech back to 48 kHz Opus.
 The model on the live path is chosen for how quickly it starts talking, which is not the
 same as how well it thinks. `internal/harness` is what stops that being a trade made on
 every sentence: the fast model can hand the hard part to a slower one and go on talking
+Those three decisions are where a call goes wrong, so `ROUTER_LOG_LEVEL=debug` narrates
+them: every transcript revision, when the words held still, what the flow controller was
+asked and what it answered, and why the agent then spoke, waited, murmured, queued the turn
+or stopped mid-reply. A quiet agent is usually one of `ignore`, `wait` on repeat, or a turn
+queued behind speech that never settled, and each of those says so.
+
+```
+transcribed provider=deepgram participant=user-1 mode=replacement text="what's the weather"
+the words held still, asking whether to answer them candidate=turn-1787 waited=352ms
+the flow controller decided candidate=turn-1787 disposition=respond floor=continue
+answering candidate=turn-1787
+```
+
 while it runs.
 
 ```mermaid
