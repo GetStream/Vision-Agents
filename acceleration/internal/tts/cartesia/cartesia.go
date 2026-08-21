@@ -50,6 +50,11 @@ const defaultBaseURL = "wss://api.cartesia.ai"
 // numbering it, and sends the version as a query parameter.
 const apiVersion = "2026-08-14"
 
+// keepAlivePeriod is how often the socket is pinged. Cartesia closes a TTS connection it
+// has heard nothing on for five minutes, and audio it sent does not count towards that.
+// It is a variable so a test need not wait a minute to see a ping.
+var keepAlivePeriod = 60 * time.Second
+
 // supportedSampleRates are the rates the raw output format offers.
 var supportedSampleRates = []int{8_000, 16_000, 22_050, 24_000, 44_100, 48_000}
 
@@ -150,6 +155,11 @@ type TTS struct {
 	// writeMu serialises writes: a websocket connection allows only one writer.
 	writeMu sync.Mutex
 
+	// done stops the keepalive, and pinging is what Close waits for so no ping is
+	// attempted on a socket that is being torn down.
+	done    chan struct{}
+	pinging sync.WaitGroup
+
 	mu       sync.Mutex
 	active   map[string]*utterance
 	started  bool
@@ -196,6 +206,7 @@ func New(options Options) (*TTS, error) {
 		logger:  logger.With("provider", ProviderName, "model", options.Model),
 		emitter: tts.NewEmitter(64),
 		active:  map[string]*utterance{},
+		done:    make(chan struct{}),
 	}, nil
 }
 
@@ -210,6 +221,21 @@ func (t *TTS) Start(ctx context.Context) error {
 	t.started = true
 	t.mu.Unlock()
 
+	if err := t.dial(ctx); err != nil {
+		return err
+	}
+
+	t.emitter.Send(tts.Connected{Provider: ProviderName, Model: t.options.Model, At: time.Now()})
+	t.pinging.Add(1)
+	go t.keepAlive()
+	return nil
+}
+
+// dial opens a connection and starts reading it.
+//
+// The read loop is handed the connection it owns rather than reading the field, so a loop
+// left over from a socket that has been replaced cannot consume the new one's frames.
+func (t *TTS) dial(ctx context.Context) error {
 	dialer := &websocket.Dialer{HandshakeTimeout: t.options.HandshakeTimeout}
 	header := http.Header{"X-API-Key": []string{t.options.APIKey}}
 
@@ -220,11 +246,45 @@ func (t *TTS) Start(ctx context.Context) error {
 		}
 		return fmt.Errorf("cartesia: dial: %w", err)
 	}
-	t.conn = conn
 
-	t.emitter.Send(tts.Connected{Provider: ProviderName, Model: t.options.Model, At: time.Now()})
-	go t.readLoop()
+	t.mu.Lock()
+	t.conn = conn
+	t.mu.Unlock()
+
+	go t.readLoop(conn)
 	return nil
+}
+
+// keepAlive pings the socket until the session is closed.
+//
+// Cartesia hangs up on a connection it has heard nothing on for five minutes, and a caller
+// who spends that long listening or thinking is not unusual. Without this the agent loses
+// its voice partway through a call and only finds out when it next tries to speak.
+func (t *TTS) keepAlive() {
+	defer t.pinging.Done()
+
+	ticker := time.NewTicker(keepAlivePeriod)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-t.done:
+			return
+		case <-ticker.C:
+			t.mu.Lock()
+			conn := t.conn
+			t.mu.Unlock()
+			if conn == nil {
+				continue
+			}
+			// WriteControl is the one write that may run alongside another, so the
+			// ping does not queue behind a turn being streamed to the voice.
+			deadline := time.Now().Add(keepAlivePeriod / 2)
+			if err := conn.WriteControl(websocket.PingMessage, nil, deadline); err != nil {
+				t.logger.Debug("keepalive ping failed", "error", err)
+			}
+		}
+	}
 }
 
 // Synthesize sends text upstream. Several requests sharing an ID stream one utterance, and
@@ -313,6 +373,11 @@ func (t *TTS) Close() error {
 	conn := t.conn
 	t.mu.Unlock()
 
+	// The keepalive is stopped before the socket goes, so no ping is attempted on a
+	// connection that is being torn down.
+	close(t.done)
+	t.pinging.Wait()
+
 	t.settleOutstanding()
 
 	if conn != nil {
@@ -393,20 +458,42 @@ func (t *TTS) send(message any) error {
 
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
-	if t.conn == nil {
+
+	t.mu.Lock()
+	conn, shutdown := t.conn, t.shutdown
+	t.mu.Unlock()
+	if shutdown {
 		return errors.New("not connected")
 	}
-	return t.conn.WriteMessage(websocket.TextMessage, payload)
+	if conn != nil {
+		if err := conn.WriteMessage(websocket.TextMessage, payload); err == nil {
+			return nil
+		}
+	}
+
+	// The keepalive should mean the socket is still up, but a connection can be lost for
+	// reasons no ping prevents, and the caller is mid-sentence. Redialling costs a
+	// handshake once; not redialling costs the agent its voice for the rest of the call.
+	t.logger.Debug("reconnecting to speak")
+	if err := t.dial(context.Background()); err != nil {
+		return err
+	}
+
+	t.mu.Lock()
+	conn = t.conn
+	t.mu.Unlock()
+	if conn == nil {
+		return errors.New("not connected")
+	}
+	return conn.WriteMessage(websocket.TextMessage, payload)
 }
 
 // readLoop translates server frames into events until the connection ends.
-func (t *TTS) readLoop() {
+func (t *TTS) readLoop(conn *websocket.Conn) {
 	for {
-		_, raw, err := t.conn.ReadMessage()
+		_, raw, err := conn.ReadMessage()
 		if err != nil {
-			t.handleReadError(err)
-			// The connection is gone, so nothing in flight will ever finish on its own.
-			t.settleOutstanding()
+			t.handleReadError(conn, err)
 			return
 		}
 
@@ -419,13 +506,18 @@ func (t *TTS) readLoop() {
 	}
 }
 
-func (t *TTS) handleReadError(err error) {
+func (t *TTS) handleReadError(conn *websocket.Conn, err error) {
 	t.mu.Lock()
-	shutdown := t.shutdown
+	shutdown, superseded := t.shutdown, t.conn != conn
 	t.mu.Unlock()
-	if shutdown {
+	if shutdown || superseded {
+		// A socket that has already been replaced has nothing left to report: whatever
+		// was in flight on it has moved to the connection that took its place.
 		return
 	}
+
+	// The connection is gone, so nothing in flight will ever finish on its own.
+	t.settleOutstanding()
 
 	if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 		t.emitter.Send(tts.Disconnected{
