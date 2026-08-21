@@ -421,6 +421,46 @@ func (s *AgentSuite) TestWhatAToolFoundOutIsSpokenRatherThanWaitedOn() {
 	}, "the caller was left in silence by a tool that worked")
 }
 
+func (s *AgentSuite) TestAToolReachedForWithoutAWordStillTellsTheCallerToWait() {
+	// The fast models do not reliably say anything before they call a tool, and the
+	// caller cannot hear one running. Without this they ask a question and get silence,
+	// which on a phone is indistinguishable from having been cut off.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool {
+		return s.spokenText("moment") || s.spokenText("check") ||
+			s.spokenText("second") || s.spokenText("Bear with me")
+	}, "the caller was left in silence while the tool ran")
+	s.eventually(func() bool {
+		return s.spokenText("ships tomorrow")
+	}, "the answer never followed the promise to check")
+}
+
+func (s *AgentSuite) TestATurnThatSpokeForItselfIsNotGivenAFiller() {
+	// A model that already said what it was doing does not need it said again, and
+	// "Let me check. One moment." is a worse answer than either half.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the tool answer never came")
+	s.False(s.spokenText("One moment"), "the agent stacked a filler on top of its own words")
+}
+
 func (s *AgentSuite) TestPressingAMenuOptionLeavesTheLineQuietForTheMenu() {
 	// The digits are the whole point of the tool and the menu is what answers next, so
 	// talking over it would be talking to nobody.
@@ -436,6 +476,23 @@ func (s *AgentSuite) TestPressingAMenuOptionLeavesTheLineQuietForTheMenu() {
 
 	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
 	s.never(func() bool { return s.spokenText("pressed four") },
+		"the agent talked over the menu it had just pressed at")
+}
+
+func (s *AgentSuite) TestPressingAMenuOptionSilentlyIsNotGivenAFillerEither() {
+	// Filling the pause is for a caller who asked a question. A menu did not ask one and
+	// is not listening, so a wordless press has to stay wordless.
+	s.onACall()
+	s.join(false)
+	s.model.reply = []string{}
+	s.asksFor("press", `{"digits":"4"}`)
+	menu := stt.Participant{ID: "menu"}
+	s.speak(menu)
+
+	s.says(menu, "For accounts, press four")
+
+	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+	s.never(func() bool { return s.spokenText("moment") || s.spokenText("check") },
 		"the agent talked over the menu it had just pressed at")
 }
 

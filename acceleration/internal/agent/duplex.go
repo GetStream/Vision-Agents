@@ -33,6 +33,16 @@ const (
 // short on purpose: anything longer is a turn, and taking a turn is interrupting.
 var defaultPhrases = []string{"Mhm.", "Okay.", "Right.", "I see."}
 
+// workingPhrases are what the agent says when it has gone off to do something and would
+// otherwise leave the caller listening to nothing. They are rotated so a caller who asks
+// twice is not answered with the same words.
+var workingPhrases = []string{
+	"One moment.",
+	"Let me check that.",
+	"One second, looking that up.",
+	"Bear with me a moment.",
+}
+
 // uncertainNote is what the model is told about a turn the transcriber was doubtful
 // about. Checking is cheaper than confidently answering the wrong question.
 const uncertainNote = "You did not catch all of that. Check what they meant before " +
@@ -69,6 +79,9 @@ type duplex struct {
 	speakers map[string]*speaker
 	// phrase rotates the murmurs, so the agent does not say "mhm" four times running.
 	phrase int
+	// working rotates what is said while a tool runs, separately from the murmurs so
+	// that using one does not skip the other along.
+	working int
 }
 
 // speaker is what one participant is in the middle of.
@@ -127,6 +140,21 @@ func (d *duplex) Presence(participant stt.Participant, lastSpokeAt time.Time, qu
 	}
 	current.murmured = time.Now()
 	return d.nextPhraseLocked()
+}
+
+// Working returns something to say while a tool runs, for a turn where the model reached
+// for one without a word to the caller.
+//
+// It is not tied to the backchannel option: murmuring over someone who is still talking
+// is a judgement call, but going quiet on somebody who asked a question is never what
+// was wanted.
+func (d *duplex) Working() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	phrase := workingPhrases[d.working%len(workingPhrases)]
+	d.working++
+	return phrase
 }
 
 // Note is what the model should know about a turn beyond its words, which for now is

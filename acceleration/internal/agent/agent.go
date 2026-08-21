@@ -1149,6 +1149,17 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 				a.fail(err, "tts")
 			}
 		}
+		// A model that reaches for a tool without a word leaves the caller listening to
+		// nothing until it comes back, which on a phone is indistinguishable from having
+		// been cut off. Prompting for it is not enough: the models that do it reliably
+		// are not the ones fast enough to hold a conversation.
+		if fillsPause(typed) && strings.TrimSpace(a.spoken.String()) == "" {
+			filler := a.duplex.Working()
+			a.spoken.WriteString(filler)
+			if err := a.speakSentence(typed.CompletionID, filler); err != nil {
+				a.fail(err, "tts")
+			}
+		}
 		if err := a.closeUtterance(typed.CompletionID); err != nil {
 			a.fail(err, "tts")
 		}
@@ -1198,6 +1209,21 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 		currentHarness.Requested(typed.CompletionID, typed.ToolCalls)
 	}
 	a.respondQueued()
+}
+
+// fillsPause reports whether a turn that said nothing should say something before the
+// tools it asked for are run.
+func fillsPause(typed llm.CompletionComplete) bool {
+	// A turn that is itself a tool's answer gets no follow-up, so filling the pause on
+	// one would leave the caller with a promise to check as the last thing they heard.
+	if len(typed.ToolCalls) == 0 || strings.HasPrefix(typed.CompletionID, toolPrefix) {
+		return false
+	}
+	// Pressing a menu option is meant to be silent. The menu answers next, and talking
+	// over it is talking to nobody.
+	return slices.ContainsFunc(typed.ToolCalls, func(call llm.ToolCall) bool {
+		return call.Name != toolPress
+	})
 }
 
 // consumeTTS publishes the agent's speech to the edge as it is synthesised.
