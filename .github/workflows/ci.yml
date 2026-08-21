@@ -53,6 +53,47 @@ jobs:
       marker: 'not integration'
     secrets: inherit
 
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: acceleration/go.mod
+          cache-dependency-path: |
+            acceleration/go.sum
+            agents-core-go/go.sum
+
+      # cmd/transcribe and cmd/agent decode and encode Opus through cgo, so the codecs have
+      # to be present before the acceleration module will build at all.
+      - name: Install the audio codecs
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libopus-dev libopusfile-dev libsoxr-dev
+
+      # The server, the Go client and the Python client all come from one spec, so a spec
+      # edited without regenerating them is a spec the three have already drifted from.
+      - name: Check the generated code is in step with the spec
+        run: |
+          (cd acceleration && go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml)
+          (cd agents-core-go && go generate ./...)
+          git diff --exit-code -- acceleration/internal/api/generated.go agents-core-go/acceleration/generated.go
+
+      - name: Vet the backend
+        run: go vet ./...
+        working-directory: acceleration
+
+      - name: Test the backend
+        run: go test ./...
+        working-directory: acceleration
+
+      - name: Vet the SDK
+        run: go vet ./...
+        working-directory: agents-core-go
+
+      - name: Test the SDK
+        run: go test -race ./...
+        working-directory: agents-core-go
+
 # Cancel in-flight runs for the same branch/PR when new commits arrive
 concurrency:
   group: ci-unit-${{ github.workflow }}-${{ github.ref }}
