@@ -3,6 +3,7 @@ package ttsrouter
 import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/s2pro"
@@ -18,6 +19,15 @@ func DefaultRegistry() *Registry {
 
 	registry.Register(elevenlabs.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
 		return elevenlabs.New(elevenlabs.Options{
+			Model:    spec.Model,
+			VoiceID:  spec.Voice,
+			Language: firstLanguage(spec.LanguageHints),
+			Logger:   spec.Logger,
+		})
+	})
+
+	registry.Register(cartesia.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return cartesia.New(cartesia.Options{
 			Model:    spec.Model,
 			VoiceID:  spec.Voice,
 			Language: firstLanguage(spec.LanguageHints),

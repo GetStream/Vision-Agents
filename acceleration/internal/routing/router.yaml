@@ -100,6 +100,64 @@ stt:
 
 tts:
   providers:
+    # Sonic 3.6, which tops both Artificial Analysis speech arenas and is the fastest of
+    # these to first audio. It is served under sonic-preview while it is in beta; when it
+    # goes generally available the name becomes sonic-3.6. Priced at the entry self-serve
+    # rate, which larger plans bring down to nearer 37.
+    - provider: cartesia
+      model: sonic-preview
+      languages:
+        [
+          ar,
+          bg,
+          bn,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fi,
+          fr,
+          gu,
+          he,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ka,
+          kn,
+          ko,
+          ml,
+          mr,
+          ms,
+          nl,
+          no,
+          or,
+          pa,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          ta,
+          te,
+          th,
+          tl,
+          tr,
+          uk,
+          ur,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_chars: 50.0
+
     # Flash is the low-latency model; the WebSocket streams audio as it is generated.
     - provider: elevenlabs
       model: eleven_flash_v2_5

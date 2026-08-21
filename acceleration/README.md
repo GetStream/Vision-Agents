@@ -92,6 +92,8 @@ to play audio, or `-out` to write a file instead.
 | `TELNYX_API_KEY`        | Telnyx credentials                                         |
 | `TELNYX_CONNECTION_ID`  | The Telnyx SIP connection numbers are routed over          |
 | `DEEPGRAM_API_KEY`      | Deepgram Flux credentials                                  |
+| `CARTESIA_API_KEY`      | Cartesia Sonic credentials                                 |
+| `CARTESIA_VOICE_ID`     | Optional default voice; a built-in one is used when unset  |
 | `ELEVENLABS_API_KEY`    | ElevenLabs credentials                                     |
 | `ELEVENLABS_VOICE_ID`   | Optional default voice; a built-in one is used when unset  |
 | `FISH_API_KEY`          | Fish Audio credentials                                     |
