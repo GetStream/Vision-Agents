@@ -5,12 +5,13 @@ AI models built for Indian languages.
 
 ## Features
 
-- **STT**: WebSocket streaming speech-to-text (Saarika / Saaras) with Voice
+- **STT**: WebSocket streaming speech-to-text (Saaras) with Voice
   Activity Detection for turn events.
 - **TTS**: WebSocket streaming text-to-speech (Bulbul) with configurable
   speaker, pace, and language.
-- **LLM**: OpenAI-compatible chat completions (Sarvam-105B / Sarvam-M) via
-  the existing `ChatCompletionsLLM` from the OpenAI plugin.
+- **LLM**: OpenAI-compatible chat completions (`sarvam-105b` /
+  `sarvam-105b-conversations`) via the existing `ChatCompletionsLLM` from the
+  OpenAI plugin.
 
 ## Installation
 

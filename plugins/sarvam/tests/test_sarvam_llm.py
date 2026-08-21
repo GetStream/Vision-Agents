@@ -66,11 +66,16 @@ class TestSarvamLLM:
 
     async def test_default_model(self):
         llm = LLM(api_key="sk_test")
-        assert llm.model == "sarvam-m"
+        assert llm.model == "sarvam-105b"
 
     async def test_custom_model(self):
-        llm = LLM(api_key="sk_test", model="sarvam-105b")
-        assert llm.model == "sarvam-105b"
+        llm = LLM(api_key="sk_test", model="sarvam-105b-conversations")
+        assert llm.model == "sarvam-105b-conversations"
+
+    async def test_legacy_models_rejected(self):
+        for model in ("sarvam-m", "sarvam-30b"):
+            with pytest.raises(ValueError, match="Unsupported Sarvam LLM model"):
+                LLM(api_key="sk_test", model=model)
 
     async def test_base_url_points_to_sarvam(self):
         llm = LLM(api_key="sk_test")

@@ -2,9 +2,9 @@
 
 ## Breaking Changes
 
-### `sarvam` plugin: drop `sarvam-30b` from supported LLM models (#636)
+### `sarvam` plugin: drop deprecated LLM, STT, and TTS models (#637)
 
-`sarvam.LLM` no longer accepts `sarvam-30b`. Use `sarvam-m` or `sarvam-105b` instead.
+Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-105b` (`sarvam-105b-conversations` is also supported). STT drops `saarika:v2.5` and `saaras:v2` / `saaras:v2.5` and defaults to `saaras:v3-realtime` on `/speech-to-text-realtime/ws` (`saaras:v3` and `saaras:v4` remain on the legacy WebSocket). TTS no longer accepts `bulbul:v3-beta`.
 
 ### `deepgram` plugin: TTS defaults to Flux (`/v2/speak`)
 

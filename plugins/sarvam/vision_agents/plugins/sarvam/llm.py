@@ -5,7 +5,7 @@ point an ``AsyncOpenAI`` client at Sarvam's base URL and inject the
 ``api-subscription-key`` header. Streaming, tool calling, and conversation
 history are all inherited from :class:`ChatCompletionsLLM`.
 
-Sarvam-m supports "hybrid thinking" which emits ``<think>…</think>`` blocks
+Sarvam-105b supports "hybrid thinking" which emits ``<think>…</think>`` blocks
 before the actual answer. This plugin strips those blocks from the streamed
 output so they don't reach TTS.
 
@@ -25,8 +25,8 @@ from vision_agents.plugins.openai import ChatCompletionsLLM
 logger = logging.getLogger(__name__)
 
 SARVAM_BASE_URL = "https://api.sarvam.ai/v1"
-DEFAULT_MODEL = "sarvam-m"
-SUPPORTED_MODELS = {"sarvam-m", "sarvam-105b"}
+DEFAULT_MODEL = "sarvam-105b"
+SUPPORTED_MODELS = {"sarvam-105b", "sarvam-105b-conversations"}
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
@@ -112,13 +112,19 @@ class SarvamLLM(ChatCompletionsLLM):
         """Initialize the Sarvam LLM.
 
         Args:
-            model: The Sarvam model id. Defaults to ``sarvam-m``. Supported:
-                ``sarvam-m``, ``sarvam-105b``.
+            model: The Sarvam model id. Defaults to ``sarvam-105b``. Supported:
+                ``sarvam-105b``, ``sarvam-105b-conversations``.
             api_key: Sarvam API key. Defaults to ``SARVAM_API_KEY`` env var.
             base_url: API base URL. Defaults to ``https://api.sarvam.ai/v1``.
             client: Optional pre-configured ``AsyncOpenAI`` client. Takes
                 precedence over ``api_key`` / ``base_url``.
         """
+        if model not in SUPPORTED_MODELS:
+            raise ValueError(
+                f"Unsupported Sarvam LLM model '{model}'. "
+                f"Expected one of: {sorted(SUPPORTED_MODELS)}"
+            )
+
         resolved_key = (
             api_key if api_key is not None else os.environ.get("SARVAM_API_KEY")
         )
