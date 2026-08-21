@@ -111,14 +111,18 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 		Err:       err,
 	})
 	if !left {
-		// Only a failure is worth breaking silence for. A tool that worked has already
-		// said what it needs to in its result, and pressing at a menu asks for quiet
-		// until the menu answers.
+		// A tool result is not something the caller can hear. Whether it worked or not,
+		// somebody asked a question and is waiting on the answer, so the agent says it
+		// rather than sitting on it until they happen to speak again.
 		//
-		// A turn that is itself the answer to a failed tool does not get another, or a
-		// model that responds to a broken trunk by trying it again would keep the call
-		// and the bill going without the caller hearing a word.
-		if err != nil && !strings.HasPrefix(requested.TurnID, toolPrefix) {
+		// Pressing at a menu is the exception: the digits are the whole point of the
+		// tool and the menu is what answers next, so talking over it would be talking to
+		// nobody.
+		//
+		// A turn that is itself the answer to a tool does not get another, or a model
+		// that responds to a broken trunk by trying it again would keep the call and the
+		// bill going without the caller hearing a word.
+		if requested.Call.Name != toolPress && !strings.HasPrefix(requested.TurnID, toolPrefix) {
 			if err := a.respondAfterTool(toolPrefix + turnStamp()); err != nil {
 				a.fail(err, "llm")
 			}

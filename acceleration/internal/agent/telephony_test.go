@@ -402,6 +402,43 @@ func (s *AgentSuite) TestACallersOwnToolIsRunByThemAndItsAnswerReachesTheConvers
 	s.never(s.left, "answering a question is not a reason to hang up")
 }
 
+func (s *AgentSuite) TestWhatAToolFoundOutIsSpokenRatherThanWaitedOn() {
+	// A tool result is not something the caller can hear. Somebody asked a question, and
+	// leaving the answer sitting in the history until they speak again is silence where
+	// they expected to be told.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool {
+		return s.spokenText("ships tomorrow")
+	}, "the caller was left in silence by a tool that worked")
+}
+
+func (s *AgentSuite) TestPressingAMenuOptionLeavesTheLineQuietForTheMenu() {
+	// The digits are the whole point of the tool and the menu is what answers next, so
+	// talking over it would be talking to nobody.
+	s.onACall()
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.model.then = []string{"I pressed four for you."}
+	s.asksFor("press", `{"digits":"4"}`)
+	menu := stt.Participant{ID: "menu"}
+	s.speak(menu)
+
+	s.says(menu, "For accounts, press four")
+
+	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+	s.never(func() bool { return s.spokenText("pressed four") },
+		"the agent talked over the menu it had just pressed at")
+}
+
 func (s *AgentSuite) TestATelephonyToolIsNotHandedToTheCallersRunner() {
 	// The two that act on the call are this process's to run, so a caller cannot quietly
 	// take over what happens when the model says it is transferring somebody.
