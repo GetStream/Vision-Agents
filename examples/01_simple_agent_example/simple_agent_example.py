@@ -53,6 +53,7 @@ async def create_agent(**kwargs) -> Agent:
         # turn_detection=vogent.TurnDetection(), # smart turn and vogent are supported. not needed with deepgram (it has turn keeping)
         # realtime openai and gemini are supported (tts and stt not needed in that case)
         # llm=openai.Realtime()
+        broadcast_metrics=True,
     )
 
     return agent

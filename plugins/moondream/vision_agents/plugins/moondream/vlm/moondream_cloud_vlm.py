@@ -195,6 +195,7 @@ class CloudVLM(llm.VideoLLM):
                 provider=self.provider_name,
                 model="moondream-cloud",
                 latency_ms=latency_ms,
+                time_to_first_token_ms=final_ttft_ms,
                 frames_processed=1,
             )
 

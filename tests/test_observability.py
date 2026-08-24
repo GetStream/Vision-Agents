@@ -15,6 +15,10 @@ from vision_agents.core.observability.metrics import (
     llm_tool_calls,
     llm_tool_latency_ms,
     meter,
+    realtime_responses,
+    realtime_session_duration_ms,
+    realtime_sessions,
+    realtime_time_to_first_audio_ms,
     stt_audio_duration_ms,
     stt_errors,
     stt_latency_ms,
@@ -22,6 +26,7 @@ from vision_agents.core.observability.metrics import (
     tts_characters,
     tts_errors,
     tts_latency_ms,
+    tts_time_to_first_audio_ms,
     turn_duration_ms,
     turn_trailing_silence_ms,
     video_detections,
@@ -31,6 +36,7 @@ from vision_agents.core.observability.metrics import (
     vlm_inferences,
     vlm_input_tokens,
     vlm_output_tokens,
+    vlm_time_to_first_token_ms,
 )
 
 
@@ -46,6 +52,10 @@ def mock_metrics():
         llm_tool_calls,
         llm_tool_latency_ms,
         meter,
+        realtime_responses,
+        realtime_session_duration_ms,
+        realtime_sessions,
+        realtime_time_to_first_audio_ms,
         stt_audio_duration_ms,
         stt_errors,
         stt_latency_ms,
@@ -53,6 +63,7 @@ def mock_metrics():
         tts_characters,
         tts_errors,
         tts_latency_ms,
+        tts_time_to_first_audio_ms,
         turn_duration_ms,
         turn_trailing_silence_ms,
         video_detections,
@@ -62,6 +73,7 @@ def mock_metrics():
         vlm_inferences,
         vlm_input_tokens,
         vlm_output_tokens,
+        vlm_time_to_first_token_ms,
     ]
     patches = []
     try:
@@ -107,6 +119,7 @@ class TestMetricsCollector:
             5, {"provider": "openai", "model": "gpt-4"}
         )
         assert collector.agent_metrics.llm_latency_ms__avg.value() == 150
+        assert collector.agent_metrics.llm_latency_ms__avg.count == 1
         assert collector.agent_metrics.llm_time_to_first_token_ms__avg.value() == 50
         assert collector.agent_metrics.llm_input_tokens__total.value() == 10
         assert collector.agent_metrics.llm_output_tokens__total.value() == 5
@@ -157,6 +170,7 @@ class TestMetricsCollector:
                 "error_code": "BAD_REQUEST",
             },
         )
+        assert collector.agent_metrics.llm_errors__total.value() == 1
 
     def test_on_stt_transcript(self, collector):
         collector.on_stt_transcript(
@@ -191,16 +205,21 @@ class TestMetricsCollector:
                 "error_code": "CONNECTION_ERROR",
             },
         )
+        assert collector.agent_metrics.stt_errors__total.value() == 1
 
     def test_on_tts_synthesis(self, collector):
         collector.on_tts_synthesis(
             provider="cartesia",
             synthesis_time_ms=50.0,
+            time_to_first_audio_ms=20.0,
             audio_duration_ms=1500.0,
             character_count=len("Hello world"),
         )
 
         tts_latency_ms.record.assert_called_once_with(50.0, {"provider": "cartesia"})
+        tts_time_to_first_audio_ms.record.assert_called_once_with(
+            20.0, {"provider": "cartesia"}
+        )
         tts_audio_duration_ms.record.assert_called_once_with(
             1500.0, {"provider": "cartesia"}
         )
@@ -208,6 +227,7 @@ class TestMetricsCollector:
             len("Hello world"), {"provider": "cartesia"}
         )
         assert collector.agent_metrics.tts_latency_ms__avg.value() == 50.0
+        assert collector.agent_metrics.tts_time_to_first_audio_ms__avg.value() == 20.0
         assert collector.agent_metrics.tts_audio_duration_ms__total.value() == 1500.0
         assert collector.agent_metrics.tts_characters__total.value() == len(
             "Hello world"
@@ -228,6 +248,7 @@ class TestMetricsCollector:
                 "error_code": "SYNTHESIS_ERROR",
             },
         )
+        assert collector.agent_metrics.tts_errors__total.value() == 1
 
     def test_on_turn_ended(self, collector):
         collector.on_turn_ended(
@@ -242,6 +263,7 @@ class TestMetricsCollector:
         turn_trailing_silence_ms.record.assert_called_once_with(
             500.0, {"provider": "smart_turn"}
         )
+        assert collector.agent_metrics.turns__total.value() == 1
         assert collector.agent_metrics.turn_duration_ms__avg.value() == 3500.0
         assert collector.agent_metrics.turn_trailing_silence_ms__avg.value() == 500.0
 
@@ -250,6 +272,7 @@ class TestMetricsCollector:
             provider="moondream",
             model="moondream-cloud",
             latency_ms=200.0,
+            time_to_first_token_ms=40.0,
             input_tokens=100,
             output_tokens=20,
             frames_processed=5,
@@ -260,6 +283,9 @@ class TestMetricsCollector:
         )
         vlm_inference_latency_ms.record.assert_called_once_with(
             200.0, {"provider": "moondream", "model": "moondream-cloud"}
+        )
+        vlm_time_to_first_token_ms.record.assert_called_once_with(
+            40.0, {"provider": "moondream", "model": "moondream-cloud"}
         )
         video_frames_processed.add.assert_called_once_with(
             5, {"provider": "moondream", "model": "moondream-cloud"}
@@ -273,6 +299,7 @@ class TestMetricsCollector:
 
         assert collector.agent_metrics.vlm_inferences__total.value() == 1
         assert collector.agent_metrics.vlm_inference_latency_ms__avg.value() == 200.0
+        assert collector.agent_metrics.vlm_time_to_first_token_ms__avg.value() == 40.0
         assert collector.agent_metrics.video_frames_processed__total.value() == 5
         assert collector.agent_metrics.vlm_input_tokens__total.value() == 100
         assert collector.agent_metrics.vlm_output_tokens__total.value() == 20
@@ -292,6 +319,7 @@ class TestMetricsCollector:
                 "error_code": "INFERENCE_ERROR",
             },
         )
+        assert collector.agent_metrics.vlm_errors__total.value() == 1
 
     def test_on_video_detection(self, collector):
         collector.on_video_detection(
@@ -324,6 +352,37 @@ class TestMetricsCollector:
     def test_on_realtime_user_transcription(self, collector):
         collector.on_realtime_user_transcription(provider="openai")
         assert collector.agent_metrics.realtime_user_transcriptions__total.value() == 1
+
+    def test_on_realtime_ttfa_and_session(self, collector):
+        collector.on_realtime_session_started(provider="openai")
+        realtime_sessions.add.assert_called_once_with(1, {"provider": "openai"})
+
+        collector.on_realtime_time_to_first_audio(
+            provider="openai", time_to_first_audio_ms=120.0
+        )
+        realtime_time_to_first_audio_ms.record.assert_called_once_with(
+            120.0, {"provider": "openai"}
+        )
+        assert (
+            collector.agent_metrics.realtime_time_to_first_audio_ms__avg.value()
+            == 120.0
+        )
+
+        collector.on_realtime_response_completed(provider="openai")
+        assert collector.agent_metrics.realtime_responses__total.value() == 1
+        realtime_responses.add.assert_called_once_with(1, {"provider": "openai"})
+
+        collector.on_realtime_session_ended(provider="openai", duration_ms=5000.0)
+        realtime_session_duration_ms.record.assert_called_once_with(
+            5000.0, {"provider": "openai"}
+        )
+        assert (
+            collector.agent_metrics.realtime_session_duration_ms__avg.value() == 5000.0
+        )
+
+    def test_on_realtime_error(self, collector):
+        collector.on_realtime_error(provider="openai", error_type="TimeoutError")
+        assert collector.agent_metrics.realtime_errors__total.value() == 1
 
     def test_hierarchy_emits_otel_only_at_root(self, mock_metrics):
         parent = MetricsCollector()
@@ -390,7 +449,19 @@ class TestAgentMetrics:
         metrics = AgentMetrics()
         metrics_dict = metrics.to_dict()
         all_fields = [f.name for f in dataclasses.fields(AgentMetrics)]
-        assert set(all_fields) == set(metrics_dict.keys())
+        assert set(all_fields).issubset(set(metrics_dict.keys()))
+        # Companion counts for every average field.
+        for name in all_fields:
+            if name.endswith("__avg"):
+                assert metrics.count_field_name(name) in metrics_dict
+
+    def test_to_dict_includes_sample_counts(self):
+        metrics = AgentMetrics()
+        metrics.llm_latency_ms__avg.update(100)
+        metrics.llm_latency_ms__avg.update(200)
+        data = metrics.to_dict(fields=["llm_latency_ms__avg"])
+        assert data["llm_latency_ms__avg"] == 150.0
+        assert data["llm_latency_ms__count"] == 2
 
     def test_to_dict_some_fields_success(self):
         metrics = AgentMetrics()
@@ -402,3 +473,39 @@ class TestAgentMetrics:
         metrics = AgentMetrics()
         with pytest.raises(ValueError, match="Unknown field: unknown_field"):
             metrics.to_dict(fields=["unknown_field"])
+
+    def test_infer_mode_pipeline(self):
+        metrics = AgentMetrics()
+        metrics.llm_latency_ms__avg.update(100)
+        assert metrics.infer_mode() == "pipeline"
+
+    def test_infer_mode_realtime(self):
+        metrics = AgentMetrics()
+        metrics.realtime_responses__total.inc(1)
+        assert metrics.infer_mode() == "realtime"
+
+    def test_infer_mode_hybrid(self):
+        metrics = AgentMetrics()
+        metrics.stt_latency_ms__avg.update(50)
+        metrics.realtime_time_to_first_audio_ms__avg.update(80)
+        assert metrics.infer_mode() == "hybrid"
+
+    def test_infer_mode_hybrid_realtime_plus_vlm(self):
+        metrics = AgentMetrics()
+        metrics.realtime_responses__total.inc(1)
+        metrics.vlm_inferences__total.inc(1)
+        assert metrics.infer_mode() == "hybrid"
+
+    def test_from_dict_rejects_fractional_count(self):
+        metrics = AgentMetrics.from_dict(
+            {"llm_latency_ms__avg": 100.0, "llm_latency_ms__count": 1.5}
+        )
+        assert metrics.llm_latency_ms__avg.value() == 100.0
+        assert metrics.llm_latency_ms__avg.count == 1
+
+    def test_from_dict_accepts_integral_float_count(self):
+        metrics = AgentMetrics.from_dict(
+            {"llm_latency_ms__avg": 100.0, "llm_latency_ms__count": 2.0}
+        )
+        assert metrics.llm_latency_ms__avg.value() == 100.0
+        assert metrics.llm_latency_ms__avg.count == 2

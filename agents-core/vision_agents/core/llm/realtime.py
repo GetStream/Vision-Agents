@@ -1,6 +1,7 @@
 import abc
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import Coroutine
 from dataclasses import dataclass
@@ -135,6 +136,12 @@ class Realtime(OmniLLM):
             | RealtimeAgentSpeechEnded
         ] = Stream()
 
+        # Session / TTFA tracking: start clock on user speech end, record once
+        # on the first audio output chunk of that response.
+        self._session_started_at: float | None = None
+        self._pending_response_started_at: float | None = None
+        self._ttfa_recorded: bool = False
+
     @property
     def output(
         self,
@@ -168,6 +175,8 @@ class Realtime(OmniLLM):
         """Increment epoch so stale audio output events are discarded."""
         self._epoch += 1
         self._current_participant = None
+        self._pending_response_started_at = None
+        self._ttfa_recorded = False
         self._audio_input_processor.clear()
         self._output.clear()
 
@@ -191,6 +200,11 @@ class Realtime(OmniLLM):
 
     async def process_audio(self, pcm: PcmData, participant: Participant) -> None:
         self._current_participant = participant
+        self.metrics.on_realtime_audio_input(
+            byte_count=pcm.samples.nbytes,
+            duration_ms=pcm.duration_ms,
+            provider=self.provider_name,
+        )
         await self._audio_input_processor.process_audio(pcm, participant)
 
     async def _close_audio_input(self) -> None:
@@ -207,6 +221,8 @@ class Realtime(OmniLLM):
     ):
         """Mark the session connected and emit RealtimeConnectedEvent."""
         self.connected = True
+        self._session_started_at = time.perf_counter()
+        self.metrics.on_realtime_session_started(provider=self.provider_name)
         self.events.send(
             RealtimeConnectedEvent(
                 plugin_name=self.provider_name,
@@ -220,6 +236,13 @@ class Realtime(OmniLLM):
         """Mark the session disconnected and emit RealtimeDisconnectedEvent."""
         self.connected = False
         self._audio_input_processor.clear()
+        duration_ms: float | None = None
+        if self._session_started_at is not None:
+            duration_ms = (time.perf_counter() - self._session_started_at) * 1000
+            self._session_started_at = None
+        self.metrics.on_realtime_session_ended(
+            provider=self.provider_name, duration_ms=duration_ms
+        )
         self.events.send(
             RealtimeDisconnectedEvent(
                 plugin_name=self.provider_name,
@@ -229,8 +252,26 @@ class Realtime(OmniLLM):
             )
         )
 
+    def _mark_response_started(self) -> None:
+        """Mark the start of a realtime response for TTFA measurement."""
+        self._pending_response_started_at = time.perf_counter()
+        self._ttfa_recorded = False
+
+    def _record_ttfa_if_needed(self) -> None:
+        """Record TTFA once on the first audio output after speech end."""
+        if self._ttfa_recorded or self._pending_response_started_at is None:
+            return
+        ttfa_ms = (time.perf_counter() - self._pending_response_started_at) * 1000
+        self._ttfa_recorded = True
+        self._pending_response_started_at = None
+        self.metrics.on_realtime_time_to_first_audio(
+            provider=self.provider_name,
+            time_to_first_audio_ms=ttfa_ms,
+        )
+
     def _emit_audio_output_event(self, pcm: PcmData, response_id: str | None = None):
         """Emit a structured audio output event."""
+        self._record_ttfa_if_needed()
         event = RealtimeAudioOutput(
             data=pcm,
             response_id=response_id,
@@ -263,6 +304,7 @@ class Realtime(OmniLLM):
 
     def _emit_user_speech_ended(self):
         """Emit a user-speech-ended signal from server-side VAD."""
+        self._mark_response_started()
         if self._current_participant is None:
             return
         self._output.send_nowait(

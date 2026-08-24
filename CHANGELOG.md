@@ -12,6 +12,15 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
+### Call metrics summary and richer session latency tracking (#635)
+
+Session `AgentMetrics` now expose sample counts for every average (`*_ms__count`),
+error totals, turn counts, TTS time-to-first-audio, realtime time-to-first-audio
+and session duration, and VLM time-to-first-token. On agent close the framework
+emits a best-effort `call_metrics_summary` custom event (mode, call duration,
+providers, flat metrics) so clients can show a post-call summary. Periodic
+`agent_metrics` broadcasts are unchanged.
+
 ### `deepgram` plugin: Flux TTS streaming, `speed`, and Interrupt barge-in
 
 Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) with a persistent websocket. Pass optional `speed` (0.85–1.15 in 0.05 steps) on the constructor. Barge-in sends `Interrupt` instead of Aura's `Clear`. Supported sample rates now include 32000 and 44100.

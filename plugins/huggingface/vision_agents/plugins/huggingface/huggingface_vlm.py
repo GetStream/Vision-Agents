@@ -131,6 +131,7 @@ class HuggingFaceVLM(VideoLLM):
                     provider=self.provider_name,
                     model=self.model,
                     latency_ms=item.latency_ms,
+                    time_to_first_token_ms=item.time_to_first_token_ms,
                     input_tokens=item.input_tokens,
                     output_tokens=item.output_tokens,
                     frames_processed=frames_count,
