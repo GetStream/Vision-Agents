@@ -7,11 +7,16 @@
 //
 // Writing is asynchronous and drops rather than blocks: a conversation must never wait on
 // the network to store what was just said.
+//
+// A reply is shown while it is still being written. The pieces go out as ephemeral
+// updates, which reach anyone watching the channel without storing a version per token,
+// and what the reply came to is stored once it is finished.
 package chatlog
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -37,6 +42,27 @@ const queueSize = 256
 
 // writeTimeout bounds a single write so a stuck network cannot wedge the writer.
 const writeTimeout = 10 * time.Second
+
+// streamInterval is how often a reply still being written is shown. Deltas arrive a token
+// at a time, and showing each one would be a request per token.
+const streamInterval = 200 * time.Millisecond
+
+// generatingField is the custom field a client reads to know a reply is not finished. The
+// Python agent writes the same field, so a client can watch either.
+const generatingField = "generating"
+
+// kind says how a queued message relates to the reply it belongs to.
+type kind int
+
+const (
+	// whole is a line that was said in full: a participant's turn, or a reply that never
+	// streamed.
+	whole kind = iota
+	// piece is more of a reply that is still being written.
+	piece
+	// end closes a streamed reply, storing what it came to.
+	end
+)
 
 // Options configures a Log. The credentials fall back to the environment, the same way
 // the Stream edge reads them.
@@ -82,6 +108,9 @@ type Log struct {
 type message struct {
 	author User
 	text   string
+	// turnID names the reply a piece belongs to. Empty for anything said in full.
+	turnID string
+	kind   kind
 }
 
 // New validates the options and returns a Log. It writes nothing; Start does that.
@@ -148,8 +177,17 @@ func (l *Log) Record(event agent.Event) {
 	switch typed := event.(type) {
 	case agent.Heard:
 		l.Say(participantUser(typed.Participant), typed.Text)
+	case agent.ResponseDelta:
+		l.enqueue(message{author: l.agent, text: typed.Text, turnID: typed.TurnID, kind: piece})
 	case agent.Responded:
-		l.Say(l.agent, typed.Text)
+		if typed.Text == "" {
+			return
+		}
+		l.enqueue(message{author: l.agent, text: typed.Text, turnID: typed.TurnID, kind: end})
+	case agent.Interrupted:
+		// A reply nobody finished still has to stop saying it is being written, and what
+		// the caller heard of it is worth keeping.
+		l.enqueue(message{author: l.agent, turnID: typed.TurnID, kind: end})
 	}
 }
 
@@ -158,9 +196,15 @@ func (l *Log) Say(author User, text string) {
 	if author.ID == "" || text == "" {
 		return
 	}
+	l.enqueue(message{author: author, text: text, kind: whole})
+}
 
+// enqueue hands one message to the writer, dropping it if the writer is too far behind. A
+// dropped piece costs a moment of a reply looking behind; the finished reply carries the
+// whole of it, so nothing is lost from the transcript itself.
+func (l *Log) enqueue(queued message) {
 	select {
-	case l.queue <- message{author: author, text: text}:
+	case l.queue <- queued:
 	default:
 		l.dropped.Add(1)
 	}
@@ -189,31 +233,179 @@ func (l *Log) Close() {
 func (l *Log) run() {
 	defer close(l.done)
 
-	// Server-side sends name their author, so a user the app has never seen has to exist
-	// before their first message. The writer is the only goroutine here, so this needs no
-	// lock of its own.
-	known := map[string]struct{}{l.agent.ID: {}}
+	writer := newWriter(l)
 
-	for queued := range l.queue {
-		ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	ticker := time.NewTicker(streamInterval)
+	defer ticker.Stop()
 
-		if _, seen := known[queued.author.ID]; !seen {
-			if err := l.upsert(ctx, queued.author); err != nil {
-				l.logger.Error("could not store a speaker", "user", queued.author.ID, "error", err)
-				cancel()
-				continue
+	for {
+		select {
+		case queued, open := <-l.queue:
+			if !open {
+				writer.closeOut()
+				return
 			}
-			known[queued.author.ID] = struct{}{}
+			writer.handle(queued)
+		case <-ticker.C:
+			writer.show()
+		}
+	}
+}
+
+// reply is a reply being written into the channel a piece at a time.
+type reply struct {
+	author User
+	// messageID is the stored message watchers see updated, once there is one.
+	messageID string
+	text      string
+	// shown is what watchers were last sent, so an unchanged reply is not sent again.
+	shown string
+}
+
+// writer is the state behind the queue. The writer goroutine is the only one that touches
+// it, so it needs no lock of its own.
+type writer struct {
+	log     *Log
+	known   map[string]struct{}
+	writing map[string]*reply
+}
+
+func newWriter(l *Log) *writer {
+	return &writer{
+		log: l,
+		// Server-side sends name their author, so a user the app has never seen has to
+		// exist before their first message.
+		known:   map[string]struct{}{l.agent.ID: {}},
+		writing: map[string]*reply{},
+	}
+}
+
+// handle takes one queued message.
+func (w *writer) handle(queued message) {
+	switch queued.kind {
+	case piece:
+		writing, started := w.writing[queued.turnID]
+		if !started {
+			writing = &reply{author: queued.author}
+			w.writing[queued.turnID] = writing
+		}
+		writing.text += queued.text
+	case end:
+		w.settle(queued.turnID, queued.text)
+	case whole:
+		w.store(queued.author, queued.text)
+	}
+}
+
+// show sends what has been written since the last tick to anyone watching. The first
+// piece is stored, so the channel has a message to update and to keep if the reply is
+// never finished; the rest are ephemeral, which reach watchers without a write per token.
+func (w *writer) show() {
+	for turnID, writing := range w.writing {
+		if writing.text == writing.shown {
+			continue
 		}
 
-		_, err := l.client.Chat().SendMessage(ctx, channelType, l.agentID, &getstream.SendMessageRequest{
-			Message: getstream.MessageRequest{Text: &queued.text, UserID: &queued.author.ID},
-		})
-		if err != nil {
-			l.logger.Error("could not store a message", "user", queued.author.ID, "error", err)
+		ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+		var err error
+		if writing.messageID == "" {
+			writing.messageID, err = w.send(ctx, writing.author, writing.text, true)
+		} else {
+			_, err = w.log.client.Chat().EphemeralMessageUpdate(ctx, writing.messageID,
+				&getstream.EphemeralMessageUpdateRequest{
+					UserID: &writing.author.ID,
+					Set:    map[string]any{"text": writing.text, generatingField: true},
+				})
 		}
 		cancel()
+
+		if err != nil {
+			w.log.logger.Error("could not show a reply being written", "turn", turnID, "error", err)
+			continue
+		}
+		writing.shown = writing.text
 	}
+}
+
+// settle stores what a reply came to and stops it saying it is still being written. Text
+// is what the model ended up with, or empty for a reply nobody finished, which is kept as
+// far as it got.
+func (w *writer) settle(turnID, text string) {
+	writing, streamed := w.writing[turnID]
+	if !streamed {
+		// A reply that never streamed is just a line of the conversation.
+		w.store(w.log.agent, text)
+		return
+	}
+	delete(w.writing, turnID)
+
+	if text == "" {
+		text = writing.text
+	}
+	if writing.messageID == "" {
+		// It finished before the first tick, so there is nothing to correct.
+		w.store(writing.author, text)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+
+	// The pieces were ephemeral, so this is the write that leaves the reply behind.
+	_, err := w.log.client.Chat().UpdateMessagePartial(ctx, writing.messageID,
+		&getstream.UpdateMessagePartialRequest{
+			UserID: &writing.author.ID,
+			Set:    map[string]any{"text": text, generatingField: false},
+		})
+	if err != nil {
+		w.log.logger.Error("could not store a finished reply", "turn", turnID, "error", err)
+	}
+}
+
+// closeOut finishes whatever was still being written. The queue closes when the call is
+// over, and a reply left generating would say it was still coming forever.
+func (w *writer) closeOut() {
+	for turnID := range w.writing {
+		w.settle(turnID, "")
+	}
+}
+
+// store writes one whole line of the conversation.
+func (w *writer) store(author User, text string) {
+	if author.ID == "" || text == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+
+	if _, err := w.send(ctx, author, text, false); err != nil {
+		w.log.logger.Error("could not store a message", "user", author.ID, "error", err)
+	}
+}
+
+// send stores one message and returns its id, creating its author first if the app has
+// never seen them.
+func (w *writer) send(ctx context.Context, author User, text string, generating bool) (string, error) {
+	if _, seen := w.known[author.ID]; !seen {
+		if err := w.log.upsert(ctx, author); err != nil {
+			return "", fmt.Errorf("storing the speaker: %w", err)
+		}
+		w.known[author.ID] = struct{}{}
+	}
+
+	response, err := w.log.client.Chat().SendMessage(ctx, channelType, w.log.agentID,
+		&getstream.SendMessageRequest{
+			Message: getstream.MessageRequest{
+				Text:   &text,
+				UserID: &author.ID,
+				Custom: map[string]any{generatingField: generating},
+			},
+		})
+	if err != nil {
+		return "", err
+	}
+	return response.Data.Message.ID, nil
 }
 
 func (l *Log) upsert(ctx context.Context, user User) error {

@@ -57,14 +57,8 @@ func (s *ChatlogIntegrationSuite) TestWhatWasSaidEndsUpInTheChannel() {
 	s.log.Record(agent.Heard{Participant: participant, Text: "what time do you open"})
 	s.log.Record(agent.Responded{Text: "we open at nine"})
 
-	messages := s.messages(2)
-
-	said := make([]string, 0, len(messages))
-	for _, message := range messages {
-		said = append(said, message.Text)
-	}
-	s.Contains(said, "what time do you open")
-	s.Contains(said, "we open at nine")
+	s.await(said("what time do you open"))
+	s.await(said("we open at nine"))
 }
 
 func (s *ChatlogIntegrationSuite) TestEachLineIsAttributedToWhoSaidIt() {
@@ -72,29 +66,69 @@ func (s *ChatlogIntegrationSuite) TestEachLineIsAttributedToWhoSaidIt() {
 
 	s.log.Record(agent.Heard{Participant: participant, Text: "is anyone there"})
 
-	messages := s.messages(1)
-
-	var authors []string
-	for _, message := range messages {
-		authors = append(authors, message.User.ID)
-	}
-	s.Contains(authors, "caller-2", "the caller's user id, not their per-call session id")
+	stored := s.await(said("is anyone there"))
+	s.Equal("caller-2", stored.User.ID, "the caller's user id, not their per-call session id")
 }
 
-// messages waits for the writer to drain and returns what the channel holds.
-func (s *ChatlogIntegrationSuite) messages(atLeast int) []getstream.MessageResponse {
+func (s *ChatlogIntegrationSuite) TestAReplyIsVisibleBeforeItIsFinished() {
+	s.log.Record(agent.ResponseDelta{TurnID: "turn-1", Text: "checking the diary "})
+
+	writing := s.await(said("checking the diary "))
+	s.Equal(true, writing.Custom[generatingField],
+		"a client showing the reply needs to know more of it is coming")
+
+	s.log.Record(agent.ResponseDelta{TurnID: "turn-1", Text: "now"})
+	s.log.Record(agent.Responded{TurnID: "turn-1", Text: "checking the diary now"})
+
+	finished := s.await(func(message getstream.MessageResponse) bool {
+		return message.ID == writing.ID && message.Text == "checking the diary now"
+	})
+	s.Equal(false, finished.Custom[generatingField],
+		"the pieces were ephemeral, so the whole reply has to be stored")
+}
+
+func (s *ChatlogIntegrationSuite) TestAnInterruptedReplyIsKeptAsFarAsItGot() {
+	s.log.Record(agent.ResponseDelta{TurnID: "turn-2", Text: "let me check"})
+
+	writing := s.await(said("let me check"))
+	s.log.Record(agent.Interrupted{TurnID: "turn-2"})
+
+	finished := s.await(func(message getstream.MessageResponse) bool {
+		return message.ID == writing.ID && message.Custom[generatingField] == false
+	})
+	s.Equal("let me check", finished.Text, "the caller heard that much")
+}
+
+// said matches a message by what it says.
+func said(text string) func(getstream.MessageResponse) bool {
+	return func(message getstream.MessageResponse) bool { return message.Text == text }
+}
+
+// await waits for the writer to drain and returns the message that matches.
+func (s *ChatlogIntegrationSuite) await(
+	matches func(getstream.MessageResponse) bool,
+) getstream.MessageResponse {
+	limit := transcriptLimit
+	// Without asking for the state the channel comes back without its messages.
+	state := true
 	deadline := time.Now().Add(writeGrace)
+
 	for {
-		response, err := s.log.Chat().GetOrCreateChannel(s.ctx, "messaging", s.agentID,
-			&getstream.GetOrCreateChannelRequest{})
+		response, err := s.log.Chat().GetOrCreateChannel(s.ctx, channelType, s.agentID,
+			&getstream.GetOrCreateChannelRequest{
+				State:    &state,
+				Messages: &getstream.MessagePaginationParams{Limit: &limit},
+			})
 		s.Require().NoError(err)
 
-		if len(response.Data.Messages) >= atLeast {
-			return response.Data.Messages
+		for _, message := range response.Data.Messages {
+			if matches(message) {
+				return message
+			}
 		}
 		if time.Now().After(deadline) {
 			s.Require().FailNowf("the transcript never arrived",
-				"wanted at least %d messages, the channel has %d", atLeast, len(response.Data.Messages))
+				"nothing in the %d messages the channel holds matched", len(response.Data.Messages))
 		}
 		time.Sleep(time.Second)
 	}

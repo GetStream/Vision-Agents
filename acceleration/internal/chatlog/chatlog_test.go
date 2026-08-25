@@ -96,10 +96,48 @@ func (s *ChatLogSuite) TestTheAgentIsTheAuthorOfItsOwnReplies() {
 
 func (s *ChatLogSuite) TestOnlySpeechIsStored() {
 	s.log.Record(agent.Joined{At: time.Now()})
-	s.log.Record(agent.ResponseDelta{TurnID: "turn-1", Text: "hi"})
 	s.log.Record(agent.Turn{TurnID: "turn-1", RoundtripMs: 120})
 
 	s.Empty(s.queued(), "a transcript is what was said, not how the agent worked")
+}
+
+func (s *ChatLogSuite) TestAReplyIsWrittenAsItStreams() {
+	s.log.Record(agent.ResponseDelta{TurnID: "turn-1", Text: "hi"})
+
+	waiting := s.queued()
+	s.Require().Len(waiting, 1, "a caller should not have to wait for the reply to finish")
+	s.Equal(piece, waiting[0].kind)
+	s.Equal("turn-1", waiting[0].turnID)
+	s.Equal("vision-agent", waiting[0].author.ID)
+}
+
+func (s *ChatLogSuite) TestThePiecesOfAReplyAreOneMessage() {
+	writer := newWriter(s.log)
+
+	writer.handle(message{author: s.log.agent, text: "hi ", turnID: "turn-1", kind: piece})
+	writer.handle(message{author: s.log.agent, text: "there", turnID: "turn-1", kind: piece})
+
+	s.Require().Len(writer.writing, 1)
+	s.Equal("hi there", writer.writing["turn-1"].text)
+}
+
+func (s *ChatLogSuite) TestARepliesPiecesAreKeptApartFromAnothers() {
+	writer := newWriter(s.log)
+
+	writer.handle(message{author: s.log.agent, text: "hi", turnID: "turn-1", kind: piece})
+	writer.handle(message{author: s.log.agent, text: "bye", turnID: "turn-2", kind: piece})
+
+	s.Equal("hi", writer.writing["turn-1"].text)
+	s.Equal("bye", writer.writing["turn-2"].text)
+}
+
+func (s *ChatLogSuite) TestAnInterruptedReplyIsClosedOut() {
+	s.log.Record(agent.Interrupted{TurnID: "turn-1"})
+
+	waiting := s.queued()
+	s.Require().Len(waiting, 1, "a reply nobody finished would say it was still coming forever")
+	s.Equal(end, waiting[0].kind)
+	s.Equal("turn-1", waiting[0].turnID)
 }
 
 func (s *ChatLogSuite) TestSilenceIsNotStored() {
