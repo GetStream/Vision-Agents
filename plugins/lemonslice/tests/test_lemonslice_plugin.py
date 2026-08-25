@@ -132,12 +132,9 @@ class TestLemonSliceAvatar:
         assert payload["transport_type"] == "stream"
         assert payload["properties"]["call_id"] == "call-1"
 
-    async def test_interrupt_does_not_announce_an_end_of_utterance(
+    async def test_end_utterance_and_interrupt_events_respect_audio_boundaries(
         self, call_events: list[dict], call_event_transport: httpx.MockTransport
     ):
-        # An interruption discards the buffered audio, so announcing an
-        # end-of-utterance PTS that covers it points the avatar at audio that
-        # never arrives.
         avatar = _make_avatar()
         manager = avatar._rtc_manager
         manager._client = AsyncStream(
@@ -146,6 +143,37 @@ class TestLemonSliceAvatar:
         manager._call = manager._client.video.call("default", "call-1")
         manager._input_track = AvatarInputTrack(sample_rate=16000, channels=1)
         manager._connected = True
+
+        for _ in range(3):
+            await manager.send_audio(
+                PcmData(
+                    samples=np.zeros(480, dtype=np.int16),
+                    sample_rate=24000,
+                    format=AudioFormat.S16,
+                    channels=1,
+                )
+            )
+
+        await manager.flush()
+
+        emitted_samples = 0
+        while True:
+            try:
+                emitted_samples += (
+                    await asyncio.wait_for(manager._input_track.recv(), timeout=0.05)
+                ).samples
+            except TimeoutError:
+                break
+
+        assert call_events[0] == {
+            "type": "lemonslice.end_utterance",
+            "pts": emitted_samples,
+            "event_id": 1,
+        }
+
+        # An interruption discards the buffered audio, so announcing an
+        # end-of-utterance PTS that covers it points the avatar at audio that
+        # never arrives.
         await manager._input_track.write(
             PcmData(
                 samples=np.zeros(16000, dtype=np.int16),
@@ -162,4 +190,7 @@ class TestLemonSliceAvatar:
         await asyncio.sleep(0.05)
         await cancel_and_wait(task)
 
-        assert [event["type"] for event in call_events] == ["lemonslice.interrupt"]
+        assert [event["type"] for event in call_events] == [
+            "lemonslice.end_utterance",
+            "lemonslice.interrupt",
+        ]

@@ -257,6 +257,14 @@ class StreamRTCManager:
         """Signal end of a TTS segment to the avatar via a custom call event."""
         if self._call is None or not self._connected or self._input_track is None:
             return
+        await self._input_track.write(
+            PcmData(
+                sample_rate=self._input_track.sample_rate,
+                format=self._input_track.format,
+                channels=self._input_track.channels,
+            ),
+            final=True,
+        )
         pts = await self._input_track.pts()
         await self._call.send_call_event(
             user_id=self._plugin_user_id,
