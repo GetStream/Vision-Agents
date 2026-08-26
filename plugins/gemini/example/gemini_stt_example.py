@@ -57,7 +57,7 @@ async def create_agent(**kwargs) -> Agent:
             language_codes=["en-US", "de-DE"],
             custom_vocabulary=em_vocab,
         ),
-        llm=gemini.LLM(),
+        llm=gemini.LLM(model="gemini-3.1-flash-lite"),
         tts=elevenlabs.TTS(voice_id="7A85ufQZSEaTbZ5eQ4f4"),
     )
     return agent
