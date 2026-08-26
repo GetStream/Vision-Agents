@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
-    "google-genai>=2.8.0,<3",
+    "google-genai>=2.15.0,<3",
 ]
 
 [project.urls]

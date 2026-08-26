@@ -1,14 +1,18 @@
 [project]
-name = "gemini-vlm-example"
+name = "gemini-example"
 version = "0.0.0"
 requires-python = ">=3.10"
 
 dependencies = [
   "python-dotenv>=1.0",
   "vision-agents-plugins-gemini",
+  "vision-agents-plugins-elevenlabs",
+  "vision-agents-plugins-getstream",
   "vision-agents",
 ]
 
 [tool.uv.sources]
 "vision-agents-plugins-gemini" = {path = "..", editable=true}
+"vision-agents-plugins-elevenlabs" = {path = "../../elevenlabs", editable=true}
+"vision-agents-plugins-getstream" = {path = "../../getstream", editable=true}
 "vision-agents" = {path = "../../../agents-core", editable=true}
