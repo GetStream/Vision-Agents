@@ -134,6 +134,8 @@ func (s *recordingTTS) Events() <-chan tts.Event { return s.emitter.Events() }
 func (s *recordingTTS) Provider() string         { return "stub" }
 func (s *recordingTTS) Model() string            { return "stub-tts" }
 func (s *recordingTTS) Streaming() bool          { return false }
+func (s *recordingTTS) Performs() bool           { return false }
+func (s *recordingTTS) Prompt() string           { return "" }
 
 func (s *recordingTTS) Close() error {
 	s.emitter.Close()

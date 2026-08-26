@@ -15,8 +15,10 @@ type Spec struct {
 	// LanguageHints narrow multilingual models.
 	LanguageHints []string
 	// Voice selects the speaker for modalities that produce audio.
-	Voice  string
-	Logger *slog.Logger
+	Voice string
+	// Keyterms are the words a modality that recognises speech should expect.
+	Keyterms []string
+	Logger   *slog.Logger
 }
 
 // Factory builds an unstarted provider.

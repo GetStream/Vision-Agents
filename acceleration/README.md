@@ -43,13 +43,16 @@ and billing as a direct API call.
 | `cmd/knowledge`      | Reads documents into a knowledge base an agent can look things up in |
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
+| `deploy/breeze-tts-2` | The streaming Breeze TTS 2 Truss, written but not yet pushed       |
 | `deploy/gemma-4`     | The Gemma 4 vLLM Truss, written and validated but not yet pushed    |
 
-Two providers are therefore unreachable until someone deploys them. `s2pro` is under the
+Three providers are therefore unreachable until someone deploys them. `s2pro` is under the
 Fish Audio Research License and wants an H100, so both questions are worth settling before
-the push; the hosted `fish` provider serves the same model in the meantime. `gemma` needs a
-dedicated deployment because Gemma is not on Baseten's shared Model APIs. With `S2PRO_WS_URL`
-or `GEMMA_BASE_URL` unset each fails to build and routing moves to the next candidate, so a
+the push; the hosted `fish` provider serves the same model in the meantime. `breeze` is in
+the same position under the BreezeBlue Research and Non-Commercial License, and there its
+hosted API is the licensed alternative. `gemma` needs a dedicated deployment because Gemma
+is not on Baseten's shared Model APIs. With `S2PRO_WS_URL`, `BREEZE_WS_URL` or
+`GEMMA_BASE_URL` unset each fails to build and routing moves to the next candidate, so a
 shortcut still resolves.
 
 All three LLM providers speak OpenAI-compatible chat completions, so they share one
@@ -80,6 +83,7 @@ to play audio, or `-out` to write a file instead.
 | `ROUTER_ADDR`           | HTTP listen address, defaults to `:8080`                   |
 | `ROUTER_POSTGRES_DSN`   | Postgres DSN. Without it, nothing is recorded              |
 | `ROUTER_REDIS_ADDR`     | Redis `host:port`. Without it, routing ignores health      |
+| `ROUTER_BLOB_URL`       | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
@@ -99,10 +103,11 @@ to play audio, or `-out` to write a file instead.
 | `FISH_API_KEY`          | Fish Audio credentials                                     |
 | `FISH_VOICE_ID`         | Optional Fish reference id to clone a voice from           |
 | `OPENAI_API_KEY`        | OpenAI credentials                                         |
-| `GOOGLE_API_KEY`        | Gemini credentials, from AI Studio                         |
+| `GOOGLE_API_KEY`        | Gemini credentials, from AI Studio; used by the LLM and the transcriber |
 | `BASETEN_API_KEY`       | Baseten credentials, for the Model APIs and both deployments |
 | `PARAKEET_WS_URL`       | The Parakeet WebSocket endpoint                            |
 | `S2PRO_WS_URL`          | The S2 Pro WebSocket endpoint. Not yet deployed, see above |
+| `BREEZE_WS_URL`         | The Breeze TTS 2 WebSocket endpoint. Not yet deployed, see above |
 | `DEEPSEEK_BASE_URL`     | Optional; overrides Baseten's shared Model APIs endpoint    |
 | `GEMMA_BASE_URL`        | The Gemma 4 deployment endpoint. Not yet deployed, see above |
 | `LIVEKIT_URL`           | LiveKit host, used by `cmd/transcribe`                     |
@@ -160,6 +165,36 @@ pins the effort to `minimal` rather than letting a conversation wait on the mode
 default; `Options.ReasoningEffort` raises it for anything off the live path. Google reports
 the thinking as a token count rather than streaming it, so there are no `ReasoningDelta`
 events to separate out.
+
+### Transcribers, and what Gemini does differently
+
+| Model                              | Languages | Per audio hour |
+| ---------------------------------- | --------- | -------------- |
+| `deepgram/flux-general-en`          | en        | $0.276         |
+| `deepgram/flux-general-multi`       | 12        | $0.276         |
+| `gemini/gemini-3.5-transcribe-live` | 85+       | ~$0.54         |
+| `parakeet/parakeet-tdt-0.6b-v3`     | 25        | $0.079         |
+
+Deepgram and Parakeet are speech recognisers. Gemini 3.5 Transcribe is a Gemini model that
+happens to be listening, reached over the Live API's `BidiGenerateContent` socket with the
+talking half turned off, and that difference shows in three places.
+
+It writes down what you meant rather than what you emitted: filler words go, a
+self-correction resolves to the correction, and the text arrives punctuated. That is worth
+having on a call and wrong for a compliance transcript, and it is not a setting.
+
+It has no field for a keyterm or a language hint — `AudioTranscriptionConfig` is an empty
+message. Both are passed as a system instruction instead, which is the only lever the API
+gives and is a request rather than a constraint. Deepgram's `keyterm` is the stronger tool
+if the vocabulary matters more than the phrasing.
+
+It sends the words in pieces that append, so a chunk is a `delta` and the turn boundary the
+server reports is what settles it. The final restates the whole utterance, which cadence
+treats as the transcriber settling rather than as the caller saying it twice.
+
+Billing is per token, not per hour: audio in at $3.50/1M against 25 tokens a second, text
+out at $21.00/1M. The router config carries Google's own blended figure of about $0.009 an
+audio minute, so a busy call costs more than the table suggests and a quiet one less.
 
 ## Run
 
@@ -343,6 +378,51 @@ short listening noise during long speech or delegated work; pass `-backchannel=f
 it off. `-min-confidence` additionally makes the agent clarify a doubtful transcript. The
 flow controller also asks for clarification when the words are clear but the intent is not.
 
+### Voices that act a direction
+
+Some voices perform bracketed directions such as `[laughs]` or `[whispering]` rather than
+reading them out. A provider says whether it does, and only then is the model told it may
+write them. What it writes is stripped before it reaches the transcript or the
+conversation's history, so a direction is heard and never read.
+
+Two providers perform them, and they are not interchangeable.
+
+`elevenlabs/eleven_v3_conversational` acts any bracketed direction, over the Text to
+Dialogue socket rather than the streaming one. It is a different bargain from
+`eleven_flash_v2_5`: latency is roughly a second to first audio against about 75 ms, and
+an open connection holds a dialogue session from a pool separate from the standard
+concurrency limit, so a deployment routing calls to it needs headroom of a different kind.
+The protocol has no context ids and no cancel frame, so audio is attributed by flush order
+and a barge-in reopens the socket.
+
+`breeze/breeze-tts-2` acts four: `[laugh]`, `[sigh]`, `[cough]` and `[clears throat]`. Its
+prompt says so, because telling a model any direction works when only four do would have
+it write directions that get spoken. In exchange it takes the other half of the
+instruction — how the line should sound, or who should say it — which no other provider
+here does. Two languages only, English and Chinese, and it runs on our own Baseten
+deployment, so see `deploy/breeze-tts-2/README.md` before routing anything at it: the
+licence and the single-request engine both matter.
+
+### A voice described rather than chosen
+
+Every other provider takes a voice id. Breeze takes prose: "a warm, thoughtful young woman
+with a calm, reflective delivery" designs a voice with no reference audio at all, and the
+same field alongside a reference clip steers delivery while the clip keeps the identity. So
+`-voice` means something different depending on who is listening, and a voice id from
+another provider is meaningless here rather than merely wrong.
+
+That is also why `breeze` registers no cloner in `internal/tts/voices`, the same as
+`s2pro`: a customer's own voice is a clip plus a transcript per request, not something
+registered upstream and given an id. The router skips it for a call asking for one.
+
+### Directions are written in square brackets, whoever is listening
+
+Breeze's own syntax for an English vocal event is parentheses — `(sigh)` — but the agent
+writes `[sigh]` for every provider, because parentheses are ordinary punctuation that a
+reply may use for something else. The deployment translates on the way into the engine,
+which is the point where an utterance split across text deltas is whole again. A Chinese
+event such as `[叹气]` is already in brackets and passes through untouched.
+
 ## Sessions, for callers outside this process
 
 Everything above is driven by `cmd/agent` on a command line. `internal/session` is the same
@@ -480,6 +560,38 @@ config's. Starting one runs a loop that holds a semaphore sized to `concurrency`
 each call at the vendor and creates a session for it; contacts are claimed in Postgres, so
 a process that stopped mid-campaign resumes rather than starting again. Pausing stops
 ringing new people and leaves the conversations already happening alone.
+
+## Voices a customer brought with them
+
+A config's `voice` is normally a name the chosen provider knows. It can also name one of
+the customer's own voices, cloned from recordings they uploaded:
+
+```bash
+curl -s -X POST localhost:8080/v1/agents/voices \
+  -H "X-Customer-Id: acme" -H 'Content-Type: application/json' \
+  -d '{"name":"founder","description":"the one from the ad"}'
+
+curl -s -X POST localhost:8080/v1/agents/voices/$ID/samples \
+  -H "X-Customer-Id: acme" -H 'Content-Type: application/json' \
+  -d '{"audio":"'"$(base64 < clip.wav)"'","filename":"clip.wav","transcript":"..."}'
+
+curl -s -X POST localhost:8080/v1/agents/voices/$ID/prepare \
+  -H "X-Customer-Id: acme" -H 'Content-Type: application/json' -d '{}'
+```
+
+**The voice is ours and the ids are theirs.** Preparing sends the recordings to each
+provider that can be taught one and remembers what each called it back. A session names
+our voice, and which id that means is worked out once the router has picked a provider —
+which is the point, because the router fails over mid-call and an id ElevenLabs knows
+means nothing to Cartesia. A provider that was never given the voice, or that refused the
+recordings, is simply not chosen for a call that asks for it. Deleting a voice takes it off
+every provider first, so a voice nobody can reach stops being billed for.
+
+Recordings live in the bucket `ROUTER_BLOB_URL` names, not in Postgres, so they can be
+re-sent to a provider added later without asking the customer for them again. Without that
+variable the voice paths say so rather than half-working. Not every provider clones:
+`s2pro` takes reference audio per session rather than registering a voice, so it is not
+offered custom voices and the router routes around it for calls that want one.
 
 ## What is recorded
 

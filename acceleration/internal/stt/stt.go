@@ -8,12 +8,35 @@ package stt
 
 import (
 	"context"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 )
 
 // SampleRate is the only rate the providers accept. LiveKit decodes to this for us.
 const SampleRate = 16_000
+
+// MaxKeyterms is how many terms a provider will be told about. It is the lowest limit
+// among the providers that accept any, so a list under it works everywhere.
+const MaxKeyterms = 100
+
+// CleanKeyterms drops the blanks and the surrounding space from a caller's list, so a
+// term nobody meant to add does not take up one of the places a provider allows.
+func CleanKeyterms(terms []string) []string {
+	if len(terms) == 0 {
+		return nil
+	}
+	kept := make([]string, 0, len(terms))
+	for _, term := range terms {
+		if trimmed := strings.TrimSpace(term); trimmed != "" {
+			kept = append(kept, trimmed)
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
+}
 
 // Mode describes how a transcript relates to the ones before it.
 type Mode string

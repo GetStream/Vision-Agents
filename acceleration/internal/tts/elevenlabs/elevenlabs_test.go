@@ -188,6 +188,15 @@ func (s *ElevenLabsSuite) TestNewDefaultsToTheLowLatencyModelAndAVoice() {
 	s.True(provider.Streaming(), "the model generates from partial text")
 }
 
+func (s *ElevenLabsSuite) TestThisSocketsModelsAreNeverOfferedAudioTags() {
+	// A model that cannot act a tag reads the word inside the brackets out, so asking for
+	// one would make every reply worse rather than better.
+	flash := s.newTTS(Options{Model: DefaultModel})
+
+	s.False(flash.Performs())
+	s.Empty(flash.Prompt())
+}
+
 func (s *ElevenLabsSuite) TestNewRejectsASampleRateTheOutputFormatCannotCarry() {
 	_, err := New(Options{APIKey: "k", SampleRate: 12_345})
 	s.ErrorContains(err, "sample rate 12345 is not one of")

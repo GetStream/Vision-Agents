@@ -205,6 +205,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		Duplex:             spec.duplex(),
 		Voice:              spec.Voice,
 		LanguageHints:      spec.LanguageHints,
+		Keyterms:           spec.Keyterms,
 		MaxTokens:          spec.MaxTokens,
 		Memory:             m.options.Memory,
 		Knowledge:          m.options.Knowledge,

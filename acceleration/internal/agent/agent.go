@@ -108,6 +108,9 @@ type Options struct {
 	Voice string
 	// LanguageHints narrow the candidates in every modality.
 	LanguageHints []string
+	// Keyterms are the business-specific words the transcriber should expect. A provider
+	// that cannot be told about vocabulary ignores them.
+	Keyterms []string
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
 	MaxTokens int
 	// Memory carries what earlier conversations established into this one. Without it
@@ -165,6 +168,12 @@ type Agent struct {
 	// recalled is what the agent already knew on joining, rendered as a system message
 	// and prepended to the instructions on every turn.
 	recalled string
+	// voicePrompt is what the voice asked to have said about it, appended to the
+	// instructions so the model writes lines the voice can actually perform.
+	voicePrompt string
+	// performs reports whether the voice acts bracketed directions. When it does not,
+	// they are taken out before it is asked to speak rather than read out as words.
+	performs bool
 
 	// ctx is the call's lifetime. Every session the agent opens derives from it.
 	ctx    context.Context
@@ -217,6 +226,9 @@ type Agent struct {
 
 	// chunk assembles model deltas into sentences. Only the model consumer touches it.
 	chunk chunker
+	// directions takes the voice's stage directions out of the reply. They are meant for
+	// the provider that can act them, so they never reach a reader or the history.
+	directions tts.Directions
 	// spoken is the reply as the caller will hear it, which is what goes into the
 	// history: a request for help was written to the harness, not said, so remembering
 	// it would have the model reading its own instructions back on the next turn.
@@ -432,6 +444,11 @@ func (a *Agent) Join(ctx context.Context) error {
 			return fmt.Errorf("agent: start tts: %w", err)
 		}
 		a.tts = voice
+		// What the voice wants said about it is read once, here, rather than on every
+		// turn: the session cannot change provider without the agent rejoining, and
+		// instructions() is called under the lock this session was opened outside of.
+		a.voicePrompt = voice.Prompt()
+		a.performs = voice.Performs()
 	}
 
 	// What earlier conversations established is fetched before the call starts, so the
@@ -681,6 +698,7 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 		Tags:          a.options.Tags,
 		Target:        a.options.STTTarget,
 		LanguageHints: a.options.LanguageHints,
+		Keyterms:      a.options.Keyterms,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent: start stt for %s: %w", participant.ID, err)
@@ -1053,13 +1071,19 @@ func (a *Agent) quiet() bool {
 // instructions is the system prompt for a turn: what the agent was told to be, ahead of
 // it whatever it already knew about the person it is talking to.
 func (a *Agent) instructions() string {
-	if a.recalled == "" {
-		return a.prompt
+	parts := make([]string, 0, 3)
+	if a.recalled != "" {
+		parts = append(parts, a.recalled)
 	}
-	if a.prompt == "" {
-		return a.recalled
+	if a.prompt != "" {
+		parts = append(parts, a.prompt)
 	}
-	return a.recalled + "\n\n" + a.prompt
+	// How to write for the voice comes last, because it is about the delivery rather than
+	// about who the agent is.
+	if a.voicePrompt != "" {
+		parts = append(parts, a.voicePrompt)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // consumeLLM turns the model's deltas into sentences and sends them to be spoken.
@@ -1109,11 +1133,23 @@ func (a *Agent) say(turnID, delta string) {
 		return
 	}
 	a.replying = turnID
-	a.spoken.WriteString(speech)
-	a.emitter.Send(ResponseDelta{TurnID: turnID, Text: speech})
+
+	// A stage direction is addressed to the voice, not to the caller: it is taken out of
+	// what is read and remembered, and left in only for a voice that can act it.
+	plain := a.directions.Add(speech)
+	if plain != "" {
+		a.spoken.WriteString(plain)
+		a.emitter.Send(ResponseDelta{TurnID: turnID, Text: plain})
+	}
 	// The delta is the whole of the reply when there is no voice: a reader has already
 	// been given it, and cutting it into sentences would only be for the speaking.
 	if a.options.Text {
+		return
+	}
+	if !a.performs {
+		speech = plain
+	}
+	if speech == "" {
 		return
 	}
 
@@ -1129,13 +1165,19 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 	// Text the harness was holding on the chance it began a request for help was only
 	// ever text, so it is spoken.
 	tail := a.harness.Flush()
-	a.spoken.WriteString(tail)
+	// A direction the stripper was still holding is released the same way: unfinished, it
+	// was only ever text.
+	plain := a.directions.Add(tail) + a.directions.Flush()
+	a.spoken.WriteString(plain)
+	if !a.performs {
+		tail = plain
+	}
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
 		// of the reply. Without this a reader would be missing whatever the harness was
 		// still deciding about when the model stopped.
-		if tail != "" {
-			a.emitter.Send(ResponseDelta{TurnID: typed.CompletionID, Text: tail})
+		if plain != "" {
+			a.emitter.Send(ResponseDelta{TurnID: typed.CompletionID, Text: plain})
 		}
 	} else {
 		for _, sentence := range a.chunk.Add(tail) {
@@ -1505,6 +1547,7 @@ func (a *Agent) expectedSyntheses(turnID string) int {
 func (a *Agent) resetTurn() {
 	a.chunk.Reset()
 	a.harness.Reset()
+	a.directions.Reset()
 	a.spoken.Reset()
 	a.sentences = 0
 	a.openTurn = ""

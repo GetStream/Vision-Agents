@@ -18,13 +18,14 @@ import (
 // Registry is the set of text-to-speech providers a build can construct.
 type Registry = routing.Registry[tts.TTS]
 
-// Options configures a Router. Store and Live are optional: without them the router still
-// routes, it just stops recording.
+// Options configures a Router. Store, Live and Voices are optional: without them the
+// router still routes, it just stops recording and stops resolving custom voices.
 type Options struct {
 	Config   routing.ModalityConfig
 	Registry *Registry
 	Store    *store.Store
 	Live     *live.Client
+	Voices   routing.VoiceResolver
 	Logger   *slog.Logger
 }
 
@@ -60,6 +61,7 @@ func New(options Options) (*Router, error) {
 		Registry: options.Registry,
 		Store:    options.Store,
 		Live:     options.Live,
+		Voices:   options.Voices,
 		Logger:   options.Logger,
 	})
 	if err != nil {

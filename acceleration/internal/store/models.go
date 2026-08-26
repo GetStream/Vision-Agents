@@ -181,6 +181,8 @@ type AgentConfig struct {
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
+	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
+	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// KnowledgeNamespace is what the agent may look things up in.
 	KnowledgeNamespace string            `bun:"knowledge_namespace,notnull"`
 	Tags               map[string]string `bun:"tags,type:jsonb"`
@@ -207,6 +209,67 @@ type Skill struct {
 	CreatedAt  time.Time  `bun:"created_at,notnull"`
 	UpdatedAt  time.Time  `bun:"updated_at,notnull"`
 	DeletedAt  *time.Time `bun:"deleted_at"`
+}
+
+// What a provider has made of a voice's samples.
+const (
+	// VoicePending means preparation has been asked for but has not finished.
+	VoicePending = "pending"
+	// VoiceReady means the provider has the voice and will speak in it.
+	VoiceReady = "ready"
+	// VoiceFailed means the provider would not take it, and Error says why.
+	VoiceFailed = "failed"
+)
+
+// Voice is a voice a customer brought with them, as opposed to one from a provider's own
+// library.
+//
+// What a session asks for is this row rather than a provider's id for it, because the
+// router fails over between providers mid-call and an id one provider knows means nothing
+// to the next. Which id it means is worked out once the provider is chosen.
+type Voice struct {
+	bun.BaseModel `bun:"table:voices,alias:v"`
+
+	ID          string     `bun:"id,pk"`
+	CustomerID  string     `bun:"customer_id,notnull"`
+	Name        string     `bun:"name,notnull"`
+	Description string     `bun:"description,notnull"`
+	CreatedAt   time.Time  `bun:"created_at,notnull"`
+	UpdatedAt   time.Time  `bun:"updated_at,notnull"`
+	DeletedAt   *time.Time `bun:"deleted_at"`
+}
+
+// VoiceSample is one recording of the voice. The audio is in object storage, so the row
+// says where it went rather than holding it.
+type VoiceSample struct {
+	bun.BaseModel `bun:"table:voice_samples,alias:vs"`
+
+	ID      string `bun:"id,pk"`
+	VoiceID string `bun:"voice_id,notnull"`
+	// ObjectKey locates the audio in the bucket the deployment was given.
+	ObjectKey   string `bun:"object_key,notnull"`
+	ContentType string `bun:"content_type,notnull"`
+	Bytes       int64  `bun:"bytes,notnull"`
+	// Transcript is what is said in the recording, which the providers that ask for one
+	// clone more faithfully with.
+	Transcript string    `bun:"transcript,notnull"`
+	CreatedAt  time.Time `bun:"created_at,notnull"`
+}
+
+// VoiceBinding is what one provider made of a voice's samples.
+type VoiceBinding struct {
+	bun.BaseModel `bun:"table:voice_bindings,alias:vb"`
+
+	ID       string `bun:"id,pk"`
+	VoiceID  string `bun:"voice_id,notnull"`
+	Provider string `bun:"provider,notnull"`
+	// ExternalID is what the provider calls this voice, and what a session asks it for.
+	ExternalID string `bun:"external_id,notnull"`
+	// State is one of VoicePending, VoiceReady or VoiceFailed.
+	State     string    `bun:"state,notnull"`
+	Error     string    `bun:"error,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"`
 }
 
 // Which way a call went.

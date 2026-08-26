@@ -15,6 +15,16 @@ func TestSTTSuite(t *testing.T) {
 	suite.Run(t, new(STTSuite))
 }
 
+func (s *STTSuite) TestKeytermsLoseTheirBlanksAndSurroundingSpace() {
+	s.Equal([]string{"Vision Agents", "Stream"},
+		CleanKeyterms([]string{"  Vision Agents ", "", "Stream", "   "}))
+}
+
+func (s *STTSuite) TestAListOfNothingButBlanksIsNoKeytermsAtAll() {
+	s.Nil(CleanKeyterms([]string{"", "  "}))
+	s.Nil(CleanKeyterms(nil))
+}
+
 func (s *STTSuite) TestOnlyFinalModeIsFinal() {
 	s.True(Transcript{Mode: ModeFinal}.Final())
 	s.False(Transcript{Mode: ModeReplacement}.Final())

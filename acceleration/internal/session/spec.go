@@ -2,12 +2,14 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
 // Spec is a conversation somebody outside this process asked for.
@@ -55,8 +57,11 @@ type Spec struct {
 	SubagentTarget string
 	Voice          string
 	LanguageHints  []string
-	MaxTokens      int
-	Tasks          int
+	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
+	// A provider that cannot be told about vocabulary ignores them.
+	Keyterms  []string
+	MaxTokens int
+	Tasks     int
 
 	// Skills are what the voice model may hand to the subagent, spelled out. Nil means
 	// SkillNames decides, and both being empty means the built-in set, which is only
@@ -136,6 +141,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Instructions:       config.Instructions,
 		Greeting:           config.Greeting,
 		SkillNames:         config.Skills,
+		Keyterms:           config.Keyterms,
 		KnowledgeNamespace: config.KnowledgeNamespace,
 		Tags:               routing.Tags(config.Tags),
 	}
@@ -183,6 +189,12 @@ func (s *Spec) Normalize() error {
 		if s.TTSTarget == "" {
 			s.TTSTarget = defaultTTSTarget
 		}
+	}
+
+	s.Keyterms = stt.CleanKeyterms(s.Keyterms)
+	if len(s.Keyterms) > stt.MaxKeyterms {
+		return fmt.Errorf("session: at most %d keyterms may be named, and this asks for %d",
+			stt.MaxKeyterms, len(s.Keyterms))
 	}
 
 	if err := s.Tags.Validate(); err != nil {

@@ -596,3 +596,7 @@ func newID() string {
 	_, _ = rand.Read(raw)
 	return hex.EncodeToString(raw)
 }
+
+// NewID is newID for callers that have to name something before the row holding it exists,
+// as an uploaded file must be given an object key before it can be recorded.
+func NewID() string { return newID() }

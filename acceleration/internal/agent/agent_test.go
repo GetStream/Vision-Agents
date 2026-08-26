@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -218,6 +219,10 @@ func (s *stubLLM) interrupted() int {
 type stubTTS struct {
 	emitter   *tts.Emitter
 	streaming bool
+	// performs and prompt are what a voice that acts stage directions reports, so a test
+	// can have the agent treat the stub as one.
+	performs bool
+	prompt   string
 
 	mu         sync.Mutex
 	said       []tts.Request
@@ -275,6 +280,8 @@ func (s *stubTTS) Close() error {
 func (s *stubTTS) Provider() string { return "stub" }
 func (s *stubTTS) Model() string    { return "stub-tts" }
 func (s *stubTTS) Streaming() bool  { return s.streaming }
+func (s *stubTTS) Performs() bool   { return s.performs }
+func (s *stubTTS) Prompt() string   { return s.prompt }
 
 func (s *stubTTS) spoken() []tts.Request {
 	s.mu.Lock()
@@ -402,6 +409,9 @@ type AgentSuite struct {
 	// base, and namespace is which one it reads.
 	knows     *stubKnowledge
 	namespace string
+	// performing is what a voice that acts stage directions asks to have said about it.
+	// It is set before joining, because the stub voice is built there.
+	performing string
 	// records is where turns are written, when a test gives the agent a database.
 	records *store.Store
 	// agentID names the agent, so a test writing turns can find its own rows.
@@ -426,6 +436,7 @@ func (s *AgentSuite) SetupTest() {
 	s.tools = harness.Tools{}
 	s.runner = nil
 	s.duplex = DuplexOptions{}
+	s.performing = ""
 	if s.agentID == "" {
 		s.agentID = "agent-1"
 	}
@@ -513,6 +524,10 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	s.model = newStubLLM()
 	s.flow = newStubLLM()
 	s.voice = newStubTTS(streamingVoice)
+	if s.performing != "" {
+		s.voice.performs = true
+		s.voice.prompt = s.performing
+	}
 	s.model.reply = []string{"Hello there. ", "How are you?"}
 	s.flow.reply = []string{`{"disposition":"respond","floor":"stop"}`}
 
@@ -1031,6 +1046,94 @@ func (s *AgentSuite) TestWhatIsRememberedIsToldToTheModel() {
 	instructions := s.model.requests()[0].Instructions
 	s.Contains(instructions, "Prefers to be called Al")
 	s.Contains(instructions, "be brief")
+}
+
+func (s *AgentSuite) TestAVoiceThatActsDirectionsSaysSoInTheInstructions() {
+	s.performing = "You may write stage directions in square brackets."
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	instructions := s.model.requests()[0].Instructions
+	s.Contains(instructions, "be brief", "the agent's own instructions come first")
+	s.Contains(instructions, "square brackets", "and how to write for the voice after them")
+}
+
+func (s *AgentSuite) TestAVoiceThatCannotActDirectionsAsksForNone() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	s.Equal("be brief", s.model.requests()[0].Instructions,
+		"a voice that would read a direction out must not be offered one")
+}
+
+func (s *AgentSuite) TestADirectionIsSpokenButNeverRead() {
+	// The direction is for the voice to act. A caller reading the transcript would see
+	// stage notes nobody said, and the model would read its own back on the next turn.
+	s.performing = "You may write stage directions in square brackets."
+	s.join(true)
+	s.model.reply = []string{"[laughs] That ", "is a good one."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "tell me a joke")
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+
+	s.Contains(said(s.voice.spoken()), "[laughs]", "the voice is given the direction to act")
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal("That is a good one.", responded.Text)
+
+	history := s.agent.History()
+	s.Require().Len(history, 2)
+	s.Equal("That is a good one.", history[1].Content)
+}
+
+func (s *AgentSuite) TestADirectionIsTakenOutOfWhatAVoiceCannotAct() {
+	// Left in, the caller would hear the word "laughs" read out mid-sentence.
+	s.join(true)
+	s.model.reply = []string{"[laughs] That ", "is a good one."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "tell me a joke")
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+
+	s.NotContains(said(s.voice.spoken()), "laughs")
+	s.Equal("That is a good one.", said(s.voice.spoken()))
+}
+
+func (s *AgentSuite) TestADirectionSplitAcrossTwoDeltasIsStillTakenOut() {
+	// A model writes a few characters at a time, so a direction arrives in pieces. Taken
+	// out one delta at a time, half of it would reach the caller.
+	s.join(true)
+	s.model.reply = []string{"Well ", "[sig", "hs] fine."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "how are you")
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal("Well fine.", responded.Text)
+}
+
+// said is every request's text joined, which is the reply as the voice was given it.
+func said(requests []tts.Request) string {
+	var spoken strings.Builder
+	for _, request := range requests {
+		spoken.WriteString(request.Text)
+	}
+	return spoken.String()
 }
 
 func (s *AgentSuite) TestMemoriesBelongToTheCustomerAndTheApp() {

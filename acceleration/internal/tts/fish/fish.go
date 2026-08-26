@@ -250,6 +250,12 @@ func (t *TTS) Model() string { return t.options.Model }
 // must send complete sentences rather than deltas.
 func (t *TTS) Streaming() bool { return false }
 
+// Performs reports false: Fish reads a bracketed direction out as words.
+func (t *TTS) Performs() bool { return false }
+
+// Prompt reports nothing: there is no direction this voice would act.
+func (t *TTS) Prompt() string { return "" }
+
 // SampleRate is the rate the audio comes back at.
 func (t *TTS) SampleRate() int { return t.options.SampleRate }
 

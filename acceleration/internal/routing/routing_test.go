@@ -85,6 +85,42 @@ func (s *RoutingSuite) newRouterWith(factory Factory[*stubProvider]) *Router[*st
 	return router
 }
 
+// prepared is the provider ids one customer's own voice "founder" has been given. Any
+// other name is somebody's library voice and comes back untouched.
+type prepared map[string]string
+
+func (p prepared) ResolveVoice(_ context.Context, _, provider, voice string) (string, error) {
+	if voice != "founder" {
+		return voice, nil
+	}
+	external, ok := p[provider]
+	if !ok {
+		return "", ErrVoiceNotPrepared
+	}
+	return external, nil
+}
+
+// newRouterResolving returns a router that knows about a customer's own voices.
+func (s *RoutingSuite) newRouterResolving(
+	voices prepared, factory Factory[*stubProvider],
+) *Router[*stubProvider] {
+	registry := NewRegistry[*stubProvider]()
+	for _, provider := range []string{"quick", "lush", "batchy"} {
+		registry.Register(provider, factory)
+	}
+
+	router, err := New(Options[*stubProvider]{
+		Modality: TTS,
+		Config:   s.config(),
+		Registry: registry,
+		Voices:   voices,
+		Logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return router
+}
+
 // names reduces candidates to their registry names for easy assertions.
 func names(candidates []Candidate) []string {
 	result := make([]string, 0, len(candidates))
@@ -385,6 +421,47 @@ func (s *RoutingSuite) TestSelectClosesAProviderThatFailedToStart() {
 	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Target: "quick/en"})
 	s.Require().Error(err)
 	s.True(built.closed, "a provider that failed to start must not leak its connection")
+}
+
+func (s *RoutingSuite) TestACustomVoiceBecomesTheIdTheChosenProviderKnowsItBy() {
+	var spoke Spec
+	router := s.newRouterResolving(prepared{"lush": "lush-88"}, func(spec Spec) (*stubProvider, error) {
+		spoke = spec
+		return &stubProvider{model: spec.Model}, nil
+	})
+
+	_, config, err := router.Select(s.ctx,
+		Request{CustomerID: "acme", Target: "en-high-accuracy", Voice: "founder"})
+	s.Require().NoError(err)
+
+	s.Equal("lush", config.Provider,
+		"the providers that were never given this voice cannot speak in it")
+	s.Equal("lush-88", spoke.Voice, "the provider is asked for the voice by its own id")
+}
+
+func (s *RoutingSuite) TestAProvidersOwnLibraryVoicePassesStraightThrough() {
+	var spoke Spec
+	router := s.newRouterResolving(prepared{}, func(spec Spec) (*stubProvider, error) {
+		spoke = spec
+		return &stubProvider{model: spec.Model}, nil
+	})
+
+	_, config, err := router.Select(s.ctx,
+		Request{CustomerID: "acme", Target: "en-high-accuracy", Voice: "nova"})
+	s.Require().NoError(err)
+
+	s.Equal("quick", config.Provider, "a library voice rules nobody out")
+	s.Equal("nova", spoke.Voice)
+}
+
+func (s *RoutingSuite) TestAVoiceNoProviderWasGivenLeavesNobodyToSayIt() {
+	router := s.newRouterResolving(prepared{"nobody": "unused"}, func(spec Spec) (*stubProvider, error) {
+		return &stubProvider{model: spec.Model}, nil
+	})
+
+	_, _, err := router.Select(s.ctx,
+		Request{CustomerID: "acme", Target: "en-high-accuracy", Voice: "founder"})
+	s.ErrorContains(err, "every candidate")
 }
 
 func (s *RoutingSuite) TestProvidersListsEveryConfiguredModelInOrder() {

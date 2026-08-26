@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,10 +16,13 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
@@ -80,13 +84,36 @@ func (s *APIIntegrationSuite) SetupSuite() {
 			routing.STT: speech,
 			routing.TTS: voice,
 		},
-		Store: pgStore,
-		Live:  liveClient,
+		Store:  pgStore,
+		Live:   liveClient,
+		Voices: s.voiceService(pgStore),
 	})
 	s.Require().NoError(err)
 	s.server = httptest.NewServer(server.Handler())
 
 	s.base = time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+}
+
+// voiceService wires the voice paths against a directory and a provider that always takes
+// the recordings, so the HTTP surface can be exercised without cloning anything for real.
+func (s *APIIntegrationSuite) voiceService(pgStore *store.Store) *voices.Service {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"voice_id":"el-cloned"}`))
+	}))
+	s.T().Cleanup(provider.Close)
+
+	bucket, err := blob.Open(s.ctx, "file://"+s.T().TempDir())
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.Require().NoError(bucket.Close()) })
+
+	cloner, err := voices.NewElevenLabs(voices.ElevenLabsOptions{APIKey: "secret", BaseURL: provider.URL})
+	s.Require().NoError(err)
+	cloners := voices.NewRegistry()
+	cloners.Register("elevenlabs", cloner)
+
+	service, err := voices.NewService(voices.Options{Store: pgStore, Bucket: bucket, Cloners: cloners})
+	s.Require().NoError(err)
+	return service
 }
 
 func (s *APIIntegrationSuite) TearDownSuite() {
@@ -349,6 +376,7 @@ func (s *APIIntegrationSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() 
 	response, payload := s.do(http.MethodPost, "/v1/agents/configs", `{
 		"name":"support","llm":"llm-fast","tts":"en-low-latency","voice":"aurora",
 		"subagent":"llm-best","instructions":"be brief","skills":["think","refund"],
+		"keyterms":["Vision Agents","Stream"],
 		"knowledge_namespace":"handbook","tags":{"project":"support"}
 	}`)
 	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
@@ -369,10 +397,25 @@ func (s *APIIntegrationSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() 
 	s.Equal("aurora", *read.Voice)
 	s.Require().NotNil(read.Skills)
 	s.Equal([]string{"think", "refund"}, *read.Skills)
+	s.Require().NotNil(read.Keyterms)
+	s.Equal([]string{"Vision Agents", "Stream"}, *read.Keyterms)
 	s.Require().NotNil(read.KnowledgeNamespace)
 	s.Equal("handbook", *read.KnowledgeNamespace)
 	s.Require().NotNil(read.Tags)
 	s.Equal("support", (*read.Tags)["project"])
+}
+
+func (s *APIIntegrationSuite) TestAConfigNamingMoreKeytermsThanAnyProviderTakesIsRefused() {
+	terms := make([]string, stt.MaxKeyterms+1)
+	for i := range terms {
+		terms[i] = fmt.Sprintf("%q", fmt.Sprintf("term-%d", i))
+	}
+	body := fmt.Sprintf(`{"name":"support","keyterms":[%s]}`, strings.Join(terms, ","))
+
+	response, payload := s.do(http.MethodPost, "/v1/agents/configs", body)
+
+	s.Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+	s.Contains(string(payload), "keyterms")
 }
 
 func (s *APIIntegrationSuite) TestUpdatingAConfigReplacesWhatItWas() {
@@ -576,10 +619,10 @@ func (s *APIIntegrationSuite) TestWhatBecameOfAContactIsShownAgainstIt() {
 	var contacts []Contact
 	s.Require().NoError(json.Unmarshal(payload, &contacts))
 	s.Require().Len(contacts, 2)
-	s.Equal(Done, contacts[0].State)
+	s.Equal(ContactStateDone, contacts[0].State)
 	s.Require().NotNil(contacts[0].CallId)
 	s.Equal("session-1", *contacts[0].CallId)
-	s.Equal(Failed, contacts[1].State)
+	s.Equal(ContactStateFailed, contacts[1].State)
 	s.Require().NotNil(contacts[1].Error)
 	s.Contains(*contacts[1].Error, "not in service")
 }
@@ -712,4 +755,81 @@ func (s *APIIntegrationSuite) TestVoiceProvidersAreRankedSeparately() {
 			s.Zero(provider.Health.Errors, "health is keyed by modality")
 		}
 	}
+}
+
+func (s *APIIntegrationSuite) TestAVoiceIsRecordedPreparedAndReadBack() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/voices",
+		`{"name":"founder","description":"the one from the ad"}`)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	var created Voice
+	s.Require().NoError(json.Unmarshal(payload, &created))
+	s.Require().NotEmpty(created.Id)
+	s.Equal("founder", created.Name)
+	s.Empty(*created.Samples, "a voice starts with nothing recorded")
+
+	audio := base64.StdEncoding.EncodeToString([]byte("pretend this is speech"))
+	response, payload = s.do(http.MethodPost, "/v1/agents/voices/"+created.Id+"/samples",
+		fmt.Sprintf(`{"audio":%q,"filename":"clip.wav","content_type":"audio/wav","transcript":"hello"}`, audio))
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	var recorded Voice
+	s.Require().NoError(json.Unmarshal(payload, &recorded))
+	s.Require().Len(*recorded.Samples, 1)
+	s.EqualValues(22, *(*recorded.Samples)[0].Bytes)
+
+	response, payload = s.do(http.MethodPost, "/v1/agents/voices/"+created.Id+"/prepare", `{}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var prepared Voice
+	s.Require().NoError(json.Unmarshal(payload, &prepared))
+	s.Require().Len(*prepared.Bindings, 1)
+	s.Equal(VoiceBindingStateReady, (*prepared.Bindings)[0].State)
+	s.Equal("el-cloned", *(*prepared.Bindings)[0].ExternalId,
+		"a session names the voice, and the provider is asked for its own id")
+}
+
+func (s *APIIntegrationSuite) TestAVoiceWithNothingRecordedCannotBePrepared() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/voices", `{"name":"founder"}`)
+	var created Voice
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	response, payload := s.do(http.MethodPost, "/v1/agents/voices/"+created.Id+"/prepare", `{}`)
+
+	s.Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+	s.Contains(string(payload), "add a recording")
+}
+
+func (s *APIIntegrationSuite) TestAVoiceBelongingToSomebodyElseIsNotThere() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/voices", `{"name":"founder"}`)
+	var created Voice
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	s.customerID = "somebody-else"
+	response, _ := s.do(http.MethodGet, "/v1/agents/voices/"+created.Id, "")
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+func (s *APIIntegrationSuite) TestAVoiceNeedsAName() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/voices", `{"name":"  "}`)
+
+	s.Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+	s.Contains(string(payload), "needs a name")
+}
+
+func (s *APIIntegrationSuite) TestADeletedVoiceStopsBeingListed() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/voices", `{"name":"founder"}`)
+	var created Voice
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	response, _ := s.do(http.MethodDelete, "/v1/agents/voices/"+created.Id, "")
+	s.Require().Equal(http.StatusNoContent, response.StatusCode)
+
+	response, payload = s.do(http.MethodGet, "/v1/agents/voices", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+
+	var listed []Voice
+	s.Require().NoError(json.Unmarshal(payload, &listed))
+	s.Empty(listed)
 }

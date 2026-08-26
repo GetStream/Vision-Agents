@@ -75,6 +75,12 @@ func (s *Session) Model() string { return s.config.Model }
 // Streaming reports whether the provider accepts partial text deltas.
 func (s *Session) Streaming() bool { return s.provider.Streaming() }
 
+// Prompt is what the model writing this voice's lines should be told about it.
+func (s *Session) Prompt() string { return s.provider.Prompt() }
+
+// Performs reports whether the voice acts bracketed directions rather than reading them.
+func (s *Session) Performs() bool { return s.provider.Performs() }
+
 // Price is what this session's provider charges, so a caller can report a cost without
 // reaching for the router's config.
 func (s *Session) Price() routing.Price { return s.config.Price }

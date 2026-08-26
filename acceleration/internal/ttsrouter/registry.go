@@ -3,6 +3,7 @@ package ttsrouter
 import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/breeze"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
@@ -18,12 +19,18 @@ func DefaultRegistry() *Registry {
 	registry := NewRegistry()
 
 	registry.Register(elevenlabs.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
-		return elevenlabs.New(elevenlabs.Options{
+		options := elevenlabs.Options{
 			Model:    spec.Model,
 			VoiceID:  spec.Voice,
 			Language: firstLanguage(spec.LanguageHints),
 			Logger:   spec.Logger,
-		})
+		}
+		// The v3 models are served on a different socket, so which endpoint to open is
+		// decided by the model the router picked rather than by a second provider name.
+		if elevenlabs.Performs(spec.Model) {
+			return elevenlabs.NewDialogue(options)
+		}
+		return elevenlabs.New(options)
 	})
 
 	registry.Register(cartesia.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
@@ -41,6 +48,10 @@ func DefaultRegistry() *Registry {
 
 	registry.Register(s2pro.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
 		return s2pro.New(s2pro.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
+	})
+
+	registry.Register(breeze.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return breeze.New(breeze.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
 	})
 
 	return registry

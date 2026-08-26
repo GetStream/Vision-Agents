@@ -618,6 +618,176 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/voices:
+    get:
+      operationId: listVoices
+      summary: The voices the calling customer has brought with them
+      responses:
+        "200":
+          description: The customer's voices, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Voice"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createVoice
+      summary: Name a voice of the customer's own
+      description: >
+        A voice starts empty. Recordings are added to it one at a time, and then it is
+        prepared with the text-to-speech providers that should be able to speak in it. An
+        agent config names this voice rather than any provider's id for it, so the router
+        can still fail over between providers mid-call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceRequest"
+      responses:
+        "201":
+          description: The voice was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Voice"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/agents/voices/{id}:
+    get:
+      operationId: getVoice
+      summary: One voice, with its recordings and what each provider made of them
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The voice
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Voice"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateVoice
+      summary: Rename a voice
+      description: >
+        Only what the voice is called changes. The recordings and the provider bindings are
+        what it sounds like, and renaming it does not make it sound different.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceRequest"
+      responses:
+        "200":
+          description: The voice as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Voice"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteVoice
+      summary: Delete a voice
+      description: >
+        The voice is taken off every provider it was prepared with, so a deleted voice
+        stops being billed for as well as stops being usable. Calls that spoke in it keep
+        naming it.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "204":
+          description: The voice is gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/voices/{id}/samples:
+    post:
+      operationId: addVoiceSample
+      summary: Add a recording to a voice
+      description: >
+        The audio is stored in the deployment's object bucket and the voice keeps a
+        reference to it, so recordings can be re-sent to a provider that is added later
+        without asking the customer for them again. Adding a recording does not re-prepare
+        the voice.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceSampleRequest"
+      responses:
+        "201":
+          description: The voice with the recording added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Voice"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/voices/{id}/prepare:
+    post:
+      operationId: prepareVoice
+      summary: Teach the text-to-speech providers this voice
+      description: >
+        Each provider is sent the recordings and hands back an id of its own, which is
+        remembered so a session can ask for this voice by name. Providers are prepared
+        independently: one refusing the recordings leaves the others usable, and the
+        binding says why it refused.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrepareVoiceRequest"
+      responses:
+        "200":
+          description: The voice with a binding per provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Voice"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/skills:
     get:
       operationId: listSkills
@@ -1467,6 +1637,14 @@ components:
           description: >
             Skill names, either the customer's own or one of the built-in think, recall
             and explain. Omit for the built-in set.
+        keyterms:
+          type: array
+          items:
+            type: string
+          description: >
+            Business-specific words the transcriber would otherwise get wrong, such as
+            product or company names. Up to 100 terms, and providers that cannot be told
+            about vocabulary ignore them.
         knowledge_namespace:
           type: string
           description: >
@@ -1504,12 +1682,124 @@ components:
           type: array
           items:
             type: string
+        keyterms:
+          type: array
+          items:
+            type: string
         knowledge_namespace:
           type: string
         tags:
           type: object
           additionalProperties:
             type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    VoiceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: >
+            What an agent config names the voice by, which is unique among the customer's
+            own voices.
+        description:
+          type: string
+          description: A note for whoever reads the voice back, and for the provider's dashboard.
+
+    VoiceSampleRequest:
+      type: object
+      required: [audio]
+      properties:
+        audio:
+          type: string
+          format: byte
+          description: The recording, base64 encoded. A minute of clean speech is plenty.
+        filename:
+          type: string
+          description: >
+            What to call the file upstream. The extension is how a provider knows what it
+            was given, so send one.
+        content_type:
+          type: string
+        transcript:
+          type: string
+          description: >
+            What is said in the recording. Optional, and the providers that use one clone
+            more faithfully with it.
+
+    PrepareVoiceRequest:
+      type: object
+      properties:
+        providers:
+          type: array
+          items:
+            type: string
+          description: >
+            Which providers to teach the voice to. Empty means every provider this
+            deployment can clone with.
+
+    VoiceSample:
+      type: object
+      required: [id, created_at]
+      properties:
+        id:
+          type: string
+        filename:
+          type: string
+        content_type:
+          type: string
+        bytes:
+          type: integer
+          format: int64
+        transcript:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    VoiceBinding:
+      type: object
+      required: [provider, state]
+      properties:
+        provider:
+          type: string
+        external_id:
+          type: string
+          description: What this provider calls the voice.
+        state:
+          type: string
+          enum: [pending, ready, failed]
+        error:
+          type: string
+          description: Why the provider would not take the recordings, when it would not.
+        updated_at:
+          type: string
+          format: date-time
+
+    Voice:
+      type: object
+      required: [id, name, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        samples:
+          type: array
+          items:
+            $ref: "#/components/schemas/VoiceSample"
+        bindings:
+          type: array
+          items:
+            $ref: "#/components/schemas/VoiceBinding"
         created_at:
           type: string
           format: date-time
@@ -1853,6 +2143,13 @@ components:
           items:
             type: string
           description: Language hints, which narrow the candidates in every modality.
+        keyterms:
+          type: array
+          items:
+            type: string
+          description: >
+            Business-specific words the transcriber would otherwise get wrong. Up to 100
+            terms, and providers that cannot be told about vocabulary ignore them.
         max_tokens:
           type: integer
         tasks:

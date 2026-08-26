@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
 // noConfigs is what the config and skill paths say on a deployment without a database.
@@ -45,8 +47,8 @@ func (s *Server) CreateAgentConfig(ctx context.Context, request CreateAgentConfi
 	if request.Body == nil {
 		return CreateAgentConfig400JSONResponse{badRequest("a request body is required")}, nil
 	}
-	if strings.TrimSpace(request.Body.Name) == "" {
-		return CreateAgentConfig400JSONResponse{badRequest("an agent config needs a name")}, nil
+	if message, ok := configComplaint(*request.Body); !ok {
+		return CreateAgentConfig400JSONResponse{badRequest(message)}, nil
 	}
 
 	config := storedConfig(*request.Body, customerID)
@@ -85,8 +87,8 @@ func (s *Server) UpdateAgentConfig(ctx context.Context, request UpdateAgentConfi
 	if request.Body == nil {
 		return UpdateAgentConfig400JSONResponse{badRequest("a request body is required")}, nil
 	}
-	if strings.TrimSpace(request.Body.Name) == "" {
-		return UpdateAgentConfig400JSONResponse{badRequest("an agent config needs a name")}, nil
+	if message, ok := configComplaint(*request.Body); !ok {
+		return UpdateAgentConfig400JSONResponse{badRequest(message)}, nil
 	}
 
 	existing, err := s.store.AgentConfig(ctx, customerID, request.Id)
@@ -234,6 +236,27 @@ const (
 	unknownSkill  = "no such skill"
 )
 
+// configComplaint reports what is wrong with an agent config, if anything. Keyterms are
+// checked here rather than left to the transcriber, because a list nobody can serve is
+// worth hearing about while the config is being written and not once a call is running.
+func configComplaint(request AgentConfigRequest) (string, bool) {
+	if strings.TrimSpace(request.Name) == "" {
+		return "an agent config needs a name", false
+	}
+	if len(keytermsOf(request.Keyterms)) > stt.MaxKeyterms {
+		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false
+	}
+	return "", true
+}
+
+// keytermsOf reads the terms a caller sent, which are optional and may be blank.
+func keytermsOf(list *[]string) []string {
+	if list == nil {
+		return nil
+	}
+	return stt.CleanKeyterms(*list)
+}
+
 // skillComplaint reports what is wrong with a skill, if anything. A skill without a
 // description is one the fast model would never know when to reach for.
 func skillComplaint(request SkillRequest) (string, bool) {
@@ -267,6 +290,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.Skills != nil {
 		config.Skills = *request.Skills
 	}
+	config.Keyterms = keytermsOf(request.Keyterms)
 	if request.Tags != nil {
 		config.Tags = *request.Tags
 	}
@@ -304,6 +328,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills
+	}
+	if len(config.Keyterms) > 0 {
+		keyterms := config.Keyterms
+		rendered.Keyterms = &keyterms
 	}
 	if len(config.Tags) > 0 {
 		tags := config.Tags

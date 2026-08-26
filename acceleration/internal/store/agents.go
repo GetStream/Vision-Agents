@@ -47,7 +47,7 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 
 	result, err := s.db.NewUpdate().Model(config).
 		Column("name", "stt", "tts", "voice", "llm", "subagent", "instructions",
-			"greeting", "skills", "knowledge_namespace", "tags", "updated_at").
+			"greeting", "skills", "keyterms", "knowledge_namespace", "tags", "updated_at").
 		Where("id = ?", config.ID).
 		Where("customer_id = ?", config.CustomerID).
 		Where("deleted_at IS NULL").
@@ -274,6 +274,9 @@ func (s *Store) SkillsNamed(ctx context.Context, customerID string, names []stri
 func normalizeConfig(config *AgentConfig) {
 	if config.Skills == nil {
 		config.Skills = []string{}
+	}
+	if config.Keyterms == nil {
+		config.Keyterms = []string{}
 	}
 	if config.Tags == nil {
 		config.Tags = map[string]string{}

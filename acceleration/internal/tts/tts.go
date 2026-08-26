@@ -49,4 +49,12 @@ type TTS interface {
 	// Streaming reports whether the provider accepts partial text deltas. When false, a
 	// caller must buffer a sentence and send it as one final request.
 	Streaming() bool
+
+	// Prompt is what the model writing this voice's lines should be told about it, or
+	// empty when the voice needs nothing said. It is how a provider that can act a
+	// direction asks to be given one, without the agent knowing which provider it has.
+	Prompt() string
+	// Performs reports whether the voice acts bracketed directions such as [laughs]
+	// rather than reading them out. A voice that does not gets them taken out first.
+	Performs() bool
 }

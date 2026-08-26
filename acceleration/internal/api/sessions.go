@@ -249,6 +249,9 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	if request.Languages != nil {
 		spec.LanguageHints = *request.Languages
 	}
+	if request.Keyterms != nil {
+		spec.Keyterms = *request.Keyterms
+	}
 	// Cost labels are merged rather than replaced: a config labels which agent the spend
 	// belongs to and a call labels which conversation, and both are worth billing on.
 	if request.Tags != nil {

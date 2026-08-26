@@ -42,6 +42,9 @@ type Request struct {
 	Target string
 	// LanguageHints narrow multilingual models.
 	LanguageHints []string
+	// Keyterms are the business-specific words the transcriber should expect. A provider
+	// that cannot be told about vocabulary ignores them.
+	Keyterms []string
 }
 
 // Router selects a speech-to-text provider and opens transcription sessions.
@@ -75,6 +78,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		Tags:          request.Tags,
 		Target:        request.Target,
 		LanguageHints: request.LanguageHints,
+		Keyterms:      request.Keyterms,
 	}
 	provider, config, err := r.Select(ctx, core)
 	if err != nil {

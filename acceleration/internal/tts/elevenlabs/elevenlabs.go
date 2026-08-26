@@ -53,6 +53,23 @@ var supportedSampleRates = []int{8_000, 16_000, 22_050, 24_000, 32_000, 44_100, 
 // upstream, so it is only sent when it applies.
 var multilingualModels = []string{"eleven_flash_v2_5", "eleven_turbo_v2_5", "eleven_multilingual_v2"}
 
+// dialogueModelPrefix marks the v3 family, which is the only one that acts audio tags.
+// Everything before it reads a bracket out as the word inside it.
+const dialogueModelPrefix = "eleven_v3"
+
+// Performs reports whether a model acts audio tags rather than reading them out.
+func Performs(model string) bool { return strings.HasPrefix(model, dialogueModelPrefix) }
+
+// AudioTagPrompt is what a model writing for a v3 voice is told about directing it. The
+// tags named are examples rather than a closed set: the voice takes any bracketed
+// direction, so listing a few is enough to show the shape of one.
+const AudioTagPrompt = "Your words are spoken by a voice that acts stage directions. " +
+	"Write a direction in square brackets just before the words it applies to, and it " +
+	"will be performed rather than read out: [laughs], [sighs], [whispers], [excited], " +
+	"[sarcastic], [short pause]. Any direction works, not only these. Use them where a " +
+	"person would naturally have done that, and no more than once or twice a turn: a " +
+	"reply full of directions sounds like a performance rather than a conversation."
+
 // Options configures the provider. APIKey falls back to ELEVENLABS_API_KEY and VoiceID to
 // ELEVENLABS_VOICE_ID.
 type Options struct {
@@ -133,13 +150,15 @@ type TTS struct {
 	shutdown bool
 }
 
-// New validates the options and returns an unstarted provider.
-func New(options Options) (*TTS, error) {
+// normalize fills in the defaults and reports what cannot be defaulted. Both endpoints
+// take the same options, so they settle them the same way and differ only in the model
+// they fall back to.
+func normalize(options Options, fallbackModel string) (Options, *slog.Logger, error) {
 	if options.APIKey == "" {
 		options.APIKey = os.Getenv("ELEVENLABS_API_KEY")
 	}
 	if options.APIKey == "" {
-		return nil, errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)")
+		return options, nil, errors.New("elevenlabs: api key is required (set ELEVENLABS_API_KEY)")
 	}
 	if options.VoiceID == "" {
 		options.VoiceID = os.Getenv("ELEVENLABS_VOICE_ID")
@@ -148,13 +167,13 @@ func New(options Options) (*TTS, error) {
 		options.VoiceID = DefaultVoiceID
 	}
 	if options.Model == "" {
-		options.Model = DefaultModel
+		options.Model = fallbackModel
 	}
 	if options.SampleRate == 0 {
 		options.SampleRate = DefaultSampleRate
 	}
 	if !slices.Contains(supportedSampleRates, options.SampleRate) {
-		return nil, fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
+		return options, nil, fmt.Errorf("elevenlabs: sample rate %d is not one of %v",
 			options.SampleRate, supportedSampleRates)
 	}
 	if options.BaseURL == "" {
@@ -169,6 +188,21 @@ func New(options Options) (*TTS, error) {
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
+	}
+	return options, logger, nil
+}
+
+// New validates the options and returns an unstarted provider.
+func New(options Options) (*TTS, error) {
+	options, logger, err := normalize(options, DefaultModel)
+	if err != nil {
+		return nil, err
+	}
+	// The v3 family is not served here at all, so a caller that asked for one would get a
+	// connection the server refuses rather than a voice.
+	if Performs(options.Model) {
+		return nil, fmt.Errorf(
+			"elevenlabs: %s is a dialogue model, open it with NewDialogue", options.Model)
 	}
 
 	return &TTS{
@@ -326,6 +360,14 @@ func (t *TTS) Model() string { return t.options.Model }
 
 // Streaming reports true: the model generates from partial text.
 func (t *TTS) Streaming() bool { return true }
+
+// Performs reports false: only the v3 family acts audio tags, and those are served by
+// Dialogue rather than here.
+func (t *TTS) Performs() bool { return false }
+
+// Prompt reports nothing: asking this model for a direction would have it read the words
+// inside the brackets out.
+func (t *TTS) Prompt() string { return "" }
 
 // SampleRate is the rate the audio comes back at.
 func (t *TTS) SampleRate() int { return t.options.SampleRate }

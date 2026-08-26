@@ -27,6 +27,55 @@ stt:
       price:
         per_audio_hour: 0.276
 
+    # Gemini 3.5 Transcribe over the Live API. It detects the language itself and claims
+    # 85+ of them; the list here is the ones this deployment routes on. Billed per token
+    # rather than per hour of audio: $3.50/1M audio in at 25 tokens a second, plus
+    # $21.00/1M text out, which Google puts at about $0.009 an audio minute.
+    - provider: gemini
+      model: gemini-3.5-transcribe-live
+      languages:
+        [
+          ar,
+          bg,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          et,
+          fi,
+          fr,
+          he,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ko,
+          lt,
+          lv,
+          nl,
+          no,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sl,
+          sv,
+          th,
+          tr,
+          uk,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      price:
+        per_audio_hour: 0.54
+
     # 25 languages; see nvidia/parakeet-tdt-0.6b-v3. Self-hosted on an L4, so the price is
     # the GPU rather than a per-hour-of-audio rate. Measured throughput on one replica.
     - provider: parakeet
@@ -244,6 +293,52 @@ tts:
       price:
         per_million_chars: 110.0
 
+    # v3 conversational is the only model that acts audio tags: written a direction such
+    # as [laughs], it performs it rather than reading the word out. It is served on the
+    # text-to-dialogue socket rather than the one above, and it is slower to first audio,
+    # which is why it sits below flash rather than replacing it.
+    - provider: elevenlabs
+      model: eleven_v3_conversational
+      languages:
+        [
+          ar,
+          bg,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fi,
+          fil,
+          fr,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ko,
+          ms,
+          nl,
+          no,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          ta,
+          tr,
+          uk,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: high-quality
+      price:
+        per_million_chars: 110.0
+
     # Fish's hosted S2 Pro. 80+ languages; the common ones are listed.
     - provider: fish
       model: s2-pro
@@ -305,6 +400,22 @@ tts:
       tier: low-latency
       price:
         per_million_chars: 9.0
+
+    # Breeze TTS 2 on our own Baseten deployment. Two languages only, and it performs a
+    # vocal event the way the ElevenLabs v3 socket does, so it sits in the high-quality
+    # tier where being expressive is worth waiting a little for.
+    #
+    # The price is the GPU: Breeze report a real-time factor of 0.32 against S2 Pro's
+    # 0.195 on comparable hardware, so this is that model's rate scaled by the extra GPU
+    # time. It assumes the card stays busy, which the deployment's single-request engine
+    # makes optimistic — see deploy/breeze-tts-2/README.md.
+    - provider: breeze
+      model: breeze-tts-2
+      languages: [en, zh]
+      realtime: true
+      tier: high-quality
+      price:
+        per_million_chars: 14.8
 
   aliases:
     en-low-latency:

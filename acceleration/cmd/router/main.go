@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -28,6 +29,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
@@ -104,6 +109,22 @@ func run(logger *slog.Logger) error {
 		logger.Warn("no redis configured, routing will not use live health", "env", redisEnvVar)
 	}
 
+	// Voices a customer brought with them live in an object bucket and a few tables. The
+	// resolver only reads the tables, so a deployment with a database but no bucket can
+	// still speak in voices another one prepared.
+	var resolver routing.VoiceResolver
+	if pgStore != nil {
+		resolver = voices.NewResolver(pgStore)
+	}
+
+	bucket, err := blob.Open(ctx, os.Getenv(blob.EnvURL))
+	if err != nil {
+		return err
+	}
+	if bucket != nil {
+		defer bucket.Close()
+	}
+
 	// A modality the config says nothing about is simply not served, and its paths 404.
 	routers := map[routing.Modality]routing.Inspector{}
 	streams := &api.Streams{}
@@ -130,6 +151,7 @@ func run(logger *slog.Logger) error {
 			Registry: ttsrouter.DefaultRegistry(),
 			Store:    pgStore,
 			Live:     liveClient,
+			Voices:   resolver,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -207,8 +229,17 @@ func run(logger *slog.Logger) error {
 		transcripts = reader
 	}
 
+	// Bringing a voice needs somewhere to keep the recordings, a place to record them and
+	// at least one provider willing to be taught. Missing any of those, the voice paths
+	// say so rather than half-working.
+	voiceService, err := buildVoices(pgStore, bucket, logger)
+	if err != nil {
+		return err
+	}
+
 	options := api.Options{
 		Routers:     routers,
+		Voices:      voiceService,
 		Store:       pgStore,
 		Live:        liveClient,
 		Phone:       telephony,
@@ -322,6 +353,45 @@ func buildSessions(
 				Logger:  logger,
 			})
 		},
+	})
+}
+
+// buildVoices wires the control plane for voices a customer brought with them.
+//
+// It returns nil when there is no database, no bucket, or no provider this deployment has
+// a key for, since a voice needs a row, somewhere to keep the recordings and somebody to
+// teach them to. The voice paths report the absence rather than failing halfway through an
+// upload.
+func buildVoices(
+	pgStore *store.Store,
+	bucket *blob.Bucket,
+	logger *slog.Logger,
+) (*voices.Service, error) {
+	if pgStore == nil || bucket == nil {
+		logger.Debug("not serving voices of your own", "database", pgStore != nil, "bucket", bucket != nil)
+		return nil, nil
+	}
+
+	cloners := voices.NewRegistry()
+	if cloner, err := voices.NewElevenLabs(voices.ElevenLabsOptions{}); err == nil {
+		cloners.Register(elevenlabs.ProviderName, cloner)
+	}
+	if cloner, err := voices.NewCartesia(voices.CartesiaOptions{}); err == nil {
+		cloners.Register(cartesia.ProviderName, cloner)
+	}
+	if cloner, err := voices.NewFish(voices.FishOptions{}); err == nil {
+		cloners.Register(fish.ProviderName, cloner)
+	}
+	if len(cloners.Providers()) == 0 {
+		logger.Warn("not serving voices of your own: no provider this deployment has a key for can be taught one")
+		return nil, nil
+	}
+
+	return voices.NewService(voices.Options{
+		Store:   pgStore,
+		Bucket:  bucket,
+		Cloners: cloners,
+		Logger:  logger,
 	})
 }
 

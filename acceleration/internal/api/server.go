@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 )
 
 // CustomerHeader carries the trusted customer identifier. Real authentication is not part
@@ -58,7 +59,11 @@ type Options struct {
 	// Absent when the deployment has no knowledge provider, in which case there is nothing
 	// to fill and the path says so.
 	Knowledge knowledge.Writer
-	Logger    *slog.Logger
+	// Voices holds the voices customers brought with them. Absent when the deployment has
+	// no object storage, in which case there is nowhere to keep a recording and the voice
+	// paths say so.
+	Voices *voices.Service
+	Logger *slog.Logger
 }
 
 // Server implements the generated StrictServerInterface.
@@ -72,6 +77,7 @@ type Server struct {
 	transcripts *chatlog.Reader
 	campaigns   *campaign.Runner
 	knowledge   knowledge.Writer
+	voices      *voices.Service
 	logger      *slog.Logger
 }
 
@@ -100,6 +106,7 @@ func NewServer(options Options) (*Server, error) {
 		transcripts: options.Transcripts,
 		campaigns:   options.Campaigns,
 		knowledge:   options.Knowledge,
+		voices:      options.Voices,
 		logger:      logger,
 	}, nil
 }

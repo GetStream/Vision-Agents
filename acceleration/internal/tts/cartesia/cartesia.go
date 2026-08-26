@@ -56,7 +56,6 @@ const apiVersion = "2026-08-14"
 // minutes, and a caller who spends that long listening or thinking is ordinary. Ping frames
 // do not count: they keep their Line sockets open but not these, so the only way to still
 // have a voice afterwards is to open another one.
-//
 const reconnectDelay = time.Second
 
 // supportedSampleRates are the rates the raw output format offers.
@@ -289,7 +288,6 @@ func (t *TTS) redial() {
 	t.emitter.Send(tts.Connected{Provider: ProviderName, Model: t.options.Model, At: time.Now()})
 }
 
-
 // Synthesize sends text upstream. Several requests sharing an ID stream one utterance, and
 // the one with Final set ends the context so the tail of the audio is generated at once.
 func (t *TTS) Synthesize(request tts.Request) error {
@@ -404,6 +402,12 @@ func (t *TTS) Model() string { return t.options.Model }
 
 // Streaming reports true: the model generates from partial text.
 func (t *TTS) Streaming() bool { return true }
+
+// Performs reports false: Sonic reads a bracketed direction out as words.
+func (t *TTS) Performs() bool { return false }
+
+// Prompt reports nothing: there is no direction this voice would act.
+func (t *TTS) Prompt() string { return "" }
 
 // SampleRate is the rate the audio comes back at.
 func (t *TTS) SampleRate() int { return t.options.SampleRate }

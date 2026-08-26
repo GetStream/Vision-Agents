@@ -20,6 +20,9 @@ type stubTTS struct {
 	// interrupts counts barge-ins, so a session can be checked to forward them.
 	interrupts int
 	closed     bool
+	// performs and prompt are what a voice that acts stage directions reports.
+	performs bool
+	prompt   string
 }
 
 func newStubTTS() *stubTTS {
@@ -46,6 +49,8 @@ func (s *stubTTS) Close() error {
 func (s *stubTTS) Provider() string { return "stub" }
 func (s *stubTTS) Model() string    { return "stub-model" }
 func (s *stubTTS) Streaming() bool  { return true }
+func (s *stubTTS) Performs() bool   { return s.performs }
+func (s *stubTTS) Prompt() string   { return s.prompt }
 
 type TTSRouterSuite struct {
 	suite.Suite

@@ -48,14 +48,30 @@ type Inspector interface {
 	Resolve(ctx context.Context, target string, languageHints []string) ([]Candidate, error)
 }
 
-// Options configures a Router. Store and Live are optional: without them the router still
-// routes, it just stops recording.
+// ErrVoiceNotPrepared says a customer's own voice exists but this provider was never
+// given it. The router treats that as a reason to try the next candidate rather than as a
+// failure, because another provider may well have it.
+var ErrVoiceNotPrepared = errors.New("routing: this provider has not been given that voice")
+
+// VoiceResolver turns what a caller asked for into the id one provider knows the voice by.
+//
+// It exists because a customer's own voice is one row to us and a different id at every
+// provider, and the router only learns which provider it has once it is picking between
+// them. A name that is not a customer's own voice is returned unchanged, so a provider's
+// library voices keep working without going near this.
+type VoiceResolver interface {
+	ResolveVoice(ctx context.Context, customerID, provider, voice string) (string, error)
+}
+
+// Options configures a Router. Store, Live and Voices are optional: without them the
+// router still routes, it just stops recording and stops resolving custom voices.
 type Options[P Provider] struct {
 	Modality Modality
 	Config   ModalityConfig
 	Registry *Registry[P]
 	Store    *store.Store
 	Live     *live.Client
+	Voices   VoiceResolver
 	Logger   *slog.Logger
 }
 
@@ -66,6 +82,7 @@ type Router[P Provider] struct {
 	registry *Registry[P]
 	recorder *Recorder
 	live     *live.Client
+	voices   VoiceResolver
 	logger   *slog.Logger
 }
 
@@ -85,6 +102,8 @@ type Request struct {
 	LanguageHints []string
 	// Voice selects the speaker for modalities that produce audio.
 	Voice string
+	// Keyterms are the words a modality that recognises speech should expect.
+	Keyterms []string
 }
 
 // Owner returns who the request is billed to and how it is labelled.
@@ -120,6 +139,7 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 		registry: options.Registry,
 		recorder: NewRecorder(options.Modality, options.Store, options.Live, logger),
 		live:     options.Live,
+		voices:   options.Voices,
 		logger:   logger,
 	}, nil
 }
@@ -230,10 +250,16 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 func (r *Router[P]) startCandidate(ctx context.Context, request Request, candidate Candidate) (P, error) {
 	var zero P
 
+	voice, err := r.voice(ctx, request, candidate.Config.Provider)
+	if err != nil {
+		return zero, err
+	}
+
 	spec := Spec{
 		Model:         candidate.Config.Model,
 		LanguageHints: request.LanguageHints,
-		Voice:         request.Voice,
+		Voice:         voice,
+		Keyterms:      request.Keyterms,
 		Logger:        r.logger,
 	}
 
@@ -262,6 +288,15 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	}
 
 	return provider, nil
+}
+
+// voice is the id this candidate knows the requested voice by. Without a resolver, or for
+// a name that is not a customer's own voice, it is what was asked for.
+func (r *Router[P]) voice(ctx context.Context, request Request, provider string) (string, error) {
+	if r.voices == nil || request.Voice == "" {
+		return request.Voice, nil
+	}
+	return r.voices.ResolveVoice(ctx, request.CustomerID, provider, request.Voice)
 }
 
 // health reads live health, treating a Redis failure as "no information" so a broken
