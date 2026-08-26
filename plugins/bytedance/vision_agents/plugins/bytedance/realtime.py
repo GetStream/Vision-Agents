@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from enum import IntEnum
 from typing import AsyncIterator, Optional
 
 import websockets
@@ -9,33 +8,15 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import AudioInputPacingConfig
 from vision_agents.core.llm import Realtime as CoreRealtime
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.utils.utils import cancel_and_wait
 
-from . import _ast
+from . import _ast, _v3
 from ._auth import DEFAULT_WS_HOST, Credentials
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_RESOURCE_ID = "volc.service_type.10053"
 INPUT_SAMPLE_RATE = 16000
-
-
-class AstEvent(IntEnum):
-    START_SESSION = 100
-    FINISH_SESSION = 102
-    SESSION_STARTED = 150
-    SESSION_CANCELED = 151
-    SESSION_FINISHED = 152
-    SESSION_FAILED = 153
-    TASK_REQUEST = 200
-    TTS_SENTENCE_START = 350
-    TTS_SENTENCE_END = 351
-    TTS_RESPONSE = 352
-    SOURCE_SUBTITLE_START = 650
-    SOURCE_SUBTITLE_RESPONSE = 651
-    SOURCE_SUBTITLE_END = 652
-    TRANSLATION_SUBTITLE_START = 653
-    TRANSLATION_SUBTITLE_RESPONSE = 654
-    TRANSLATION_SUBTITLE_END = 655
 
 
 class Realtime(CoreRealtime):
@@ -108,7 +89,8 @@ class Realtime(CoreRealtime):
 
         self._ws: Optional[websockets.ClientConnection] = None
         self._processing_task: Optional[asyncio.Task] = None
-        self._session_started = asyncio.Event()
+        self._session_started = False
+        self._session_requested = False
 
     def _start_session_request(self) -> bytes:
         target_audio = None
@@ -117,7 +99,7 @@ class Realtime(CoreRealtime):
                 format="pcm", rate=self.sample_rate, bits=16, channel=1
             )
         return _ast.TranslateRequest(
-            event=AstEvent.START_SESSION,
+            event=_v3.EventType.START_SESSION,
             session_id=self.session_id,
             user_uid="vision-agents",
             source_audio=_ast.Audio(
@@ -137,17 +119,10 @@ class Realtime(CoreRealtime):
         if self._ws is not None:
             return
 
-        headers = self._credentials.headers(self._resource_id)
-        self._ws = await websockets.connect(
-            self._ws_url,
-            additional_headers=headers,
-            max_size=10 * 1024 * 1024,
+        self._ws = await self._credentials.connect(
+            self._ws_url, self._resource_id, "ByteDance Realtime"
         )
-        response = self._ws.response
-        logid = response.headers.get("X-Tt-Logid") if response is not None else None
-        logger.debug("ByteDance Realtime connected, logid=%s", logid)
 
-        await self._ws.send(self._start_session_request())
         self._on_connected(
             session_config={
                 "mode": self.mode,
@@ -162,18 +137,24 @@ class Realtime(CoreRealtime):
     ):
         if not self.connected or self._ws is None:
             return
-        if not self._session_started.is_set():
-            return
 
-        self._current_participant = participant
-        audio_bytes = pcm.resample(INPUT_SAMPLE_RATE, 1).samples.tobytes()
-        req = _ast.TranslateRequest(
-            event=AstEvent.TASK_REQUEST,
-            session_id=self.session_id,
-            source_audio=_ast.Audio(binary_data=audio_bytes),
-        )
         try:
-            await self._ws.send(req.encode())
+            # AST ends any session that goes ~8s without an audio packet, so the
+            # session starts on first audio rather than at connect time.
+            if not self._session_requested:
+                self._session_requested = True
+                await self._ws.send(self._start_session_request())
+            if not self._session_started:
+                return
+
+            audio_bytes = pcm.resample(INPUT_SAMPLE_RATE, 1).samples.tobytes()
+            await self._ws.send(
+                _ast.TranslateRequest(
+                    event=_v3.EventType.TASK_REQUEST,
+                    session_id=self.session_id,
+                    source_audio=_ast.Audio(binary_data=audio_bytes),
+                ).encode()
+            )
         except websockets.ConnectionClosed as e:
             self._emit_error_event(e, context="simple_audio_response")
 
@@ -207,33 +188,33 @@ class Realtime(CoreRealtime):
         response = _ast.TranslateResponse.decode(data)
         event = response.event
 
-        if event == AstEvent.SESSION_STARTED:
-            self._session_started.set()
+        if event == _v3.EventType.SESSION_STARTED:
+            self._session_started = True
             logger.debug("ByteDance Realtime session started")
-        elif event == AstEvent.SESSION_FAILED:
+        elif event == _v3.EventType.SESSION_FAILED:
             self._emit_error_event(
                 RuntimeError(f"AST session failed: {response.message}"),
                 context="ast",
             )
-        elif event in (AstEvent.SESSION_FINISHED, AstEvent.SESSION_CANCELED):
+        elif event in (_v3.EventType.SESSION_FINISHED, _v3.EventType.SESSION_CANCELED):
             logger.debug("ByteDance Realtime session finished")
-        elif event == AstEvent.SOURCE_SUBTITLE_RESPONSE:
+        elif event == _v3.EventType.SOURCE_SUBTITLE_RESPONSE:
             if response.text:
                 self._emit_user_speech_transcription(response.text, mode="replacement")
-        elif event == AstEvent.SOURCE_SUBTITLE_END:
+        elif event == _v3.EventType.SOURCE_SUBTITLE_END:
             if response.text:
                 self._emit_user_speech_transcription(response.text, mode="final")
-        elif event == AstEvent.TRANSLATION_SUBTITLE_RESPONSE:
+        elif event == _v3.EventType.TRANSLATION_SUBTITLE_RESPONSE:
             if response.text:
                 self._emit_agent_speech_transcription(response.text, mode="replacement")
-        elif event == AstEvent.TRANSLATION_SUBTITLE_END:
+        elif event == _v3.EventType.TRANSLATION_SUBTITLE_END:
             if response.text:
                 self._emit_agent_speech_transcription(response.text, mode="final")
-        elif event == AstEvent.TTS_SENTENCE_START:
+        elif event == _v3.EventType.TTS_SENTENCE_START:
             self._emit_agent_speech_started()
-        elif event == AstEvent.TTS_SENTENCE_END:
+        elif event == _v3.EventType.TTS_SENTENCE_END:
             self._emit_agent_speech_ended()
-        elif event == AstEvent.TTS_RESPONSE:
+        elif event == _v3.EventType.TTS_RESPONSE:
             if response.data:
                 pcm = PcmData.from_bytes(
                     response.data, sample_rate=self.sample_rate, channels=1
@@ -244,18 +225,14 @@ class Realtime(CoreRealtime):
         if self._ws is not None:
             try:
                 req = _ast.TranslateRequest(
-                    event=AstEvent.FINISH_SESSION, session_id=self.session_id
+                    event=_v3.EventType.FINISH_SESSION, session_id=self.session_id
                 )
                 await self._ws.send(req.encode())
             except websockets.ConnectionClosed:
                 pass
 
         if self._processing_task is not None:
-            self._processing_task.cancel()
-            try:
-                await self._processing_task
-            except asyncio.CancelledError:
-                pass
+            await cancel_and_wait(self._processing_task)
             self._processing_task = None
 
         await self._close_audio_input()
@@ -264,4 +241,6 @@ class Realtime(CoreRealtime):
             await self._ws.close()
             self._ws = None
 
+        self._session_started = False
+        self._session_requested = False
         self._on_disconnected()

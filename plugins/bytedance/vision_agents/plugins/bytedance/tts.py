@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 import uuid
 from typing import AsyncIterator, Optional
 
@@ -10,8 +9,6 @@ from vision_agents.core import tts
 
 from . import _v3
 from ._auth import DEFAULT_WS_HOST, Credentials
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_RESOURCE_ID = "seed-tts-2.0"
 DEFAULT_SPEAKER = "zh_female_vv_uranus_bigtts"
@@ -64,8 +61,11 @@ class TTS(tts.TTS):
 
         self._ws: Optional[websockets.ClientConnection] = None
         self._connect_lock = asyncio.Lock()
-        self._stop_event = asyncio.Event()
         self._generation = 0
+
+    async def start(self) -> None:
+        """Open the persistent Seed Speech connection ahead of the first reply."""
+        await self._ensure_connection()
 
     def _req_params(self, text: Optional[str] = None) -> dict:
         audio_params = {"format": "pcm", "sample_rate": self.sample_rate}
@@ -77,18 +77,12 @@ class TTS(tts.TTS):
         return req_params
 
     async def _ensure_connection(self) -> websockets.ClientConnection:
-        if self._ws is not None:
-            return self._ws
-
         async with self._connect_lock:
             if self._ws is not None:
                 return self._ws
 
-            headers = self._credentials.headers(self._resource_id)
-            ws = await websockets.connect(
-                self._ws_url,
-                additional_headers=headers,
-                max_size=10 * 1024 * 1024,
+            ws = await self._credentials.connect(
+                self._ws_url, self._resource_id, "ByteDance TTS"
             )
             await ws.send(
                 _v3.build_event_message(
@@ -103,16 +97,14 @@ class TTS(tts.TTS):
             if started.event != _v3.EventType.CONNECTION_STARTED:
                 await ws.close()
                 raise RuntimeError(
-                    f"ByteDance TTS handshake failed: {started.event} {started.payload}"
+                    f"ByteDance TTS handshake failed: {started.event} {started.payload!r}"
                 )
             self._ws = ws
             self._on_connected()
-            logger.debug("ByteDance TTS connected at %dHz", self.sample_rate)
             return ws
 
     async def stream_audio(self, text: str, *args, **kwargs) -> AsyncIterator[PcmData]:
         ws = await self._ensure_connection()
-        self._stop_event.clear()
         self._generation += 1
         generation = self._generation
 
@@ -148,17 +140,13 @@ class TTS(tts.TTS):
                 session_id=session_id,
             )
         )
-        return self._receive_audio(session_id, generation)
+        return self._receive_audio(ws, session_id, generation)
 
     async def _receive_audio(
-        self, session_id: str, generation: int
+        self, ws: websockets.ClientConnection, session_id: str, generation: int
     ) -> AsyncIterator[PcmData]:
-        ws = self._ws
-        if ws is None:
-            return
-
         async for message in ws:
-            if self._stop_event.is_set() or generation != self._generation:
+            if generation != self._generation:
                 return
             if not isinstance(message, (bytes, bytearray)):
                 continue
@@ -169,7 +157,7 @@ class TTS(tts.TTS):
 
             if parsed.type == _v3.MsgType.ERROR:
                 raise RuntimeError(
-                    f"ByteDance TTS error {parsed.code}: {parsed.payload}"
+                    f"ByteDance TTS error {parsed.code}: {parsed.payload!r}"
                 )
             if parsed.event == _v3.EventType.TTS_RESPONSE and isinstance(
                 parsed.payload, (bytes, bytearray)
@@ -184,10 +172,9 @@ class TTS(tts.TTS):
             ):
                 return
             elif parsed.event == _v3.EventType.SESSION_FAILED:
-                raise RuntimeError(f"ByteDance TTS session failed: {parsed.payload}")
+                raise RuntimeError(f"ByteDance TTS session failed: {parsed.payload!r}")
 
     async def stop_audio(self) -> None:
-        self._stop_event.set()
         self._generation += 1
 
     async def close(self) -> None:

@@ -87,9 +87,9 @@ class TestBytedanceRealtime:
         assert audio[0].data.sample_rate == 24000
 
     def test_session_started_event_sets_gate(self, rt):
-        assert not rt._session_started.is_set()
+        assert not rt._session_started
         rt._handle_response(_response_bytes(150))
-        assert rt._session_started.is_set()
+        assert rt._session_started
 
     @pytest.mark.integration
     async def test_interpretation_flow(self, mia_audio_16khz, silence_1s_16khz):

@@ -31,21 +31,16 @@ def _key(field_number: int, wire_type: int) -> bytes:
     return _varint((field_number << 3) | wire_type)
 
 
-def _string_field(field_number: int, value: str) -> bytes:
-    data = value.encode()
-    return _key(field_number, _WIRE_LEN) + _varint(len(data)) + data
-
-
 def _bytes_field(field_number: int, value: bytes) -> bytes:
     return _key(field_number, _WIRE_LEN) + _varint(len(value)) + value
 
 
+def _string_field(field_number: int, value: str) -> bytes:
+    return _bytes_field(field_number, value.encode())
+
+
 def _int_field(field_number: int, value: int) -> bytes:
     return _key(field_number, _WIRE_VARINT) + _varint(value)
-
-
-def _message_field(field_number: int, value: bytes) -> bytes:
-    return _key(field_number, _WIRE_LEN) + _varint(len(value)) + value
 
 
 def _read_varint(buf: bytes, pos: int) -> tuple[int, int]:
@@ -97,7 +92,7 @@ class Audio:
     binary_data: bytes = b""
 
     def encode(self) -> bytes:
-        out = b""
+        out = bytearray()
         if self.format:
             out += _string_field(4, self.format)
         if self.codec:
@@ -110,7 +105,7 @@ class Audio:
             out += _int_field(9, self.channel)
         if self.binary_data:
             out += _bytes_field(14, self.binary_data)
-        return out
+        return bytes(out)
 
 
 @dataclass
@@ -121,7 +116,7 @@ class ReqParams:
     speaker_id: str = ""
 
     def encode(self) -> bytes:
-        out = b""
+        out = bytearray()
         if self.mode:
             out += _string_field(1, self.mode)
         if self.source_language:
@@ -130,7 +125,7 @@ class ReqParams:
             out += _string_field(3, self.target_language)
         if self.speaker_id:
             out += _string_field(4, self.speaker_id)
-        return out
+        return bytes(out)
 
 
 @dataclass
@@ -144,22 +139,22 @@ class TranslateRequest:
     denoise: Optional[bool] = None
 
     def encode(self) -> bytes:
-        out = b""
+        out = bytearray()
         if self.session_id:
-            out += _message_field(1, _string_field(6, self.session_id))
+            out += _bytes_field(1, _string_field(6, self.session_id))
         if self.event:
             out += _int_field(2, self.event)
         if self.user_uid:
-            out += _message_field(3, _string_field(1, self.user_uid))
+            out += _bytes_field(3, _string_field(1, self.user_uid))
         if self.source_audio is not None:
-            out += _message_field(4, self.source_audio.encode())
+            out += _bytes_field(4, self.source_audio.encode())
         if self.target_audio is not None:
-            out += _message_field(5, self.target_audio.encode())
+            out += _bytes_field(5, self.target_audio.encode())
         if self.request is not None:
-            out += _message_field(6, self.request.encode())
+            out += _bytes_field(6, self.request.encode())
         if self.denoise is not None:
             out += _int_field(7, 1 if self.denoise else 0)
-        return out
+        return bytes(out)
 
 
 @dataclass
@@ -167,8 +162,6 @@ class TranslateResponse:
     event: int = 0
     data: bytes = b""
     text: str = ""
-    start_time: int = 0
-    end_time: int = 0
     session_id: str = ""
     status_code: int = 0
     message: str = ""
@@ -183,10 +176,6 @@ class TranslateResponse:
             response.data = bytes(fields[3][-1])
         if 4 in fields:
             response.text = fields[4][-1].decode()
-        if 5 in fields:
-            response.start_time = fields[5][-1]
-        if 6 in fields:
-            response.end_time = fields[6][-1]
         if 1 in fields:
             meta = _decode_fields(fields[1][-1])
             if 1 in meta:

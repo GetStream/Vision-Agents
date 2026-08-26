@@ -19,13 +19,22 @@ from vision_agents.plugins import bytedance, getstream
 
 load_dotenv()
 
+# BytePlus accounts use a regional host and their own AST resource id.
+HOST = "wss://voice.ap-southeast-1.bytepluses.com"
+
 
 async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="ByteDance Interpreter", id="agent"),
         instructions="",
-        llm=bytedance.Realtime(source_language="zh", target_language="en"),
+        llm=bytedance.Realtime(
+            source_language="en",
+            target_language="zh",
+            mode="s2t",
+            ws_url=f"{HOST}/api/v4/ast/v2/translate",
+            resource_id="volc.service_type.1000025",
+        ),
     )
     return agent
 

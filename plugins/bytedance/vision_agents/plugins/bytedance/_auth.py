@@ -5,12 +5,18 @@ upgrade request. The new Volcengine / BytePlus console uses a single
 ``X-Api-Key``; the legacy console uses ``X-Api-App-Key`` + ``X-Api-Access-Key``.
 """
 
+import logging
 import os
 import uuid
 from dataclasses import dataclass
 from typing import Optional
 
+import websockets
+
+logger = logging.getLogger(__name__)
+
 DEFAULT_WS_HOST = "wss://openspeech.bytedance.com"
+MAX_MESSAGE_SIZE = 10 * 1024 * 1024
 
 
 @dataclass
@@ -52,18 +58,15 @@ class Credentials:
             )
         return cls(api_key=api_key, app_key=app_key, access_key=access_key)
 
-    def headers(
-        self, resource_id: str, *, connect_id: Optional[str] = None
-    ) -> dict[str, str]:
+    def headers(self, resource_id: str) -> dict[str, str]:
         """Build the WebSocket handshake headers for a Seed Speech service.
 
         Args:
             resource_id: The ``X-Api-Resource-Id`` selecting the service/SKU.
-            connect_id: Optional connection tracing ID; a UUID is generated when omitted.
         """
         headers = {
             "X-Api-Resource-Id": resource_id,
-            "X-Api-Connect-Id": connect_id or str(uuid.uuid4()),
+            "X-Api-Connect-Id": str(uuid.uuid4()),
             "X-Api-Request-Id": str(uuid.uuid4()),
         }
         if self.api_key:
@@ -72,3 +75,23 @@ class Credentials:
             headers["X-Api-App-Key"] = self.app_key or ""
             headers["X-Api-Access-Key"] = self.access_key or ""
         return headers
+
+    async def connect(
+        self, ws_url: str, resource_id: str, label: str
+    ) -> websockets.ClientConnection:
+        """Open an authenticated Seed Speech WebSocket connection.
+
+        Args:
+            ws_url: The service endpoint.
+            resource_id: The ``X-Api-Resource-Id`` selecting the service/SKU.
+            label: Human-readable service name used in the debug log.
+        """
+        ws = await websockets.connect(
+            ws_url,
+            additional_headers=self.headers(resource_id),
+            max_size=MAX_MESSAGE_SIZE,
+        )
+        response = ws.response
+        logid = response.headers.get("X-Tt-Logid") if response is not None else None
+        logger.debug("%s connected, logid=%s", label, logid)
+        return ws

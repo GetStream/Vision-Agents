@@ -8,6 +8,7 @@ from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import stt
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt import TranscriptResponse
+from vision_agents.core.utils.utils import cancel_and_wait
 
 from . import _v3
 from ._auth import DEFAULT_WS_HOST, Credentials
@@ -99,15 +100,9 @@ class STT(stt.STT):
             logger.warning("ByteDance STT already started")
             return
 
-        headers = self._credentials.headers(self._resource_id)
-        self._ws = await websockets.connect(
-            self._ws_url,
-            additional_headers=headers,
-            max_size=10 * 1024 * 1024,
+        self._ws = await self._credentials.connect(
+            self._ws_url, self._resource_id, "ByteDance STT"
         )
-        response = self._ws.response
-        logid = response.headers.get("X-Tt-Logid") if response is not None else None
-        logger.debug("ByteDance STT connected, logid=%s", logid)
 
         await self._ws.send(_v3.build_full_client_request(self._config_payload()))
         self._on_connected()
@@ -158,7 +153,7 @@ class STT(stt.STT):
     def _handle_message(self, message: _v3.Message) -> None:
         if message.type == _v3.MsgType.ERROR:
             error = RuntimeError(
-                f"ByteDance ASR error {message.code}: {message.payload}"
+                f"ByteDance ASR error {message.code}: {message.payload!r}"
             )
             self._emit_error_event(error, context="asr")
             return
@@ -210,11 +205,7 @@ class STT(stt.STT):
                 pass
 
         if self._listen_task is not None:
-            self._listen_task.cancel()
-            try:
-                await self._listen_task
-            except asyncio.CancelledError:
-                pass
+            await cancel_and_wait(self._listen_task)
             self._listen_task = None
 
         if self._ws is not None:

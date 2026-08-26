@@ -130,7 +130,7 @@ class TestAstProto:
         assert b"\x10\x64" in encoded
 
     def test_translate_response_roundtrip(self):
-        meta = _ast._message_field(
+        meta = _ast._bytes_field(
             1, _ast._string_field(1, "sid") + _ast._int_field(3, 20000000)
         )
         raw = meta + _ast._int_field(2, 655) + _ast._string_field(4, "translated text")

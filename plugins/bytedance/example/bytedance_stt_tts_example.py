@@ -24,15 +24,21 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+# BytePlus accounts use a regional host instead of the mainland default.
+HOST = "wss://voice.ap-southeast-1.bytepluses.com"
+
 
 async def create_agent(**kwargs) -> Agent:
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(name="ByteDance Agent", id="agent"),
         instructions="You're a helpful voice AI assistant. Keep replies short and conversational.",
-        stt=bytedance.STT(),
+        stt=bytedance.STT(ws_url=f"{HOST}/api/v3/sauc/bigmodel_async"),
         llm=gemini.LLM(),
-        tts=bytedance.TTS(speaker="zh_female_vv_uranus_bigtts"),
+        tts=bytedance.TTS(
+            speaker="zh_female_vv_uranus_bigtts",
+            ws_url=f"{HOST}/api/v3/tts/bidirection",
+        ),
     )
     return agent
 
