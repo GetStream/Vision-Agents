@@ -53,6 +53,7 @@ members = [
     "vision-agents-plugins-xai",
 ]
 overrides = [{ name = "numpy", specifier = ">=1.26.0,<2.0" }]
+build-constraints = [{ name = "cython", specifier = "<3.3" }]
 
 [manifest.dependency-groups]
 dev = [
