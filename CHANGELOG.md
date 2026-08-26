@@ -6,7 +6,7 @@
 
 Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-105b` (`sarvam-105b-conversations` is also supported). STT drops `saarika:v2.5` and `saaras:v2` / `saaras:v2.5` and defaults to `saaras:v3-realtime` on `/speech-to-text-realtime/ws` (`saaras:v3` and `saaras:v4` remain on the legacy WebSocket). TTS no longer accepts `bulbul:v3-beta`.
 
-### `deepgram` plugin: TTS defaults to Flux (`/v2/speak`)
+### `deepgram` plugin: TTS defaults to Flux (`/v2/speak`) (#633)
 
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
@@ -15,11 +15,32 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 ### `gemini` plugin: Gemini 3.5 speech-to-text
 
 Adds `gemini.STT` using Gemini Live transcription (`gemini-3.5-transcribe-live` by default). It streams 16 kHz PCM, supports `language_codes` and `custom_vocabulary`, and emits standard transcript and turn events. Automatic language detection is the default (omit `language_codes` or pass `[]`).
-### `deepgram` plugin: Flux TTS streaming, `speed`, and Interrupt barge-in
+
+### `deepgram` plugin: Flux TTS streaming, `speed`, and Interrupt barge-in (#633)
 
 Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) with a persistent websocket. Pass optional `speed` (0.85–1.15 in 0.05 steps) on the constructor. Barge-in sends `Interrupt` instead of Aura's `Clear`. Supported sample rates now include 32000 and 44100.
 
-### `telnyx` plugin: LLM, STT and TTS (#620, #621, #622)
+## Bug Fixes
+
+### `deepgram` plugin: Flux STT handles typed `TurnInfo` from SDK 7.7 (#633)
+
+`deepgram-sdk` 7.7 delivers listen v2 `TurnInfo` as typed objects instead of dicts. The STT handler now accepts both, so transcripts and turn events are emitted and the unexpected-message warning spam is gone.
+
+### Agent metadata was overwritten by stale user data (#630)
+
+The component metadata added in #618 was merged *under* the existing `agent_user.custom`, so a pre-set `custom` won and the provider/model fields never reached the edge. Component metadata now takes precedence, and keys that don't describe a configured component are unset on the stored user, so a previous run's `tts`/`avatar`/... values are cleared instead of lingering. `StreamEdge` maps a `None` custom field to the partial-update `unset` list rather than writing a literal null.
+
+# v0.6.9
+
+## Breaking Changes
+
+### `xai` plugin: Realtime default model bumped to `grok-voice-think-fast-2.0` (#624)
+
+`xai.Realtime` defaults to `grok-voice-think-fast-2.0` (was `grok-voice-think-fast-1.0`). Pass `model=` explicitly to stay on a 1.0 model.
+
+## New Features
+
+### `telnyx` plugin: LLM, STT and TTS (#629, #631)
 
 The Telnyx plugin, until now a phone transport, also exposes `telnyx.LLM`,
 `telnyx.STT`, and `telnyx.TTS`, so a phone agent can run end to end on Telnyx.
@@ -32,9 +53,63 @@ and decodes to `PcmData` as it arrives. All three read `TELNYX_API_KEY` from the
 environment. See `plugins/telnyx/examples/voice_agent_call.py` for an inbound
 call answered by an all-Telnyx pipeline.
 
-### `speechify` plugin: Speechify TTS
+### `speechify` plugin: Speechify TTS (#615, #617)
 
 Adds a new `speechify` plugin exposing `speechify.TTS`, backed by Speechify's streaming API. It streams raw PCM audio, defaults to the `simba-3.2` model with the `geffen_32` voice, and reads `SPEECHIFY_API_KEY` from the environment. Install with `vision-agents[speechify]`.
+
+### Agent metadata describing the configured providers (#618)
+
+The agent user is now published with metadata describing its own pipeline, so dashboards and Stream Chat clients can tell what an agent is made of without out-of-band bookkeeping. `Agent.components_metadata` returns `{"llm" | "vlm" | "realtime": {...}, "stt": ..., "tts": ..., "turn_detection": ..., "avatar": ..., "processors": [...]}` where each entry is `{"provider": <plugin name>, "model": <str | None>}`, and `Agent.authenticate()` writes it (plus `is_agent: True`) to the edge user's custom data. `StreamEdge` now merges via a partial update instead of an upsert, so custom fields written by other clients survive. Adds the public `MetadataValue` type in `vision_agents.core.edge.types`.
+
+## Bug Fixes
+
+### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct` (#625)
+
+`nvidia/cosmos-reason2-8b` is no longer available on the NVIDIA Chat Completions API for typical API Catalog keys. The plugin default, README, and example now use `meta/llama-3.2-11b-vision-instruct`.
+
+# v0.6.8
+
+## Breaking Changes
+
+### Minimum `getstream` raised to `>=4.1.0,<5` (#612)
+
+`agents-core` and the `getstream` plugin now require `getstream` 4.1, which introduces a stateful `AudioStreamTrack`. Audio tracks own their queue and lifecycle, so the agent and the avatar plugins (`anam`, `lemonslice`, `liveavatar`) no longer drive playback timing themselves. Out-of-tree edge transports that construct audio tracks (see `local` and `tencent` for reference) need the same update.
+
+# v0.6.7
+
+## Breaking Changes
+
+### `moonshine` extra removed (#613)
+
+The `moonshine` plugin is gone, and with it the `vision-agents[moonshine]` extra.
+
+## New Features
+
+### `anam` plugin: Anam SDK 0.6.0 (#614)
+
+The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). Sessions use the SDK's direct API-key path and default `video_quality="high"`; the plugin API is unchanged.
+
+### `kokoro` plugin: model warmup (#613)
+
+`kokoro.TTS` warms the model on `start()` so the first synthesis doesn't pay the load cost, and its streaming/lifecycle handling was tightened. The `pocket` plugin's dependency pins were also refreshed.
+
+## Bug Fixes
+
+### `twelvelabs` plugin: asset ready wait and clip duration for Pegasus (#610)
+
+`PegasusVLM` now polls the TwelveLabs Assets API until an uploaded clip is `ready` before `analyze_stream` — direct uploads return `processing` and must not be analyzed early. Encoded MP4 clips also set PTS/`time_base` so padded buffers report at least 4 seconds of duration (Pegasus's minimum). Uploaded assets are still deleted if ready-wait fails or times out.
+
+# v0.6.6
+
+## Bug Fixes
+
+### `EventManager.register_events_from_module` crashed on non-string class types (#608)
+
+The scan assumed every candidate's class attribute was a string and raised when it wasn't, which broke event registration for modules containing such classes.
+
+# v0.6.5
+
+## New Features
 
 ### Realtime input audio pacing (#599)
 
@@ -44,35 +119,75 @@ Realtime LLMs that need a steady upstream audio cadence can now opt into framewo
 
 Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and bumps the default Gemini Realtime model to `gemini-3.1-flash-live-preview` (was `gemini-2.5-flash-native-audio-preview-12-2025`). The Live Translate model is sensitive to uneven input audio — irregular upstream chunks produce audible jitter and word-cutoffs in its output. `GeminiRealtime` automatically installs `AudioInputPacingConfig.virtual_microphone()` whenever the model is `gemini-3.5-live-translate-preview`, so the framework feeds it a steady 20 ms stream by default. Opt out with `input_audio_pacing=None`.
 
+### `twelvelabs` plugin: Pegasus video understanding (#607)
+
+New opt-in `twelvelabs` plugin exposing `PegasusVLM`, a `VideoLLM` backed by TwelveLabs Pegasus. Unlike frame-by-frame VLMs it buffers recent frames, encodes a short MP4 clip, uploads it to the TwelveLabs Assets API, and streams the analysis back, so the agent can reason about motion and events over time. Reads `TWELVELABS_API_KEY`. Install with `vision-agents[twelvelabs]`.
+
+### `telnyx` plugin: phone transport (#594)
+
+New `telnyx` plugin providing `TelnyxMediaStream` for Telnyx Media Streaming, plus a call registry, µ-law/PCM audio handling, webhook signature verification, and runnable inbound/outbound call examples. Install with `vision-agents[telnyx]`.
+
+### `cartesia` plugin: streaming STT (#602)
+
+Adds `cartesia.STT` (WebSocket streaming) alongside the existing TTS, and refreshes the supported Cartesia speech models.
+
+## Bug Fixes
+
+### `openai` plugin: strict mode rejected tools with optional parameters (#605)
+
+`convert_tools_to_openai_format` set `strict: True` unconditionally, but the Responses API rejects an object schema in strict mode unless every property is listed in `required` — so any tool with a defaulted or optional parameter failed. Strict mode is now enabled per tool only when the schema qualifies, `additionalProperties: false` is applied recursively (nested objects, array items, `anyOf`/`oneOf`/`allOf`), and the normalization runs on a deep copy so the registry's shared schema is no longer mutated.
+
+# v0.6.4
+
+## New Features
+
+### `gemini` plugin: `google-genai>=2.8.0` for native live translation (#598)
+
+google-genai 2.8.0 adds a native `translation_config` field on `LiveConnectConfig`, so the Gemini Live Translate models can be driven through `gemini.Realtime(config=...)` without an SDK monkeypatch.
+
+# v0.6.3
+
+## Breaking Changes
+
+### `all-plugins` extra removed (#584)
+
+With 30+ plugins it no longer makes sense to install them all at once. Depend on the specific extras you need, e.g. `vision-agents[getstream,gemini,deepgram]`.
+
+### `deepgram-sdk` raised to `>=7.1.0,<7.2.0` (#543)
+
+The Deepgram plugin moves to SDK 7. Listen v2 messages arrive as plain dicts on this version, and the STT handler was updated accordingly.
+
+## New Features
+
+### `minimax` plugin: MiniMax LLM (#593)
+
+New `minimax` plugin exposing `minimax.LLM` over MiniMax's OpenAI-compatible Chat Completions API. Defaults to `MiniMax-M3` (512K context, image input); `MiniMax-M2.7` and `MiniMax-M2.7-highspeed` are also supported. Reads `MINIMAX_API_KEY` and optional `MINIMAX_BASE_URL`. Install with `vision-agents[minimax]`.
+
+### `qdrant` plugin: Qdrant RAG (#572)
+
+New `qdrant` plugin providing a Qdrant-backed RAG implementation for grounding agent responses in your own documents. Install with `vision-agents[qdrant]`.
+
+### `inworld` plugin: LLM and VLM via the Inworld router (#530)
+
+Adds `inworld.LLM` and `inworld.VLM` on top of Inworld's OpenAI-compatible `/v1/chat/completions`, which routes upstream across providers with auto-selection, fallbacks, and traffic splitting. Router options are constructor kwargs (`fallback_models`, `ignore_models`, `sort_by`, `ttft_timeout`, `metadata`, `web_search`), sent as `extra_body`. A `ttft_timeout` below 500 ms raises `ValueError` at construction instead of producing the gateway's misleading 502s.
+
 ### `getstream` plugin: non-blocking StreamConversation persistence (#589)
 
 `StreamConversation` now persists messages to Stream Chat in the background instead of awaiting each REST round-trip inline. Voice pipelines call `upsert_message` on the critical path (per transcript and per LLM delta), where the inline ~150–300 ms round-trip compounded into audible response latency. Writes are dispatched as fire-and-forget tasks serialized behind a per-channel lock, so ordering is preserved and the final persisted message always matches the final content. Adds `Conversation.wait_for_pending_syncs()`, drained on agent shutdown so in-flight writes are not dropped.
 
-### `anam` plugin: Anam SDK 0.6.0
-
-The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). Sessions use the SDK's direct API-key path and default `video_quality="high"`; the plugin API is unchanged.
-
 ## Bug Fixes
 
-### `deepgram` plugin: Flux STT handles typed `TurnInfo` from SDK 7.7
-
-`deepgram-sdk` 7.7 delivers listen v2 `TurnInfo` as typed objects instead of dicts. The STT handler now accepts both, so transcripts and turn events are emitted and the unexpected-message warning spam is gone.
-
-### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct` (#625)
-
-`nvidia/cosmos-reason2-8b` is no longer available on the NVIDIA Chat Completions API for typical API Catalog keys. The plugin default, README, and example now use `meta/llama-3.2-11b-vision-instruct`.
-
-### `twelvelabs` plugin: asset ready wait and clip duration for Pegasus (#610)
-
-`PegasusVLM` now polls the TwelveLabs Assets API until an uploaded clip is `ready` before `analyze_stream` — direct uploads return `processing` and must not be analyzed early. Encoded MP4 clips also set PTS/`time_base` so padded buffers report at least 4 seconds of duration (Pegasus's minimum). Uploaded assets are still deleted if ready-wait fails or times out.
-
-### `openai` plugin: `ChatCompletionsLLM` ignored injected/eager turn text and leaked `<think>` reasoning
+### `openai` plugin: `ChatCompletionsLLM` ignored injected/eager turn text and leaked `<think>` reasoning (#592)
 
 `ChatCompletionsLLM.simple_response` rebuilt the request purely from the conversation and ignored its `text` argument unless `participant` was `None`. Because the agent always supplies a participant, injected `agent.simple_response()` instructions produced an empty request (`400 chat content is empty`), and eager turns answered the *previous* transcript. The current `text` is now appended as the trailing user message when the conversation does not already end with it. Additionally, `<think>...</think>` reasoning spans emitted by reasoning models (e.g. MiniMax-M3) are now stripped from streamed deltas and final text so they no longer reach chat or TTS.
 
 ### `gemini` plugin: crash on duplicate follow-up tool calls (#588)
 
 `GeminiLLM.simple_response` crashed with `ValueError('content parts are required.')` when the model echoed an already-executed function call in a follow-up turn. `_dedup_and_execute` filtered it out, leaving the follow-up `chat.send_message_stream(parts=[], ...)` with an empty list, which google-genai rejects. The multi-hop loop now exits cleanly when every requested call is a duplicate.
+
+### Packaging: plugin wheels contain only the import package (#587)
+
+Plugin wheels were built from `["."]`, pulling `tests/`, `example/`, `README.md` and `pyproject.toml` of each plugin into the published artifact. Every plugin now scopes its wheel target to `["vision_agents"]`.
 
 # v0.6.2
 
