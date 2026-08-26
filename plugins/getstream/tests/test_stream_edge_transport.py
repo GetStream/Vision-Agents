@@ -148,6 +148,69 @@ class TestStreamEdge:
             await edge.close()
 
     @pytest.mark.integration
+    async def test_authenticate_unsets_none_custom_fields(self) -> None:
+        """None custom values remove stored fields without touching unrelated ones."""
+        edge = StreamEdge()
+        user_id = f"test-authenticate-unset-{uuid4()}"
+        try:
+            await edge.client.upsert_users(
+                UserRequest(
+                    id=user_id,
+                    name="Stored name",
+                    custom={
+                        "set_elsewhere": "keep me",
+                        "stt": {"provider": "deepgram"},
+                    },
+                )
+            )
+
+            await edge.authenticate(
+                User(
+                    id=user_id,
+                    name="Agent",
+                    custom={"is_agent": True, "stt": None},
+                )
+            )
+
+            response = await edge.client.query_users(
+                QueryUsersPayload(filter_conditions={"id": {"$eq": user_id}})
+            )
+            stored = response.data.users[0]
+            assert stored.custom == {"set_elsewhere": "keep me", "is_agent": True}
+            assert "stt" not in stored.custom
+        finally:
+            try:
+                await edge.client.delete_users([user_id])
+            finally:
+                await edge.close()
+
+    @pytest.mark.integration
+    async def test_authenticate_omits_none_custom_on_create(self) -> None:
+        """404 create path omits null-valued custom fields instead of storing them."""
+        edge = StreamEdge()
+        user_id = f"test-authenticate-create-none-{uuid4()}"
+        try:
+            await edge.authenticate(
+                User(
+                    id=user_id,
+                    name="Agent",
+                    custom={"is_agent": True, "stt": None},
+                )
+            )
+
+            response = await edge.client.query_users(
+                QueryUsersPayload(filter_conditions={"id": {"$eq": user_id}})
+            )
+            stored = response.data.users[0]
+            assert stored.custom == {"is_agent": True}
+            assert "stt" not in stored.custom
+        finally:
+            try:
+                await edge.client.delete_users([user_id])
+            finally:
+                await edge.close()
+
+    @pytest.mark.integration
     async def test_create_users_creates_users_that_do_not_exist_yet(self) -> None:
         edge = StreamEdge()
         user_id = f"test-create-users-{uuid4()}"

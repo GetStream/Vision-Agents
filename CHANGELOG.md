@@ -1,10 +1,36 @@
 # Unreleased
 
+## Breaking Changes
+
+### `sarvam` plugin: drop deprecated LLM, STT, and TTS models (#637)
+
+Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-105b` (`sarvam-105b-conversations` is also supported). STT drops `saarika:v2.5` and `saaras:v2` / `saaras:v2.5` and defaults to `saaras:v3-realtime` on `/speech-to-text-realtime/ws` (`saaras:v3` and `saaras:v4` remain on the legacy WebSocket). TTS no longer accepts `bulbul:v3-beta`.
+
+### `deepgram` plugin: TTS defaults to Flux (`/v2/speak`)
+
+`deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
+
 ## New Features
 
 ### `gemini` plugin: Gemini 3.5 speech-to-text
 
 Adds `gemini.STT` using Gemini Live transcription (`gemini-3.5-transcribe-live` by default). It streams 16 kHz PCM, supports `language_codes` and `custom_vocabulary`, and emits standard transcript and turn events. Automatic language detection is the default (omit `language_codes` or pass `[]`).
+### `deepgram` plugin: Flux TTS streaming, `speed`, and Interrupt barge-in
+
+Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) with a persistent websocket. Pass optional `speed` (0.85–1.15 in 0.05 steps) on the constructor. Barge-in sends `Interrupt` instead of Aura's `Clear`. Supported sample rates now include 32000 and 44100.
+
+### `telnyx` plugin: LLM, STT and TTS (#620, #621, #622)
+
+The Telnyx plugin, until now a phone transport, also exposes `telnyx.LLM`,
+`telnyx.STT`, and `telnyx.TTS`, so a phone agent can run end to end on Telnyx.
+`telnyx.LLM` wraps Telnyx Inference's OpenAI-compatible Chat Completions
+endpoint and defaults to `meta-llama/Llama-3.3-70B-Instruct`. `telnyx.STT`
+streams `linear16` over WebSocket and takes a `sample_rate`, so telephony audio
+from `TelnyxMediaStream` can be transcribed at 8 kHz without an upsample; pick
+the engine with `transcription_engine`. `telnyx.TTS` streams MP3 over WebSocket
+and decodes to `PcmData` as it arrives. All three read `TELNYX_API_KEY` from the
+environment. See `plugins/telnyx/examples/voice_agent_call.py` for an inbound
+call answered by an all-Telnyx pipeline.
 
 ### `speechify` plugin: Speechify TTS
 
@@ -27,6 +53,10 @@ Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and
 The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). Sessions use the SDK's direct API-key path and default `video_quality="high"`; the plugin API is unchanged.
 
 ## Bug Fixes
+
+### `deepgram` plugin: Flux STT handles typed `TurnInfo` from SDK 7.7
+
+`deepgram-sdk` 7.7 delivers listen v2 `TurnInfo` as typed objects instead of dicts. The STT handler now accepts both, so transcripts and turn events are emitted and the unexpected-message warning spam is gone.
 
 ### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct` (#625)
 

@@ -79,6 +79,20 @@ logger = logging.getLogger(__name__)
 # resampled — write(..., final=True) only flushes the tail — so the rate is inert.
 _DRAIN_MARKER = PcmData(sample_rate=48000, format="s16", channels=1)
 
+# Metadata keys owned by components_metadata. Keys not describing a configured
+# component are set to None so the edge provider clears any stale value a
+# previous run of the same agent user wrote.
+_COMPONENT_METADATA_KEYS: tuple[str, ...] = (
+    "llm",
+    "vlm",
+    "realtime",
+    "stt",
+    "tts",
+    "turn_detection",
+    "avatar",
+    "processors",
+)
+
 tracer: Tracer = trace.get_tracer("agents")
 
 
@@ -842,9 +856,10 @@ class Agent:
 
             with self.span("edge.authenticate"):
                 self.agent_user.custom = {
+                    **self.agent_user.custom,
+                    **dict.fromkeys(_COMPONENT_METADATA_KEYS),
                     **self.components_metadata,
                     **{"is_agent": True},
-                    **self.agent_user.custom,
                 }
                 await self.edge.authenticate(self.agent_user)
                 self._agent_user_initialized = True

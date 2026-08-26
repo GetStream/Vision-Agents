@@ -435,7 +435,7 @@ class TestAgent:
         assert custom["tts"] == {"provider": "DummyTTS"}
 
     async def test_authenticate_preserves_user_supplied_custom(self):
-        """User-provided custom keys survive the metadata merge."""
+        """Non-managed user custom keys survive; framework owns component metadata."""
         agent = Agent(
             llm=DummyLLM(),
             tts=DummyTTS(),
@@ -446,9 +446,33 @@ class TestAgent:
         await agent.authenticate()
 
         custom = agent.agent_user.custom
-        assert custom["is_agent"] is False
+        assert custom["is_agent"] is True
         assert custom["team"] == "red"
         assert custom["llm"] == {"provider": "DummyLLM", "model": "llm"}
+
+    async def test_authenticate_clears_stale_managed_custom(self):
+        """Stale component keys in agent_user.custom cannot override current metadata."""
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(
+                name="test",
+                custom={
+                    "stt": {"provider": "deepgram", "model": "flux-general-en"},
+                    "team": "red",
+                },
+            ),
+        )
+
+        await agent.authenticate()
+
+        custom = agent.agent_user.custom
+        assert custom["stt"] is None
+        assert custom["team"] == "red"
+        assert custom["llm"] == {"provider": "DummyLLM", "model": "llm"}
+        assert custom["tts"] == {"provider": "DummyTTS", "model": "tts"}
+        assert custom["is_agent"] is True
 
     async def test_send_metrics_event(self):
         """Test that metrics are sent as custom events."""
