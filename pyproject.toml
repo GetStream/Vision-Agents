@@ -51,6 +51,11 @@ vision-agents-plugins-speechify = { workspace = true }
 # vogent-turn requires numpy<2.0, so we override to use 1.26.x
 override-dependencies = ["numpy>=1.26.0,<2.0"]
 
+# curated-tokenizers 0.0.9 (kokoro -> misaki[en] -> spacy-curated-transformers)
+# ships no cp313 wheels, so it is built from source. Its build requirement is an
+# unpinned `cython>=0.25` and Cython 3.3 crashes cythonizing `_bbpe.pyx`.
+build-constraint-dependencies = ["cython<3.3"]
+
 # Store uv cache in project directory for better sandboxing
 cache-dir = ".uv-cache"
 
