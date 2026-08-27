@@ -27,6 +27,10 @@ const (
 	// defaultBackchannelGap is the least time between two murmurs. A listener who says
 	// "mhm" every other second is not listening, they are heckling.
 	defaultBackchannelGap = 6 * time.Second
+	// defaultIdleGap is how long a call has to go silent before the agent asks whether
+	// there is anything else. Long enough to let somebody think, short enough that they
+	// are not left wondering whether the agent is still on the line.
+	defaultIdleGap = 30 * time.Second
 )
 
 // defaultPhrases are what the agent murmurs to show it is still listening. They are
@@ -41,6 +45,17 @@ var workingPhrases = []string{
 	"Let me check that.",
 	"One second, looking that up.",
 	"Bear with me a moment.",
+}
+
+// idlePhrases are what the agent says to a call nobody is talking on, so a silence ends
+// in an invitation rather than in the caller wondering whether anyone is still there.
+//
+// The list is also the limit: each is used once and then the agent lets the silence
+// stand, because somebody who has not answered twice is not going to answer a third
+// time and asking again is nagging a caller who has walked away.
+var idlePhrases = []string{
+	"Is there anything else I can help with?",
+	"Anything else I can do for you?",
 }
 
 // uncertainNote is what the model is told about a turn the transcriber was doubtful
@@ -82,6 +97,8 @@ type duplex struct {
 	// working rotates what is said while a tool runs, separately from the murmurs so
 	// that using one does not skip the other along.
 	working int
+	// idle rotates what is said to a call that has gone quiet.
+	idle int
 }
 
 // speaker is what one participant is in the middle of.
@@ -110,6 +127,9 @@ func (d *duplex) Heard(participant stt.Participant, text string, quiet bool) str
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	// Somebody is talking, so a silence that had been given up on is over and a later
+	// one is worth asking about again.
+	d.idle = 0
 	current := d.speakerFor(participant)
 
 	if !d.options.Backchannel || !quiet {
@@ -140,6 +160,27 @@ func (d *duplex) Presence(participant stt.Participant, lastSpokeAt time.Time, qu
 	}
 	current.murmured = time.Now()
 	return d.nextPhraseLocked()
+}
+
+// Idle returns a question to put to a call nobody has said anything on for a while, or
+// empty when it has not been quiet for long enough. A call where nothing has happened at
+// all is not idle yet: the agent has not so much as greeted anyone.
+//
+// Like Working, and unlike a murmur, it is not tied to the backchannel option: leaving
+// somebody in silence until they hang up is never what was wanted.
+func (d *duplex) Idle(lastActivity time.Time, quiet bool) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if !quiet || lastActivity.IsZero() || time.Since(lastActivity) < defaultIdleGap {
+		return ""
+	}
+	if d.idle >= len(idlePhrases) {
+		return ""
+	}
+	phrase := idlePhrases[d.idle]
+	d.idle++
+	return phrase
 }
 
 // Working returns something to say while a tool runs, for a turn where the model reached

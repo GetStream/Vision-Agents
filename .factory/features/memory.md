@@ -1,6 +1,7 @@
 # Memory
 
-[Sprint 4](../sprint4.md), "Memory".
+[Sprint 4](../sprint4.md), "Memory", asked for again in [sprint 9](../sprint9.md). What an
+agent looks up rather than remembers is [knowledge](knowledge.md).
 
 ## Asked for
 

@@ -724,6 +724,31 @@ func (s *APIIntegrationSuite) TestACallKeepsTheTimeItFirstEnded() {
 	s.WithinDuration(s.base.Add(time.Minute), *read.EndedAt, time.Second)
 }
 
+func (s *APIIntegrationSuite) TestWhatACallDecidedIsFoundByTheRowRecordingIt() {
+	// A dashboard holds the row's id, and the agent wrote its reasoning against the call
+	// it joined. Reading one by the other is what puts the decision log on the page.
+	call := store.Call{
+		ID: "session-" + s.customerID, CustomerID: s.customerID,
+		CallID: "call-1", AgentID: "agent-1", StartedAt: s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+	s.Require().NoError(s.store.RecordCallEvents(s.ctx, []store.CallEvent{{
+		CustomerID: s.customerID, CallID: call.CallID, AgentID: call.AgentID,
+		At: s.base.Add(time.Second), Kind: "answer", Reason: "a complete thought",
+		Said: "how is the weather",
+	}}))
+
+	response, payload := s.do(http.MethodGet, "/v1/agents/calls/"+call.ID+"/events", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var decided []CallEvent
+	s.Require().NoError(json.Unmarshal(payload, &decided))
+	s.Require().Len(decided, 1)
+	s.Equal(DecisionKind("answer"), decided[0].Kind)
+	s.Require().NotNil(decided[0].Said)
+	s.Equal("how is the weather", *decided[0].Said)
+}
+
 func (s *APIIntegrationSuite) TestAnotherCustomersCallIsNotFound() {
 	call := store.Call{
 		ID: "session-" + s.customerID, CustomerID: "somebody-else",

@@ -16,9 +16,10 @@ Flash, Gemma 4 and OpenAI, with the usual router and stats on top, and a `llm-fa
 | ------------------------------------------------------------ | ----------------------------------------------- |
 | [deepseek](../../acceleration/internal/llm/deepseek)         | Baseten's shared Model APIs, so no deployment    |
 | [openai](../../acceleration/internal/llm/openai)             | OpenAI                                           |
+| [gemini](../../acceleration/internal/llm/gemini)             | Google AI Studio                                 |
 | [gemma](../../acceleration/internal/llm/gemma)               | A dedicated Baseten vLLM deployment              |
 
-All three speak OpenAI-compatible chat completions, so they share one implementation in
+All four speak OpenAI-compatible chat completions, so they share one implementation in
 [openaicompat](../../acceleration/internal/llm/openaicompat) and differ only in base URL,
 credentials and the extra fields they send.
 [cmd/chat](../../acceleration/cmd/chat) asks one question or holds a conversation.
@@ -39,10 +40,11 @@ credentials and the extra fields they send.
   none. Barge-in passes none; the [harness](harness.md) names one, which is what lets a
   delegated task be abandoned without stopping the sentence being spoken. A completion that
   already produced text still settles and still reports what it cost.
-- **Tool calling is absent from the contract.** Standardising a tool schema across providers
-  is a bigger question than routing needs answered, and `Client()` reaches the provider's own
-  tool support. What the agent needed instead was [delegation](harness.md), which is a
-  different shape: it does not block the reply on a result.
+- **Tool calling arrived later, and delegation is still the default.** The contract carries
+  `Tools` and `ToolCalls` because the [Python SDK](sdk.md) runs functions in the caller's own
+  process and a [knowledge](knowledge.md) lookup is a tool. Neither changes what the agent
+  reaches for first: a tool call blocks the reply on a result, so anything that might take
+  seconds goes through [delegation](harness.md) instead.
 
 ## Targets and prices
 
@@ -54,6 +56,7 @@ shortcuts work here too, with `en-high-accuracy` reaching the quality tier.
 | --------------------------------- | ------------ | ------ | ------- | ------- |
 | `deepseek/DeepSeek-V4-Flash-0731` | low-latency  | $0.13  | $0.028  | $0.26   |
 | `openai/gpt-5.6-luna`             | low-latency  | $0.20  | $0.02   | $1.20   |
+| `gemini/gemini-3.5-flash-lite`    | low-latency  | $0.30  | $0.03   | $2.50   |
 | `gemma/gemma-4-E2B-it`            | low-latency  | $0.032 | -       | $0.16   |
 | `deepseek/DeepSeek-V4-Pro-0813`   | high-quality | $1.32  | $0.132  | $3.96   |
 | `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |
@@ -62,6 +65,8 @@ shortcuts work here too, with `en-high-accuracy` reaching the quality tier.
 Per million tokens. Cached prompt tokens are billed once, at the cached rate, not twice.
 Gemma is self-hosted, so its rates are an estimate of what the deployment costs rather than a
 published price. Sol uses OpenAI's canonical `gpt-5.6-sol` id with medium reasoning effort.
+Flash Lite is the dearest of the fast tier and earns it on speed, at around 350 output tokens
+a second; every Gemini 3 model thinks, so the provider pins it to minimal.
 
 ## Not done
 

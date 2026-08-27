@@ -450,13 +450,34 @@ func (s *ConverseSuite) TestALongSilenceWhileWorkRunsIsFilled() {
 	s.Equal([]ActionKind{ActBackchannel}, kinds(s.converse.Tick(state)))
 }
 
-func (s *ConverseSuite) TestAnIdleCallWithNothingRunningStaysQuiet() {
+func (s *ConverseSuite) TestACallNobodyHasSpokenOnIsAskedWhetherAnythingElseIsNeeded() {
 	s.build(DuplexOptions{Backchannel: true, BackchannelGap: time.Millisecond})
 
 	state := s.quiet()
 	state.LastSpokeAt = time.Now().Add(-time.Hour)
 
-	s.Empty(s.converse.Tick(state), "nobody is talking and nothing is running, so there is nothing to say")
+	actions := s.converse.Tick(state)
+	s.Require().Equal([]ActionKind{ActCheckIn}, kinds(actions))
+	s.Contains(actions[0].Text, "anything else")
+}
+
+func (s *ConverseSuite) TestACallThatHasJustGoneQuietIsLeftAlone() {
+	s.build(DuplexOptions{Backchannel: true, BackchannelGap: time.Millisecond})
+
+	state := s.quiet()
+	state.LastSpokeAt = time.Now().Add(-time.Second)
+
+	s.Empty(s.converse.Tick(state), "a pause is somebody thinking, not a call that has died")
+}
+
+func (s *ConverseSuite) TestSomebodyStillTalkingIsNotASilentCall() {
+	s.build(DuplexOptions{Backchannel: true, BackchannelGap: time.Millisecond})
+
+	state := s.quiet()
+	state.LastSpokeAt = time.Now().Add(-time.Hour)
+	state.LastHeardAt = time.Now()
+
+	s.Empty(s.converse.Tick(state), "the caller spoke a moment ago, so the agent owes them an answer")
 }
 
 func (s *ConverseSuite) TestTheWordsAreReportedAsTheyArrive() {

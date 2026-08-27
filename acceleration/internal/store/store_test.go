@@ -411,7 +411,7 @@ func (s *StoreSuite) TestWhatTheConversationDecidedIsReadBackInTheOrderItHappene
 	}
 	s.Require().NoError(s.store.RecordCallEvents(s.ctx, decisions))
 
-	read, err := s.store.CallEvents(s.ctx, "acme", "call-1", 0)
+	read, err := s.store.CallEvents(s.ctx, "acme", "call-1", s.base, nil, 0)
 	s.Require().NoError(err)
 	s.Require().Len(read, 2)
 	s.Equal("wait", read[0].Kind)
@@ -428,10 +428,23 @@ func (s *StoreSuite) TestOneCallsReasoningIsNotAnothers() {
 	theirs.CallID = "call-2"
 	s.Require().NoError(s.store.RecordCallEvents(s.ctx, []CallEvent{mine, theirs}))
 
-	read, err := s.store.CallEvents(s.ctx, "acme", "call-1", 0)
+	read, err := s.store.CallEvents(s.ctx, "acme", "call-1", s.base, nil, 0)
 	s.Require().NoError(err)
 	s.Require().Len(read, 1)
 	s.Equal("mine", read[0].Reason)
+}
+
+func (s *StoreSuite) TestAnEarlierCallOnTheSameIdIsNotThisOnes() {
+	// A call id is the room, not the conversation: dialling the same room again is a
+	// second call, and the reasoning behind the first one does not explain it.
+	earlier := s.decision("answer", "the call before", s.base.Add(-time.Hour))
+	now := s.decision("answer", "this call", s.base.Add(time.Second))
+	s.Require().NoError(s.store.RecordCallEvents(s.ctx, []CallEvent{earlier, now}))
+
+	read, err := s.store.CallEvents(s.ctx, "acme", "call-1", s.base, nil, 0)
+	s.Require().NoError(err)
+	s.Require().Len(read, 1)
+	s.Equal("this call", read[0].Reason)
 }
 
 func (s *StoreSuite) TestRecordingNoDecisionsIsNotAnError() {

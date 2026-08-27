@@ -1,6 +1,7 @@
 # Observability
 
-[Sprint 4](../sprint4.md), "Observability".
+[Sprint 4](../sprint4.md), "Observability", and the decision log in
+[sprint 15](../sprint15.md).
 
 ## Asked for
 
@@ -47,15 +48,35 @@ Two consequences:
   promised has completed. An interruption closes the turn early, and whatever was measured
   before it still happened and is still reported.
 
+## The decision log
+
+A turn says what the caller waited for. It does not say why the agent waited before
+answering, ignored what it heard, or stopped mid-sentence. Every judgement `converse` makes
+is emitted as `Decided` and written to `call_events`:
+
+```
+at, kind, reason, turn_id, participant, said, latency_ms
+```
+
+`kind` is the action taken and `reason` is why, in words, which is what makes the log
+readable rather than something to correlate. It is written by the same kind of async recorder
+turns use, and read back by `GET /v1/agents/calls/{id}/events` — so a finished call replays
+what a running one streams as `decision` frames on the session socket, and the
+[dashboard](dashboard.md) does not care which it is looking at.
+
+Interim transcripts go out as `hearing` on the same socket, off by default. They are how you
+watch an agent hear, and they are noise to an SDK holding a conversation, so a consumer asks
+for them.
+
 ## Nothing waits on a database
 
-Turns, transcripts and memories all go through a bounded queue and are dropped when the writer
-falls behind. Losing a row costs a statistic; blocking costs the participant a silence. The
+Turns, decisions, transcripts and memories all go through a bounded queue and are dropped when
+the writer falls behind. Losing a row costs a statistic; blocking costs the participant a silence. The
 turn writer holds 256 rows, bounds each write at five seconds so a stuck database cannot wedge
 it, and logs a count of what it dropped on close rather than per drop.
 
 ## Not done
 
-Nothing outstanding. Sprint 6 takes this further into evaluation — word error rate against a
-slower model after the call, summary scoring, and per-region latency benchmarks — which is a
-separate body of work.
+Sprint 6 takes this further into evaluation — word error rate against a slower model after
+the call, summary scoring, and per-region latency benchmarks — which is a separate body of
+work. `review_score` is a column on a call that nothing yet fills in.

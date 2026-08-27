@@ -1,6 +1,7 @@
 # The voice agent
 
-[Sprint 3](../sprint3.md), steps 5 and 6, through [Sprint 6](../sprint6.md).
+[Sprint 3](../sprint3.md), steps 5 and 6, through [Sprint 6](../sprint6.md), with the
+decisions gathered into one place in [sprint 15](../sprint15.md).
 
 ## Asked for
 
@@ -33,12 +34,27 @@ flowchart LR
 | Piece                                                              | What it does                            |
 | ------------------------------------------------------------------ | --------------------------------------- |
 | [agent.go](../../acceleration/internal/agent/agent.go)              | The conversation loop and its lifecycle  |
+| [converse.go](../../acceleration/internal/agent/converse.go)        | Every judgement the conversation makes   |
 | [cadence.go](../../acceleration/internal/agent/cadence.go)          | Debounces evolving participant transcripts |
 | [edge.go](../../acceleration/internal/agent/edge.go)                | The transport contract, four methods     |
 | [streamedge](../../acceleration/internal/agent/streamedge)          | The real transport: a Stream call over WebRTC |
 | [chunker.go](../../acceleration/internal/agent/chunker.go)          | Splits a reply into sentences for the voice |
 | [turns.go](../../acceleration/internal/agent/turns.go)              | Measures each exchange, see [observability](observability.md) |
 | [cmd/agent](../../acceleration/cmd/agent)                           | Joins a call and holds a conversation    |
+
+## One place decides, one place acts
+
+`converse` is given the state and returns an `Action` — `ask`, `wait`, `ignore`, `answer`,
+`queue`, `interrupt`, `shorten`, `backchannel`, `supersede`, `compact`, `delegate`, `fail` —
+and `Agent` runs it. Before sprint 15 the same judgements were spread across `consumeCadence`,
+`applyDecision`, `consumePresence`, the backchannel and the compaction caller, which meant no
+single place could say why the agent had done what it did.
+
+Splitting deciding from acting buys two things. `converse` is testable with real objects and
+no call, because deciding is a pure function of the state it is handed. And every decision
+passes through one `decide`, which logs it once and emits a `Decided` event, so the decision
+trail is a byproduct of the reasoning rather than something written alongside it and able to
+disagree with it. Where that trail goes is in [observability](observability.md).
 
 ## Three decisions
 

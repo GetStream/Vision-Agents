@@ -13,16 +13,17 @@
     "@tanstack/react-query": "^5.102.8",
     "next": "16.3.3",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "vgpu": "^0.3.1"
   },
   "devDependencies": {
-    "openapi-typescript": "7.13.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.3",
+    "openapi-typescript": "7.13.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

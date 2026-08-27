@@ -211,8 +211,10 @@ func (s *Store) RecordCallEvents(ctx context.Context, events []CallEvent) error 
 }
 
 // CallEvents returns the judgements made on one call, oldest first, which read in order
-// are how the call was handled and why.
-func (s *Store) CallEvents(ctx context.Context, customerID, callID string, limit int) ([]CallEvent, error) {
+// are how the call was handled and why. They are keyed by the call the agent joined rather
+// than by the row recording it, the way turns are, so a call is found by the window it was
+// on for.
+func (s *Store) CallEvents(ctx context.Context, customerID, callID string, from time.Time, to *time.Time, limit int) ([]CallEvent, error) {
 	if customerID == "" || callID == "" {
 		return nil, errors.New("store: a customer and a call id are required")
 	}
@@ -223,14 +225,18 @@ func (s *Store) CallEvents(ctx context.Context, customerID, callID string, limit
 		limit = maxCallEventLimit
 	}
 
-	var events []CallEvent
-	err := s.db.NewSelect().Model(&events).
+	query := s.db.NewSelect().Model((*CallEvent)(nil)).
 		Where("customer_id = ?", customerID).
 		Where("call_id = ?", callID).
+		Where("at >= ?", from).
 		Order("at ASC", "id ASC").
-		Limit(limit).
-		Scan(ctx)
-	if err != nil {
+		Limit(limit)
+	if to != nil {
+		query = query.Where("at <= ?", *to)
+	}
+
+	var events []CallEvent
+	if err := query.Scan(ctx, &events); err != nil {
 		return nil, fmt.Errorf("store: call events: %w", err)
 	}
 	return events, nil

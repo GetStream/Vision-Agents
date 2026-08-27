@@ -841,6 +841,7 @@ func (a *Agent) floor() floor {
 		Quiet:           a.utterances == 0 && !a.generating,
 		Speaking:        a.speakingTurn,
 		LastSpokeAt:     a.lastSpokeAt,
+		LastHeardAt:     a.lastHeardAt,
 		LastParticipant: a.lastParticipant,
 	}
 	current := a.harness
@@ -863,6 +864,9 @@ func (a *Agent) perform(action Action) {
 	switch action.Kind {
 	case ActBackchannel:
 		a.backchannel(action.Participant, action.Text)
+
+	case ActCheckIn:
+		a.checkIn(action.Participant, action.Text)
 
 	case ActSupersede:
 		if err := a.harness.CancelDecision(action.TurnID); err != nil {
@@ -1066,6 +1070,32 @@ func (a *Agent) backchannel(participant stt.Participant, phrase string) {
 		return
 	}
 	a.emitter.Send(Backchannel{Participant: participant, Text: phrase})
+}
+
+// checkIn asks a caller who has gone quiet whether there is anything else.
+//
+// Unlike a murmur it is a turn the agent took, so it goes into the history and is
+// reported as speech: without that, the "no, that was everything" that comes back
+// answers a question the model cannot see it asked.
+func (a *Agent) checkIn(participant stt.Participant, phrase string) {
+	turnID := backchannelPrefix + turnStamp()
+
+	a.mu.Lock()
+	if a.tts == nil {
+		a.mu.Unlock()
+		return
+	}
+	a.speakingTurn = turnID
+	a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: phrase})
+	a.mu.Unlock()
+
+	a.logger.Debug("asking whether anything else is needed",
+		"turn", turnID, "participant", participant.ID, "phrase", phrase)
+	if err := a.speakWhole(turnID, phrase); err != nil {
+		a.fail(err, "tts")
+		return
+	}
+	a.emitter.Send(Responded{TurnID: turnID, Text: phrase})
 }
 
 // instructions is the system prompt for a turn: what the agent was told to be, ahead of

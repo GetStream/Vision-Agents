@@ -1,6 +1,8 @@
 # Speaking while listening
 
-[Sprint 5](../sprint5.md), part D, and [Sprint 6](../sprint6.md).
+[Sprint 5](../sprint5.md), part D, and [Sprint 6](../sprint6.md). Every decision below is
+taken in `converse` since [sprint 15](../sprint15.md); see
+[the voice agent](voice-agent.md).
 
 ## Asked for
 
@@ -45,7 +47,8 @@ Three sources are routed through the [harness](harness.md):
 ## Observability
 
 `Backchannel` and `OverlapDecided` join the agent's events, alongside `Delegated`,
-`TaskSettled`, `TaskCancelled`, and `ConversationCompacted`.
+`TaskSettled`, `TaskCancelled`, and `ConversationCompacted`. Each of these also produces a
+`Decided`, which is the one stream that has all of them in the order they happened.
 
 ## Not done
 

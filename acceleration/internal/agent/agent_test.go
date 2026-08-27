@@ -1372,6 +1372,24 @@ func (s *AgentSuite) TestTheAgentMurmursWhileSomeoneIsStillTalking() {
 	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "the murmur never reached the call")
 }
 
+func (s *AgentSuite) TestAskingWhetherAnythingElseIsNeededIsSomethingTheAgentSaid() {
+	// The model has to see the question in the history, or the "no, that was everything"
+	// that comes back is answering something it has no record of asking.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.agent.checkIn(participant, "Is there anything else I can help with?")
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 },
+		"the question was never reported as speech")
+	history := s.agent.History()
+	s.Require().Len(history, 1)
+	s.Equal(llm.Assistant, history[0].Role)
+	s.Equal("Is there anything else I can help with?", history[0].Content)
+	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "the question never reached the call")
+}
+
 func (s *AgentSuite) TestSomeoneCarryingOnAfterAMurmurIsNotAnInterruption() {
 	// A murmur is meant to overlap. Treating the caller carrying on as barge-in would
 	// report an interruption on every single one.

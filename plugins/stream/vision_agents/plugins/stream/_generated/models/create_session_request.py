@@ -42,9 +42,11 @@ class CreateSessionRequest:
             spoken to.
         navigating (bool | Unset): The agent placed this call, so let recordings finish and answer their menus.
              Default: False.
-        llm (str | Unset): A provider/model or a capability shortcut. Default: 'llm-fast'.
-        stt (str | Unset):  Default: 'en-low-latency'.
-        tts (str | Unset):  Default: 'en-low-latency'.
+        llm (str | Unset): A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when
+            there is no config. These carry no schema default on purpose: a generated client that filled one in would send
+            it, and a caller naming a config would silently lose the model it configured.
+        stt (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
+        tts (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
         subagent (str | Unset): The model that does the thinking. Empty means the voice model answers everything itself,
             and skills mean nothing.
         voice (str | Unset): Provider-specific voice id.
@@ -81,9 +83,9 @@ class CreateSessionRequest:
     instructions: str | Unset = UNSET
     greeting: str | Unset = UNSET
     navigating: bool | Unset = False
-    llm: str | Unset = "llm-fast"
-    stt: str | Unset = "en-low-latency"
-    tts: str | Unset = "en-low-latency"
+    llm: str | Unset = UNSET
+    stt: str | Unset = UNSET
+    tts: str | Unset = UNSET
     subagent: str | Unset = UNSET
     voice: str | Unset = UNSET
     languages: list[str] | Unset = UNSET

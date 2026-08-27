@@ -120,7 +120,8 @@ settles, because the completion it was waiting on has already been and gone.
 
 Large histories remain verbatim while prefix caching is effective. Once a completion reports at
 least 2,048 input tokens and less than half cached, the thinking session privately summarizes the
-old prefix while recent turns stay verbatim. The result is applied only if that prefix still
+old prefix while recent turns stay verbatim. When that is worth doing is decided in `converse`
+with every other judgement — see [the voice agent](voice-agent.md) — and done here. The result is applied only if that prefix still
 matches, so late maintenance cannot erase newer conversation. It emits `Compacted`, not
 `Settled`, and never creates a caller-facing follow-up.
 

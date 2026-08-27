@@ -114,11 +114,13 @@ func (s *Server) GetCallEvents(ctx context.Context, request GetCallEventsRequest
 		return GetCallEvents400JSONResponse{badRequest(noCalls)}, nil
 	}
 
-	if _, err := s.store.Call(ctx, customerID, request.Id); err != nil {
+	call, err := s.store.Call(ctx, customerID, request.Id)
+	if err != nil {
 		return GetCallEvents404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
 	}
 
-	stored, err := s.store.CallEvents(ctx, customerID, request.Id, value(request.Params.Limit))
+	stored, err := s.store.CallEvents(
+		ctx, customerID, call.CallID, call.StartedAt, call.EndedAt, value(request.Params.Limit))
 	if err != nil {
 		return nil, err
 	}

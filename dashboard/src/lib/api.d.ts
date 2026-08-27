@@ -1207,15 +1207,12 @@ export interface components {
              * @default false
              */
             navigating: boolean;
-            /**
-             * @description A provider/model or a capability shortcut.
-             * @default llm-fast
-             */
-            llm: string;
-            /** @default en-low-latency */
-            stt: string;
-            /** @default en-low-latency */
-            tts: string;
+            /** @description A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured. */
+            llm?: string;
+            /** @description Omit it and the config decides, or en-low-latency when there is no config. */
+            stt?: string;
+            /** @description Omit it and the config decides, or en-low-latency when there is no config. */
+            tts?: string;
             /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
             subagent?: string;
             /** @description Provider-specific voice id. */

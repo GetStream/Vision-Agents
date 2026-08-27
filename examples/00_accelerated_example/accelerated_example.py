@@ -2,8 +2,9 @@ import logging
 from typing import Any, Dict
 
 from dotenv import load_dotenv
-from vision_agents.core import Agent, AgentLauncher, Runner
+from vision_agents.core import Agent, AgentLauncher, Runner, User
 from vision_agents.core.utils.examples import get_weather_by_location
+from vision_agents.plugins import getstream, stream
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +21,11 @@ Needs a router: see acceleration/README.md, then point STREAM_ACCELERATION_URL a
 """
 
 
-INSTRUCTIONS = "You're a voice AI assistant. Keep responses short and conversational. Don't use special characters or formatting. Be friendly and helpful."
-
-
 async def create_agent(**kwargs) -> Agent:
     agent = Agent(
-        config="coding_support_agent",
+        edge=getstream.Edge(),
+        agent_user=User(name="My accelerated AI friend", id="agent"),
+        llm=stream.Accelerated(config="coding_support_agent"),
         cost_tracking={"project": "examples", "environment": "dev"},
         memory_filter={"user_id": "222", "company_id": "12312"},
     )

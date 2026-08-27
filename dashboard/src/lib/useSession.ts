@@ -34,6 +34,22 @@ export type Line = {
   text: string;
 };
 
+/** Who has the floor right now. */
+export type VoiceState = "idle" | "listening" | "thinking" | "speaking";
+
+/**
+ * Voice is what the call sounds like as far as this page can tell. No audio ever
+ * reaches the browser, so it is drawn from who holds the floor and how much they
+ * are saying rather than from a waveform.
+ */
+export type Voice = {
+  state: VoiceState;
+  /** at is the last time anything moved, so a state nothing followed can be let go of. */
+  at: number;
+  /** words is how much has been said in this state: the only measure of effort there is. */
+  words: number;
+};
+
 export type Timing = {
   turn_id: string;
   started_at: string;
@@ -50,15 +66,19 @@ export type Live = {
   /** ended is true once the agent has left, which is a finished call rather than a lost socket. */
   ended: boolean;
   hearing: Hearing | null;
+  voice: Voice;
   decisions: Decision[];
   lines: Line[];
   timings: Timing[];
 };
 
+const quiet: Voice = { state: "idle", at: 0, words: 0 };
+
 const empty: Live = {
   connected: false,
   ended: false,
   hearing: null,
+  voice: quiet,
   decisions: [],
   lines: [],
   timings: [],
@@ -74,6 +94,15 @@ function tail<T>(existing: T[], added: T): T[] {
 
 function speakerOf(participant: Participant | undefined): string {
   return participant?.name || participant?.user_id || participant?.id || "caller";
+}
+
+function saying(state: VoiceState, text: string): Voice {
+  const said = text.trim();
+  return {
+    state,
+    at: Date.now(),
+    words: said === "" ? 0 : said.split(/\s+/).length,
+  };
 }
 
 /**
@@ -140,6 +169,7 @@ function apply(current: Live, frame: Frame): Live {
     case "hearing":
       return {
         ...current,
+        voice: saying("listening", String(frame.text ?? "")),
         hearing: {
           participant: frame.participant as Participant,
           text: String(frame.text ?? ""),
@@ -147,8 +177,11 @@ function apply(current: Live, frame: Frame): Live {
       };
 
     case "heard":
+      // The caller has stopped and the conversation is deciding what to do with
+      // it, which is thinking whether or not a model is running yet.
       return {
         ...current,
+        voice: saying("thinking", ""),
         hearing: null,
         lines: tail(current.lines, {
           at: Date.now(),
@@ -158,6 +191,12 @@ function apply(current: Live, frame: Frame): Live {
         }),
       };
 
+    case "responding":
+      return { ...current, voice: saying("thinking", "") };
+
+    case "spoke":
+      return { ...current, voice: saying("idle", "") };
+
     case "responded": {
       const said = String(frame.text ?? "");
       if (said === "") {
@@ -165,6 +204,7 @@ function apply(current: Live, frame: Frame): Live {
       }
       return {
         ...current,
+        voice: saying("speaking", said),
         lines: tail(current.lines, {
           at: Date.now(),
           agent: true,
@@ -187,7 +227,7 @@ function apply(current: Live, frame: Frame): Live {
       };
 
     case "left":
-      return { ...current, ended: true, hearing: null };
+      return { ...current, ended: true, hearing: null, voice: quiet };
 
     default:
       return current;

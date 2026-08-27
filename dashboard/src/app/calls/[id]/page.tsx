@@ -7,6 +7,7 @@ import { DecisionLog } from "@/components/DecisionLog";
 import { LatencyPanel } from "@/components/LatencyPanel";
 import { SpeakingTimeline } from "@/components/SpeakingTimeline";
 import { Transcript } from "@/components/Transcript";
+import { VoicePanel } from "@/components/VoicePanel";
 import { duration, Failure, PageHeading, Panel, Tile } from "@/components/ui";
 import { router } from "@/lib/router";
 import { useSession } from "@/lib/useSession";
@@ -80,6 +81,8 @@ export default function CallPage({
           ) : null
         }
       />
+
+      {running ? <VoicePanel className="mb-6" voice={session.voice} /> : null}
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile

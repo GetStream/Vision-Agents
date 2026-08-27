@@ -1,6 +1,7 @@
 # Text to speech
 
-[Sprint 2](../sprint2.md), steps 1, 2 and 5.
+[Sprint 2](../sprint2.md), steps 1, 2 and 5, with expressiveness and
+[voices of your own](voices.md) added in [sprint 11](../sprint11.md).
 
 ## Asked for
 
@@ -15,9 +16,11 @@ a CLI where you type text and hear it.
 
 | Provider                                                        | Where it runs                              |
 | --------------------------------------------------------------- | ------------------------------------------ |
-| [elevenlabs](../../acceleration/internal/tts/elevenlabs)        | Hosted: Flash for latency, Multilingual v2 for quality |
+| [cartesia](../../acceleration/internal/tts/cartesia)            | Hosted Sonic                                |
+| [elevenlabs](../../acceleration/internal/tts/elevenlabs)        | Hosted: Flash for latency, Multilingual v2 and v3 for quality |
 | [fish](../../acceleration/internal/tts/fish)                    | Fish's hosted S2 Pro                        |
 | [s2pro](../../acceleration/internal/tts/s2pro)                  | The same weights on our own Baseten deployment |
+| [breeze](../../acceleration/internal/tts/breeze)                | Breeze TTS 2 on our own deployment, English and Chinese |
 
 [cmd/say](../../acceleration/cmd/say) is step 5: `-text` says one line, or type lines and
 hear each. It prints which provider served the utterance, the wait for first audio, how much
@@ -38,6 +41,19 @@ speech came back and what it cost.
 optional for a phone call: a voice that keeps talking over the caller is broken, whichever
 provider it is.
 
+## Expressiveness is a prompt, not a field
+
+ElevenLabs v3 performs `[laughs]` and `[whispers]` inline; Breeze performs a closed set of
+four; the rest say the brackets or ignore them. So a provider declares `Performs()` and
+carries its own `Prompt()`, which the agent appends to its instructions when that voice is
+selected. Telling the model what this voice can do is the only thing that generalises —
+there is no shared tag vocabulary to standardise, and the ElevenLabs set is open-ended by
+design.
+
+Tags are stripped from the transcript and the events either way, so what is stored is what
+was said rather than how. A provider that does not perform them is sent the stripped text
+too, which is what stops a voice reading stage directions aloud.
+
 ## Deployment state
 
 [deploy/s2-pro](../../acceleration/deploy/s2-pro) is written and validated but not pushed.
@@ -49,6 +65,9 @@ deployment's estimated $9.
 
 The Sprint 6 full-stack test selects concrete `s2pro/s2-pro` when `S2PRO_WS_URL` is present,
 otherwise concrete `fish/s2-pro`; it never silently routes to another voice.
+
+Breeze is in the same position under the BreezeBlue Research and Non-Commercial License, and
+is not deployed either.
 
 ## Not done
 

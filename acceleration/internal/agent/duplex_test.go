@@ -87,3 +87,66 @@ func (s *DuplexSuite) TestPresenceDoesNotTalkOverTheAgent() {
 
 	s.Empty(listener.Presence(stt.Participant{ID: "alice"}, time.Now().Add(-time.Second), false))
 }
+
+func (s *DuplexSuite) TestASilentCallIsAskedWhetherAnythingElseIsNeeded() {
+	// Nothing here turns backchannels on: leaving somebody in silence until they hang
+	// up is not a judgement call the way murmuring over them is.
+	listener := newDuplex(DuplexOptions{})
+
+	s.Contains(listener.Idle(time.Now().Add(-defaultIdleGap-time.Second), true),
+		"anything else", "a call nobody is talking on gets an invitation back into it")
+}
+
+func (s *DuplexSuite) TestAShortSilenceIsLeftAlone() {
+	listener := newDuplex(DuplexOptions{})
+
+	s.Empty(listener.Idle(time.Now().Add(-time.Second), true),
+		"a pause is somebody thinking, not a call that has died")
+}
+
+func (s *DuplexSuite) TestACallWhereNothingHasHappenedYetIsNotIdle() {
+	listener := newDuplex(DuplexOptions{})
+
+	s.Empty(listener.Idle(time.Time{}, true),
+		"the agent has not so much as greeted anyone yet")
+}
+
+func (s *DuplexSuite) TestTheAgentDoesNotAskWhileItIsTalking() {
+	listener := newDuplex(DuplexOptions{})
+
+	s.Empty(listener.Idle(time.Now().Add(-defaultIdleGap-time.Second), false))
+}
+
+func (s *DuplexSuite) TestAskingTwiceDoesNotUseTheSameWords() {
+	listener := newDuplex(DuplexOptions{})
+	silent := time.Now().Add(-defaultIdleGap - time.Second)
+
+	first := listener.Idle(silent, true)
+	second := listener.Idle(silent, true)
+
+	s.NotEqual(first, second, "a caller who has gone quiet twice is not asked the same thing twice")
+}
+
+func (s *DuplexSuite) TestACallerWhoNeverAnswersIsLeftInPeace() {
+	listener := newDuplex(DuplexOptions{})
+	silent := time.Now().Add(-defaultIdleGap - time.Second)
+
+	listener.Idle(silent, true)
+	listener.Idle(silent, true)
+
+	s.Empty(listener.Idle(silent, true),
+		"somebody who has not answered twice has walked away, and asking again is nagging")
+}
+
+func (s *DuplexSuite) TestASilenceAfterSomebodySpeaksIsAskedAboutAgain() {
+	listener := newDuplex(DuplexOptions{})
+	alice := stt.Participant{ID: "alice"}
+	silent := time.Now().Add(-defaultIdleGap - time.Second)
+
+	listener.Idle(silent, true)
+	listener.Idle(silent, true)
+	listener.Heard(alice, "sorry, I am back", true)
+
+	s.NotEmpty(listener.Idle(silent, true),
+		"they came back, so a later silence is worth asking about")
+}

@@ -2279,14 +2279,19 @@ components:
             The agent placed this call, so let recordings finish and answer their menus.
         llm:
           type: string
-          default: llm-fast
-          description: A provider/model or a capability shortcut.
+          description: >
+            A provider/model or a capability shortcut. Omit it and the config decides,
+            or llm-fast when there is no config. These carry no schema default on
+            purpose: a generated client that filled one in would send it, and a caller
+            naming a config would silently lose the model it configured.
         stt:
           type: string
-          default: en-low-latency
+          description: >
+            Omit it and the config decides, or en-low-latency when there is no config.
         tts:
           type: string
-          default: en-low-latency
+          description: >
+            Omit it and the config decides, or en-low-latency when there is no config.
         subagent:
           type: string
           description: >

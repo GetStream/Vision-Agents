@@ -2,7 +2,8 @@
 
 [Sprint 4](../sprint4.md), "Phone numbers", widened by
 [sprint 12](../sprint12.md) to eight vendors and
-[sprint 13](../sprint13.md) to outbound calls at seven of them.
+[sprint 13](../sprint13.md) to outbound calls at seven of them. Answering one is
+[inbound calls and dispatch](dispatch.md), from [sprint 14](../sprint14.md).
 
 ## Asked for
 
@@ -76,7 +77,8 @@ go run ./cmd/phone search -country US -state CO -type local \
 Stream's SIP support is **inbound only** today, which shapes the whole feature:
 
 - **Inbound** is what the docs describe. A number reaches an agent because the vendor sends the
-  call to a Stream inbound trunk.
+  call to a Stream inbound trunk, and Stream then reports the arriving call to a worker; see
+  [dispatch](dispatch.md).
 - **Outbound** is originated at the vendor and bridged into that same trunk, because there is
   nothing to ask Stream to dial with. It is the same call path arrived at from the other end,
   not a second mechanism.

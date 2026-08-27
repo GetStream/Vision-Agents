@@ -1,6 +1,7 @@
 # Speech to text
 
-[Sprint 1](../sprint1.md), steps 1, 2 and 5.
+[Sprint 1](../sprint1.md), steps 1, 2 and 5, with keyterms added in
+[sprint 11](../sprint11.md).
 
 ## Asked for
 
@@ -18,6 +19,7 @@ Audio is always signed 16-bit PCM at 16 kHz, the only rate both providers accept
 | Provider                                                            | Where it runs                        |
 | ------------------------------------------------------------------- | ------------------------------------ |
 | [deepgram](../../acceleration/internal/stt/deepgram)                | Hosted Flux, English and multilingual |
+| [gemini](../../acceleration/internal/stt/gemini)                    | Hosted, live transcription            |
 | [parakeet](../../acceleration/internal/stt/parakeet)                | Our own Baseten deployment, 25 languages |
 
 [deploy/parakeet](../../acceleration/deploy/parakeet) is the Truss behind the second one: a
@@ -51,6 +53,17 @@ Deepgram start/resume events and Parakeet's server-side start marker remain prov
 Only transcript replacements and finals cross the contract. The
 [voice agent](voice-agent.md) debounces those revisions per participant, so the same
 conversation behavior works with either provider.
+
+## Keyterms
+
+A config carries up to a hundred words the transcriber would otherwise get wrong — product
+names, company names, the things a business says all day. Deepgram takes them natively;
+Gemini has no field for them, so they go in as a system instruction naming the spelling;
+Parakeet ignores them.
+
+A hundred is the lowest limit among the providers that accept any, and it is enforced when
+the config is written rather than when a call is placed, so a config that is too long is
+rejected by the person who wrote it instead of by a caller's session.
 
 ## Targets
 

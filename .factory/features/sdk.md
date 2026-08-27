@@ -1,6 +1,8 @@
 # The Python SDK over the Go backend
 
-[Sprint 8](../sprint8.md).
+[Sprint 8](../sprint8.md), with telephony added in sprints
+[13](../sprint13.md) and [14](../sprint14.md). Its Go counterpart is the
+[Go SDK](go-sdk.md).
 
 ## Asked for
 
@@ -58,7 +60,7 @@ sequenceDiagram
 | [api/sessionws.go](../../acceleration/internal/api/sessionws.go)    | The event socket, hand-written                   |
 | [api/streamws.go](../../acceleration/internal/api/streamws.go)      | One socket per modality, for pipelines that stay in Python |
 | [sandbox/](../../acceleration/internal/sandbox)                     | Where the subagent runs code it writes           |
-| [plugins/stream](../../plugins/stream)                              | The Python side: `Accelerated`, `STT`, `TTS`, `LLM`, `Router` |
+| [plugins/stream](../../plugins/stream)                              | The Python side: `Accelerated`, `STT`, `TTS`, `LLM`, `Router`, `StreamDispatch` |
 
 ## The LLM slot holds a pipeline
 
@@ -88,6 +90,18 @@ the conversation.
 The same is true of `cost_tracking`, which becomes `routing.Tags` on every request the
 session makes, and `memory_filter`, which splits into who the memories are about and what
 narrows recall further.
+
+## A call is a context manager
+
+Telephony arrived in the same shape. `agent.outbound_call(...)` places the call and joins the
+agent to where the answered leg lands; `agent.answer(call)` joins one that is already ringing
+and waits for the SIP participant. Both are context managers for the same reason `join` is:
+the interesting thing is what happens inside the call, and leaving it should not be something
+a caller remembers to do.
+
+The dispatch worker is the one piece with no equivalent in the Go SDK. `StreamDispatch` holds
+a socket, reports its load and runs a handler per arriving call — see
+[dispatch](dispatch.md).
 
 ## One modality at a time
 

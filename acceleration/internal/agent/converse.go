@@ -30,6 +30,8 @@ const (
 	ActShorten ActionKind = "shorten"
 	// ActBackchannel makes a short listening noise.
 	ActBackchannel ActionKind = "backchannel"
+	// ActCheckIn asks a caller who has gone quiet whether they need anything else.
+	ActCheckIn ActionKind = "checkin"
 	// ActSupersede abandons a ruling asked for about words that have since changed.
 	ActSupersede ActionKind = "supersede"
 	// ActCompact replaces an old stretch of history with a summary.
@@ -79,8 +81,19 @@ type floor struct {
 	Delegating bool
 	// LastSpokeAt is when the agent last published audio.
 	LastSpokeAt time.Time
+	// LastHeardAt is when anyone on the call was last transcribed.
+	LastHeardAt time.Time
 	// LastParticipant is who the agent was last talking to.
 	LastParticipant stt.Participant
+}
+
+// active is when anything last happened on the call, either end of it. It is zero on a
+// call where nobody has spoken and the agent has yet to say a word.
+func (f floor) active() time.Time {
+	if f.LastHeardAt.After(f.LastSpokeAt) {
+		return f.LastHeardAt
+	}
+	return f.LastSpokeAt
 }
 
 // converse holds the judgements a conversation makes.
@@ -345,6 +358,21 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 	}
 }
 
+// idle invites a caller who has gone quiet back into the conversation, because a silence
+// that nobody breaks is how a call ends by accident rather than because it was over.
+func (c *converse) idle(state floor, participant stt.Participant) []Action {
+	phrase := c.duplex.Idle(state.active(), state.Quiet)
+	if phrase == "" {
+		return nil
+	}
+	return []Action{c.decide(Action{
+		Kind:        ActCheckIn,
+		Reason:      "nobody has said anything for a while, asking whether there is anything else",
+		Participant: participant,
+		Text:        phrase,
+	})}
+}
+
 // Tick decides whether a long listening or thinking gap needs filling, so an agent that
 // is busy does not sound like a dead line.
 func (c *converse) Tick(state floor) []Action {
@@ -353,7 +381,7 @@ func (c *converse) Tick(state floor) []Action {
 		participant = state.LastParticipant
 	}
 	if !hearing && !state.Delegating {
-		return nil
+		return c.idle(state, participant)
 	}
 
 	phrase := c.duplex.Presence(participant, state.LastSpokeAt, state.Quiet)
