@@ -11,6 +11,7 @@ vision-agents-plugins-deepgram = { workspace = true }
 vision-agents-plugins-elevenlabs = { workspace = true }
 vision-agents-plugins-fal = { workspace = true }
 vision-agents-plugins-fish = { workspace = true }
+vision-agents-plugins-funasr = { workspace = true }
 vision-agents-plugins-gemini = { workspace = true }
 vision-agents-plugins-kokoro = { workspace = true }
 vision-agents-plugins-openai = { workspace = true }
@@ -68,6 +69,7 @@ members = [
     "plugins/deepgram",
     "plugins/elevenlabs",
     "plugins/fish",
+    "plugins/funasr",
     "plugins/gemini",
     "plugins/kokoro",
     "plugins/openai",
