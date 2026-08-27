@@ -58,14 +58,14 @@ func (s *ServerSuite) TestPlacingACallRequiresTheCustomerHeader() {
 func (s *ServerSuite) TestSearchingAtAnUnimplementedVendorIsNotFound() {
 	s.withTelephony()
 
-	recorder := s.get("/v1/phone/numbers/available?vendor=sinch&country=US", "acme")
+	recorder := s.get("/v1/phone/numbers/available?vendor=bics&country=US", "acme")
 
 	s.Equal(http.StatusNotFound, recorder.Code)
 
 	var failure Error
 	s.decode(recorder, &failure)
 	s.Contains(failure.Error, "not implemented")
-	s.Contains(failure.Error, "sinch")
+	s.Contains(failure.Error, "bics")
 }
 
 func (s *ServerSuite) TestSearchingAtAnUnknownVendorIsRejected() {
@@ -78,6 +78,40 @@ func (s *ServerSuite) TestSearchingAtAnUnknownVendorIsRejected() {
 	var failure Error
 	s.decode(recorder, &failure)
 	s.Contains(failure.Error, "not a known vendor")
+}
+
+func (s *ServerSuite) TestSearchingWithoutAVendorSaysNoVendorCanBeAsked() {
+	// Leaving the vendor out fans the search out, and this deployment has no vendor with
+	// credentials, which is a different answer from having nothing for sale.
+	s.withTelephony()
+
+	recorder := s.get("/v1/phone/numbers/available?country=US&administrative_area=CO", "acme")
+
+	s.Equal(http.StatusBadRequest, recorder.Code)
+
+	var failure Error
+	s.decode(recorder, &failure)
+	s.Contains(failure.Error, "no vendor has the credentials")
+}
+
+func (s *ServerSuite) TestEveryVendorSaysWhichOperationsItSupports() {
+	s.withTelephony()
+
+	recorder := s.get("/v1/phone/vendors", "acme")
+	s.Equal(http.StatusOK, recorder.Code)
+
+	var vendors []PhoneVendor
+	s.decode(recorder, &vendors)
+	s.Require().NotEmpty(vendors)
+
+	for _, vendor := range vendors {
+		if !vendor.Implemented {
+			s.Nil(vendor.Operations, vendor.Vendor+" claims operations it cannot do")
+			continue
+		}
+		s.Require().NotNil(vendor.Operations, vendor.Vendor+" does not say what it can do")
+		s.Contains(*vendor.Operations, PhoneOperationBuy)
+	}
 }
 
 func (s *ServerSuite) TestListingNumbersWithoutADatabaseSaysSo() {
@@ -107,6 +141,31 @@ func (s *ServerSuite) TestANumberCannotBeBoughtWithLabelsTheRollupsCannotCarry()
 	var failure Error
 	s.decode(recorder, &failure)
 	s.Contains(failure.Error, "tag")
+}
+
+func (s *ServerSuite) TestACallCannotRingForLessThanNoTime() {
+	s.withTelephony()
+
+	recorder := s.post("/v1/phone/calls", "acme",
+		`{"from":"+15125551234","to":"+15550001111","ring_timeout_seconds":-5}`)
+
+	s.Equal(http.StatusBadRequest, recorder.Code)
+
+	var failure Error
+	s.decode(recorder, &failure)
+	s.Contains(failure.Error, "less than no time")
+}
+
+func (s *ServerSuite) TestTheAnswerPathIsReachedByAVendorThatHasNoCustomerToName() {
+	// A telephony vendor fetching a call plan sends no customer header, so this path has
+	// to be outside the middleware that requires one. Being unauthorized here would mean a
+	// vendor bridging a live call to nowhere.
+	s.withTelephony()
+
+	recorder := s.get("/v1/phone/answer/some-token", "")
+
+	s.Equal(http.StatusNotFound, recorder.Code)
+	s.Contains(recorder.Body.String(), "not waiting to be answered")
 }
 
 // withTelephony rebuilds the handler with a phone service that has vendors declared but

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -42,10 +44,22 @@ const (
 	redisEnvVar       = "ROUTER_REDIS_ADDR"
 	configEnvVar      = "ROUTER_CONFIG"
 	phoneConfigEnvVar = "ROUTER_PHONE_CONFIG"
+	// publicURLEnvVar is where this service is reachable from the internet, which the
+	// telephony vendors that fetch a call plan on answer need in order to fetch it. It is
+	// not ROUTER_ADDR: that is where to listen, which behind a load balancer is not where
+	// anyone reaches it.
+	publicURLEnvVar = "ROUTER_PUBLIC_URL"
+	// streamSecretEnvVar signs the call events Stream sends to the inbound hook. It is the
+	// app secret rather than a webhook-specific one.
+	streamSecretEnvVar = "STREAM_API_SECRET"
+	// corsOriginsEnvVar names the browser origins allowed to call this API directly,
+	// comma separated. It exists for the dashboard, which talks to the router rather than
+	// through a server of its own. Unset means no browser may.
+	corsOriginsEnvVar = "ROUTER_CORS_ORIGINS"
 	logLevelEnvVar    = "ROUTER_LOG_LEVEL"
-	defaultAddress    = ":8080"
-	shutdownGrace     = 10 * time.Second
-	readHeaderTimeout = 10 * time.Second
+	defaultAddress     = ":8080"
+	shutdownGrace      = 10 * time.Second
+	readHeaderTimeout  = 10 * time.Second
 )
 
 func main() {
@@ -237,17 +251,30 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
+	// Inbound calls are answered by whoever is connected to the dispatch socket, so the
+	// pool exists whether or not anybody is: an empty pool is a call nobody answers, which
+	// is a different thing from a deployment that does not dispatch at all.
+	workers := dispatch.NewPool()
+
 	options := api.Options{
-		Routers:     routers,
-		Voices:      voiceService,
-		Store:       pgStore,
-		Live:        liveClient,
-		Phone:       telephony,
-		Sessions:    sessions,
-		Streams:     streams,
-		Transcripts: transcripts,
-		Campaigns:   campaigns,
-		Logger:      logger,
+		Routers:      routers,
+		Voices:       voiceService,
+		Store:        pgStore,
+		Live:         liveClient,
+		Phone:        telephony,
+		Sessions:     sessions,
+		Streams:      streams,
+		Transcripts:  transcripts,
+		Campaigns:    campaigns,
+		Dispatch:     workers,
+		StreamSecret: os.Getenv(streamSecretEnvVar),
+		CORSOrigins:  splitList(os.Getenv(corsOriginsEnvVar)),
+		Logger:       logger,
+	}
+	if options.StreamSecret == "" {
+		logger.Warn("no "+streamSecretEnvVar+" set, so inbound calls cannot be dispatched: "+
+			"the call events Stream sends cannot be told apart from anyone who found the url",
+			"hook", "POST /v1/phone/hooks/stream")
 	}
 	// A nil *turbopuffer.Store in an interface is not a nil interface, so the absence has
 	// to stay absent rather than becoming a value that says it is there.
@@ -290,6 +317,18 @@ func run(logger *slog.Logger) error {
 		defer cancel()
 		return httpServer.Shutdown(shutdownCtx)
 	}
+}
+
+// splitList reads a comma-separated environment variable, dropping the empty entries a
+// trailing comma leaves behind.
+func splitList(raw string) []string {
+	var entries []string
+	for _, entry := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(entry); trimmed != "" {
+			entries = append(entries, trimmed)
+		}
+	}
+	return entries
 }
 
 // buildSessions wires the part of the router that holds conversations rather than
@@ -421,10 +460,11 @@ func buildPhone(
 	}
 
 	return phone.NewService(phone.ServiceOptions{
-		Registry: vendors.Registry(config),
-		Store:    pgStore,
-		Stream:   stream,
-		Recorder: recorder,
-		Logger:   logger,
+		Registry:  vendors.Registry(config),
+		Store:     pgStore,
+		Stream:    stream,
+		Recorder:  recorder,
+		PublicURL: os.Getenv(publicURLEnvVar),
+		Logger:    logger,
 	})
 }

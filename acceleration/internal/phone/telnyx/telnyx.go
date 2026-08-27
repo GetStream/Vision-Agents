@@ -8,6 +8,7 @@ package telnyx
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -103,20 +105,25 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	if search.Contains != "" {
 		query.Set("filter[phone_number][contains]", search.Contains)
 	}
+	if search.Prefix != "" {
+		query.Set("filter[phone_number][starts_with]", search.Prefix)
+	}
+	if search.Locality != "" {
+		query.Set("filter[locality]", search.Locality)
+	}
+	if search.AdministrativeArea != "" {
+		query.Set("filter[administrative_area]", strings.ToUpper(search.AdministrativeArea))
+	}
+	if search.Type != "" {
+		query.Set("filter[phone_number_type]", string(search.Type))
+	}
 	if search.Limit > 0 {
 		query.Set("filter[limit]", strconv.Itoa(search.Limit))
 	}
+	// Telnyx's feature names are the ones the contract uses, so a capability is its own
+	// filter value.
 	for _, capability := range search.Capabilities {
-		switch capability {
-		case phone.Voice:
-			query.Set("filter[features][]", "voice")
-		case phone.SMS:
-			query.Add("filter[features][]", "sms")
-		case phone.MMS:
-			query.Add("filter[features][]", "mms")
-		case phone.Fax:
-			query.Add("filter[features][]", "fax")
-		}
+		query.Add("filter[features][]", string(capability))
 	}
 
 	var response envelope[[]availableNumber]
@@ -128,9 +135,11 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	for _, number := range response.Data {
 		offered = append(offered, phone.Available{
 			E164:              number.PhoneNumber,
+			Vendor:            p.Vendor(),
 			Country:           number.CountryCode,
 			Region:            number.RegionInformation.value("state"),
 			Locality:          number.RegionInformation.value("rate_center"),
+			Type:              numberType(number.PhoneNumberType),
 			Capabilities:      features(number.Features),
 			MonthlyCostMicros: dollarsToMicros(number.CostInformation.MonthlyCost),
 		})
@@ -138,30 +147,39 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	return offered, nil
 }
 
+// Supports is every filter: Telnyx's search is the widest of these vendors, which is why
+// the contract's vocabulary is shaped like it.
+func (p *Provider) Supports(phone.Filter) bool { return true }
+
+// Dials every feature: Telnyx's call takes a ring timeout, digits to press on answer and
+// custom SIP headers, all as parameters on the one request.
+func (p *Provider) Dials(phone.CallFeature) bool { return true }
+
 // BuyNumber orders a number. Telnyx fulfils orders asynchronously, so this returns as soon
-// as the order is accepted rather than when the number is usable.
-func (p *Provider) BuyNumber(ctx context.Context, e164 string) (phone.Number, error) {
-	if e164 == "" {
+// as the order is accepted rather than when the number is usable. Telnyx orders by number,
+// so the order's country is not needed.
+func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
+	if order.E164 == "" {
 		return phone.Number{}, errors.New("telnyx: a number is required")
 	}
 
-	order := numberOrder{PhoneNumbers: []orderedNumber{{PhoneNumber: e164}}}
+	request := numberOrder{PhoneNumbers: []orderedNumber{{PhoneNumber: order.E164}}}
 	if p.connectionID != "" {
-		order.ConnectionID = p.connectionID
+		request.ConnectionID = p.connectionID
 	}
 
 	var response envelope[placedOrder]
-	if err := p.do(ctx, http.MethodPost, "/v2/number_orders", nil, order, &response); err != nil {
+	if err := p.do(ctx, http.MethodPost, "/v2/number_orders", nil, request, &response); err != nil {
 		return phone.Number{}, err
 	}
 
 	bought := phone.Number{
-		E164:     e164,
+		E164:     order.E164,
 		Vendor:   p.Vendor(),
 		VendorID: response.Data.ID,
 	}
 	for _, ordered := range response.Data.PhoneNumbers {
-		if ordered.PhoneNumber != e164 {
+		if ordered.PhoneNumber != order.E164 {
 			continue
 		}
 		bought.Country = ordered.CountryCode
@@ -200,11 +218,8 @@ func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) 
 // Dial places a call to a SIP address, which for an agent is the Stream trunk. Stream's
 // SIP is inbound only, so the vendor originates and the agent is already waiting on it.
 func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dialed, error) {
-	if outbound.From == "" || outbound.To == "" {
-		return phone.Dialed{}, errors.New("telnyx: a call needs a from and a to")
-	}
-	if err := outbound.Bridge.Validate(); err != nil {
-		return phone.Dialed{}, err
+	if err := outbound.Validate(); err != nil {
+		return phone.Dialed{}, fmt.Errorf("telnyx: %w", err)
 	}
 	if p.connectionID == "" {
 		return phone.Dialed{}, errors.New("telnyx: a connection id is required to place a call")
@@ -213,12 +228,15 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	// The person is called from one of this service's numbers and the answered leg is
 	// joined to the trunk, so the agent and the person are on the same call.
 	request := dialRequest{
-		ConnectionID:    p.connectionID,
-		From:            outbound.From,
-		To:              outbound.To,
-		SIPAuthUsername: outbound.Bridge.Username,
-		SIPAuthPassword: outbound.Bridge.Password,
-		LinkTo:          outbound.Bridge.URI,
+		ConnectionID:       p.connectionID,
+		From:               outbound.From,
+		To:                 outbound.To,
+		SIPAuthUsername:    outbound.Bridge.Username,
+		SIPAuthPassword:    outbound.Bridge.Password,
+		LinkTo:             outbound.Bridge.URI,
+		TimeoutSecs:        int(outbound.RingTimeout.Seconds()),
+		SendDigitsOnAnswer: outbound.InitialDigits,
+		CustomHeaders:      headers(outbound.Headers),
 	}
 
 	var response envelope[dialedCall]
@@ -329,18 +347,24 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 func features(offered []feature) []phone.Capability {
 	var has []phone.Capability
 	for _, each := range offered {
-		switch each.Name {
-		case "voice":
-			has = append(has, phone.Voice)
-		case "sms":
-			has = append(has, phone.SMS)
-		case "mms":
-			has = append(has, phone.MMS)
-		case "fax":
-			has = append(has, phone.Fax)
+		switch phone.Capability(each.Name) {
+		case phone.Voice, phone.SMS, phone.MMS, phone.Fax,
+			phone.Emergency, phone.HDVoice, phone.InternationalSMS, phone.LocalCalling:
+			has = append(has, phone.Capability(each.Name))
 		}
 	}
 	return has
+}
+
+// numberType maps Telnyx's number types onto the three this service names, leaving the
+// national and shared-cost ones it does not sell empty rather than guessing.
+func numberType(kind string) phone.NumberType {
+	switch phone.NumberType(kind) {
+	case phone.Local, phone.TollFree, phone.Mobile:
+		return phone.NumberType(kind)
+	default:
+		return ""
+	}
 }
 
 func dollarsToMicros(dollars string) int64 {
@@ -387,6 +411,7 @@ func (r regions) value(kind string) string {
 type availableNumber struct {
 	PhoneNumber       string    `json:"phone_number"`
 	CountryCode       string    `json:"country_code"`
+	PhoneNumberType   string    `json:"phone_number_type"`
 	Features          []feature `json:"features"`
 	RegionInformation regions   `json:"region_information"`
 	CostInformation   struct {
@@ -430,6 +455,34 @@ type dialRequest struct {
 	// LinkTo is the SIP address the answered call is joined to, which is the trunk the
 	// agent is on.
 	LinkTo string `json:"link_to,omitempty"`
+	// TimeoutSecs is how long to ring before giving up.
+	TimeoutSecs int `json:"timeout_secs,omitempty"`
+	// SendDigitsOnAnswer are pressed once the person picks up.
+	SendDigitsOnAnswer string `json:"send_digits_on_answer,omitempty"`
+	// CustomHeaders travel on the INVITE to the person.
+	CustomHeaders []customHeader `json:"custom_headers,omitempty"`
+}
+
+// customHeader is one SIP header carried to the person's leg.
+type customHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// headers renders custom headers in the shape Telnyx takes them, sorted so that the same
+// call twice sends the same request.
+func headers(wanted map[string]string) []customHeader {
+	if len(wanted) == 0 {
+		return nil
+	}
+	rendered := make([]customHeader, 0, len(wanted))
+	for name, value := range wanted {
+		rendered = append(rendered, customHeader{Name: name, Value: value})
+	}
+	slices.SortFunc(rendered, func(a, b customHeader) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
+	return rendered
 }
 
 type dialedCall struct {

@@ -267,14 +267,22 @@ paths:
   /v1/phone/numbers/available:
     get:
       operationId: searchPhoneNumbers
-      summary: Search a vendor for numbers to buy
+      summary: Search for numbers to buy, at one vendor or all of them
+      description: >
+        Naming a vendor searches only that one. Leaving it out asks every vendor
+        that has its credentials, at once, and merges what they offer cheapest
+        first. Vendors do not agree on how a search can be narrowed, so one whose
+        API cannot express a filter is reported in `skipped` rather than asked
+        without it, which would answer a search for one place with numbers from
+        another.
       parameters:
         - name: vendor
           in: query
-          required: true
+          required: false
+          description: One vendor to search. Absent searches every usable vendor.
           schema:
             type: string
-          example: twilio
+          example: telnyx
         - name: country
           in: query
           required: true
@@ -290,9 +298,50 @@ paths:
         - name: contains
           in: query
           required: false
-          description: Digits the number must contain.
+          description: Digits the number must contain, anywhere in it.
           schema:
             type: string
+        - name: prefix
+          in: query
+          required: false
+          description: >
+            Digits the number must start with, matched after the country dial
+            code. This differs from `contains` in where the digits have to fall.
+          schema:
+            type: string
+          example: "719"
+        - name: locality
+          in: query
+          required: false
+          description: A city, region or rate centre.
+          schema:
+            type: string
+          example: Denver
+        - name: administrative_area
+          in: query
+          required: false
+          description: A US state or Canadian province.
+          schema:
+            type: string
+          example: CO
+        - name: number_type
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PhoneNumberType"
+        - name: features
+          in: query
+          required: false
+          description: >
+            Capabilities every number must have. Repeat the parameter to require
+            several. A vendor that cannot filter on one still reports what its
+            numbers carry, so these are checked on the results either way.
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/PhoneCapability"
         - name: limit
           in: query
           required: false
@@ -301,13 +350,11 @@ paths:
             default: 10
       responses:
         "200":
-          description: What the vendor is offering
+          description: What the vendors are offering, and which could not answer
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/AvailableNumber"
+                $ref: "#/components/schemas/NumberSearchResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1214,6 +1261,42 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/calls/{id}/events:
+    get:
+      operationId: getCallEvents
+      summary: What the conversation decided, and why
+      description: >
+        A timeline says what a call cost the caller in waiting. This says why the call went
+        the way it did: why the agent waited rather than answering, why it read something
+        as not meant for it, why it stopped mid-sentence. Read in order they are the
+        reasoning behind the conversation, which is the only thing that explains a call
+        that surprised somebody. A call still running reports the same decisions live on
+        the session socket.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+        - name: limit
+          in: query
+          required: false
+          description: How many to return, oldest first.
+          schema:
+            type: integer
+            default: 1000
+      responses:
+        "200":
+          description: The judgements, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CallEvent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/sessions:
     get:
       operationId: listSessions
@@ -1389,16 +1472,40 @@ paths:
         objects carrying a `type` and the fields of that event.
 
         The server sends what the conversation did: `joined`, `heard`, `responding`,
-        `response_delta`, `responded`, `spoke`, `turn`, `delegated`, `task_settled`,
-        `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`,
-        `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
+        `response_delta`, `responded`, `spoke`, `turn`, `decision`, `delegated`,
+        `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`, `transferred`,
+        `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
         `conversation_compacted`, `error` and `left`.
+
+        A `decision` frame is one judgement the conversation made, carrying the same
+        fields as a CallEvent. Together they are why the call went the way it did, and
+        they are also written down, so a finished call replays them from
+        `/v1/agents/calls/{id}/events`.
+
+        Two frames are only sent when asked for, because they are far more frequent than
+        the rest and most consumers want neither. `interim=true` adds `hearing`, which is
+        a transcript revision as it arrives rather than a settled turn. `decisions=false`
+        drops `decision`.
 
         The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`,
         `interrupt`, `instructions` or `close` to act on the session. A `tool_call` is the
         only frame that must be answered: everything else is a report.
       parameters:
         - $ref: "#/components/parameters/SessionID"
+        - name: interim
+          in: query
+          required: false
+          description: Also send `hearing` frames, which are the words as they are revised.
+          schema:
+            type: boolean
+            default: false
+        - name: decisions
+          in: query
+          required: false
+          description: Send `decision` frames.
+          schema:
+            type: boolean
+            default: true
       responses:
         "101":
           description: The socket is open
@@ -2074,6 +2181,56 @@ components:
           type: boolean
           description: Whether the caller talked over the answer.
 
+    CallEvent:
+      type: object
+      required: [at, kind, reason]
+      properties:
+        at:
+          type: string
+          format: date-time
+        kind:
+          $ref: "#/components/schemas/DecisionKind"
+        reason:
+          type: string
+          description: Why the conversation chose it, in words.
+        turn_id:
+          type: string
+          description: The exchange it was about, which lines it up against that turn's timings.
+        participant:
+          type: string
+          description: Who it concerned.
+        said:
+          type: string
+          description: What was heard, or what the agent decided to say.
+        latency_ms:
+          type: number
+          format: double
+          description: What the flow controller took to rule, where anything was asked.
+
+    DecisionKind:
+      type: string
+      description: >
+        What a conversation decided. Asking puts a settled turn to the flow controller;
+        waiting leaves it because the caller has not finished; ignoring drops speech meant
+        for somebody else; answering replies to it; queueing holds it until the agent has
+        stopped talking; interrupting abandons the reply being spoken and shortening ends
+        it early; a backchannel is a listening noise that never reaches the model;
+        superseding drops a ruling about words that have since changed; compacting
+        replaces old history with a summary; delegating hands work to the subagent.
+      enum:
+        - ask
+        - wait
+        - ignore
+        - answer
+        - queue
+        - interrupt
+        - shorten
+        - backchannel
+        - supersede
+        - compact
+        - delegate
+        - fail
+
     CreateSessionRequest:
       type: object
       properties:
@@ -2539,6 +2696,14 @@ components:
         ready:
           type: boolean
           description: Implemented and holding every credential it needs.
+        operations:
+          type: array
+          description: >
+            What this service can do at the vendor. Eight vendors buy numbers and
+            two of those also bridge calls, so a number is not bought from a
+            vendor that cannot answer on it by accident.
+          items:
+            $ref: "#/components/schemas/PhoneOperation"
         capabilities:
           type: array
           items:
@@ -2549,23 +2714,89 @@ components:
           items:
             type: string
 
+    PhoneOperation:
+      type: string
+      enum: [search, buy, release, attach, dial, send_digits]
+      # Without these the generated constants are named Search, Buy and Dial, which are too
+      # generic to sit at the top of a package that is mostly generated.
+      x-enum-varnames:
+        - PhoneOperationSearch
+        - PhoneOperationBuy
+        - PhoneOperationRelease
+        - PhoneOperationAttach
+        - PhoneOperationDial
+        - PhoneOperationSendDigits
+
     PhoneCapability:
       type: string
-      enum: [voice, sms, mms, fax]
+      description: >
+        What a number can carry. The names are Telnyx's feature names, because
+        they are the widest vocabulary any of these vendors offers.
+      enum:
+        [
+          voice,
+          sms,
+          mms,
+          fax,
+          emergency,
+          hd_voice,
+          international_sms,
+          local_calling,
+        ]
+
+    PhoneNumberType:
+      type: string
+      description: What kind of number it is, which decides who pays for the call.
+      enum: [local, toll_free, mobile]
+
+    NumberSearchResult:
+      type: object
+      required: [numbers, skipped]
+      properties:
+        numbers:
+          type: array
+          description: What the vendors are offering, cheapest first.
+          items:
+            $ref: "#/components/schemas/AvailableNumber"
+        skipped:
+          type: array
+          description: >
+            Vendors that were not part of the answer. A search that reached two
+            of eight vendors found what two vendors had, and deciding whether to
+            buy needs to know which.
+          items:
+            $ref: "#/components/schemas/SkippedVendor"
+
+    SkippedVendor:
+      type: object
+      required: [vendor, reason]
+      properties:
+        vendor:
+          type: string
+          example: twilio
+        reason:
+          type: string
+          example: cannot search by administrative_area
 
     AvailableNumber:
       type: object
-      required: [e164, country, capabilities]
+      required: [e164, vendor, country, capabilities]
       properties:
         e164:
           type: string
           example: "+15125551234"
+        vendor:
+          type: string
+          description: Who is offering it, which is also who to buy it from.
+          example: telnyx
         country:
           type: string
         region:
           type: string
         locality:
           type: string
+        number_type:
+          $ref: "#/components/schemas/PhoneNumberType"
         capabilities:
           type: array
           items:
@@ -2618,6 +2849,13 @@ components:
         e164:
           type: string
           example: "+15125551234"
+        country:
+          type: string
+          description: >
+            The country the number was offered from, as the search reported it.
+            Most vendors buy by number alone; the few that buy out of a country's
+            inventory need this, and it cannot be guessed back out of the number.
+          example: US
         tags:
           type: object
           additionalProperties:
@@ -2662,11 +2900,40 @@ components:
           description: One of the customer's own numbers, which is what the person sees.
         to:
           type: string
-        sip_uri:
+        call_id:
           type: string
           description: >
-            The trunk the answered call joins. Omit to have one created, which is
-            what a one-off call wants.
+            The Stream call the answered leg joins, and so the one the agent has to be
+            in. Omit to have one named after this call, since two calls from the same
+            number are two conversations.
+        call_type:
+          type: string
+          description: The Stream call type. Omit for "default".
+        ring_timeout_seconds:
+          type: integer
+          description: >
+            How long to ring before giving up. Omit to leave the vendor's default,
+            which is long enough to reach voicemail. A vendor whose call API cannot
+            express it refuses the call rather than ringing for its own default.
+        initial_digits:
+          type: string
+          description: >
+            Digits pressed once the person answers, for reaching an extension behind a
+            menu, e.g. "ww1234#". w is a short pause and W a long one.
+        custom:
+          type: object
+          description: >
+            Put on the Stream call, where the agent in it can read it. It is set at
+            Stream rather than at the vendor, so every vendor can carry it.
+          additionalProperties:
+            type: string
+        headers:
+          type: object
+          description: >
+            Carried to the person's leg as custom SIP headers. Only some vendors can
+            express these, and one that cannot refuses the call.
+          additionalProperties:
+            type: string
         tags:
           type: object
           additionalProperties:
@@ -2681,6 +2948,16 @@ components:
         status:
           type: string
           description: The vendor's own word for where the call is, e.g. "queued".
+        vendor:
+          type: string
+          description: Who is placing the call.
+        call_id:
+          type: string
+          description: >
+            The Stream call the answered leg is routed into. An agent that is not in it
+            hears nothing when the person picks up.
+        call_type:
+          type: string
 
     TransferCallRequest:
       type: object

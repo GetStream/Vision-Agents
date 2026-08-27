@@ -33,6 +33,7 @@ class AgentConfig:
         instructions (str | Unset):
         greeting (str | Unset):
         skills (list[str] | Unset):
+        keyterms (list[str] | Unset):
         knowledge_namespace (str | Unset):
         tags (AgentConfigTags | Unset):
     """
@@ -49,6 +50,7 @@ class AgentConfig:
     instructions: str | Unset = UNSET
     greeting: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
+    keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     tags: AgentConfigTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -79,6 +81,10 @@ class AgentConfig:
         skills: list[str] | Unset = UNSET
         if not isinstance(self.skills, Unset):
             skills = self.skills
+
+        keyterms: list[str] | Unset = UNSET
+        if not isinstance(self.keyterms, Unset):
+            keyterms = self.keyterms
 
         knowledge_namespace = self.knowledge_namespace
 
@@ -112,6 +118,8 @@ class AgentConfig:
             field_dict["greeting"] = greeting
         if skills is not UNSET:
             field_dict["skills"] = skills
+        if keyterms is not UNSET:
+            field_dict["keyterms"] = keyterms
         if knowledge_namespace is not UNSET:
             field_dict["knowledge_namespace"] = knowledge_namespace
         if tags is not UNSET:
@@ -148,6 +156,8 @@ class AgentConfig:
 
         skills = cast(list[str], d.pop("skills", UNSET))
 
+        keyterms = cast(list[str], d.pop("keyterms", UNSET))
+
         knowledge_namespace = d.pop("knowledge_namespace", UNSET)
 
         _tags = d.pop("tags", UNSET)
@@ -170,6 +180,7 @@ class AgentConfig:
             instructions=instructions,
             greeting=greeting,
             skills=skills,
+            keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
             tags=tags,
         )

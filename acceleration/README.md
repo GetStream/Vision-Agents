@@ -30,7 +30,9 @@ and billing as a direct API call.
 | `internal/knowledge` | What the business wrote down; `turbopuffer/` is the one provider    |
 | `internal/knowledge/ingest` | Cutting documents into passages, for both the command and the endpoint |
 | `internal/phone`     | Telephony: the vendor contract, the Stream SIP trunk, the service   |
-| `internal/phone/twilio`, `internal/phone/telnyx` | The two implemented vendors    |
+| `internal/phone/twilio`, `internal/phone/telnyx` | The two vendors that also answer on a number |
+| `internal/phone/sinch`, `.../bandwidth`, `.../vonage`, `.../bird`, `.../plivo` | Five more that buy numbers and call out on them |
+| `internal/phone/didww`  | Sells numbers and cannot dial: it has no call control API at all    |
 | `internal/store`     | Postgres via bun, plus the goose migrations in `migrations/`        |
 | `internal/live`      | Redis via rueidis: provider health and live per-customer counters   |
 | `internal/api`       | HTTP layer generated from `api/openapi.yaml`                        |
@@ -39,7 +41,7 @@ and billing as a direct API call.
 | `cmd/say`            | Types a line, hears it                                              |
 | `cmd/chat`           | Types a line, reads the answer                                      |
 | `cmd/agent`          | Joins a Stream call and holds a conversation                        |
-| `cmd/phone`          | Buys numbers, points them at an agent, and transfers live calls     |
+| `cmd/phone`          | Buys numbers, points them at an agent, calls out and transfers live calls |
 | `cmd/knowledge`      | Reads documents into a knowledge base an agent can look things up in |
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
@@ -86,6 +88,7 @@ to play audio, or `-out` to write a file instead.
 | `ROUTER_BLOB_URL`       | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
+| `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless the dashboard is running |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
 | `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
 | `MEM0_API_KEY`          | mem0 credentials. Without it the agent remembers nothing   |
@@ -237,6 +240,14 @@ go run ./cmd/phone vendors
 go run ./cmd/phone search -vendor twilio -country US -area 512
 go run ./cmd/phone buy -vendor twilio -number +15125551234 -tag project=support
 go run ./cmd/phone attach -number +15125551234 -call support-line
+
+# Or ask every vendor at once, for somewhere specific with the features you need
+go run ./cmd/phone search -country US -state CO -type local \
+  -feature hd_voice -feature emergency -limit 5
+
+# Call somebody, on the terms the call needs, and join the call it prints
+go run ./cmd/phone dial -from +15125551234 -to +15550001111 \
+  -call-id support-line -ring-timeout 20s -digits ww1234#
 
 # Let the agent hand a caller to a human, or answer a menu on a call it placed
 go run ./cmd/agent -call support-line -number +15125551234
@@ -500,6 +511,7 @@ inline in the request overrides it, so a config can be reused and one call still
 | `GET /v1/agents/calls/{id}`                 | One call, with what a model made of it       |
 | `GET /v1/agents/calls/{id}/transcript`      | What was said                                |
 | `GET /v1/agents/calls/{id}/timeline`        | Each exchange, said and measured together    |
+| `GET /v1/agents/calls/{id}/events`          | What the conversation decided, and why       |
 | `POST /v1/agents/knowledge`                 | Fill a knowledge base from documents         |
 | `/v1/agents/campaigns`                      | Lists of people to ring, and how far they got |
 
@@ -645,11 +657,32 @@ queued and dropped under backpressure. `app_id` is the deployment and `user_id` 
 customer, so two deployments sharing one mem0 account do not read each other's memories.
 Every call is recorded as a `requests` row with modality `memory`.
 
-**Phone.** `phone.Provider` is the five things every vendor agrees on: search, buy, release,
-point at the bridge, dial out. All eleven vendors are declared in
-[internal/phone/phone.yaml](internal/phone/phone.yaml); Twilio and Telnyx are implemented and
-the other nine resolve to a stub that refuses every operation by name, so they list rather
-than being absent.
+**Phone.** `phone.Provider` is the things vendors agree on: search, buy, release, point at
+the bridge, dial out, press digits. All eleven vendors are declared in
+[internal/phone/phone.yaml](internal/phone/phone.yaml). Eight are implemented; the other
+three resolve to a stub that refuses every operation by name, so they list rather than being
+absent.
+
+Being implemented means different things for different vendors, so each declares its
+`operations` and `GET /v1/phone/vendors` reports them. Seven of the eight can place an
+outbound call. **DIDWW cannot, and never will here:** it sells numbers and has no call
+control API at all, only SIP origination against a trunk resource it expects you to point
+your own switch at. There is nothing to ask it to dial with, so `dial` is absent from its
+operations and a number is not bought from it for an agent that has to call people.
+
+Only Twilio and Telnyx also `attach`, which is the inbound direction: pointing a number at a
+trunk so calling it reaches an agent. For the other five that is a per-vendor application
+rather than a property of the number, and it is declared missing rather than half-done.
+
+Vendors also disagree about how a search can be narrowed. Telnyx filters by US state and
+Sinch does not; Plivo matches digits only at the front of a number and Vonage matches at
+either end but not both at once. So a provider declares which filters it can express, and
+`GET /v1/phone/numbers/available` without a vendor asks every vendor that has its credentials
+at once, merges what they offer cheapest first, and reports in `skipped` any vendor it could
+not ask and why. Dropping a filter the vendor cannot express would answer a search for
+Colorado with numbers from Ohio, which reads as a result. Capabilities are the exception:
+every vendor says what its numbers carry even when it cannot filter on them, so those are
+checked on the results.
 
 Stream's SIP support is **inbound only** today. A number reaches an agent by the vendor
 sending the call to a Stream inbound trunk; an outbound call is originated at the vendor and
@@ -657,6 +690,63 @@ bridged into the same trunk, because there is nothing to ask Stream to dial with
 number creates the trunk and a routing rule whose caller id is a handlebars template, so the
 SIP caller becomes a participant with a stable id that per-participant transcription can key
 on.
+
+### Placing a call
+
+`POST /v1/phone/calls` makes its own trunk and routing rule and pins the rule to a call, so
+the answered leg lands somewhere an agent can be waiting. The response says which call that
+is, and an agent that is not in it hears nothing when the person picks up.
+
+Vendors do not agree on what a call can be asked for, so a provider declares which terms its
+API can express and a call naming one it cannot is refused rather than placed without it. A
+ring timeout that was silently dropped is a call sitting in somebody's voicemail for a
+minute.
+
+| Term | Who can express it |
+| --- | --- |
+| `ring_timeout_seconds` | Everyone but Bird and Sinch |
+| `initial_digits` | Twilio, Telnyx, Bandwidth, Sinch |
+| `headers` | Telnyx only |
+
+Getting past the trunk splits the vendors in two. Twilio, Telnyx and Plivo can name SIP
+digest credentials in their call plans, so the trunk's own password is enough. Vonage, Bird,
+Sinch and Bandwidth have no field for a password anywhere, so their trunk recognises them by
+the address they call from, declared as `signalling` in `phone.yaml`. Stream reads an empty
+allowlist as "accept everything" rather than "password only", so a vendor that authenticates
+by address refuses to place a call until its addresses are declared: a trunk with neither is
+a way into a customer's calls for anyone who learns its uri. Vonage's and Bird's addresses
+are published and are in `phone.yaml`; Bandwidth's and Sinch's come with the account, so
+those are per deployment.
+
+Plivo and Bandwidth also will not take a call plan on the request at all, and fetch one when
+the person answers. For those, placing a call parks the plan and hands the vendor a
+single-use expiring token at `GET /v1/phone/answer/{token}`, which is the one unauthenticated
+path here because the vendor fetching it has no customer to name. It needs `ROUTER_PUBLIC_URL`
+to be set to somewhere those vendors can reach, and says so rather than placing a call
+nothing will answer. Sinch is the near miss: its callbacks belong to the application rather
+than to a call, so its plan travels inline on the callout instead.
+
+```bash
+go run ./cmd/phone dial -from +15125551234 -to +15550001111 \
+  -call-id support-line -ring-timeout 20s -digits ww1234# -custom reason=callback
+```
+
+Buying a number spends money every month, so nothing automated buys one. The runbook, run by
+hand:
+
+```bash
+# What is on offer, and what it costs
+go run ./cmd/phone search -vendor telnyx -country US -state CO \
+  -type local -feature hd_voice -feature emergency -limit 5
+
+# Buy one of them. -country is only needed by the vendors that sell out of a
+# country's inventory rather than by number, which the search reports.
+go run ./cmd/phone buy -vendor telnyx -number +1719XXXXXXX -tag project=sprint12
+go run ./cmd/phone list
+
+# Give it back, which is what stops the charge
+go run ./cmd/phone release -number +1719XXXXXXX
+```
 
 `cmd/router` applies migrations on startup. To run them by hand:
 
@@ -695,11 +785,12 @@ docker run -d --name va-redis -p 56379:6379 redis:7-alpine
 
 ## Regenerate the HTTP layer
 
-`api/openapi.yaml` is the source of truth for both sides. After editing it:
+`api/openapi.yaml` is the source of truth for every side. After editing it:
 
 ```bash
 go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
 uv run ../plugins/stream/generate.py
+(cd ../dashboard && npm run types)
 ```
 
 The two sockets are declared in the spec with a `101` response so a reader and a client

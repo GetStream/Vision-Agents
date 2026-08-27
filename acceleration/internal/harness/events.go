@@ -53,7 +53,10 @@ type Decided struct {
 	CandidateID string
 	Disposition Disposition
 	Floor       Floor
-	Err         error
+	// TookMs is how long the controller was thinking about it, which is time the caller
+	// spent waiting to be answered and is worth reporting alongside the answer.
+	TookMs float64
+	Err    error
 }
 
 func (d Decided) Valid() bool {

@@ -49,6 +49,8 @@ class CreateSessionRequest:
             and skills mean nothing.
         voice (str | Unset): Provider-specific voice id.
         languages (list[str] | Unset): Language hints, which narrow the candidates in every modality.
+        keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong. Up to 100
+            terms, and providers that cannot be told about vocabulary ignore them.
         max_tokens (int | Unset):
         tasks (int | Unset): How much delegated work may run at once.
         sandbox (CreateSessionRequestSandbox | Unset): Where the subagent may run code it writes. Only the subagent is
@@ -85,6 +87,7 @@ class CreateSessionRequest:
     subagent: str | Unset = UNSET
     voice: str | Unset = UNSET
     languages: list[str] | Unset = UNSET
+    keyterms: list[str] | Unset = UNSET
     max_tokens: int | Unset = UNSET
     tasks: int | Unset = UNSET
     sandbox: CreateSessionRequestSandbox | Unset = UNSET
@@ -133,6 +136,10 @@ class CreateSessionRequest:
         languages: list[str] | Unset = UNSET
         if not isinstance(self.languages, Unset):
             languages = self.languages
+
+        keyterms: list[str] | Unset = UNSET
+        if not isinstance(self.keyterms, Unset):
+            keyterms = self.keyterms
 
         max_tokens = self.max_tokens
 
@@ -213,6 +220,8 @@ class CreateSessionRequest:
             field_dict["voice"] = voice
         if languages is not UNSET:
             field_dict["languages"] = languages
+        if keyterms is not UNSET:
+            field_dict["keyterms"] = keyterms
         if max_tokens is not UNSET:
             field_dict["max_tokens"] = max_tokens
         if tasks is not UNSET:
@@ -280,6 +289,8 @@ class CreateSessionRequest:
         voice = d.pop("voice", UNSET)
 
         languages = cast(list[str], d.pop("languages", UNSET))
+
+        keyterms = cast(list[str], d.pop("keyterms", UNSET))
 
         max_tokens = d.pop("max_tokens", UNSET)
 
@@ -356,6 +367,7 @@ class CreateSessionRequest:
             subagent=subagent,
             voice=voice,
             languages=languages,
+            keyterms=keyterms,
             max_tokens=max_tokens,
             tasks=tasks,
             sandbox=sandbox,

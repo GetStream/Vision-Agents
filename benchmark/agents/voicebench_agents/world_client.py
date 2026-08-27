@@ -10,7 +10,9 @@ from typing import Any
 class WorldClient:
     def __init__(self, base_url: str | None = None) -> None:
         self.base_url = (
-            base_url or os.environ.get("VOICEBENCH_WORLD_URL") or "http://127.0.0.1:8090"
+            base_url
+            or os.environ.get("VOICEBENCH_WORLD_URL")
+            or "http://127.0.0.1:8090"
         ).rstrip("/")
 
     def call(self, tool: str, **args: Any) -> dict[str, Any]:

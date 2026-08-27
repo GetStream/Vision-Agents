@@ -90,14 +90,17 @@ func newCadence(gap, retry, settle time.Duration, logger *slog.Logger) *cadence 
 	}
 }
 
-// Observe records a transcript revision. It returns a controller decision made stale by
-// the new words, if there is one.
-func (c *cadence) Observe(transcript stt.Transcript) string {
+// Observe records a transcript revision.
+//
+// It returns a controller decision made stale by the new words, if there is one, and what
+// the participant is now saying: the whole of it, assembled from the deltas of a provider
+// that sends them, and empty when the revision changed nothing.
+func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.closed {
-		return ""
+		return "", ""
 	}
 	current := c.speakerFor(transcript.Participant)
 	text := transcript.Text
@@ -105,7 +108,7 @@ func (c *cadence) Observe(transcript stt.Transcript) string {
 		text = current.text + transcript.Text
 	}
 	if strings.TrimSpace(text) == "" {
-		return ""
+		return "", ""
 	}
 
 	current.participant = transcript.Participant
@@ -114,7 +117,7 @@ func (c *cadence) Observe(transcript stt.Transcript) string {
 	current.latencyMs = transcript.ProcessingTimeMs
 	current.utterance = transcript.Utterance
 	if sameWords(current.text, text) {
-		return ""
+		return "", ""
 	}
 	// Nothing new has been said since the agent answered, so these are the words it
 	// answered arriving again as the transcriber settles on them.
@@ -122,10 +125,10 @@ func (c *cadence) Observe(transcript stt.Transcript) string {
 		c.logger.Debug("ignoring the transcriber restating an answered utterance",
 			"participant", transcript.Participant.ID, "text", text,
 			"utterance", transcript.Utterance, "since", time.Since(current.committedAt))
-		return ""
+		return "", ""
 	}
 
-	superseded := current.candidateID
+	superseded = current.candidateID
 	current.text = text
 	current.candidateID = ""
 	current.generation++
@@ -134,7 +137,7 @@ func (c *cadence) Observe(transcript stt.Transcript) string {
 	c.logger.Debug("heard more, waiting for the words to stop changing",
 		"participant", transcript.Participant.ID, "mode", transcript.Mode, "text", text,
 		"confidence", transcript.Confidence, "gap", c.gap, "superseded", superseded)
-	return superseded
+	return superseded, strings.TrimSpace(text)
 }
 
 // Resolve records what became of a candidate. Waiting retries the same words after a

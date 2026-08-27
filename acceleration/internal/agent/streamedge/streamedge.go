@@ -45,6 +45,11 @@ const defaultCallType = "default"
 // wait. A chunk is 20 ms, so this is a fifth of a second of slack.
 const audioBuffer = 10
 
+// attendanceBuffer is how many arrivals and departures may queue. Generous relative to what
+// a call sees, because these are delivered on the signalling goroutine: a full channel there
+// would hold up every other event the SFU is trying to report.
+const attendanceBuffer = 32
+
 // Options configures an Edge. The credentials fall back to the environment, which is how
 // every other provider in this service is configured.
 type Options struct {
@@ -80,7 +85,10 @@ type Edge struct {
 	// inbound carries every participant's speech, already decoded to what the
 	// speech-to-text providers accept.
 	inbound *emit.Emitter[agent.InboundAudio]
-	speaker *speaker
+	// attending carries who comes and goes, which is how an agent that did not start the
+	// call knows somebody is there to talk to.
+	attending *emit.Emitter[agent.Attendance]
+	speaker   *speaker
 
 	client *videosdk.Client
 	call   *videosdk.Call
@@ -91,9 +99,9 @@ type Edge struct {
 	listening map[string]*lkmedia.PCMRemoteTrack
 	// subscribed is the whole subscription list, because the SFU replaces it wholesale on
 	// every update rather than adding to it.
-	subscribed []*signal_rpc.TrackSubscriptionDetails
-	unregister func()
-	left       bool
+	subscribed  []*signal_rpc.TrackSubscriptionDetails
+	unregisters []func()
+	left        bool
 
 	leaveOnce sync.Once
 }
@@ -132,6 +140,7 @@ func New(options Options) (*Edge, error) {
 		options:   options,
 		logger:    options.Logger.With("call", options.CallType+":"+options.CallID),
 		inbound:   emit.New[agent.InboundAudio](audioBuffer),
+		attending: emit.New[agent.Attendance](attendanceBuffer),
 		speaker:   newSpeaker(options.Logger),
 		listening: map[string]*lkmedia.PCMRemoteTrack{},
 	}, nil
@@ -165,6 +174,10 @@ func (e *Edge) Join(ctx context.Context) error {
 		return fmt.Errorf("streamedge: subscribe: %w", err)
 	}
 	e.watchForNewTracks(ctx)
+	// Registered before the people already here are reported, so somebody arriving during
+	// this is reported once rather than not at all.
+	e.watchAttendance()
+	e.reportPresent(joined.GetCallState())
 
 	if err := e.publish(); err != nil {
 		return err
@@ -177,6 +190,9 @@ func (e *Edge) Join(ctx context.Context) error {
 
 // Audio carries what the participants said, as 16 kHz mono PCM.
 func (e *Edge) Audio() <-chan agent.InboundAudio { return e.inbound.Events() }
+
+// Attendance reports who comes and goes, satisfying agent.Roster.
+func (e *Edge) Attendance() <-chan agent.Attendance { return e.attending.Events() }
 
 // PublishAudio sends a chunk of the agent's speech to the call.
 func (e *Edge) PublishAudio(pcm audio.PcmData) error { return e.speaker.Write(pcm) }
@@ -194,7 +210,8 @@ func (e *Edge) Call() *videosdk.Call { return e.call }
 func (e *Edge) leave() error {
 	e.mu.Lock()
 	e.left = true
-	unregister := e.unregister
+	unregisters := e.unregisters
+	e.unregisters = nil
 	decoders := make([]*lkmedia.PCMRemoteTrack, 0, len(e.listening))
 	for _, decoder := range e.listening {
 		decoders = append(decoders, decoder)
@@ -202,12 +219,13 @@ func (e *Edge) leave() error {
 	e.listening = map[string]*lkmedia.PCMRemoteTrack{}
 	e.mu.Unlock()
 
-	if unregister != nil {
+	for _, unregister := range unregisters {
 		unregister()
 	}
 	// The channel closes before the decoders do, because closing a decoder waits for its
 	// decode goroutine: one blocked handing over its last chunk would never be let go of.
 	e.inbound.Close()
+	e.attending.Close()
 	for _, decoder := range decoders {
 		decoder.Close()
 	}
@@ -348,8 +366,57 @@ func (e *Edge) watchForNewTracks(ctx context.Context) {
 	})
 
 	e.mu.Lock()
-	e.unregister = unregister
+	e.unregisters = append(e.unregisters, unregister)
 	e.mu.Unlock()
+}
+
+// watchAttendance reports arrivals and departures.
+//
+// The SFU says who is there whether or not they have published anything, which is the point:
+// a caller who has not spoken yet is still somebody to say hello to, and a track is the only
+// other evidence there would be.
+func (e *Edge) watchAttendance() {
+	joined := videosdk.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_ParticipantJoined) {
+		e.report(event.ParticipantJoined.GetParticipant(), true)
+	})
+	left := videosdk.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_ParticipantLeft) {
+		e.report(event.ParticipantLeft.GetParticipant(), false)
+	})
+
+	e.mu.Lock()
+	e.unregisters = append(e.unregisters, joined, left)
+	e.mu.Unlock()
+}
+
+// reportPresent reports the people who were already in the call when the agent joined. An
+// agent that answers a call the caller reached first would otherwise be told about nobody.
+func (e *Edge) reportPresent(state *sfu_models.CallState) {
+	for _, participant := range state.GetParticipants() {
+		e.report(participant, true)
+	}
+}
+
+// report puts one arrival or departure on the channel, leaving out the agent itself.
+func (e *Edge) report(participant *sfu_models.Participant, joined bool) {
+	if participant == nil || participant.GetUserId() == e.options.User.ID {
+		return
+	}
+
+	e.mu.Lock()
+	left := e.left
+	e.mu.Unlock()
+	if left {
+		return
+	}
+
+	e.attending.Send(agent.Attendance{
+		Participant: stt.Participant{
+			ID:     participant.GetSessionId(),
+			UserID: participant.GetUserId(),
+			Name:   participant.GetName(),
+		},
+		Joined: joined,
+	})
 }
 
 // audioSubscriptions asks for the audio every other participant is already publishing.

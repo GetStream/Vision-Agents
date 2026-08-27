@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pressly/goose/v3"
@@ -516,8 +517,12 @@ func (s *Store) ReleaseNumber(ctx context.Context, customerID, e164 string, at t
 	return nil
 }
 
-// AttachNumber records which SIP trunk calls to a number arrive on.
-func (s *Store) AttachNumber(ctx context.Context, customerID, e164, trunkID string) error {
+// AttachNumber records which SIP trunk calls to a number arrive on and which Stream call
+// they land in.
+//
+// The call is recorded as well as the trunk because an inbound call arrives over a webhook
+// that names the call, so without it there is nothing to attribute the call to.
+func (s *Store) AttachNumber(ctx context.Context, customerID, e164, trunkID, callType, callID string) error {
 	if customerID == "" || e164 == "" {
 		return errors.New("store: a customer and a number are required")
 	}
@@ -527,6 +532,8 @@ func (s *Store) AttachNumber(ctx context.Context, customerID, e164, trunkID stri
 
 	result, err := s.db.NewUpdate().Model((*PhoneNumber)(nil)).
 		Set("stream_trunk_id = ?", trunkID).
+		Set("stream_call_id = ?", callID).
+		Set("stream_call_type = ?", callType).
 		Where("customer_id = ?", customerID).
 		Where("e164 = ?", e164).
 		Where("released_at IS NULL").
@@ -583,6 +590,55 @@ func (s *Store) Number(ctx context.Context, customerID, e164 string) (PhoneNumbe
 	}
 	if err != nil {
 		return PhoneNumber{}, fmt.Errorf("store: number: %w", err)
+	}
+	return number, nil
+}
+
+// NumberByCall returns the number whose callers land in a Stream call.
+//
+// This is the way back from an arriving call to the customer whose call it is: the webhook
+// that reports one is app-wide and names the call rather than the number or the customer.
+//
+// A number attached before the call was recorded is found by the "phone-<e164>" the default
+// routing rule names, which is derivable rather than stored. Without that fallback every
+// number already in service would have to be attached again to answer a call.
+func (s *Store) NumberByCall(ctx context.Context, callType, callID string) (PhoneNumber, error) {
+	if callID == "" {
+		return PhoneNumber{}, errors.New("store: a call id is required")
+	}
+	if callType == "" {
+		callType = "default"
+	}
+
+	var number PhoneNumber
+	err := s.db.NewSelect().Model(&number).
+		Where("stream_call_id = ?", callID).
+		Where("stream_call_type = ?", callType).
+		Where("released_at IS NULL").
+		Limit(1).
+		Scan(ctx)
+	if err == nil {
+		return number, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
+	}
+
+	e164, named := strings.CutPrefix(callID, "phone-")
+	if !named {
+		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
+	}
+	err = s.db.NewSelect().Model(&number).
+		Where("e164 = ?", e164).
+		Where("stream_trunk_id IS NOT NULL").
+		Where("released_at IS NULL").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PhoneNumber{}, fmt.Errorf("store: no number reaches call %s:%s", callType, callID)
+	}
+	if err != nil {
+		return PhoneNumber{}, fmt.Errorf("store: number by call: %w", err)
 	}
 	return number, nil
 }

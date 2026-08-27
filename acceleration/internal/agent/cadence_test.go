@@ -38,11 +38,13 @@ func (s *CadenceSuite) ready() candidate {
 func (s *CadenceSuite) TestAStableRevisionBecomesReadyWithoutAFinalEvent() {
 	alice := stt.Participant{ID: "alice"}
 
-	s.Empty(s.cadence.Observe(stt.Transcript{
+	superseded, saying := s.cadence.Observe(stt.Transcript{
 		Participant: alice,
 		Mode:        stt.ModeReplacement,
 		Text:        "book a table",
-	}))
+	})
+	s.Empty(superseded)
+	s.Equal("book a table", saying, "the words so far are what a watcher sees as they arrive")
 
 	ready := s.ready()
 	s.Equal(alice, ready.Participant)
@@ -72,11 +74,13 @@ func (s *CadenceSuite) TestTheFinalCopyOfAnAnsweredUtteranceIsNotAnsweredAgain()
 	answered := s.ready()
 	s.Require().True(s.cadence.Resolve(answered.ID, false))
 
-	s.Empty(s.cadence.Observe(stt.Transcript{
+	superseded, saying := s.cadence.Observe(stt.Transcript{
 		Participant: alice,
 		Mode:        stt.ModeFinal,
 		Text:        "How is your day going?",
-	}))
+	})
+	s.Empty(superseded)
+	s.Empty(saying, "the transcriber going over itself is not the caller saying anything")
 
 	s.quiet()
 }
@@ -109,9 +113,10 @@ func (s *CadenceSuite) TestOneUtteranceIsAnsweredOnceHoweverLongTheTranscriberGo
 
 	for range 3 {
 		time.Sleep(80 * time.Millisecond)
-		s.Empty(s.cadence.Observe(stt.Transcript{
+		superseded, _ := s.cadence.Observe(stt.Transcript{
 			Participant: alice, Mode: stt.ModeReplacement, Utterance: 1, Text: "hey",
-		}))
+		})
+		s.Empty(superseded)
 	}
 
 	s.quiet()
@@ -164,13 +169,14 @@ func (s *CadenceSuite) TestNewWordsSupersedeAControllerDecision() {
 	})
 	first := s.ready()
 
-	superseded := s.cadence.Observe(stt.Transcript{
+	superseded, saying := s.cadence.Observe(stt.Transcript{
 		Participant: alice,
 		Mode:        stt.ModeReplacement,
 		Text:        "book a table for four",
 	})
 
 	s.Equal(first.ID, superseded)
+	s.Equal("book a table for four", saying)
 	s.Equal("book a table for four", s.ready().Text)
 }
 

@@ -104,6 +104,40 @@ func (s *Server) GetCallTranscript(ctx context.Context, request GetCallTranscrip
 	return GetCallTranscript200JSONResponse(messages), nil
 }
 
+// GetCallEvents returns what the conversation decided on one call, oldest first.
+func (s *Server) GetCallEvents(ctx context.Context, request GetCallEventsRequestObject) (GetCallEventsResponseObject, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return GetCallEvents401JSONResponse{missingCustomer()}, nil
+	}
+	if s.store == nil {
+		return GetCallEvents400JSONResponse{badRequest(noCalls)}, nil
+	}
+
+	if _, err := s.store.Call(ctx, customerID, request.Id); err != nil {
+		return GetCallEvents404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
+	}
+
+	stored, err := s.store.CallEvents(ctx, customerID, request.Id, value(request.Params.Limit))
+	if err != nil {
+		return nil, err
+	}
+
+	decisions := make([]CallEvent, 0, len(stored))
+	for _, decided := range stored {
+		decisions = append(decisions, CallEvent{
+			At:          decided.At,
+			Kind:        DecisionKind(decided.Kind),
+			Reason:      decided.Reason,
+			TurnId:      optional(decided.TurnID),
+			Participant: optional(decided.Participant),
+			Said:        optional(decided.Said),
+			LatencyMs:   decided.LatencyMs,
+		})
+	}
+	return GetCallEvents200JSONResponse(decisions), nil
+}
+
 // GetCallTimeline returns the call as it unfolded: each exchange with what was said in it
 // and what the caller waited for it.
 func (s *Server) GetCallTimeline(ctx context.Context, request GetCallTimelineRequestObject) (GetCallTimelineResponseObject, error) {

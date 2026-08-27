@@ -31,6 +31,8 @@ class AgentConfigRequest:
         greeting (str | Unset):
         skills (list[str] | Unset): Skill names, either the customer's own or one of the built-in think, recall and
             explain. Omit for the built-in set.
+        keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong, such as product
+            or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
         knowledge_namespace (str | Unset): What the agent may look things up in. Empty means it knows only what it was
             told.
         tags (AgentConfigRequestTags | Unset): Cost labels, carried onto every request a session using it makes.
@@ -45,6 +47,7 @@ class AgentConfigRequest:
     instructions: str | Unset = UNSET
     greeting: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
+    keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     tags: AgentConfigRequestTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -69,6 +72,10 @@ class AgentConfigRequest:
         skills: list[str] | Unset = UNSET
         if not isinstance(self.skills, Unset):
             skills = self.skills
+
+        keyterms: list[str] | Unset = UNSET
+        if not isinstance(self.keyterms, Unset):
+            keyterms = self.keyterms
 
         knowledge_namespace = self.knowledge_namespace
 
@@ -99,6 +106,8 @@ class AgentConfigRequest:
             field_dict["greeting"] = greeting
         if skills is not UNSET:
             field_dict["skills"] = skills
+        if keyterms is not UNSET:
+            field_dict["keyterms"] = keyterms
         if knowledge_namespace is not UNSET:
             field_dict["knowledge_namespace"] = knowledge_namespace
         if tags is not UNSET:
@@ -129,6 +138,8 @@ class AgentConfigRequest:
 
         skills = cast(list[str], d.pop("skills", UNSET))
 
+        keyterms = cast(list[str], d.pop("keyterms", UNSET))
+
         knowledge_namespace = d.pop("knowledge_namespace", UNSET)
 
         _tags = d.pop("tags", UNSET)
@@ -148,6 +159,7 @@ class AgentConfigRequest:
             instructions=instructions,
             greeting=greeting,
             skills=skills,
+            keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
             tags=tags,
         )

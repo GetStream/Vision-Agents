@@ -17,7 +17,7 @@ from vision_agents.core.utils.utils import cancel_and_wait
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 from ._backend import Backend
-from ._generated.api.default import close_session, create_session
+from ._generated.api.default import close_session, create_session, list_agent_configs
 from ._generated.models import (
     CreateSessionRequest,
     CreateSessionRequestSandbox,
@@ -65,6 +65,7 @@ class Accelerated(OmniLLM):
         tts: str = "",
         subagent: str = "",
         voice: str = "",
+        config: str = "",
         language: Optional[str] = None,
         greeting: str = "",
         backchannel: bool = False,
@@ -85,6 +86,9 @@ class Accelerated(OmniLLM):
             subagent: The model that does the thinking a harness delegates. Overridden by
                 the agent's harness when it names one.
             voice: A provider-specific voice id.
+            config: The name of a stored agent config to start from, as passed to
+                `define_agent`. Everything else here overrides what it says. The name is
+                looked up on joining, so an agent can be built before the config exists.
             language: A language hint, which narrows the candidates in every modality.
             greeting: Said on joining without going through the model. Empty means the
                 agent waits to be spoken to.
@@ -103,6 +107,7 @@ class Accelerated(OmniLLM):
         self.tts = tts
         self.subagent = subagent
         self.voice = voice
+        self.config = config
         self.language = language
         self.greeting = greeting
         self.backchannel = backchannel
@@ -123,8 +128,12 @@ class Accelerated(OmniLLM):
         Returns once the backend is in the call, so an agent that has joined is one that
         is already listening.
         """
+        request = self._request(call)
+        if self.config:
+            request.config_id = await self._config_id(self.config)
+
         created = await create_session.asyncio(
-            client=self.backend.client(), body=self._request(call)
+            client=self.backend.client(), body=request
         )
         if isinstance(created, Error):
             raise RemotePipelineError(created.error)
@@ -132,8 +141,10 @@ class Accelerated(OmniLLM):
             raise RemotePipelineError("the router did not answer with a session")
 
         self.session = created
+        # Decisions are the router explaining itself several times a second, which is what
+        # a dashboard watching a call wants and what this would only throw away.
         self._socket = Socket(
-            self.backend.socket(f"/v1/agents/sessions/{created.id}/events"),
+            self.backend.socket(f"/v1/agents/sessions/{created.id}/events?decisions=false"),
             self.backend.headers,
         )
         await self._socket.connect()
@@ -209,6 +220,25 @@ class Accelerated(OmniLLM):
 
     async def stop_watching_video_track(self) -> None:
         """Nothing was being watched."""
+
+    async def _config_id(self, name: str) -> str:
+        """Find the id of the stored config called `name`.
+
+        A config is named when it is defined and identified by id everywhere after, so the
+        lookup happens here rather than making the caller carry an id around.
+        """
+        listed = await list_agent_configs.asyncio(client=self.backend.client())
+        if isinstance(listed, Error):
+            raise RemotePipelineError(listed.error)
+        if listed is None:
+            raise RemotePipelineError(
+                "the router did not answer with any agent configs"
+            )
+
+        for stored in listed:
+            if stored.name == name:
+                return stored.id
+        raise RemotePipelineError(f"there is no agent config called {name!r}")
 
     def _request(self, call: RemoteCall) -> CreateSessionRequest:
         """Render the agent's configuration as a session to create."""
@@ -389,6 +419,18 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
     kind = frame.get("type", "")
     participant = frame.get("participant") or {}
 
+    if kind == "participant_joined":
+        return RemoteEvent(
+            type="participant_joined",
+            user_id=participant.get("user_id", ""),
+            participant_id=participant.get("id", ""),
+        )
+    if kind == "participant_left":
+        return RemoteEvent(
+            type="participant_left",
+            user_id=participant.get("user_id", ""),
+            participant_id=participant.get("id", ""),
+        )
     if kind == "heard":
         return RemoteEvent(
             type="user_speech",

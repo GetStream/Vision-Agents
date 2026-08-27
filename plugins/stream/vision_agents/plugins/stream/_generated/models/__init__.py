@@ -11,6 +11,7 @@ from .buy_number_request import BuyNumberRequest
 from .buy_number_request_tags import BuyNumberRequestTags
 from .call import Call
 from .call_direction import CallDirection
+from .call_event import CallEvent
 from .call_tags import CallTags
 from .campaign import Campaign
 from .campaign_request import CampaignRequest
@@ -25,6 +26,7 @@ from .contacts_request_contacts_item import ContactsRequestContactsItem
 from .create_session_request import CreateSessionRequest
 from .create_session_request_sandbox import CreateSessionRequestSandbox
 from .create_session_request_tags import CreateSessionRequestTags
+from .decision_kind import DecisionKind
 from .error import Error
 from .granularity import Granularity
 from .health_status import HealthStatus
@@ -35,13 +37,19 @@ from .ingested_knowledge import IngestedKnowledge
 from .instructions_request import InstructionsRequest
 from .knowledge_document import KnowledgeDocument
 from .modality import Modality
+from .number_search_result import NumberSearchResult
 from .phone_capability import PhoneCapability
 from .phone_number import PhoneNumber
 from .phone_number_tags import PhoneNumberTags
+from .phone_number_type import PhoneNumberType
+from .phone_operation import PhoneOperation
 from .phone_vendor import PhoneVendor
 from .place_call_request import PlaceCallRequest
+from .place_call_request_custom import PlaceCallRequestCustom
+from .place_call_request_headers import PlaceCallRequestHeaders
 from .place_call_request_tags import PlaceCallRequestTags
 from .placed_call import PlacedCall
+from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
 from .provider import Provider
 from .provider_health import ProviderHealth
@@ -58,6 +66,7 @@ from .session_tool import SessionTool
 from .session_tool_parameters import SessionToolParameters
 from .skill import Skill
 from .skill_request import SkillRequest
+from .skipped_vendor import SkippedVendor
 from .stats_bucket import StatsBucket
 from .tag_stats_bucket import TagStatsBucket
 from .tier import Tier
@@ -66,6 +75,12 @@ from .transcript_message import TranscriptMessage
 from .transfer_call_request import TransferCallRequest
 from .transfer_call_request_tags import TransferCallRequestTags
 from .turn_stats_bucket import TurnStatsBucket
+from .voice import Voice
+from .voice_binding import VoiceBinding
+from .voice_binding_state import VoiceBindingState
+from .voice_request import VoiceRequest
+from .voice_sample import VoiceSample
+from .voice_sample_request import VoiceSampleRequest
 
 __all__ = (
     "AgentConfig",
@@ -79,6 +94,7 @@ __all__ = (
     "BuyNumberRequestTags",
     "Call",
     "CallDirection",
+    "CallEvent",
     "CallTags",
     "Campaign",
     "CampaignRequest",
@@ -93,6 +109,7 @@ __all__ = (
     "CreateSessionRequest",
     "CreateSessionRequestSandbox",
     "CreateSessionRequestTags",
+    "DecisionKind",
     "Error",
     "Granularity",
     "HealthStatus",
@@ -103,13 +120,19 @@ __all__ = (
     "InstructionsRequest",
     "KnowledgeDocument",
     "Modality",
+    "NumberSearchResult",
     "PhoneCapability",
     "PhoneNumber",
     "PhoneNumberTags",
+    "PhoneNumberType",
+    "PhoneOperation",
     "PhoneVendor",
     "PlaceCallRequest",
+    "PlaceCallRequestCustom",
+    "PlaceCallRequestHeaders",
     "PlaceCallRequestTags",
     "PlacedCall",
+    "PrepareVoiceRequest",
     "PressDigitsRequest",
     "Provider",
     "ProviderHealth",
@@ -126,6 +149,7 @@ __all__ = (
     "SessionToolParameters",
     "Skill",
     "SkillRequest",
+    "SkippedVendor",
     "StatsBucket",
     "TagStatsBucket",
     "Tier",
@@ -134,4 +158,10 @@ __all__ = (
     "TransferCallRequest",
     "TransferCallRequestTags",
     "TurnStatsBucket",
+    "Voice",
+    "VoiceBinding",
+    "VoiceBindingState",
+    "VoiceRequest",
+    "VoiceSample",
+    "VoiceSampleRequest",
 )

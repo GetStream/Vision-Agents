@@ -73,12 +73,41 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	// Reading and writing each own the connection in one direction, which is what gorilla
 	// requires: two goroutines writing to one socket interleave frames.
 	go s.readCommands(connection, found)
-	s.writeEvents(connection, events)
+	s.writeEvents(connection, events, watching(r))
+}
+
+// wanted says which of the frequent frames this watcher asked for.
+//
+// Interim transcripts and decisions arrive several times a second, which is what a person
+// watching a call wants and what an SDK holding a conversation would only have to throw
+// away. Neither is worth sending to somebody who is not reading it.
+type wanted struct {
+	interim   bool
+	decisions bool
+}
+
+func watching(r *http.Request) wanted {
+	asked := r.URL.Query()
+	return wanted{
+		interim:   asked.Get("interim") == "true",
+		decisions: asked.Get("decisions") != "false",
+	}
+}
+
+func (w wanted) takes(event session.Event) bool {
+	switch event.(type) {
+	case agent.Hearing:
+		return w.interim
+	case agent.Decided:
+		return w.decisions
+	default:
+		return true
+	}
 }
 
 // writeEvents pushes the conversation to the caller until the session ends or the socket
 // breaks.
-func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event) {
+func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted) {
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
 
@@ -90,6 +119,9 @@ func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.E
 				connection.WriteMessage(websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "the session ended"))
 				return
+			}
+			if !asked.takes(event) {
+				continue
 			}
 			encoded, ok := frameOf(event)
 			if !ok {
@@ -199,12 +231,46 @@ func frameOf(event session.Event) (frame, bool) {
 	case agent.Joined:
 		return frame{"type": "joined", "at": typed.At}, true
 
+	case agent.ParticipantJoined:
+		return frame{
+			"type":        "participant_joined",
+			"participant": participantOf(typed.Participant),
+			"at":          typed.At,
+		}, true
+
+	case agent.ParticipantLeft:
+		return frame{
+			"type":        "participant_left",
+			"participant": participantOf(typed.Participant),
+			"at":          typed.At,
+		}, true
+
+	case agent.Hearing:
+		return frame{
+			"type":        "hearing",
+			"participant": participantOf(typed.Participant),
+			"text":        typed.Text,
+			"language":    typed.Language,
+		}, true
+
 	case agent.Heard:
 		return frame{
 			"type":        "heard",
 			"participant": participantOf(typed.Participant),
 			"text":        typed.Text,
 			"language":    typed.Language,
+		}, true
+
+	case agent.Decided:
+		return frame{
+			"type":        "decision",
+			"at":          typed.At,
+			"kind":        typed.Kind,
+			"reason":      typed.Reason,
+			"turn_id":     typed.TurnID,
+			"participant": participantOf(typed.Participant),
+			"said":        typed.Text,
+			"latency_ms":  typed.LatencyMs,
 		}, true
 
 	case agent.Responding:

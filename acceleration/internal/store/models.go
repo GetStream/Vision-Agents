@@ -91,6 +91,36 @@ type Turn struct {
 	Interrupted bool     `bun:"interrupted,notnull"`
 }
 
+// CallEvent is one judgement the conversation made about how to handle a call.
+//
+// A Turn says what an exchange cost the caller in waiting. This says why the call went
+// the way it did: why the agent waited rather than answering, why it read something as
+// not meant for it, why it stopped mid-sentence. Read in order they are the reasoning
+// behind a conversation, which is the only thing that explains a call that surprised
+// somebody.
+type CallEvent struct {
+	bun.BaseModel `bun:"table:call_events,alias:ce"`
+
+	ID         int64  `bun:"id,pk,autoincrement"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// CallID is the session the judgement was made in.
+	CallID  string    `bun:"call_id,notnull"`
+	AgentID string    `bun:"agent_id,notnull"`
+	At      time.Time `bun:"at,notnull"`
+	// Kind is what was decided.
+	Kind string `bun:"kind,notnull"`
+	// Reason is why, in words.
+	Reason string `bun:"reason,notnull"`
+	// TurnID is the exchange it was about, so a judgement lines up with the timings of
+	// the turn it produced.
+	TurnID      string `bun:"turn_id,nullzero"`
+	Participant string `bun:"participant,nullzero"`
+	// Said is what was heard, or what the agent decided to say.
+	Said string `bun:"said,nullzero"`
+	// LatencyMs is what the flow controller took to rule, where anything was asked.
+	LatencyMs *float64 `bun:"latency_ms"`
+}
+
 // TurnBucket is one aggregated row from turn_stats_hourly or turn_stats_daily.
 type TurnBucket struct {
 	CustomerID       string    `bun:"customer_id"`
@@ -154,9 +184,41 @@ type PhoneNumber struct {
 	VendorID string `bun:"vendor_id,nullzero"`
 	// StreamTrunkID is the SIP trunk calls to this number arrive on, empty until it has
 	// been attached to one.
-	StreamTrunkID string     `bun:"stream_trunk_id,nullzero"`
-	PurchasedAt   time.Time  `bun:"purchased_at,notnull"`
-	ReleasedAt    *time.Time `bun:"released_at"`
+	StreamTrunkID string `bun:"stream_trunk_id,nullzero"`
+	// StreamCallID and StreamCallType are the Stream call the routing rule puts callers
+	// in. They are what an arriving call is recognised by, since a webhook names the call
+	// rather than the number.
+	StreamCallID   string     `bun:"stream_call_id,nullzero"`
+	StreamCallType string     `bun:"stream_call_type,nullzero"`
+	PurchasedAt    time.Time  `bun:"purchased_at,notnull"`
+	ReleasedAt     *time.Time `bun:"released_at"`
+}
+
+// CallBridge is what a vendor is told to do when the person it called picks up.
+//
+// Three vendors take a URL rather than a call plan when a call is placed, and fetch it on
+// answer. This is the answer, parked between the two moments. The token is the whole of the
+// fetch's authentication, so a bridge is read once and then gone.
+type CallBridge struct {
+	bun.BaseModel `bun:"table:call_bridges,alias:cb"`
+
+	// Token is what the vendor puts in the url it fetches, and the only thing proving the
+	// fetch is one this service asked for.
+	Token      string `bun:"token,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	Vendor     string `bun:"vendor,notnull"`
+	// TrunkURI is the SIP address the answered leg is transferred to.
+	TrunkURI string `bun:"trunk_uri,notnull"`
+	// TrunkUsername and TrunkPassword are the trunk's digest credentials, set only for a
+	// vendor that can send them.
+	TrunkUsername string `bun:"trunk_username,nullzero"`
+	TrunkPassword string `bun:"trunk_password,nullzero"`
+	// InitialDigits are pressed at the person before the transfer.
+	InitialDigits string `bun:"initial_digits,nullzero"`
+	// CallID is the Stream call the leg is routed into, kept for the audit trail.
+	CallID    string    `bun:"call_id,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+	ExpiresAt time.Time `bun:"expires_at,notnull"`
 }
 
 // AgentConfig is a named set of the decisions a session is created with.

@@ -4,6 +4,8 @@ from typing import AsyncIterator, Literal, Optional, Protocol, runtime_checkable
 from ..harness import Harness
 
 RemoteEventType = Literal[
+    "participant_joined",
+    "participant_left",
     "user_turn_started",
     "user_turn_ended",
     "user_speech",

@@ -14,6 +14,14 @@ const defaultCallLimit = 50
 // maxCallLimit caps one a caller asked too much of.
 const maxCallLimit = 500
 
+// How much of a call's reasoning is handed back at once. A busy call makes a few
+// judgements a second, so an hour of one is thousands of rows and a page of them is what
+// anybody actually reads.
+const (
+	defaultCallEventLimit = 1000
+	maxCallEventLimit     = 10000
+)
+
 // StartCall records that a conversation began.
 //
 // It is written when the agent joins rather than when the call ends, so a call that is
@@ -178,6 +186,54 @@ func (s *Store) CallTurns(ctx context.Context, customerID, agentID string, from 
 		return nil, fmt.Errorf("store: call turns: %w", err)
 	}
 	return turns, nil
+}
+
+// RecordCallEvents writes a batch of judgements. They are written together because they
+// arrive together: a call makes several decisions a second, and one round trip each would
+// have the writer permanently behind.
+func (s *Store) RecordCallEvents(ctx context.Context, events []CallEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	for i := range events {
+		if events[i].CustomerID == "" || events[i].CallID == "" {
+			return errors.New("store: a customer and a call id are required")
+		}
+		if events[i].At.IsZero() {
+			events[i].At = time.Now().UTC()
+		}
+	}
+
+	if _, err := s.db.NewInsert().Model(&events).Exec(ctx); err != nil {
+		return fmt.Errorf("store: record call events: %w", err)
+	}
+	return nil
+}
+
+// CallEvents returns the judgements made on one call, oldest first, which read in order
+// are how the call was handled and why.
+func (s *Store) CallEvents(ctx context.Context, customerID, callID string, limit int) ([]CallEvent, error) {
+	if customerID == "" || callID == "" {
+		return nil, errors.New("store: a customer and a call id are required")
+	}
+	if limit <= 0 {
+		limit = defaultCallEventLimit
+	}
+	if limit > maxCallEventLimit {
+		limit = maxCallEventLimit
+	}
+
+	var events []CallEvent
+	err := s.db.NewSelect().Model(&events).
+		Where("customer_id = ?", customerID).
+		Where("call_id = ?", callID).
+		Order("at ASC", "id ASC").
+		Limit(limit).
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: call events: %w", err)
+	}
+	return events, nil
 }
 
 func unknownCall(id string) error {

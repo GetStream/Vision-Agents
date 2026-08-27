@@ -160,6 +160,9 @@ type Agent struct {
 	// turns measures each exchange end to end and, when a store is configured, records it.
 	turns     *turnTracker
 	turnStore *turnRecorder
+	// decisionStore keeps what the conversation decided, so a call can be read back after
+	// the process that held it is gone.
+	decisionStore *decisionRecorder
 	// memory carries what earlier conversations established into this one.
 	memory *memoryWriter
 	// knowledge answers what the business already wrote down, when the agent has a
@@ -207,15 +210,12 @@ type Agent struct {
 	lastParticipant stt.Participant
 	lastHeardAt     time.Time
 	lastSpokeAt     time.Time
-	// lastCandidateTurn owns delegated work from the last relevant caller turn.
-	lastCandidateTurn string
 	// cadence turns evolving transcript revisions into stable candidates without relying
 	// on provider turn boundaries.
 	cadence *cadence
-	// candidates are waiting on the fast flow controller.
-	candidates map[string]candidate
-	// queued is a relevant turn heard while the agent chose to finish speaking.
-	queued *queuedCandidate
+	// converse makes every judgement about how to handle the call, and reports each one
+	// so the reasoning behind a conversation can be read back rather than inferred.
+	converse *converse
 
 	// duplex tracks listening acknowledgements and transcript confidence.
 	duplex *duplex
@@ -250,11 +250,6 @@ type Agent struct {
 	closeOnce sync.Once
 }
 
-type queuedCandidate struct {
-	candidate candidate
-	clarify   bool
-}
-
 // New validates the options and returns an Agent. It opens nothing; Join does that.
 func New(options Options) (*Agent, error) {
 	if options.LLM == nil {
@@ -284,17 +279,6 @@ func New(options Options) (*Agent, error) {
 	}
 
 	logger := options.Logger.With("customer", options.CustomerID)
-	agent := &Agent{
-		options:    options,
-		logger:     logger,
-		emitter:    NewEmitter(eventBuffer),
-		prompt:     options.Instructions,
-		listeners:  map[string]*sttrouter.Session{},
-		cadence:    newCadence(0, 0, 0, logger),
-		candidates: map[string]candidate{},
-		duplex:     newDuplex(options.Duplex),
-	}
-
 	owner := routing.Owner{
 		CustomerID: options.CustomerID,
 		AgentID:    options.AgentID,
@@ -302,10 +286,30 @@ func New(options Options) (*Agent, error) {
 		Tags:       options.Tags,
 	}
 
-	// Turns are keyed by agent id, so an agent without one is measured but not stored.
+	settling := newCadence(0, 0, 0, logger)
+	listening := newDuplex(options.Duplex)
+	emitter := NewEmitter(eventBuffer)
+	agent := &Agent{
+		options:   options,
+		logger:    logger,
+		emitter:   emitter,
+		prompt:    options.Instructions,
+		listeners: map[string]*sttrouter.Session{},
+		cadence:   settling,
+		duplex:    listening,
+	}
+
+	// Turns are keyed by agent id and decisions by call id, so an agent missing either is
+	// still measured and still reports itself, it is just not kept.
 	if options.Store != nil && options.AgentID != "" {
 		agent.turnStore = newTurnRecorder(options.Store, owner, logger)
 	}
+	var record func(Decided)
+	if options.Store != nil && options.CallID != "" {
+		agent.decisionStore = newDecisionRecorder(options.Store, owner, logger)
+		record = agent.decisionStore.Record
+	}
+	agent.converse = newConverse(settling, listening, emitter, record, logger)
 	agent.turns = newTurnTracker(agent.finishTurn)
 
 	if options.Memory != nil {
@@ -479,6 +483,14 @@ func (a *Agent) Join(ctx context.Context) error {
 		go a.consumeEdge()
 		go a.consumeCadence()
 		go a.consumePresence()
+
+		// Only a transport with other people in it can answer this, so it is asked for
+		// rather than required. Without it nothing is reported and the agent behaves as
+		// it did before, which is right for a loopback with nobody else on it.
+		if roster, ok := a.options.Edge.(Roster); ok {
+			a.running.Add(1)
+			go a.consumeRoster(roster)
+		}
 	}
 
 	if a.options.Text {
@@ -651,6 +663,9 @@ func (a *Agent) close() error {
 	if a.turnStore != nil {
 		a.turnStore.Close()
 	}
+	if a.decisionStore != nil {
+		a.decisionStore.Close()
+	}
 	if a.memory != nil {
 		a.memory.Close()
 	}
@@ -674,6 +689,28 @@ func (a *Agent) consumeEdge() {
 		if err := listener.ProcessAudio(inbound.Audio, inbound.Participant); err != nil {
 			a.fail(err, "stt")
 		}
+	}
+}
+
+// consumeRoster turns who comes and goes into events a watcher can wait on.
+func (a *Agent) consumeRoster(roster Roster) {
+	defer a.running.Done()
+
+	for attendance := range roster.Attendance() {
+		if attendance.Joined {
+			a.logger.Debug("a participant joined",
+				"participant", attendance.Participant.UserID)
+			a.emitter.Send(ParticipantJoined{
+				Participant: attendance.Participant,
+				At:          time.Now(),
+			})
+			continue
+		}
+		a.logger.Debug("a participant left", "participant", attendance.Participant.UserID)
+		a.emitter.Send(ParticipantLeft{
+			Participant: attendance.Participant,
+			At:          time.Now(),
+		})
 	}
 }
 
@@ -738,19 +775,7 @@ func (a *Agent) consumeSTT(session *sttrouter.Session) {
 			a.lastHeardAt = time.Now()
 			a.lastParticipant = typed.Participant
 			a.mu.Unlock()
-			if phrase := a.duplex.Heard(typed.Participant, typed.Text, a.quiet()); phrase != "" {
-				a.backchannel(typed.Participant, phrase)
-			}
-			if superseded := a.cadence.Observe(typed); superseded != "" {
-				a.logger.Debug("the caller said more, abandoning the decision in flight",
-					"candidate", superseded)
-				a.mu.Lock()
-				delete(a.candidates, superseded)
-				a.mu.Unlock()
-				if err := a.harness.CancelDecision(superseded); err != nil {
-					a.fail(err, "flow")
-				}
-			}
+			a.act(a.converse.Observe(typed, a.floor()))
 
 		case stt.Connected:
 			a.logger.Info("listening", "provider", typed.Provider, "model", typed.Model)
@@ -772,8 +797,7 @@ func (a *Agent) consumeSTT(session *sttrouter.Session) {
 	}
 }
 
-// consumeCadence asks the fast controller what to do once a transcript revision has held
-// still for long enough.
+// consumeCadence puts a turn to the conversation once its words have held still.
 func (a *Agent) consumeCadence() {
 	defer a.running.Done()
 
@@ -781,35 +805,12 @@ func (a *Agent) consumeCadence() {
 		select {
 		case ready := <-a.cadence.Ready():
 			a.mu.Lock()
-			if a.closed || a.harness == nil {
-				a.mu.Unlock()
+			gone := a.closed || a.harness == nil
+			a.mu.Unlock()
+			if gone {
 				continue
 			}
-			a.candidates[ready.ID] = ready
-			history := append([]llm.Message(nil), a.history...)
-			instructions := a.instructions()
-			speaking := a.generating || a.utterances > 0
-			current := a.harness
-			a.mu.Unlock()
-
-			a.logger.Debug("asking the flow controller what to do",
-				"candidate", ready.ID, "text", ready.Text, "speaking", speaking,
-				"confidence", ready.Confidence)
-
-			if err := current.Decide(harness.FlowTurn{
-				ID:           ready.ID,
-				Instructions: instructions,
-				History:      history,
-				Participant:  participantName(ready.Participant),
-				Text:         ready.Text,
-				Speaking:     speaking,
-			}); err != nil {
-				a.mu.Lock()
-				delete(a.candidates, ready.ID)
-				a.mu.Unlock()
-				a.cadence.Resolve(ready.ID, true)
-				a.fail(err, "flow")
-			}
+			a.act([]Action{a.converse.Settled(ready, a.floor())})
 		case <-a.ctx.Done():
 			return
 		}
@@ -825,106 +826,112 @@ func (a *Agent) consumePresence() {
 	for {
 		select {
 		case <-ticker.C:
-			participant, hearing := a.cadence.Active()
-			a.mu.Lock()
-			current := a.harness
-			lastParticipant := a.lastParticipant
-			lastSpokeAt := a.lastSpokeAt
-			a.mu.Unlock()
-			if !hearing {
-				participant = lastParticipant
-			}
-			if !hearing && (current == nil || !current.Delegating()) {
-				continue
-			}
-			if phrase := a.duplex.Presence(participant, lastSpokeAt, a.quiet()); phrase != "" {
-				a.backchannel(participant, phrase)
-			}
+			a.act(a.converse.Tick(a.floor()))
 		case <-a.ctx.Done():
 			return
 		}
 	}
 }
 
-func (a *Agent) applyDecision(decision harness.Decided) {
+// floor is what the agent is doing right now, which is what the judgements that depend on
+// whether it is mid-sentence are made against.
+func (a *Agent) floor() floor {
 	a.mu.Lock()
-	ready, ok := a.candidates[decision.CandidateID]
-	delete(a.candidates, decision.CandidateID)
+	state := floor{
+		Quiet:           a.utterances == 0 && !a.generating,
+		Speaking:        a.speakingTurn,
+		LastSpokeAt:     a.lastSpokeAt,
+		LastParticipant: a.lastParticipant,
+	}
+	current := a.harness
 	a.mu.Unlock()
-	if !ok {
-		a.logger.Debug("a decision arrived for a turn that has moved on",
-			"candidate", decision.CandidateID)
-		return
-	}
-	a.logger.Debug("the flow controller decided",
-		"candidate", decision.CandidateID, "disposition", decision.Disposition,
-		"floor", decision.Floor, "text", ready.Text)
 
-	if decision.Err != nil || !decision.Valid() {
-		a.cadence.Resolve(decision.CandidateID, true)
-		a.fail(decision.Error(), "flow")
-		return
-	}
-	if decision.Disposition == harness.Wait {
-		a.cadence.Resolve(decision.CandidateID, true)
-		return
-	}
-	if !a.cadence.Resolve(decision.CandidateID, false) {
-		a.logger.Debug("not answering, the words changed while the controller was deciding",
-			"candidate", decision.CandidateID)
-		return
-	}
-	if decision.Disposition == harness.Ignore {
-		a.logger.Debug("not answering, the controller read this as not meant for the agent",
-			"candidate", decision.CandidateID, "text", ready.Text)
-		return
-	}
+	state.Delegating = current != nil && current.Delegating()
+	return state
+}
 
-	a.emitter.Send(Heard{
-		Participant: ready.Participant,
-		Text:        ready.Text,
-		Language:    ready.Language,
-	})
+// act carries out what the conversation decided, in the order it decided it.
+func (a *Agent) act(actions []Action) {
+	for _, action := range actions {
+		a.perform(action)
+	}
+}
+
+// perform carries out one decision. Every branch here is mechanical: which provider to
+// touch and in what order. Why any of it is happening was settled in converse.
+func (a *Agent) perform(action Action) {
+	switch action.Kind {
+	case ActBackchannel:
+		a.backchannel(action.Participant, action.Text)
+
+	case ActSupersede:
+		if err := a.harness.CancelDecision(action.TurnID); err != nil {
+			a.fail(err, "flow")
+		}
+
+	case ActAsk:
+		a.ask(action.Candidate)
+
+	case ActInterrupt:
+		a.abandon(action.TurnID)
+		a.interrupt(action.Participant)
+
+	case ActShorten:
+		a.abandon(action.TurnID)
+		a.shorten()
+
+	case ActQueue:
+		a.abandon(action.Supersede)
+
+	case ActAnswer:
+		a.abandon(action.Supersede)
+		if err := a.respondCandidate(action.Candidate, action.Clarify); err != nil {
+			a.fail(err, "llm")
+		}
+
+	case ActFail:
+		a.fail(action.Err, "flow")
+	}
+}
+
+// ask puts a settled turn to the flow controller, on its own model session so deciding
+// never competes with the reply being streamed to the voice.
+func (a *Agent) ask(ready candidate) {
 	a.mu.Lock()
-	previousCandidate := a.lastCandidateTurn
-	a.lastCandidateTurn = ready.ID
-	currentHarness := a.harness
-	a.mu.Unlock()
-	if previousCandidate != "" && previousCandidate != ready.ID && currentHarness != nil {
-		currentHarness.CancelTurn(previousCandidate, harness.ReasonSuperseded)
-	}
-
-	if !a.quiet() {
-		a.mu.Lock()
-		overlapped := a.speakingTurn
-		utterances, generating := a.utterances, a.generating
+	current := a.harness
+	if a.closed || current == nil {
 		a.mu.Unlock()
-		a.logger.Debug("heard over the agent's own speech",
-			"candidate", decision.CandidateID, "floor", decision.Floor,
-			"overlapped", overlapped, "utterances", utterances, "generating", generating)
-		a.emitter.Send(OverlapDecided{
-			TurnID:      overlapped,
-			Participant: ready.Participant,
-			Action:      string(decision.Floor),
-		})
-		if decision.Floor == harness.Stop || decision.Floor == harness.Shorten {
-			a.harness.CancelTurn(overlapped, harness.ReasonSuperseded)
-		}
-		switch decision.Floor {
-		case harness.Stop:
-			a.interrupt(ready.Participant)
-		case harness.Shorten:
-			a.queue(ready, decision.Disposition == harness.Clarify)
-			a.shorten()
-			return
-		case harness.Continue:
-			a.queue(ready, decision.Disposition == harness.Clarify)
-			return
-		}
+		return
 	}
-	a.logger.Debug("answering", "candidate", decision.CandidateID, "text", ready.Text)
-	if err := a.respondCandidate(ready, decision.Disposition == harness.Clarify); err != nil {
-		a.fail(err, "llm")
+	history := append([]llm.Message(nil), a.history...)
+	instructions := a.instructions()
+	speaking := a.generating || a.utterances > 0
+	a.mu.Unlock()
+
+	if err := current.Decide(harness.FlowTurn{
+		ID:           ready.ID,
+		Instructions: instructions,
+		History:      history,
+		Participant:  participantName(ready.Participant),
+		Text:         ready.Text,
+		Speaking:     speaking,
+	}); err != nil {
+		a.converse.Unasked(ready.ID)
+		a.fail(err, "flow")
+	}
+}
+
+// abandon drops the delegated work a turn owns, because whatever asked for it is no
+// longer what the caller is waiting on. An empty id is nothing to abandon.
+func (a *Agent) abandon(turnID string) {
+	if turnID == "" {
+		return
+	}
+	a.mu.Lock()
+	current := a.harness
+	a.mu.Unlock()
+	if current != nil {
+		current.CancelTurn(turnID, harness.ReasonSuperseded)
 	}
 }
 
@@ -1059,13 +1066,6 @@ func (a *Agent) backchannel(participant stt.Participant, phrase string) {
 		return
 	}
 	a.emitter.Send(Backchannel{Participant: participant, Text: phrase})
-}
-
-// quiet reports whether the agent has stopped talking.
-func (a *Agent) quiet() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.utterances == 0 && !a.generating
 }
 
 // instructions is the system prompt for a turn: what the agent was told to be, ahead of
@@ -1234,10 +1234,8 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 	if a.memory != nil {
 		a.memory.Remember(exchange)
 	}
-	if currentHarness != nil {
-		if err := currentHarness.MaybeCompact(history, typed.InputTokens, typed.CachedInputTokens); err != nil {
-			a.fail(err, "compaction")
-		}
+	if err := a.converse.Compact(currentHarness, history, typed.InputTokens, typed.CachedInputTokens); err != nil {
+		a.fail(err, "compaction")
 	}
 
 	a.emitter.Send(Responded{
@@ -1353,12 +1351,13 @@ func (a *Agent) consumeHarness() {
 	for event := range a.harness.Events() {
 		switch typed := event.(type) {
 		case harness.Decided:
-			a.applyDecision(typed)
+			a.act(a.converse.Ruled(typed, a.floor()))
 
 		case harness.Compacted:
 			a.applyCompaction(typed)
 
 		case harness.Delegated:
+			a.converse.Delegating(typed.Skill, typed.Prompt, typed.TurnID)
 			a.emitter.Send(Delegated{
 				TaskID: typed.TaskID,
 				Skill:  typed.Skill,
@@ -1606,32 +1605,11 @@ func (a *Agent) shorten() {
 	}
 }
 
-func (a *Agent) queue(ready candidate, clarify bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.queued != nil {
-		a.logger.Debug("dropping a turn that never got answered",
-			"candidate", a.queued.candidate.ID, "text", a.queued.candidate.Text)
-	}
-	a.logger.Debug("holding a turn until the agent stops talking",
-		"candidate", ready.ID, "text", ready.Text, "clarify", clarify)
-	a.queued = &queuedCandidate{candidate: ready, clarify: clarify}
-}
-
+// respondQueued answers the turn held back while the agent was talking, if it has
+// stopped and there is one.
 func (a *Agent) respondQueued() {
-	a.mu.Lock()
-	if a.queued == nil || a.generating || a.utterances > 0 {
-		a.mu.Unlock()
-		return
-	}
-	queued := *a.queued
-	a.queued = nil
-	a.mu.Unlock()
-
-	a.logger.Debug("answering the turn that was waiting",
-		"candidate", queued.candidate.ID, "text", queued.candidate.Text)
-	if err := a.respondCandidate(queued.candidate, queued.clarify); err != nil {
-		a.fail(err, "llm")
+	if action, waiting := a.converse.Waiting(a.floor()); waiting {
+		a.perform(action)
 	}
 }
 

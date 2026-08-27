@@ -22,11 +22,16 @@ class BuyNumberRequest:
     Attributes:
         vendor (str):  Example: twilio.
         e164 (str):  Example: +15125551234.
+        country (str | Unset): The country the number was offered from, as the search reported it. Most vendors buy by
+            number alone; the few that buy out of a country's inventory need this, and it cannot be guessed back out of the
+            number.
+             Example: US.
         tags (BuyNumberRequestTags | Unset): Cost labels carried onto the purchase's request row.
     """
 
     vendor: str
     e164: str
+    country: str | Unset = UNSET
     tags: BuyNumberRequestTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -34,6 +39,8 @@ class BuyNumberRequest:
         vendor = self.vendor
 
         e164 = self.e164
+
+        country = self.country
 
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
@@ -47,6 +54,8 @@ class BuyNumberRequest:
                 "e164": e164,
             }
         )
+        if country is not UNSET:
+            field_dict["country"] = country
         if tags is not UNSET:
             field_dict["tags"] = tags
 
@@ -61,6 +70,8 @@ class BuyNumberRequest:
 
         e164 = d.pop("e164")
 
+        country = d.pop("country", UNSET)
+
         _tags = d.pop("tags", UNSET)
         tags: BuyNumberRequestTags | Unset
         if isinstance(_tags, Unset):
@@ -71,6 +82,7 @@ class BuyNumberRequest:
         buy_number_request = cls(
             vendor=vendor,
             e164=e164,
+            country=country,
             tags=tags,
         )
 

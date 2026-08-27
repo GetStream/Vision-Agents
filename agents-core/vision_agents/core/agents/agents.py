@@ -25,6 +25,8 @@ from ..edge import Call, EdgeTransport
 from ..edge.events import (
     AudioReceivedEvent,
     CallEndedEvent,
+    ParticipantJoinedEvent,
+    ParticipantLeftEvent,
     TrackAddedEvent,
     TrackRemovedEvent,
 )
@@ -53,6 +55,7 @@ from ..processors.base_processor import (
 )
 from ..profiling import Profiler
 from ..stt.stt import STT
+from ..telephony import InboundCall, OutboundCall, PlacedCall, Telephony
 from ..tts.tts import TTS
 from ..turn_detection import TurnDetector
 from ..utils.audio_filter import AudioFilter, FirstSpeakerWinsFilter
@@ -169,6 +172,8 @@ class Agent:
         cost_tracking: Optional[dict[str, str]] = None,
         # Which memories a remote call may recall
         memory_filter: Optional[dict[str, str]] = None,
+        # Where outbound calls are placed, for agents that ring people
+        phone: Optional[Telephony] = None,
     ):
         """Initialize the Agent.
 
@@ -208,6 +213,8 @@ class Agent:
             cost_tracking: Labels attributed to every request a remote call makes,
                 so spend can be attributed to more than a model.
             memory_filter: Scope keys narrowing which memories a remote call recalls.
+            phone: Where `outbound_call` places calls, e.g. `stream.Phone()`. Without one
+                the agent can be joined to calls but cannot ring anybody.
 
         """
         self._agent_user_initialized = False
@@ -241,6 +248,7 @@ class Agent:
 
         self.instructions = Instructions(input_text=instructions)
         self.edge = edge
+        self.phone = phone
         self.harness = harness
         self.cost_tracking = cost_tracking
         self.memory_filter = memory_filter
@@ -319,6 +327,12 @@ class Agent:
         self._audio_producer_task: Optional[asyncio.Task] = None
         self._metrics_broadcast_task: Optional[asyncio.Task] = None
         self._remote_events_task: Optional[asyncio.Task] = None
+
+        # Who else is in the call, on the remote pipeline path. A local pipeline asks its
+        # connection instead, which knows because it is the one holding the tracks; a
+        # remote one is only told, so what it is told has to be kept.
+        self._remote_participants: set[str] = set()
+        self._remote_participant_joined = asyncio.Event()
 
         # Metrics broadcasting settings
         self._broadcast_metrics = broadcast_metrics
@@ -549,6 +563,8 @@ class Agent:
 
             if isinstance(self.llm, RemotePipeline):
                 await self._join_remote(self.llm, call)
+                if participant_wait_timeout != 0:
+                    await self.wait_for_participant(timeout=participant_wait_timeout)
                 yield
                 return
 
@@ -627,6 +643,119 @@ class Agent:
             self._end_tracing()
             self._join_lock.release()
 
+    @asynccontextmanager
+    async def outbound_call(
+        self,
+        from_: str,
+        to: str,
+        call_type: str = "default",
+        call_id: str = "",
+        ring_timeout: Optional[float] = None,
+        initial_digits: str = "",
+        headers: Optional[dict[str, str]] = None,
+        custom: Optional[dict[str, str]] = None,
+    ) -> AsyncIterator[PlacedCall]:
+        """Ring somebody and join the call their answer lands in.
+
+        The call is created and the agent is in it before the phone starts ringing, so
+        there is nobody on the other end talking to silence.
+
+        Example:
+            ```python
+            async with agent.outbound_call(from_=held, to=person):
+                await agent.simple_response("greet the user")
+                await agent.finish()
+            ```
+
+        Args:
+            from_: One of your own numbers, which is what the person sees.
+            to: Who to call.
+            call_type: The call type the conversation happens on.
+            call_id: The call to hold it on. Empty names a fresh one.
+            ring_timeout: How long to ring before giving up, in seconds. None leaves the
+                vendor's default, which is long enough to reach voicemail.
+            initial_digits: Pressed once the person answers, e.g. "ww1234#".
+            headers: Custom SIP headers carried to the person's leg.
+            custom: Fields put on the call, where the agent in it can read them.
+
+        Yields:
+            What was placed, whose `vendor_call_id` names the ringing leg.
+
+        Raises:
+            ValueError: If the agent was built without a `phone`.
+        """
+        if self.phone is None:
+            raise ValueError(
+                "placing a call needs somewhere to place it; pass phone= to Agent, "
+                "e.g. Agent(phone=stream.Phone())"
+            )
+
+        call = await self.create_call(call_type, call_id or str(uuid4()))
+        placed = await self.phone.place(
+            OutboundCall(
+                from_=from_,
+                to=to,
+                call_id=call.id,
+                call_type=call_type,
+                ring_timeout=ring_timeout,
+                initial_digits=initial_digits,
+                headers=headers or {},
+                custom=custom or {},
+            )
+        )
+        self.logger.info("ringing %s from %s, call %s", to, from_, call.id)
+
+        # Nobody is on the call until the phone is answered, so waiting for a participant
+        # before starting would be waiting for the ringing to finish.
+        async with self.join(call, participant_wait_timeout=0):
+            yield placed
+
+    @asynccontextmanager
+    async def answer(
+        self,
+        call: InboundCall,
+        participant_wait_timeout: Optional[float] = 30.0,
+    ) -> AsyncIterator[None]:
+        """Join a call somebody has rung in to.
+
+        The inbound mirror of `outbound_call`. The difference is which end started it: the
+        caller is already in the call, so this attaches to the call they are in rather than
+        making one.
+
+        Example:
+            ```python
+            @dispatch.wait_for_call()
+            async def answer(call: InboundCall):
+                async with agent.answer(call):
+                    await agent.simple_response("greet the caller")
+                    await agent.finish()
+            ```
+
+        Args:
+            call: The call that arrived, as dispatch handed it over.
+            participant_wait_timeout: How long to wait for the caller to be in the call
+                before going on, in seconds. `0` does not wait, `None` waits forever.
+                Unlike an outbound call this waits by default, because there is somebody
+                there: greeting a caller before they have joined talks to nobody.
+
+        Raises:
+            ValueError: If the call names no call to join.
+        """
+        if not call.call_id:
+            raise ValueError("an inbound call has to name the call the caller is in")
+
+        # get_or_create, so this attaches to the call Stream already made for the caller
+        # rather than making a second one they are not in.
+        joined = await self.create_call(call.call_type or "default", call.call_id)
+        self.logger.info(
+            "answering %s on %s, call %s",
+            call.caller_number or "a caller",
+            call.called_number or "an unknown number",
+            call.call_id,
+        )
+        async with self.join(joined, participant_wait_timeout=participant_wait_timeout):
+            yield
+
     async def wait_for_participant(self, timeout: Optional[float] = None) -> None:
         """
         Wait for a participant other than the AI agent to join.
@@ -636,13 +765,18 @@ class Agent:
             If `None`, wait forever.
             Default - `30.0`.
         """
-        if self._connection is None:
-            return
-
         self.logger.info("Waiting for other participants to join")
 
         try:
-            await self._connection.wait_for_participant(timeout=timeout)
+            if self._connection is not None:
+                await self._connection.wait_for_participant(timeout=timeout)
+                return
+            # A remote pipeline holds the tracks, so there is no local connection to ask.
+            # It reports who arrives instead, and that is what is waited on.
+            if isinstance(self.llm, RemotePipeline):
+                await asyncio.wait_for(
+                    self._remote_participant_joined.wait(), timeout=timeout
+                )
         except asyncio.TimeoutError:
             self.logger.info(
                 f"No participants joined after {timeout}s timeout, proceeding."
@@ -763,7 +897,24 @@ class Agent:
             id=event.participant_id or event.user_id,
         )
 
-        if event.type == "user_turn_started":
+        # The same events the edge sends on a local pipeline, so somebody subscribing to
+        # who is in the call does not have to know which pipeline they got.
+        if event.type == "participant_joined":
+            self._remote_participants.add(participant.id)
+            self._remote_participant_joined.set()
+            if self.call is not None:
+                self.events.send(
+                    ParticipantJoinedEvent(participant=participant, call=self.call)
+                )
+        elif event.type == "participant_left":
+            self._remote_participants.discard(participant.id)
+            if not self._remote_participants:
+                self._remote_participant_joined.clear()
+            if self.call is not None:
+                self.events.send(
+                    ParticipantLeftEvent(participant=participant, call=self.call)
+                )
+        elif event.type == "user_turn_started":
             self.events.send(events.UserTurnStartedEvent(participant=participant))
         elif event.type == "user_turn_ended":
             self.events.send(events.UserTurnEndedEvent(participant=participant))

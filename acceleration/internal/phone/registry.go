@@ -18,19 +18,70 @@ import (
 //go:embed phone.yaml
 var defaultConfigFS embed.FS
 
-// Vendor describes one telephony vendor: what it can carry and what it needs to be
-// opened. Declaring a vendor is separate from implementing it, so the nine this service
-// does not speak to yet still list, and say plainly what they need if they are used.
+// Operation is one thing this service can do at a vendor.
+type Operation string
+
+const (
+	OpSearch     Operation = "search"
+	OpBuy        Operation = "buy"
+	OpRelease    Operation = "release"
+	OpAttach     Operation = "attach"
+	OpDial       Operation = "dial"
+	OpSendDigits Operation = "send_digits"
+)
+
+// TrunkAuth is how a vendor proves to a Stream trunk that a call arriving on it is one the
+// vendor was asked to place.
+type TrunkAuth string
+
+const (
+	// TrunkPassword means the vendor can present SIP digest credentials when it bridges a
+	// call, so the trunk's generated password is enough.
+	TrunkPassword TrunkAuth = "password"
+	// TrunkAllowlist means it cannot: nowhere in its call plan is there a field for a SIP
+	// password, so the trunk has to recognise the vendor by the address it calls from.
+	TrunkAllowlist TrunkAuth = "allowlist"
+)
+
+// Vendor describes one telephony vendor: what it can carry, what this service can do with
+// it and what it needs to be opened. Declaring a vendor is separate from implementing it,
+// so the ones this service does not speak to yet still list, and say plainly what they need
+// if they are used.
 type Vendor struct {
 	// Vendor is the stable name, e.g. "twilio".
 	Vendor string `yaml:"vendor"`
 	// Implemented reports whether this service can actually work with it. A vendor that
 	// is not resolves to a provider that refuses every operation.
 	Implemented bool `yaml:"implemented"`
+	// Operations are what is wrapped for this vendor. Buying a number from a vendor that
+	// cannot be attached leaves a number nothing can answer on, so what is missing is
+	// declared rather than only discovered by trying it.
+	Operations []Operation `yaml:"operations"`
 	// Capabilities are the kinds of traffic its numbers carry.
 	Capabilities []Capability `yaml:"capabilities"`
 	// Credentials are the environment variables it is opened with, all required.
 	Credentials []string `yaml:"credentials"`
+	// TrunkAuth is how this vendor gets past the trunk when it bridges a call. Empty
+	// means password, which is what a vendor that can send credentials uses.
+	TrunkAuth TrunkAuth `yaml:"trunk_auth"`
+	// Signalling are the addresses this vendor's SIP traffic comes from, as IPs or CIDR
+	// blocks. They are only needed by a vendor that authenticates by address, and some
+	// vendors issue them per account rather than publishing them, which is why this is
+	// declared rather than compiled in.
+	Signalling []string `yaml:"signalling"`
+}
+
+// Authenticates reports how this vendor gets past a trunk, defaulting to a password.
+func (v Vendor) Authenticates() TrunkAuth {
+	if v.TrunkAuth == "" {
+		return TrunkPassword
+	}
+	return v.TrunkAuth
+}
+
+// Does reports whether an operation is wrapped for this vendor.
+func (v Vendor) Does(operation Operation) bool {
+	return slices.Contains(v.Operations, operation)
 }
 
 // Missing returns the credentials this vendor needs that the environment does not have.
@@ -49,6 +100,16 @@ type Config struct {
 	Vendors []Vendor `yaml:"vendors"`
 }
 
+// Lookup returns what was declared about a vendor.
+func (c Config) Lookup(name string) (Vendor, bool) {
+	for _, vendor := range c.Vendors {
+		if vendor.Vendor == name {
+			return vendor, true
+		}
+	}
+	return Vendor{}, false
+}
+
 // Validate reports whether the configuration describes usable vendors.
 func (c Config) Validate() error {
 	if len(c.Vendors) == 0 {
@@ -65,6 +126,13 @@ func (c Config) Validate() error {
 		}
 		if len(vendor.Credentials) == 0 {
 			return fmt.Errorf("phone: %s declares no credentials", vendor.Vendor)
+		}
+		if vendor.Implemented && len(vendor.Operations) == 0 {
+			return fmt.Errorf("phone: %s is implemented but declares no operations", vendor.Vendor)
+		}
+		if auth := vendor.Authenticates(); auth != TrunkPassword && auth != TrunkAllowlist {
+			return fmt.Errorf("phone: %s authenticates to a trunk by %q, which is neither %q nor %q",
+				vendor.Vendor, auth, TrunkPassword, TrunkAllowlist)
 		}
 		if _, duplicate := seen[vendor.Vendor]; duplicate {
 			return fmt.Errorf("phone: %s is declared twice", vendor.Vendor)
@@ -147,14 +215,7 @@ func (r *Registry) Register(vendor string, factory Factory) {
 func (r *Registry) Vendors() []Vendor { return slices.Clone(r.config.Vendors) }
 
 // Lookup returns what was declared about a vendor.
-func (r *Registry) Lookup(name string) (Vendor, bool) {
-	for _, vendor := range r.config.Vendors {
-		if vendor.Vendor == name {
-			return vendor, true
-		}
-	}
-	return Vendor{}, false
-}
+func (r *Registry) Lookup(name string) (Vendor, bool) { return r.config.Lookup(name) }
 
 // Open returns the provider for a vendor, building it the first time.
 //

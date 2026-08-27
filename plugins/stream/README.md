@@ -93,6 +93,50 @@ arrives when it comes back.
 See [example 12](../../examples/12_docs_agent_example) for the whole thing, including reading
 this repo's markdown into a knowledge base.
 
+A config can also be named rather than looked up by id, which is what an agent usually
+wants:
+
+```python
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=agent_user,
+    llm=stream.Accelerated(config="john"),
+)
+```
+
+The name is resolved when the agent joins, so the config can be defined somewhere else and
+need not exist yet when the agent is built. Anything else passed to `Accelerated` overrides
+what the config says.
+
+## Calling somebody
+
+`stream.Phone` is the telephony half of the backend, and `Agent(phone=...)` is where a call
+is placed from. Stream's SIP is inbound only, so this is a vendor ringing the person and
+bridging the answered leg into a Stream call; the agent is in that call before the phone
+rings, so nobody answers to silence.
+
+```python
+agent = Agent(
+    edge=getstream.Edge(),
+    agent_user=agent_user,
+    llm=stream.Accelerated(config="john"),
+    phone=stream.Phone(),
+)
+
+async with agent.outbound_call(from_=held, to=person, call_type="default", call_id="hello"):
+    await agent.simple_response("greet the user and let them know you're a friendly AI agent")
+    await agent.finish()
+```
+
+`outbound_call` also takes `ring_timeout`, `initial_digits` for reaching an extension behind
+a menu, `headers` for custom SIP headers and `custom` for fields the agent can read off the
+call. Vendors do not all support all of them, and one that cannot express a term refuses the
+call rather than placing it without: a ring timeout that was dropped is a call sitting in
+somebody's voicemail. Seven of the backend's eight implemented vendors can place a call at
+all; DIDWW cannot, because it has no call control API.
+
+See [example 13](../../examples/13_outbound_call_example) for the whole thing.
+
 ## One modality at a time
 
 For a pipeline that stays in Python, each modality can be routed on its own. Failover and

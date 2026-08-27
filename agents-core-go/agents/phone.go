@@ -106,13 +106,16 @@ func (a *Agent) StartCall(ctx context.Context, from, to string) (*Session, error
 	if err != nil {
 		return nil, err
 	}
-	// The number is attached before the call is placed so the answered leg has a trunk to
-	// arrive on. Without it the vendor connects to nothing.
-	if _, err := telephony.Attach(ctx, from, call.ID, call.Type); err != nil {
-		return nil, err
-	}
-
-	placed, err := telephony.Place(ctx, from, to, a.options.CostTracking)
+	// Placing the call makes its own trunk and routing rule, pinned to the call named
+	// here, so the answered leg arrives in the call this agent is about to join. Attaching
+	// the number first would be a second rule for the same number.
+	placed, err := telephony.Place(ctx, stream.OutboundCall{
+		From:     from,
+		To:       to,
+		CallID:   call.ID,
+		CallType: call.Type,
+		Tags:     a.options.CostTracking,
+	})
 	if err != nil {
 		return nil, err
 	}

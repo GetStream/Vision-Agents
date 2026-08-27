@@ -61,22 +61,22 @@ func (e CampaignState) Valid() bool {
 
 // Defines values for ContactState.
 const (
-	Calling ContactState = "calling"
-	Done    ContactState = "done"
-	Failed  ContactState = "failed"
-	Pending ContactState = "pending"
+	ContactStateCalling ContactState = "calling"
+	ContactStateDone    ContactState = "done"
+	ContactStateFailed  ContactState = "failed"
+	ContactStatePending ContactState = "pending"
 )
 
 // Valid indicates whether the value is a known member of the ContactState enum.
 func (e ContactState) Valid() bool {
 	switch e {
-	case Calling:
+	case ContactStateCalling:
 		return true
-	case Done:
+	case ContactStateDone:
 		return true
-	case Failed:
+	case ContactStateFailed:
 		return true
-	case Pending:
+	case ContactStatePending:
 		return true
 	default:
 		return false
@@ -166,22 +166,85 @@ func (e Modality) Valid() bool {
 
 // Defines values for PhoneCapability.
 const (
-	Fax   PhoneCapability = "fax"
-	Mms   PhoneCapability = "mms"
-	Sms   PhoneCapability = "sms"
-	Voice PhoneCapability = "voice"
+	PhoneCapabilityEmergency        PhoneCapability = "emergency"
+	PhoneCapabilityFax              PhoneCapability = "fax"
+	PhoneCapabilityHdVoice          PhoneCapability = "hd_voice"
+	PhoneCapabilityInternationalSms PhoneCapability = "international_sms"
+	PhoneCapabilityLocalCalling     PhoneCapability = "local_calling"
+	PhoneCapabilityMms              PhoneCapability = "mms"
+	PhoneCapabilitySms              PhoneCapability = "sms"
+	PhoneCapabilityVoice            PhoneCapability = "voice"
 )
 
 // Valid indicates whether the value is a known member of the PhoneCapability enum.
 func (e PhoneCapability) Valid() bool {
 	switch e {
-	case Fax:
+	case PhoneCapabilityEmergency:
 		return true
-	case Mms:
+	case PhoneCapabilityFax:
 		return true
-	case Sms:
+	case PhoneCapabilityHdVoice:
 		return true
-	case Voice:
+	case PhoneCapabilityInternationalSms:
+		return true
+	case PhoneCapabilityLocalCalling:
+		return true
+	case PhoneCapabilityMms:
+		return true
+	case PhoneCapabilitySms:
+		return true
+	case PhoneCapabilityVoice:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PhoneNumberType.
+const (
+	Local    PhoneNumberType = "local"
+	Mobile   PhoneNumberType = "mobile"
+	TollFree PhoneNumberType = "toll_free"
+)
+
+// Valid indicates whether the value is a known member of the PhoneNumberType enum.
+func (e PhoneNumberType) Valid() bool {
+	switch e {
+	case Local:
+		return true
+	case Mobile:
+		return true
+	case TollFree:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PhoneOperation.
+const (
+	PhoneOperationAttach     PhoneOperation = "attach"
+	PhoneOperationBuy        PhoneOperation = "buy"
+	PhoneOperationDial       PhoneOperation = "dial"
+	PhoneOperationRelease    PhoneOperation = "release"
+	PhoneOperationSearch     PhoneOperation = "search"
+	PhoneOperationSendDigits PhoneOperation = "send_digits"
+)
+
+// Valid indicates whether the value is a known member of the PhoneOperation enum.
+func (e PhoneOperation) Valid() bool {
+	switch e {
+	case PhoneOperationAttach:
+		return true
+	case PhoneOperationBuy:
+		return true
+	case PhoneOperationDial:
+		return true
+	case PhoneOperationRelease:
+		return true
+	case PhoneOperationSearch:
+		return true
+	case PhoneOperationSendDigits:
 		return true
 	default:
 		return false
@@ -224,12 +287,34 @@ func (e Tier) Valid() bool {
 	}
 }
 
+// Defines values for VoiceBindingState.
+const (
+	VoiceBindingStateFailed  VoiceBindingState = "failed"
+	VoiceBindingStatePending VoiceBindingState = "pending"
+	VoiceBindingStateReady   VoiceBindingState = "ready"
+)
+
+// Valid indicates whether the value is a known member of the VoiceBindingState enum.
+func (e VoiceBindingState) Valid() bool {
+	switch e {
+	case VoiceBindingStateFailed:
+		return true
+	case VoiceBindingStatePending:
+		return true
+	case VoiceBindingStateReady:
+		return true
+	default:
+		return false
+	}
+}
+
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
 	CreatedAt          time.Time          `json:"created_at"`
 	Greeting           *string            `json:"greeting,omitempty"`
 	Id                 string             `json:"id"`
 	Instructions       *string            `json:"instructions,omitempty"`
+	Keyterms           *[]string          `json:"keyterms,omitempty"`
 	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
 	Llm                *string            `json:"llm,omitempty"`
 	Name               string             `json:"name"`
@@ -246,6 +331,9 @@ type AgentConfig struct {
 type AgentConfigRequest struct {
 	Greeting     *string `json:"greeting,omitempty"`
 	Instructions *string `json:"instructions,omitempty"`
+
+	// Keyterms Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
+	Keyterms *[]string `json:"keyterms,omitempty"`
 
 	// KnowledgeNamespace What the agent may look things up in. Empty means it knows only what it was told.
 	KnowledgeNamespace *string `json:"knowledge_namespace,omitempty"`
@@ -304,12 +392,26 @@ type AvailableNumber struct {
 	Locality *string `json:"locality,omitempty"`
 
 	// MonthlyCostMicros Millionths of a dollar per month, zero when the vendor does not quote one.
-	MonthlyCostMicros *int64  `json:"monthly_cost_micros,omitempty"`
-	Region            *string `json:"region,omitempty"`
+	MonthlyCostMicros *int64 `json:"monthly_cost_micros,omitempty"`
+
+	// NumberType What kind of number it is, which decides who pays for the call.
+	NumberType *PhoneNumberType `json:"number_type,omitempty"`
+	Region     *string          `json:"region,omitempty"`
+
+	// Vendor Who is offering it, which is also who to buy it from.
+	//
+	// Example: telnyx
+	Vendor string `json:"vendor"`
 }
 
 // BuyNumberRequest defines model for BuyNumberRequest.
 type BuyNumberRequest struct {
+	// Country The country the number was offered from, as the search reported it. Most vendors buy by number alone; the few that buy out of a country's inventory need this, and it cannot be guessed back out of the number.
+	//
+	//
+	// Example: US
+	Country *string `json:"country,omitempty"`
+
 	// E164 Example: +15125551234
 	E164 string `json:"e164"`
 
@@ -436,6 +538,9 @@ type CreateSessionRequest struct {
 	Greeting     *string `json:"greeting,omitempty"`
 	Instructions *string `json:"instructions,omitempty"`
 
+	// Keyterms Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
+	Keyterms *[]string `json:"keyterms,omitempty"`
+
 	// Languages Language hints, which narrow the candidates in every modality.
 	Languages *[]string `json:"languages,omitempty"`
 
@@ -558,7 +663,16 @@ type KnowledgeDocument struct {
 // Example: tts
 type Modality string
 
-// PhoneCapability defines model for PhoneCapability.
+// NumberSearchResult defines model for NumberSearchResult.
+type NumberSearchResult struct {
+	// Numbers What the vendors are offering, cheapest first.
+	Numbers []AvailableNumber `json:"numbers"`
+
+	// Skipped Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which.
+	Skipped []SkippedVendor `json:"skipped"`
+}
+
+// PhoneCapability What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
 type PhoneCapability string
 
 // PhoneNumber defines model for PhoneNumber.
@@ -578,6 +692,12 @@ type PhoneNumber struct {
 	Vendor string             `json:"vendor"`
 }
 
+// PhoneNumberType What kind of number it is, which decides who pays for the call.
+type PhoneNumberType string
+
+// PhoneOperation defines model for PhoneOperation.
+type PhoneOperation string
+
 // PhoneVendor defines model for PhoneVendor.
 type PhoneVendor struct {
 	Capabilities []PhoneCapability `json:"capabilities"`
@@ -588,6 +708,9 @@ type PhoneVendor struct {
 	// MissingCredentials The environment variables the vendor needs and does not have.
 	MissingCredentials *[]string `json:"missing_credentials,omitempty"`
 
+	// Operations What this service can do at the vendor. Eight vendors buy numbers and two of those also bridge calls, so a number is not bought from a vendor that cannot answer on it by accident.
+	Operations *[]PhoneOperation `json:"operations,omitempty"`
+
 	// Ready Implemented and holding every credential it needs.
 	Ready bool `json:"ready"`
 
@@ -597,20 +720,48 @@ type PhoneVendor struct {
 
 // PlaceCallRequest defines model for PlaceCallRequest.
 type PlaceCallRequest struct {
+	// CallId The Stream call the answered leg joins, and so the one the agent has to be in. Omit to have one named after this call, since two calls from the same number are two conversations.
+	CallId *string `json:"call_id,omitempty"`
+
+	// CallType The Stream call type. Omit for "default".
+	CallType *string `json:"call_type,omitempty"`
+
+	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it.
+	Custom *map[string]string `json:"custom,omitempty"`
+
 	// From One of the customer's own numbers, which is what the person sees.
 	From string `json:"from"`
 
-	// SipUri The trunk the answered call joins. Omit to have one created, which is what a one-off call wants.
-	SipUri *string            `json:"sip_uri,omitempty"`
-	Tags   *map[string]string `json:"tags,omitempty"`
-	To     string             `json:"to"`
+	// Headers Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call.
+	Headers *map[string]string `json:"headers,omitempty"`
+
+	// InitialDigits Digits pressed once the person answers, for reaching an extension behind a menu, e.g. "ww1234#". w is a short pause and W a long one.
+	InitialDigits *string `json:"initial_digits,omitempty"`
+
+	// RingTimeoutSeconds How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default.
+	RingTimeoutSeconds *int               `json:"ring_timeout_seconds,omitempty"`
+	Tags               *map[string]string `json:"tags,omitempty"`
+	To                 string             `json:"to"`
 }
 
 // PlacedCall defines model for PlacedCall.
 type PlacedCall struct {
+	// CallId The Stream call the answered leg is routed into. An agent that is not in it hears nothing when the person picks up.
+	CallId   *string `json:"call_id,omitempty"`
+	CallType *string `json:"call_type,omitempty"`
+
 	// Status The vendor's own word for where the call is, e.g. "queued".
-	Status       string `json:"status"`
-	VendorCallId string `json:"vendor_call_id"`
+	Status string `json:"status"`
+
+	// Vendor Who is placing the call.
+	Vendor       *string `json:"vendor,omitempty"`
+	VendorCallId string  `json:"vendor_call_id"`
+}
+
+// PrepareVoiceRequest defines model for PrepareVoiceRequest.
+type PrepareVoiceRequest struct {
+	// Providers Which providers to teach the voice to. Empty means every provider this deployment can clone with.
+	Providers *[]string `json:"providers,omitempty"`
 }
 
 // PressDigitsRequest defines model for PressDigitsRequest.
@@ -769,6 +920,15 @@ type SkillRequest struct {
 	Name string `json:"name"`
 }
 
+// SkippedVendor defines model for SkippedVendor.
+type SkippedVendor struct {
+	// Reason Example: cannot search by administrative_area
+	Reason string `json:"reason"`
+
+	// Vendor Example: twilio
+	Vendor string `json:"vendor"`
+}
+
 // StatsBucket defines model for StatsBucket.
 type StatsBucket struct {
 	// AudioMsTotal Billable audio, transcribed or produced.
@@ -896,6 +1056,64 @@ type TurnStatsBucket struct {
 	TurnCount       int64    `json:"turn_count"`
 }
 
+// Voice defines model for Voice.
+type Voice struct {
+	Bindings    *[]VoiceBinding `json:"bindings,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	Description *string         `json:"description,omitempty"`
+	Id          string          `json:"id"`
+	Name        string          `json:"name"`
+	Samples     *[]VoiceSample  `json:"samples,omitempty"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+// VoiceBinding defines model for VoiceBinding.
+type VoiceBinding struct {
+	// Error Why the provider would not take the recordings, when it would not.
+	Error *string `json:"error,omitempty"`
+
+	// ExternalId What this provider calls the voice.
+	ExternalId *string           `json:"external_id,omitempty"`
+	Provider   string            `json:"provider"`
+	State      VoiceBindingState `json:"state"`
+	UpdatedAt  *time.Time        `json:"updated_at,omitempty"`
+}
+
+// VoiceBindingState defines model for VoiceBinding.State.
+type VoiceBindingState string
+
+// VoiceRequest defines model for VoiceRequest.
+type VoiceRequest struct {
+	// Description A note for whoever reads the voice back, and for the provider's dashboard.
+	Description *string `json:"description,omitempty"`
+
+	// Name What an agent config names the voice by, which is unique among the customer's own voices.
+	Name string `json:"name"`
+}
+
+// VoiceSample defines model for VoiceSample.
+type VoiceSample struct {
+	Bytes       *int64    `json:"bytes,omitempty"`
+	ContentType *string   `json:"content_type,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	Filename    *string   `json:"filename,omitempty"`
+	Id          string    `json:"id"`
+	Transcript  *string   `json:"transcript,omitempty"`
+}
+
+// VoiceSampleRequest defines model for VoiceSampleRequest.
+type VoiceSampleRequest struct {
+	// Audio The recording, base64 encoded. A minute of clean speech is plenty.
+	Audio       []byte  `json:"audio"`
+	ContentType *string `json:"content_type,omitempty"`
+
+	// Filename What to call the file upstream. The extension is how a provider knows what it was given, so send one.
+	Filename *string `json:"filename,omitempty"`
+
+	// Transcript What is said in the recording. Optional, and the providers that use one clone more faithfully with it.
+	Transcript *string `json:"transcript,omitempty"`
+}
+
 // ResourceID defines model for ResourceID.
 type ResourceID = string
 
@@ -938,15 +1156,29 @@ type ListPhoneNumbersParams struct {
 
 // SearchPhoneNumbersParams defines parameters for SearchPhoneNumbers.
 type SearchPhoneNumbersParams struct {
-	Vendor string `form:"vendor" json:"vendor"`
+	// Vendor One vendor to search. Absent searches every usable vendor.
+	Vendor *string `form:"vendor,omitempty" json:"vendor,omitempty"`
 
 	// Country ISO 3166-1 alpha-2 country code.
 	Country  string  `form:"country" json:"country"`
 	AreaCode *string `form:"area_code,omitempty" json:"area_code,omitempty"`
 
-	// Contains Digits the number must contain.
+	// Contains Digits the number must contain, anywhere in it.
 	Contains *string `form:"contains,omitempty" json:"contains,omitempty"`
-	Limit    *int    `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Prefix Digits the number must start with, matched after the country dial code. This differs from `contains` in where the digits have to fall.
+	Prefix *string `form:"prefix,omitempty" json:"prefix,omitempty"`
+
+	// Locality A city, region or rate centre.
+	Locality *string `form:"locality,omitempty" json:"locality,omitempty"`
+
+	// AdministrativeArea A US state or Canadian province.
+	AdministrativeArea *string          `form:"administrative_area,omitempty" json:"administrative_area,omitempty"`
+	NumberType         *PhoneNumberType `form:"number_type,omitempty" json:"number_type,omitempty"`
+
+	// Features Capabilities every number must have. Repeat the parameter to require several. A vendor that cannot filter on one still reports what its numbers carry, so these are checked on the results either way.
+	Features *[]PhoneCapability `form:"features,omitempty" json:"features,omitempty"`
+	Limit    *int               `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
 // GetTurnStatsParams defines parameters for GetTurnStats.
@@ -1027,6 +1259,18 @@ type CreateSkillJSONRequestBody = SkillRequest
 
 // UpdateSkillJSONRequestBody defines body for UpdateSkill for application/json ContentType.
 type UpdateSkillJSONRequestBody = SkillRequest
+
+// CreateVoiceJSONRequestBody defines body for CreateVoice for application/json ContentType.
+type CreateVoiceJSONRequestBody = VoiceRequest
+
+// UpdateVoiceJSONRequestBody defines body for UpdateVoice for application/json ContentType.
+type UpdateVoiceJSONRequestBody = VoiceRequest
+
+// PrepareVoiceJSONRequestBody defines body for PrepareVoice for application/json ContentType.
+type PrepareVoiceJSONRequestBody = PrepareVoiceRequest
+
+// AddVoiceSampleJSONRequestBody defines body for AddVoiceSample for application/json ContentType.
+type AddVoiceSampleJSONRequestBody = VoiceSampleRequest
 
 // PlacePhoneCallJSONRequestBody defines body for PlacePhoneCall for application/json ContentType.
 type PlacePhoneCallJSONRequestBody = PlaceCallRequest
@@ -1428,6 +1672,95 @@ type ClientInterface interface {
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
 	UpdateSkill(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListVoices The voices the calling customer has brought with them
+	//
+	// Corresponds with GET /v1/agents/voices (the `ListVoices` operationId).
+	ListVoices(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateVoiceWithBody Name a voice of the customer's own
+	//
+	// A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the text-to-speech providers that should be able to speak in it. An agent config names this voice rather than any provider's id for it, so the router can still fail over between providers mid-call.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
+	CreateVoiceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateVoice Name a voice of the customer's own
+	//
+	// A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the text-to-speech providers that should be able to speak in it. An agent config names this voice rather than any provider's id for it, so the router can still fail over between providers mid-call.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
+	CreateVoice(ctx context.Context, body CreateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteVoice Delete a voice
+	//
+	// The voice is taken off every provider it was prepared with, so a deleted voice stops being billed for as well as stops being usable. Calls that spoke in it keep naming it.
+	//
+	// Corresponds with DELETE /v1/agents/voices/{id} (the `DeleteVoice` operationId).
+	DeleteVoice(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetVoice One voice, with its recordings and what each provider made of them
+	//
+	// Corresponds with GET /v1/agents/voices/{id} (the `GetVoice` operationId).
+	GetVoice(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateVoiceWithBody Rename a voice
+	//
+	// Only what the voice is called changes. The recordings and the provider bindings are what it sounds like, and renaming it does not make it sound different.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
+	UpdateVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateVoice Rename a voice
+	//
+	// Only what the voice is called changes. The recordings and the provider bindings are what it sounds like, and renaming it does not make it sound different.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
+	UpdateVoice(ctx context.Context, id ResourceID, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PrepareVoiceWithBody Teach the text-to-speech providers this voice
+	//
+	// Each provider is sent the recordings and hands back an id of its own, which is remembered so a session can ask for this voice by name. Providers are prepared independently: one refusing the recordings leaves the others usable, and the binding says why it refused.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
+	PrepareVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PrepareVoice Teach the text-to-speech providers this voice
+	//
+	// Each provider is sent the recordings and hands back an id of its own, which is remembered so a session can ask for this voice by name. Providers are prepared independently: one refusing the recordings leaves the others usable, and the binding says why it refused.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
+	PrepareVoice(ctx context.Context, id ResourceID, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddVoiceSampleWithBody Add a recording to a voice
+	//
+	// The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so recordings can be re-sent to a provider that is added later without asking the customer for them again. Adding a recording does not re-prepare the voice.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
+	AddVoiceSampleWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddVoiceSample Add a recording to a voice
+	//
+	// The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so recordings can be re-sent to a provider that is added later without asking the customer for them again. Adding a recording does not re-prepare the voice.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
+	AddVoiceSample(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// PlacePhoneCallWithBody Place an outbound call and bridge it into a Stream call
 	//
 	// Stream's SIP is inbound only, so the vendor originates the call and connects it to a trunk the agent is already on, rather than Stream dialling out.
@@ -1501,7 +1834,9 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
 	BuyPhoneNumber(ctx context.Context, body BuyPhoneNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SearchPhoneNumbers Search a vendor for numbers to buy
+	// SearchPhoneNumbers Search for numbers to buy, at one vendor or all of them
+	//
+	// Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials, at once, and merges what they offer cheapest first. Vendors do not agree on how a search can be narrowed, so one whose API cannot express a filter is reported in `skipped` rather than asked without it, which would answer a search for one place with numbers from another.
 	//
 	// Corresponds with GET /v1/phone/numbers/available (the `SearchPhoneNumbers` operationId).
 	SearchPhoneNumbers(ctx context.Context, params *SearchPhoneNumbersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2312,6 +2647,205 @@ func (c *Client) UpdateSkill(ctx context.Context, id ResourceID, body UpdateSkil
 	return c.Client.Do(req)
 }
 
+// ListVoices The voices the calling customer has brought with them
+//
+// Corresponds with GET /v1/agents/voices (the `ListVoices` operationId).
+func (c *Client) ListVoices(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListVoicesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateVoiceWithBody Name a voice of the customer's own
+//
+// A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the text-to-speech providers that should be able to speak in it. An agent config names this voice rather than any provider's id for it, so the router can still fail over between providers mid-call.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
+func (c *Client) CreateVoiceWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVoiceRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateVoice Name a voice of the customer's own
+//
+// A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the text-to-speech providers that should be able to speak in it. An agent config names this voice rather than any provider's id for it, so the router can still fail over between providers mid-call.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
+func (c *Client) CreateVoice(ctx context.Context, body CreateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVoiceRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteVoice Delete a voice
+//
+// The voice is taken off every provider it was prepared with, so a deleted voice stops being billed for as well as stops being usable. Calls that spoke in it keep naming it.
+//
+// Corresponds with DELETE /v1/agents/voices/{id} (the `DeleteVoice` operationId).
+func (c *Client) DeleteVoice(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteVoiceRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetVoice One voice, with its recordings and what each provider made of them
+//
+// Corresponds with GET /v1/agents/voices/{id} (the `GetVoice` operationId).
+func (c *Client) GetVoice(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetVoiceRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateVoiceWithBody Rename a voice
+//
+// Only what the voice is called changes. The recordings and the provider bindings are what it sounds like, and renaming it does not make it sound different.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
+func (c *Client) UpdateVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateVoiceRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateVoice Rename a voice
+//
+// Only what the voice is called changes. The recordings and the provider bindings are what it sounds like, and renaming it does not make it sound different.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
+func (c *Client) UpdateVoice(ctx context.Context, id ResourceID, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateVoiceRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PrepareVoiceWithBody Teach the text-to-speech providers this voice
+//
+// Each provider is sent the recordings and hands back an id of its own, which is remembered so a session can ask for this voice by name. Providers are prepared independently: one refusing the recordings leaves the others usable, and the binding says why it refused.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
+func (c *Client) PrepareVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareVoiceRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PrepareVoice Teach the text-to-speech providers this voice
+//
+// Each provider is sent the recordings and hands back an id of its own, which is remembered so a session can ask for this voice by name. Providers are prepared independently: one refusing the recordings leaves the others usable, and the binding says why it refused.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
+func (c *Client) PrepareVoice(ctx context.Context, id ResourceID, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareVoiceRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddVoiceSampleWithBody Add a recording to a voice
+//
+// The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so recordings can be re-sent to a provider that is added later without asking the customer for them again. Adding a recording does not re-prepare the voice.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
+func (c *Client) AddVoiceSampleWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddVoiceSampleRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddVoiceSample Add a recording to a voice
+//
+// The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so recordings can be re-sent to a provider that is added later without asking the customer for them again. Adding a recording does not re-prepare the voice.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
+func (c *Client) AddVoiceSample(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddVoiceSampleRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // PlacePhoneCallWithBody Place an outbound call and bridge it into a Stream call
 //
 // Stream's SIP is inbound only, so the vendor originates the call and connects it to a trunk the agent is already on, rather than Stream dialling out.
@@ -2475,7 +3009,9 @@ func (c *Client) BuyPhoneNumber(ctx context.Context, body BuyPhoneNumberJSONRequ
 	return c.Client.Do(req)
 }
 
-// SearchPhoneNumbers Search a vendor for numbers to buy
+// SearchPhoneNumbers Search for numbers to buy, at one vendor or all of them
+//
+// Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials, at once, and merges what they offer cheapest first. Vendors do not agree on how a search can be narrowed, so one whose API cannot express a filter is reported in `skipped` rather than asked without it, which would answer a search for one place with numbers from another.
 //
 // Corresponds with GET /v1/phone/numbers/available (the `SearchPhoneNumbers` operationId).
 func (c *Client) SearchPhoneNumbers(ctx context.Context, params *SearchPhoneNumbersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3884,6 +4420,282 @@ func NewUpdateSkillRequestWithBody(server string, id ResourceID, contentType str
 	return req, nil
 }
 
+// NewListVoicesRequest constructs an http.Request for the ListVoices method
+func NewListVoicesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/voices")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateVoiceRequest calls the generic CreateVoice builder with application/json body
+func NewCreateVoiceRequest(server string, body CreateVoiceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateVoiceRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateVoiceRequestWithBody constructs an http.Request for the CreateVoice method, with any body, and a specified content type
+func NewCreateVoiceRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/voices")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteVoiceRequest constructs an http.Request for the DeleteVoice method
+func NewDeleteVoiceRequest(server string, id ResourceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/voices/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetVoiceRequest constructs an http.Request for the GetVoice method
+func NewGetVoiceRequest(server string, id ResourceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/voices/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateVoiceRequest calls the generic UpdateVoice builder with application/json body
+func NewUpdateVoiceRequest(server string, id ResourceID, body UpdateVoiceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateVoiceRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateVoiceRequestWithBody constructs an http.Request for the UpdateVoice method, with any body, and a specified content type
+func NewUpdateVoiceRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/voices/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPrepareVoiceRequest calls the generic PrepareVoice builder with application/json body
+func NewPrepareVoiceRequest(server string, id ResourceID, body PrepareVoiceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPrepareVoiceRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewPrepareVoiceRequestWithBody constructs an http.Request for the PrepareVoice method, with any body, and a specified content type
+func NewPrepareVoiceRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/voices/%s/prepare", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewAddVoiceSampleRequest calls the generic AddVoiceSample builder with application/json body
+func NewAddVoiceSampleRequest(server string, id ResourceID, body AddVoiceSampleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddVoiceSampleRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewAddVoiceSampleRequestWithBody constructs an http.Request for the AddVoiceSample method, with any body, and a specified content type
+func NewAddVoiceSampleRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/voices/%s/samples", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewPlacePhoneCallRequest calls the generic PlacePhoneCall builder with application/json body
 func NewPlacePhoneCallRequest(server string, body PlacePhoneCallJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -4133,12 +4945,16 @@ func NewSearchPhoneNumbersRequest(server string, params *SearchPhoneNumbersParam
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "vendor", params.Vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.Vendor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "vendor", *params.Vendor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "country", params.Country, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
@@ -4164,6 +4980,66 @@ func NewSearchPhoneNumbersRequest(server string, params *SearchPhoneNumbersParam
 		if params.Contains != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "contains", *params.Contains, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Prefix != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", *params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Locality != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "locality", *params.Locality, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.AdministrativeArea != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "administrative_area", *params.AdministrativeArea, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.NumberType != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "number_type", *params.NumberType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Features != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "features", *params.Features, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -5097,6 +5973,101 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
 	UpdateSkillWithResponse(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error)
 
+	// ListVoicesWithResponse The voices the calling customer has brought with them
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/voices (the `ListVoices` operationId).
+	ListVoicesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVoicesResponse, error)
+
+	// CreateVoiceWithBodyWithResponse Name a voice of the customer's own
+	//
+	// A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the text-to-speech providers that should be able to speak in it. An agent config names this voice rather than any provider's id for it, so the router can still fail over between providers mid-call.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
+	CreateVoiceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVoiceResponse, error)
+
+	// CreateVoiceWithResponse Name a voice of the customer's own
+	//
+	// A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the text-to-speech providers that should be able to speak in it. An agent config names this voice rather than any provider's id for it, so the router can still fail over between providers mid-call.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
+	CreateVoiceWithResponse(ctx context.Context, body CreateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVoiceResponse, error)
+
+	// DeleteVoiceWithResponse Delete a voice
+	//
+	// The voice is taken off every provider it was prepared with, so a deleted voice stops being billed for as well as stops being usable. Calls that spoke in it keep naming it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/voices/{id} (the `DeleteVoice` operationId).
+	DeleteVoiceWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteVoiceResponse, error)
+
+	// GetVoiceWithResponse One voice, with its recordings and what each provider made of them
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/voices/{id} (the `GetVoice` operationId).
+	GetVoiceWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetVoiceResponse, error)
+
+	// UpdateVoiceWithBodyWithResponse Rename a voice
+	//
+	// Only what the voice is called changes. The recordings and the provider bindings are what it sounds like, and renaming it does not make it sound different.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
+	UpdateVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error)
+
+	// UpdateVoiceWithResponse Rename a voice
+	//
+	// Only what the voice is called changes. The recordings and the provider bindings are what it sounds like, and renaming it does not make it sound different.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
+	UpdateVoiceWithResponse(ctx context.Context, id ResourceID, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error)
+
+	// PrepareVoiceWithBodyWithResponse Teach the text-to-speech providers this voice
+	//
+	// Each provider is sent the recordings and hands back an id of its own, which is remembered so a session can ask for this voice by name. Providers are prepared independently: one refusing the recordings leaves the others usable, and the binding says why it refused.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
+	PrepareVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error)
+
+	// PrepareVoiceWithResponse Teach the text-to-speech providers this voice
+	//
+	// Each provider is sent the recordings and hands back an id of its own, which is remembered so a session can ask for this voice by name. Providers are prepared independently: one refusing the recordings leaves the others usable, and the binding says why it refused.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
+	PrepareVoiceWithResponse(ctx context.Context, id ResourceID, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error)
+
+	// AddVoiceSampleWithBodyWithResponse Add a recording to a voice
+	//
+	// The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so recordings can be re-sent to a provider that is added later without asking the customer for them again. Adding a recording does not re-prepare the voice.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
+	AddVoiceSampleWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
+
+	// AddVoiceSampleWithResponse Add a recording to a voice
+	//
+	// The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so recordings can be re-sent to a provider that is added later without asking the customer for them again. Adding a recording does not re-prepare the voice.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
+	AddVoiceSampleWithResponse(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error)
+
 	// PlacePhoneCallWithBodyWithResponse Place an outbound call and bridge it into a Stream call
 	//
 	// Stream's SIP is inbound only, so the vendor originates the call and connects it to a trunk the agent is already on, rather than Stream dialling out.
@@ -5172,7 +6143,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/phone/numbers (the `BuyPhoneNumber` operationId).
 	BuyPhoneNumberWithResponse(ctx context.Context, body BuyPhoneNumberJSONRequestBody, reqEditors ...RequestEditorFn) (*BuyPhoneNumberResponse, error)
 
-	// SearchPhoneNumbersWithResponse Search a vendor for numbers to buy
+	// SearchPhoneNumbersWithResponse Search for numbers to buy, at one vendor or all of them
+	//
+	// Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials, at once, and merges what they offer cheapest first. Vendors do not agree on how a search can be narrowed, so one whose API cannot express a filter is reported in `skipped` rather than asked without it, which would answer a search for one place with numbers from another.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7039,6 +8012,419 @@ func (r UpdateSkillResponse) ContentType() string {
 	return ""
 }
 
+type ListVoicesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Voice
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListVoicesResponse) GetJSON200() *[]Voice {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListVoicesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListVoicesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r ListVoicesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListVoicesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListVoicesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListVoicesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateVoiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Voice
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateVoiceResponse) GetJSON201() *Voice {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateVoiceResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateVoiceResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateVoiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateVoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateVoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateVoiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteVoiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteVoiceResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteVoiceResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteVoiceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteVoiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteVoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteVoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteVoiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetVoiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Voice
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetVoiceResponse) GetJSON200() *Voice {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetVoiceResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetVoiceResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetVoiceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetVoiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetVoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetVoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetVoiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateVoiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Voice
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateVoiceResponse) GetJSON200() *Voice {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateVoiceResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateVoiceResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateVoiceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateVoiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateVoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateVoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateVoiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PrepareVoiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Voice
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PrepareVoiceResponse) GetJSON200() *Voice {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PrepareVoiceResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PrepareVoiceResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PrepareVoiceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r PrepareVoiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PrepareVoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PrepareVoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PrepareVoiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AddVoiceSampleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Voice
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AddVoiceSampleResponse) GetJSON201() *Voice {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AddVoiceSampleResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AddVoiceSampleResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AddVoiceSampleResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r AddVoiceSampleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AddVoiceSampleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddVoiceSampleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AddVoiceSampleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type PlacePhoneCallResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7339,7 +8725,7 @@ type SearchPhoneNumbersResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]AvailableNumber
+	JSON200 *NumberSearchResult
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -7349,7 +8735,7 @@ type SearchPhoneNumbersResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r SearchPhoneNumbersResponse) GetJSON200() *[]AvailableNumber {
+func (r SearchPhoneNumbersResponse) GetJSON200() *NumberSearchResult {
 	return r.JSON200
 }
 
@@ -8506,6 +9892,167 @@ func (c *ClientWithResponses) UpdateSkillWithResponse(ctx context.Context, id Re
 	return ParseUpdateSkillResponse(rsp)
 }
 
+// ListVoicesWithResponse The voices the calling customer has brought with them
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/voices (the `ListVoices` operationId).
+func (c *ClientWithResponses) ListVoicesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVoicesResponse, error) {
+	rsp, err := c.ListVoices(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListVoicesResponse(rsp)
+}
+
+// CreateVoiceWithBodyWithResponse Name a voice of the customer's own
+//
+// A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the text-to-speech providers that should be able to speak in it. An agent config names this voice rather than any provider's id for it, so the router can still fail over between providers mid-call.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
+func (c *ClientWithResponses) CreateVoiceWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVoiceResponse, error) {
+	rsp, err := c.CreateVoiceWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVoiceResponse(rsp)
+}
+
+// CreateVoiceWithResponse Name a voice of the customer's own
+//
+// A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the text-to-speech providers that should be able to speak in it. An agent config names this voice rather than any provider's id for it, so the router can still fail over between providers mid-call.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
+func (c *ClientWithResponses) CreateVoiceWithResponse(ctx context.Context, body CreateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVoiceResponse, error) {
+	rsp, err := c.CreateVoice(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateVoiceResponse(rsp)
+}
+
+// DeleteVoiceWithResponse Delete a voice
+//
+// The voice is taken off every provider it was prepared with, so a deleted voice stops being billed for as well as stops being usable. Calls that spoke in it keep naming it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/voices/{id} (the `DeleteVoice` operationId).
+func (c *ClientWithResponses) DeleteVoiceWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteVoiceResponse, error) {
+	rsp, err := c.DeleteVoice(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteVoiceResponse(rsp)
+}
+
+// GetVoiceWithResponse One voice, with its recordings and what each provider made of them
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/voices/{id} (the `GetVoice` operationId).
+func (c *ClientWithResponses) GetVoiceWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetVoiceResponse, error) {
+	rsp, err := c.GetVoice(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetVoiceResponse(rsp)
+}
+
+// UpdateVoiceWithBodyWithResponse Rename a voice
+//
+// Only what the voice is called changes. The recordings and the provider bindings are what it sounds like, and renaming it does not make it sound different.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
+func (c *ClientWithResponses) UpdateVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error) {
+	rsp, err := c.UpdateVoiceWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateVoiceResponse(rsp)
+}
+
+// UpdateVoiceWithResponse Rename a voice
+//
+// Only what the voice is called changes. The recordings and the provider bindings are what it sounds like, and renaming it does not make it sound different.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/voices/{id} (the `UpdateVoice` operationId).
+func (c *ClientWithResponses) UpdateVoiceWithResponse(ctx context.Context, id ResourceID, body UpdateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateVoiceResponse, error) {
+	rsp, err := c.UpdateVoice(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateVoiceResponse(rsp)
+}
+
+// PrepareVoiceWithBodyWithResponse Teach the text-to-speech providers this voice
+//
+// Each provider is sent the recordings and hands back an id of its own, which is remembered so a session can ask for this voice by name. Providers are prepared independently: one refusing the recordings leaves the others usable, and the binding says why it refused.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
+func (c *ClientWithResponses) PrepareVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error) {
+	rsp, err := c.PrepareVoiceWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePrepareVoiceResponse(rsp)
+}
+
+// PrepareVoiceWithResponse Teach the text-to-speech providers this voice
+//
+// Each provider is sent the recordings and hands back an id of its own, which is remembered so a session can ask for this voice by name. Providers are prepared independently: one refusing the recordings leaves the others usable, and the binding says why it refused.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
+func (c *ClientWithResponses) PrepareVoiceWithResponse(ctx context.Context, id ResourceID, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error) {
+	rsp, err := c.PrepareVoice(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePrepareVoiceResponse(rsp)
+}
+
+// AddVoiceSampleWithBodyWithResponse Add a recording to a voice
+//
+// The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so recordings can be re-sent to a provider that is added later without asking the customer for them again. Adding a recording does not re-prepare the voice.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
+func (c *ClientWithResponses) AddVoiceSampleWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error) {
+	rsp, err := c.AddVoiceSampleWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddVoiceSampleResponse(rsp)
+}
+
+// AddVoiceSampleWithResponse Add a recording to a voice
+//
+// The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so recordings can be re-sent to a provider that is added later without asking the customer for them again. Adding a recording does not re-prepare the voice.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/voices/{id}/samples (the `AddVoiceSample` operationId).
+func (c *ClientWithResponses) AddVoiceSampleWithResponse(ctx context.Context, id ResourceID, body AddVoiceSampleJSONRequestBody, reqEditors ...RequestEditorFn) (*AddVoiceSampleResponse, error) {
+	rsp, err := c.AddVoiceSample(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddVoiceSampleResponse(rsp)
+}
+
 // PlacePhoneCallWithBodyWithResponse Place an outbound call and bridge it into a Stream call
 //
 // Stream's SIP is inbound only, so the vendor originates the call and connects it to a trunk the agent is already on, rather than Stream dialling out.
@@ -8635,7 +10182,9 @@ func (c *ClientWithResponses) BuyPhoneNumberWithResponse(ctx context.Context, bo
 	return ParseBuyPhoneNumberResponse(rsp)
 }
 
-// SearchPhoneNumbersWithResponse Search a vendor for numbers to buy
+// SearchPhoneNumbersWithResponse Search for numbers to buy, at one vendor or all of them
+//
+// Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials, at once, and merges what they offer cheapest first. Vendors do not agree on how a search can be narrowed, so one whose API cannot express a filter is reported in `skipped` rather than asked without it, which would answer a search for one place with numbers from another.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -10129,6 +11678,317 @@ func ParseUpdateSkillResponse(rsp *http.Response) (*UpdateSkillResponse, error) 
 	return response, nil
 }
 
+// ParseListVoicesResponse parses an HTTP response from a ListVoicesWithResponse call
+func ParseListVoicesResponse(rsp *http.Response) (*ListVoicesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListVoicesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Voice
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateVoiceResponse parses an HTTP response from a CreateVoiceWithResponse call
+func ParseCreateVoiceResponse(rsp *http.Response) (*CreateVoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateVoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Voice
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteVoiceResponse parses an HTTP response from a DeleteVoiceWithResponse call
+func ParseDeleteVoiceResponse(rsp *http.Response) (*DeleteVoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteVoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetVoiceResponse parses an HTTP response from a GetVoiceWithResponse call
+func ParseGetVoiceResponse(rsp *http.Response) (*GetVoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetVoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Voice
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateVoiceResponse parses an HTTP response from a UpdateVoiceWithResponse call
+func ParseUpdateVoiceResponse(rsp *http.Response) (*UpdateVoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateVoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Voice
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePrepareVoiceResponse parses an HTTP response from a PrepareVoiceWithResponse call
+func ParsePrepareVoiceResponse(rsp *http.Response) (*PrepareVoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PrepareVoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Voice
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAddVoiceSampleResponse parses an HTTP response from a AddVoiceSampleWithResponse call
+func ParseAddVoiceSampleResponse(rsp *http.Response) (*AddVoiceSampleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddVoiceSampleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Voice
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParsePlacePhoneCallResponse parses an HTTP response from a PlacePhoneCallWithResponse call
 func ParsePlacePhoneCallResponse(rsp *http.Response) (*PlacePhoneCallResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -10368,7 +12228,7 @@ func ParseSearchPhoneNumbersResponse(rsp *http.Response) (*SearchPhoneNumbersRes
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []AvailableNumber
+		var dest NumberSearchResult
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

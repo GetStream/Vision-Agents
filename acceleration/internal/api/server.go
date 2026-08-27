@@ -17,6 +17,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -29,6 +30,10 @@ import (
 // CustomerHeader carries the trusted customer identifier. Real authentication is not part
 // of this version, so the header is taken at face value.
 const CustomerHeader = "X-Customer-Id"
+
+// CustomerParam carries the same identifier on the sockets, because the browser WebSocket
+// API cannot set a header.
+const CustomerParam = "customer_id"
 
 // customerContextKey holds the customer identifier extracted from the request.
 type customerContextKey struct{}
@@ -63,22 +68,36 @@ type Options struct {
 	// no object storage, in which case there is nowhere to keep a recording and the voice
 	// paths say so.
 	Voices *voices.Service
-	Logger *slog.Logger
+	// Dispatch holds the workers waiting to answer inbound calls. Absent when nothing is
+	// meant to answer a phone, in which case the dispatch socket says so rather than
+	// accepting a worker whose calls would never arrive.
+	Dispatch *dispatch.Pool
+	// StreamSecret signs the call events Stream sends. Without it the webhook refuses
+	// every request, because an unsigned webhook is anyone who found the URL.
+	StreamSecret string
+	// CORSOrigins are the browser origins allowed to call this API directly, which is
+	// what a dashboard talking to the router without a proxy in between needs. Empty
+	// means no browser may, which is right for a deployment only servers reach.
+	CORSOrigins []string
+	Logger      *slog.Logger
 }
 
 // Server implements the generated StrictServerInterface.
 type Server struct {
-	routers     map[routing.Modality]routing.Inspector
-	store       *store.Store
-	live        *live.Client
-	phone       *phone.Service
-	sessions    *session.Manager
-	streams     *Streams
-	transcripts *chatlog.Reader
-	campaigns   *campaign.Runner
-	knowledge   knowledge.Writer
-	voices      *voices.Service
-	logger      *slog.Logger
+	routers      map[routing.Modality]routing.Inspector
+	store        *store.Store
+	live         *live.Client
+	phone        *phone.Service
+	sessions     *session.Manager
+	streams      *Streams
+	transcripts  *chatlog.Reader
+	campaigns    *campaign.Runner
+	knowledge    knowledge.Writer
+	voices       *voices.Service
+	dispatch     *dispatch.Pool
+	streamSecret string
+	corsOrigins  []string
+	logger       *slog.Logger
 }
 
 // NewServer wires the handlers.
@@ -97,39 +116,92 @@ func NewServer(options Options) (*Server, error) {
 		logger = slog.Default()
 	}
 	return &Server{
-		routers:     options.Routers,
-		store:       options.Store,
-		live:        options.Live,
-		phone:       options.Phone,
-		sessions:    options.Sessions,
-		streams:     options.Streams,
-		transcripts: options.Transcripts,
-		campaigns:   options.Campaigns,
-		knowledge:   options.Knowledge,
-		voices:      options.Voices,
-		logger:      logger,
+		routers:      options.Routers,
+		store:        options.Store,
+		live:         options.Live,
+		phone:        options.Phone,
+		sessions:     options.Sessions,
+		streams:      options.Streams,
+		transcripts:  options.Transcripts,
+		campaigns:    options.Campaigns,
+		knowledge:    options.Knowledge,
+		voices:       options.Voices,
+		dispatch:     options.Dispatch,
+		streamSecret: options.StreamSecret,
+		corsOrigins:  options.CORSOrigins,
+		logger:       logger,
 	}, nil
 }
 
 // Handler returns the HTTP handler for the whole API.
 //
-// The two sockets are registered first, on a mux the generated routes are then added to.
-// They are excluded from generation because a strict server returns a response object and
-// an upgrade returns a connection, so there is nothing for it to hand back.
+// The three sockets, the answer host and the call hook are registered first, on a mux the
+// generated routes are then added to. The sockets are excluded from generation because a
+// strict server returns a response object and an upgrade returns a connection, so there is
+// nothing for it to hand back. The answer host is excluded because it serves a vendor's XML
+// rather than this API's JSON, and the call hook because both are reached by somebody other
+// than a customer: a telephony vendor and Stream.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
-	return withCustomer(HandlerFromMux(NewStrictHandler(s, nil), mux))
+	mux.HandleFunc("GET /v1/dispatch", s.dispatchCalls)
+	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
+	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
+	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
+	return withCORS(s.corsOrigins, withCustomer(HandlerFromMux(NewStrictHandler(s, nil), mux)))
 }
 
 // withCustomer lifts the trusted customer header into the request context so handlers can
 // read it without each one reaching into the raw request.
+//
+// A WebSocket is the exception: a browser cannot put a header on one, so the socket paths
+// take the customer as a query parameter instead. It is no less trusted than the header,
+// which is to say not at all: real authentication is not part of this version.
 func withCustomer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		customerID := strings.TrimSpace(r.Header.Get(CustomerHeader))
+		if customerID == "" {
+			customerID = strings.TrimSpace(r.URL.Query().Get(CustomerParam))
+		}
 		if customerID != "" {
 			r = r.WithContext(context.WithValue(r.Context(), customerContextKey{}, customerID))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// withCORS lets a browser at the API from the origins the deployment named.
+//
+// It exists for the dashboard, which talks to the router directly rather than through a
+// server of its own: an extra hop would only be there to move a header, and the router is
+// already the thing that decides who may read a call.
+func withCORS(allowed []string, next http.Handler) http.Handler {
+	if len(allowed) == 0 {
+		return next
+	}
+	permitted := make(map[string]struct{}, len(allowed))
+	for _, origin := range allowed {
+		permitted[strings.TrimSpace(origin)] = struct{}{}
+	}
+	_, anywhere := permitted["*"]
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		_, named := permitted[origin]
+		if origin != "" && (named || anywhere) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Headers", CustomerHeader+", Content-Type")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Max-Age", "600")
+		}
+		// A preflight asks whether the real request would be allowed and carries nothing
+		// worth routing, so it is answered here rather than by a handler that would only
+		// report that nothing serves OPTIONS.
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})

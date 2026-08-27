@@ -94,6 +94,37 @@ jobs:
         run: go test -race ./...
         working-directory: agents-core-go
 
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # The dashboard's types come from the same spec the Go and Python clients do, so a
+      # spec edited without regenerating them is a dashboard already reading a shape the
+      # router no longer answers with.
+      - name: Check the generated types are in step with the spec
+        run: |
+          npm run types
+          git diff --exit-code -- src/lib/api.d.ts
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
 # Cancel in-flight runs for the same branch/PR when new commits arrive
 concurrency:
   group: ci-unit-${{ github.workflow }}-${{ github.ref }}

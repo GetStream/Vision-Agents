@@ -6,7 +6,7 @@ import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestServer
 from vision_agents.core.harness import Daytona, DefaultHarness
-from vision_agents.core.llm.remote import RemoteCall, RemoteEvent
+from vision_agents.core.llm.remote import RemoteCall, RemoteEvent, RemotePipelineError
 from vision_agents.plugins import stream
 
 SETTLE = 2.0
@@ -32,7 +32,20 @@ class Router:
         app.router.add_post("/v1/agents/sessions", self._create)
         app.router.add_get("/v1/agents/sessions/{id}/events", self._events)
         app.router.add_delete("/v1/agents/sessions/{id}", self._close)
+        app.router.add_get("/v1/agents/configs", self._configs)
         return app
+
+    async def _configs(self, _: web.Request) -> web.Response:
+        return web.json_response(
+            data=[
+                {
+                    "id": "config-7",
+                    "name": "john",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        )
 
     async def send(self, frame: dict[str, Any]) -> None:
         """Send one frame to whoever is watching the session."""
@@ -262,3 +275,26 @@ class TestAccelerated:
         await llm.leave_remote()
 
         assert await router.answered() == {"type": "close"}
+
+    async def test_a_config_named_when_the_agent_was_built_is_looked_up_on_joining(
+        self, router: Router, call: RemoteCall
+    ):
+        # A config is named where it is defined and identified by id everywhere after, and
+        # the lookup waits until joining so an agent can be built before the config exists.
+        pipeline = stream.Accelerated(config="john", url=router.url, customer_id="acme")
+
+        await pipeline.join_remote(call)
+        await pipeline.leave_remote()
+
+        assert router.created is not None
+        assert router.created["config_id"] == "config-7"
+
+    async def test_a_config_name_nothing_is_stored_under_says_so(
+        self, router: Router, call: RemoteCall
+    ):
+        pipeline = stream.Accelerated(
+            config="nobody", url=router.url, customer_id="acme"
+        )
+
+        with pytest.raises(RemotePipelineError, match="nobody"):
+            await pipeline.join_remote(call)

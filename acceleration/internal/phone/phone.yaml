@@ -1,24 +1,56 @@
-# Which telephony vendors this service knows about, what they can carry and what
-# credentials they need. Twilio and Telnyx are implemented; the rest are declared so they
-# list and resolve, and say plainly that they are not implemented when used.
+# Which telephony vendors this service knows about, what they can carry, what this service
+# can do with them and what credentials they need.
+#
+# Eight of eleven are implemented, and seven of those eight can place a call. DIDWW is the
+# exception: it sells numbers but has no call control API at all, so there is nothing to ask
+# it to dial with. The operations list is what says so, so a number is not bought from a
+# vendor that cannot answer on it by accident.
+#
+# The three that are not implemented at all resolve to a stub that refuses every operation by
+# name, so they list rather than being absent.
+#
+# trunk_auth is how a vendor gets past the Stream trunk it bridges into. Twilio, Telnyx and
+# Plivo can name SIP digest credentials in their call plans, so the trunk's own password is
+# enough. The other four have no field for one anywhere, so their trunk has to recognise them
+# by the address they call from, and signalling is that address. A trunk with neither is open
+# to anyone who learns its uri, so a vendor that authenticates by address will not place a
+# call until its signalling addresses are declared.
 vendors:
   - vendor: twilio
     implemented: true
+    operations: [search, buy, release, attach, dial]
     capabilities: [voice, sms, mms]
     credentials: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN]
+    trunk_auth: password
 
   - vendor: telnyx
     implemented: true
-    capabilities: [voice, sms, mms, fax]
+    operations: [search, buy, release, attach, dial, send_digits]
+    capabilities: [voice, sms, mms, fax, emergency, hd_voice, international_sms, local_calling]
     credentials: [TELNYX_API_KEY]
+    trunk_auth: password
 
   - vendor: sinch
+    implemented: true
+    operations: [search, buy, release, dial]
     capabilities: [voice, sms]
-    credentials: [SINCH_PROJECT_ID, SINCH_KEY_ID, SINCH_KEY_SECRET]
+    # The numbers API is the project's and the calling API is an application's, so placing
+    # a call needs a second pair of credentials that buying a number does not.
+    credentials: [SINCH_PROJECT_ID, SINCH_KEY_ID, SINCH_KEY_SECRET, SINCH_APPLICATION_KEY, SINCH_APPLICATION_SECRET]
+    trunk_auth: allowlist
+    # Sinch does not publish its voice signalling addresses; they come with the account.
+    signalling: []
 
   - vendor: bandwidth
+    implemented: true
+    operations: [search, buy, release, dial]
     capabilities: [voice, sms, mms]
-    credentials: [BANDWIDTH_ACCOUNT_ID, BANDWIDTH_USERNAME, BANDWIDTH_PASSWORD]
+    # A placed call belongs to a voice application, which buying a number does not need.
+    credentials: [BANDWIDTH_ACCOUNT_ID, BANDWIDTH_USERNAME, BANDWIDTH_PASSWORD, BANDWIDTH_SITE_ID, BANDWIDTH_APPLICATION_ID]
+    trunk_auth: allowlist
+    # Bandwidth assigns a mated pair of SBCs per account and gives their addresses out at
+    # onboarding rather than publishing them, so these are per deployment.
+    signalling: []
 
   - vendor: bics
     capabilities: [voice, sms]
@@ -29,21 +61,43 @@ vendors:
     credentials: [INFOBIP_BASE_URL, INFOBIP_API_KEY]
 
   - vendor: vonage
-    capabilities: [voice, sms]
-    credentials: [VONAGE_API_KEY, VONAGE_API_SECRET]
+    implemented: true
+    operations: [search, buy, release, dial]
+    capabilities: [voice, sms, mms]
+    credentials: [VONAGE_API_KEY, VONAGE_API_SECRET, VONAGE_APPLICATION_ID, VONAGE_PRIVATE_KEY]
+    trunk_auth: allowlist
+    # Vonage's published primary subnets, which it asks callers to allow rather than the
+    # individual addresses inside them so that the list survives its own changes.
+    signalling:
+      - 216.147.0.0/18
+      - 168.100.64.0/18
 
   - vendor: kaleyra
     capabilities: [voice, sms]
     credentials: [KALEYRA_SID, KALEYRA_API_KEY]
 
   - vendor: bird
-    capabilities: [voice, sms]
-    credentials: [BIRD_WORKSPACE_ID, BIRD_ACCESS_KEY]
+    implemented: true
+    operations: [search, buy, release, dial]
+    capabilities: [voice, sms, mms]
+    credentials: [BIRD_ACCESS_KEY]
+    trunk_auth: allowlist
+    # Bird's published signalling addresses, one per point of presence. A call is placed
+    # from whichever is nearest, so all three are allowed.
+    signalling:
+      - 35.205.0.36/32
+      - 35.227.0.132/32
+      - 35.234.192.68/32
 
   - vendor: didww
-    capabilities: [voice, sms]
+    implemented: true
+    operations: [search, buy, release]
+    capabilities: [voice, sms, fax, emergency]
     credentials: [DIDWW_API_KEY]
 
   - vendor: plivo
+    implemented: true
+    operations: [search, buy, release, dial]
     capabilities: [voice, sms, mms]
     credentials: [PLIVO_AUTH_ID, PLIVO_AUTH_TOKEN]
+    trunk_auth: password

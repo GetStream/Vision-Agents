@@ -695,7 +695,9 @@ func (s *HarnessSuite) TestAColdLargePrefixIsCompactedPrivately() {
 	s.slow.automatic = "The caller is planning dinner for Friday."
 	history := longHistory()
 
-	s.Require().NoError(s.harness.MaybeCompact(history, compactionMinTokens, 0))
+	started, err := s.harness.MaybeCompact(history, compactionMinTokens, 0)
+	s.Require().NoError(err)
+	s.True(started)
 
 	s.eventually(func() bool { return len(compactedIn(s.events.seen())) == 1 },
 		"the conversation was never compacted")
@@ -709,11 +711,13 @@ func (s *HarnessSuite) TestAColdLargePrefixIsCompactedPrivately() {
 func (s *HarnessSuite) TestAnEffectivePrefixCacheKeepsVerbatimHistory() {
 	s.build(true)
 
-	s.Require().NoError(s.harness.MaybeCompact(
+	started, err := s.harness.MaybeCompact(
 		longHistory(),
 		compactionMinTokens,
 		int64(float64(compactionMinTokens)*compactionCacheRatio),
-	))
+	)
+	s.Require().NoError(err)
+	s.False(started)
 
 	s.Empty(s.slow.requests(), "cached history is cheaper and more faithful than a summary")
 }
@@ -721,11 +725,13 @@ func (s *HarnessSuite) TestAnEffectivePrefixCacheKeepsVerbatimHistory() {
 func (s *HarnessSuite) TestShortHistoryIsNotCompacted() {
 	s.build(true)
 
-	s.Require().NoError(s.harness.MaybeCompact(
+	started, err := s.harness.MaybeCompact(
 		longHistory()[:compactionMinMessages-1],
 		compactionMinTokens,
 		0,
-	))
+	)
+	s.Require().NoError(err)
+	s.False(started)
 
 	s.Empty(s.slow.requests())
 }

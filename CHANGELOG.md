@@ -2,6 +2,58 @@
 
 ## New Features
 
+### Inbound calling: wait for a call and answer it
+
+`stream.StreamDispatch()` connects out to the acceleration backend and waits;
+the router pushes an arriving call down that connection, so nothing in your
+process has to be publicly reachable.
+
+```python
+dispatch = StreamDispatch()
+
+
+@dispatch.wait_for_call()
+async def answer(call: InboundCall):
+    async with agent.answer(call):
+        await agent.simple_response("greet the caller")
+        await agent.finish()
+
+
+asyncio.run(dispatch.run())
+```
+
+`agent.answer(call)` is the inbound mirror of `outbound_call`: it joins the call
+the caller is already in rather than creating a second one, and waits for them
+before the agent speaks. Several workers can wait at once, in which case calls
+are shared between them, and a worker already holding `capacity` calls is passed
+over rather than queued behind.
+
+The router hears about an arriving call by webhook, which is an app-wide setting,
+so run `go run ./cmd/phone hooks -url $ROUTER_PUBLIC_URL` once; it leaves any
+other hooks your app has alone. See `examples/14_inbound_call_example`.
+
+### `Agent.outbound_call`: ring a phone and hold the conversation
+
+`Agent(phone=stream.Phone())` gives an agent somewhere to place calls from, and
+`agent.outbound_call(from_=, to=)` is an async context manager that creates the
+call, rings the person and joins before their phone starts ringing, so nobody
+answers to silence. It also takes `call_id`, `call_type`, `ring_timeout`,
+`initial_digits` for reaching an extension behind a menu, `headers` for custom
+SIP headers and `custom` for fields the agent can read off the call. A vendor
+whose API cannot express one of those refuses the call rather than placing it
+without: a ring timeout that was silently dropped is a call sitting in somebody's
+voicemail.
+
+The acceleration backend places those calls at seven vendors — Twilio, Telnyx,
+Vonage, Bird, Plivo, Bandwidth and Sinch. DIDWW cannot and will not: it sells
+numbers and has no call control API at all, so `dial` is absent from its declared
+operations. Plivo and Bandwidth fetch their call plan when the person answers, so
+they need `ROUTER_PUBLIC_URL` pointed at somewhere they can reach.
+
+`stream.Accelerated(config="john")` names a stored agent config instead of
+repeating the models, resolved when the agent joins. See
+`examples/13_outbound_call_example`.
+
 ### `stream` plugin: the whole voice pipeline in the acceleration backend
 
 Adds a new `stream` plugin. `stream.Accelerated(model=, stt=, tts=)` sits in the

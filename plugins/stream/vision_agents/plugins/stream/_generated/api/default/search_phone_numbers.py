@@ -5,17 +5,24 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.available_number import AvailableNumber
 from ...models.error import Error
+from ...models.number_search_result import NumberSearchResult
+from ...models.phone_capability import PhoneCapability
+from ...models.phone_number_type import PhoneNumberType
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
-    vendor: str,
+    vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
     contains: str | Unset = UNSET,
+    prefix: str | Unset = UNSET,
+    locality: str | Unset = UNSET,
+    administrative_area: str | Unset = UNSET,
+    number_type: PhoneNumberType | Unset = UNSET,
+    features: list[PhoneCapability] | Unset = UNSET,
     limit: int | Unset = 10,
 ) -> dict[str, Any]:
 
@@ -28,6 +35,27 @@ def _get_kwargs(
     params["area_code"] = area_code
 
     params["contains"] = contains
+
+    params["prefix"] = prefix
+
+    params["locality"] = locality
+
+    params["administrative_area"] = administrative_area
+
+    json_number_type: str | Unset = UNSET
+    if not isinstance(number_type, Unset):
+        json_number_type = number_type.value
+
+    params["number_type"] = json_number_type
+
+    json_features: list[str] | Unset = UNSET
+    if not isinstance(features, Unset):
+        json_features = []
+        for features_item_data in features:
+            features_item = features_item_data.value
+            json_features.append(features_item)
+
+    params["features"] = json_features
 
     params["limit"] = limit
 
@@ -44,14 +72,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | list[AvailableNumber] | None:
+) -> Error | NumberSearchResult | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for response_200_item_data in _response_200:
-            response_200_item = AvailableNumber.from_dict(response_200_item_data)
-
-            response_200.append(response_200_item)
+        response_200 = NumberSearchResult.from_dict(response.json())
 
         return response_200
 
@@ -78,7 +101,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | list[AvailableNumber]]:
+) -> Response[Error | NumberSearchResult]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -90,19 +113,35 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    vendor: str,
+    vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
     contains: str | Unset = UNSET,
+    prefix: str | Unset = UNSET,
+    locality: str | Unset = UNSET,
+    administrative_area: str | Unset = UNSET,
+    number_type: PhoneNumberType | Unset = UNSET,
+    features: list[PhoneCapability] | Unset = UNSET,
     limit: int | Unset = 10,
-) -> Response[Error | list[AvailableNumber]]:
-    """Search a vendor for numbers to buy
+) -> Response[Error | NumberSearchResult]:
+    """Search for numbers to buy, at one vendor or all of them
+
+     Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials,
+    at once, and merges what they offer cheapest first. Vendors do not agree on how a search can be
+    narrowed, so one whose API cannot express a filter is reported in `skipped` rather than asked
+    without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str):
+        vendor (str | Unset):
         country (str):
         area_code (str | Unset):
         contains (str | Unset):
+        prefix (str | Unset):
+        locality (str | Unset):
+        administrative_area (str | Unset):
+        number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
+            for the call.
+        features (list[PhoneCapability] | Unset):
         limit (int | Unset):  Default: 10.
 
     Raises:
@@ -110,7 +149,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[AvailableNumber]]
+        Response[Error | NumberSearchResult]
     """
 
     kwargs = _get_kwargs(
@@ -118,6 +157,11 @@ def sync_detailed(
         country=country,
         area_code=area_code,
         contains=contains,
+        prefix=prefix,
+        locality=locality,
+        administrative_area=administrative_area,
+        number_type=number_type,
+        features=features,
         limit=limit,
     )
 
@@ -131,19 +175,35 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    vendor: str,
+    vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
     contains: str | Unset = UNSET,
+    prefix: str | Unset = UNSET,
+    locality: str | Unset = UNSET,
+    administrative_area: str | Unset = UNSET,
+    number_type: PhoneNumberType | Unset = UNSET,
+    features: list[PhoneCapability] | Unset = UNSET,
     limit: int | Unset = 10,
-) -> Error | list[AvailableNumber] | None:
-    """Search a vendor for numbers to buy
+) -> Error | NumberSearchResult | None:
+    """Search for numbers to buy, at one vendor or all of them
+
+     Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials,
+    at once, and merges what they offer cheapest first. Vendors do not agree on how a search can be
+    narrowed, so one whose API cannot express a filter is reported in `skipped` rather than asked
+    without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str):
+        vendor (str | Unset):
         country (str):
         area_code (str | Unset):
         contains (str | Unset):
+        prefix (str | Unset):
+        locality (str | Unset):
+        administrative_area (str | Unset):
+        number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
+            for the call.
+        features (list[PhoneCapability] | Unset):
         limit (int | Unset):  Default: 10.
 
     Raises:
@@ -151,7 +211,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[AvailableNumber]
+        Error | NumberSearchResult
     """
 
     return sync_detailed(
@@ -160,6 +220,11 @@ def sync(
         country=country,
         area_code=area_code,
         contains=contains,
+        prefix=prefix,
+        locality=locality,
+        administrative_area=administrative_area,
+        number_type=number_type,
+        features=features,
         limit=limit,
     ).parsed
 
@@ -167,19 +232,35 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    vendor: str,
+    vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
     contains: str | Unset = UNSET,
+    prefix: str | Unset = UNSET,
+    locality: str | Unset = UNSET,
+    administrative_area: str | Unset = UNSET,
+    number_type: PhoneNumberType | Unset = UNSET,
+    features: list[PhoneCapability] | Unset = UNSET,
     limit: int | Unset = 10,
-) -> Response[Error | list[AvailableNumber]]:
-    """Search a vendor for numbers to buy
+) -> Response[Error | NumberSearchResult]:
+    """Search for numbers to buy, at one vendor or all of them
+
+     Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials,
+    at once, and merges what they offer cheapest first. Vendors do not agree on how a search can be
+    narrowed, so one whose API cannot express a filter is reported in `skipped` rather than asked
+    without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str):
+        vendor (str | Unset):
         country (str):
         area_code (str | Unset):
         contains (str | Unset):
+        prefix (str | Unset):
+        locality (str | Unset):
+        administrative_area (str | Unset):
+        number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
+            for the call.
+        features (list[PhoneCapability] | Unset):
         limit (int | Unset):  Default: 10.
 
     Raises:
@@ -187,7 +268,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | list[AvailableNumber]]
+        Response[Error | NumberSearchResult]
     """
 
     kwargs = _get_kwargs(
@@ -195,6 +276,11 @@ async def asyncio_detailed(
         country=country,
         area_code=area_code,
         contains=contains,
+        prefix=prefix,
+        locality=locality,
+        administrative_area=administrative_area,
+        number_type=number_type,
+        features=features,
         limit=limit,
     )
 
@@ -206,19 +292,35 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    vendor: str,
+    vendor: str | Unset = UNSET,
     country: str,
     area_code: str | Unset = UNSET,
     contains: str | Unset = UNSET,
+    prefix: str | Unset = UNSET,
+    locality: str | Unset = UNSET,
+    administrative_area: str | Unset = UNSET,
+    number_type: PhoneNumberType | Unset = UNSET,
+    features: list[PhoneCapability] | Unset = UNSET,
     limit: int | Unset = 10,
-) -> Error | list[AvailableNumber] | None:
-    """Search a vendor for numbers to buy
+) -> Error | NumberSearchResult | None:
+    """Search for numbers to buy, at one vendor or all of them
+
+     Naming a vendor searches only that one. Leaving it out asks every vendor that has its credentials,
+    at once, and merges what they offer cheapest first. Vendors do not agree on how a search can be
+    narrowed, so one whose API cannot express a filter is reported in `skipped` rather than asked
+    without it, which would answer a search for one place with numbers from another.
 
     Args:
-        vendor (str):
+        vendor (str | Unset):
         country (str):
         area_code (str | Unset):
         contains (str | Unset):
+        prefix (str | Unset):
+        locality (str | Unset):
+        administrative_area (str | Unset):
+        number_type (PhoneNumberType | Unset): What kind of number it is, which decides who pays
+            for the call.
+        features (list[PhoneCapability] | Unset):
         limit (int | Unset):  Default: 10.
 
     Raises:
@@ -226,7 +328,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | list[AvailableNumber]
+        Error | NumberSearchResult
     """
 
     return (
@@ -236,6 +338,11 @@ async def asyncio(
             country=country,
             area_code=area_code,
             contains=contains,
+            prefix=prefix,
+            locality=locality,
+            administrative_area=administrative_area,
+            number_type=number_type,
+            features=features,
             limit=limit,
         )
     ).parsed

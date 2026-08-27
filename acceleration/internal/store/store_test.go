@@ -56,7 +56,7 @@ func (s *StoreSuite) SetupTest() {
 	_, err := s.store.DB().ExecContext(
 		s.ctx,
 		"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
-			" turns, turn_stats_hourly, turn_stats_daily, phone_numbers, voices CASCADE",
+			" turns, turn_stats_hourly, turn_stats_daily, call_events, phone_numbers, voices CASCADE",
 	)
 	s.Require().NoError(err)
 }
@@ -401,6 +401,60 @@ func (s *StoreSuite) TestALegThatNeverHappenedIsNotCountedAsInstant() {
 	s.NotNil(buckets[0].RoundtripP50Ms)
 }
 
+func (s *StoreSuite) TestWhatTheConversationDecidedIsReadBackInTheOrderItHappened() {
+	// The trail only explains a call if it is in order: a wait followed by an answer is
+	// an agent giving somebody time to finish, and the same two the other way round is
+	// an agent talking over them.
+	decisions := []CallEvent{
+		s.decision("wait", "the caller has not finished the thought", s.base.Add(2*time.Second)),
+		s.decision("answer", "a complete thought addressed to the agent", s.base.Add(3*time.Second)),
+	}
+	s.Require().NoError(s.store.RecordCallEvents(s.ctx, decisions))
+
+	read, err := s.store.CallEvents(s.ctx, "acme", "call-1", 0)
+	s.Require().NoError(err)
+	s.Require().Len(read, 2)
+	s.Equal("wait", read[0].Kind)
+	s.Equal("the caller has not finished the thought", read[0].Reason)
+	s.Equal("answer", read[1].Kind)
+	s.Equal("caller", read[1].Participant)
+	s.Require().NotNil(read[1].LatencyMs)
+	s.InDelta(30, *read[1].LatencyMs, 0.001)
+}
+
+func (s *StoreSuite) TestOneCallsReasoningIsNotAnothers() {
+	mine := s.decision("answer", "mine", s.base)
+	theirs := s.decision("answer", "theirs", s.base)
+	theirs.CallID = "call-2"
+	s.Require().NoError(s.store.RecordCallEvents(s.ctx, []CallEvent{mine, theirs}))
+
+	read, err := s.store.CallEvents(s.ctx, "acme", "call-1", 0)
+	s.Require().NoError(err)
+	s.Require().Len(read, 1)
+	s.Equal("mine", read[0].Reason)
+}
+
+func (s *StoreSuite) TestRecordingNoDecisionsIsNotAnError() {
+	s.Require().NoError(s.store.RecordCallEvents(s.ctx, nil))
+}
+
+// decision builds one judgement, defaulting what a test does not care about.
+func (s *StoreSuite) decision(kind, reason string, at time.Time) CallEvent {
+	latency := 30.0
+	return CallEvent{
+		CustomerID:  "acme",
+		CallID:      "call-1",
+		AgentID:     "agent-1",
+		At:          at,
+		Kind:        kind,
+		Reason:      reason,
+		TurnID:      "turn-1",
+		Participant: "caller",
+		Said:        "book a table for four",
+		LatencyMs:   &latency,
+	}
+}
+
 func (s *StoreSuite) TestANumberIsHeldUntilItIsReleased() {
 	number := &PhoneNumber{
 		E164: "+15125551234", Vendor: "twilio", Country: "US",
@@ -445,11 +499,72 @@ func (s *StoreSuite) TestANumberRemembersWhichTrunkItsCallsArriveOn() {
 		CustomerID: "acme", PurchasedAt: s.base,
 	}))
 
-	s.Require().NoError(s.store.AttachNumber(s.ctx, "acme", "+15125551234", "trunk-7"))
+	s.Require().NoError(s.store.AttachNumber(
+		s.ctx, "acme", "+15125551234", "trunk-7", "default", "phone-+15125551234"))
 
 	number, err := s.store.Number(s.ctx, "acme", "+15125551234")
 	s.Require().NoError(err)
 	s.Equal("trunk-7", number.StreamTrunkID)
+	s.Equal("phone-+15125551234", number.StreamCallID)
+	s.Equal("default", number.StreamCallType)
+}
+
+func (s *StoreSuite) TestAnArrivingCallNamesTheCustomerWhoseNumberWasRung() {
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15125551234", Vendor: "twilio", Country: "US",
+		CustomerID: "acme", PurchasedAt: s.base,
+	}))
+	s.Require().NoError(s.store.AttachNumber(
+		s.ctx, "acme", "+15125551234", "trunk-7", "support", "the-support-line"))
+
+	number, err := s.store.NumberByCall(s.ctx, "support", "the-support-line")
+
+	s.Require().NoError(err)
+	s.Equal("acme", number.CustomerID)
+	s.Equal("+15125551234", number.E164)
+}
+
+func (s *StoreSuite) TestANumberAttachedBeforeItsCallWasRecordedIsStillFound() {
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15125551234", Vendor: "twilio", Country: "US",
+		CustomerID: "acme", PurchasedAt: s.base,
+	}))
+	// What an attach looked like before the call was recorded: a trunk and nothing else.
+	_, err := s.store.db.NewUpdate().Model((*PhoneNumber)(nil)).
+		Set("stream_trunk_id = ?", "trunk-7").
+		Where("e164 = ?", "+15125551234").
+		Exec(s.ctx)
+	s.Require().NoError(err)
+
+	number, err := s.store.NumberByCall(s.ctx, "default", "phone-+15125551234")
+
+	s.Require().NoError(err)
+	s.Equal("acme", number.CustomerID)
+}
+
+func (s *StoreSuite) TestACallNoNumberReachesIsNotAttributedToAnybody() {
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15125551234", Vendor: "twilio", Country: "US",
+		CustomerID: "acme", PurchasedAt: s.base,
+	}))
+
+	_, err := s.store.NumberByCall(s.ctx, "default", "some-video-call")
+
+	s.ErrorContains(err, "no number reaches call default:some-video-call")
+}
+
+func (s *StoreSuite) TestAReleasedNumbersCallIsNotAttributedToItsFormerHolder() {
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15125551234", Vendor: "twilio", Country: "US",
+		CustomerID: "acme", PurchasedAt: s.base,
+	}))
+	s.Require().NoError(s.store.AttachNumber(
+		s.ctx, "acme", "+15125551234", "trunk-7", "default", "phone-+15125551234"))
+	s.Require().NoError(s.store.ReleaseNumber(s.ctx, "acme", "+15125551234", s.base.Add(time.Hour)))
+
+	_, err := s.store.NumberByCall(s.ctx, "default", "phone-+15125551234")
+
+	s.ErrorContains(err, "no number reaches call")
 }
 
 func (s *StoreSuite) TestTheSameNumberCanBeBoughtAgainAfterBeingReleased() {

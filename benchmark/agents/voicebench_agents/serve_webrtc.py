@@ -14,7 +14,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         await agent.finish()
 
 
-def serve_webrtc(create_agent: CreateAgent, host: str = "127.0.0.1", port: int = 8000) -> None:
+def serve_webrtc(
+    create_agent: CreateAgent, host: str = "127.0.0.1", port: int = 8000
+) -> None:
     Runner(
         AgentLauncher(create_agent=create_agent, join_call=join_call),
     ).serve(host=host, port=port)

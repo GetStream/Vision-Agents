@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -52,8 +53,10 @@ type flow struct {
 	emitter *Emitter
 	logger  *slog.Logger
 
-	mu      sync.Mutex
-	pending map[string]struct{}
+	mu sync.Mutex
+	// pending holds when each candidate was put to the controller, so the wait it cost
+	// the caller can be reported with the answer.
+	pending map[string]time.Time
 	running sync.WaitGroup
 }
 
@@ -87,7 +90,7 @@ func newFlow(model *llmrouter.Session, emitter *Emitter, logger *slog.Logger) *f
 		model:   model,
 		emitter: emitter,
 		logger:  logger,
-		pending: map[string]struct{}{},
+		pending: map[string]time.Time{},
 	}
 	f.running.Add(1)
 	go f.consume()
@@ -103,7 +106,7 @@ func (f *flow) Decide(turn FlowTurn) error {
 	}
 
 	f.mu.Lock()
-	f.pending[turn.ID] = struct{}{}
+	f.pending[turn.ID] = time.Now()
 	f.mu.Unlock()
 
 	if err := f.model.Respond(llm.Request{
@@ -157,7 +160,7 @@ func flowQuestion(turn FlowTurn) string {
 }
 
 func (f *flow) Cancel(candidateID string) error {
-	if !f.forget(candidateID) {
+	if _, pending := f.forget(candidateID); !pending {
 		return nil
 	}
 	return f.model.Interrupt(candidateID)
@@ -174,7 +177,8 @@ func (f *flow) consume() {
 	for event := range f.model.Events() {
 		switch typed := event.(type) {
 		case llm.CompletionComplete:
-			if !f.forget(typed.CompletionID) || typed.Interrupted {
+			took, pending := f.forget(typed.CompletionID)
+			if !pending || typed.Interrupted {
 				continue
 			}
 			answer, err := parseFlow(typed.Text)
@@ -193,25 +197,39 @@ func (f *flow) consume() {
 				CandidateID: typed.CompletionID,
 				Disposition: answer.Disposition,
 				Floor:       answer.Floor,
+				TookMs:      millis(took),
 			})
 		case llm.Error:
-			if typed.CompletionID == "" || !f.forget(typed.CompletionID) {
+			took, pending := f.forget(typed.CompletionID)
+			if typed.CompletionID == "" || !pending {
 				f.logger.Error("flow controller failed", "error", typed.Err, "context", typed.Context)
 				continue
 			}
-			f.emitter.Send(Decided{CandidateID: typed.CompletionID, Err: typed.Err})
+			f.emitter.Send(Decided{
+				CandidateID: typed.CompletionID,
+				TookMs:      millis(took),
+				Err:         typed.Err,
+			})
 		}
 	}
 }
 
-func (f *flow) forget(candidateID string) bool {
+// forget drops a candidate and reports how long it was pending, so the wait it cost the
+// caller is measured from the moment it was asked about rather than guessed at from the
+// model's own timings.
+func (f *flow) forget(candidateID string) (time.Duration, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.pending[candidateID]; !ok {
-		return false
+	asked, ok := f.pending[candidateID]
+	if !ok {
+		return 0, false
 	}
 	delete(f.pending, candidateID)
-	return true
+	return time.Since(asked), true
+}
+
+func millis(took time.Duration) float64 {
+	return float64(took.Microseconds()) / 1000
 }
 
 func parseFlow(text string) (flowAnswer, error) {

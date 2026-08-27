@@ -20,12 +20,11 @@ Note that the agent joining the call isn't handled here.
 The resulting integration at the python SDK level shoudl work like this
 
 ```
-    agent = Agent(
-        name="john", # assuming you have an agent config named john
-    )
-    async with agent.outbound_call(from=123,to=123,call_type="default", call_id"hello"):
-        await agent.simple_response("greet the user in one short sentence")
-        await agent.finish()
+agent = Agent(
+    name="john", # assuming you have an agent config named john on the go backend
+)
+async with agent.outbound_call(from=123,to=123,call_type="default", call_id"hello"):
+    await agent.simple_response("greet the user and let them know you're a friendly AI agent")
 ```
 
 Where outbound call is a context manager that calls the number with the above API endpoint.

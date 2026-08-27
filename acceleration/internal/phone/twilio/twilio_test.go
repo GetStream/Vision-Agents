@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -116,7 +117,7 @@ func (s *TwilioSuite) TestBuyingANumberReturnsWhatIsNeededToManageItLater() {
 	s.answer(`{"sid":"PN9","phone_number":"+15125551234","iso_country":"US",
 		"monthly_price":"1.15","capabilities":{"voice":true,"SMS":true}}`)
 
-	bought, err := s.provider.BuyNumber(s.ctx, "+15125551234")
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
 	s.Require().NoError(err)
 
 	s.Equal(http.MethodPost, s.seen.method)
@@ -198,6 +199,54 @@ func (s *TwilioSuite) TestDiallingOutBridgesTheAnsweredCallIntoTheTrunk() {
 	s.Contains(s.seen.form.Get("Twiml"), "<Sip>sip:trunk-7@sip.stream-io-api.com</Sip>")
 	s.Equal("CA1", placed.VendorCallID)
 	s.Equal("queued", placed.Status)
+}
+
+func (s *TwilioSuite) TestTheRingTimeoutAndInitialDigitsRideOnTheCallRatherThanTheTwiml() {
+	// Both concern the leg to the person: Timeout is how long they are rung for, and
+	// SendDigits is pressed at them once they answer. The TwiML runs after that and only
+	// says where to bridge to.
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:          "+15125551234",
+		To:            "+15550001111",
+		Bridge:        phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+		RingTimeout:   25 * time.Second,
+		InitialDigits: "ww1234#",
+	})
+	s.Require().NoError(err)
+
+	s.Equal("25", s.seen.form.Get("Timeout"))
+	s.Equal("ww1234#", s.seen.form.Get("SendDigits"))
+	s.NotContains(s.seen.form.Get("Twiml"), "1234", "the digits are pressed at the person, not the trunk")
+}
+
+func (s *TwilioSuite) TestACallWithNoTermsAsksTwilioForNoneOfThem() {
+	// An unset ring timeout has to leave Twilio's own default rather than becoming zero,
+	// which would be a call that gives up before it rings.
+	s.answer(`{"sid":"CA1","status":"queued"}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	s.False(s.seen.form.Has("Timeout"))
+	s.False(s.seen.form.Has("SendDigits"))
+}
+
+func (s *TwilioSuite) TestRingingForLongerThanTwilioAllowsIsRefusedBeforeItIsAsked() {
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:        "+15125551234",
+		To:          "+15550001111",
+		Bridge:      phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+		RingTimeout: 20 * time.Minute,
+	})
+
+	s.ErrorContains(err, "600s twilio will ring for")
+	s.Empty(s.seen.path, "a call twilio would reject is not sent")
 }
 
 func (s *TwilioSuite) TestPressingDigitsIsRefusedRatherThanEndingTheCall() {

@@ -22,9 +22,45 @@ type Joined struct {
 
 func (Joined) isAgentEvent() {}
 
-// Heard is a settled turn from a participant. Interim transcripts are not surfaced: they
-// are revisions of a turn that has not finished, and acting on them would mean answering
-// half a sentence.
+// ParticipantJoined means somebody else is now in the call.
+//
+// Reported because an agent in a call it did not start has no other way of knowing anybody
+// is there: an agent answering a phone has to know the caller arrived before it says hello,
+// and until they speak there is no audio to infer it from.
+type ParticipantJoined struct {
+	Participant stt.Participant
+	At          time.Time
+}
+
+func (ParticipantJoined) isAgentEvent() {}
+
+// ParticipantLeft means somebody else has gone. On a phone call there is only one of them,
+// so this is the caller hanging up.
+type ParticipantLeft struct {
+	Participant stt.Participant
+	At          time.Time
+}
+
+func (ParticipantLeft) isAgentEvent() {}
+
+// Hearing is a transcript revision as it arrives, before anything has been decided about
+// it. It is what the agent is hearing rather than what it has heard: the words are still
+// changing, and most revisions are replaced by the next one.
+//
+// Nothing in the conversation acts on this. It is here so a person watching a call can
+// see the words appear as the agent does, which is the difference between watching an
+// agent think and waiting to find out what it concluded.
+type Hearing struct {
+	Participant stt.Participant
+	Text        string
+	Language    string
+}
+
+func (Hearing) isAgentEvent() {}
+
+// Heard is a settled turn from a participant, once the conversation has decided it was
+// meant for the agent. A revision of a turn that has not finished is a Hearing instead:
+// acting on one would mean answering half a sentence.
 type Heard struct {
 	Participant stt.Participant
 	Text        string
@@ -32,6 +68,29 @@ type Heard struct {
 }
 
 func (Heard) isAgentEvent() {}
+
+// Decided is one judgement the conversation made about how to handle the call: whether
+// the caller had finished, whether what they said was meant for the agent, who keeps the
+// floor when both are talking, and when a silence needs filling.
+//
+// It carries the reason as well as the choice. A latency figure explains a slow call on
+// its own, but only the reasoning explains a call that went somewhere nobody expected.
+type Decided struct {
+	At   time.Time
+	Kind string
+	// Reason is why, in words.
+	Reason string
+	// TurnID is the turn the judgement was about.
+	TurnID string
+	// Participant is who it concerned.
+	Participant stt.Participant
+	// Text is what was heard, or what the agent decided to say.
+	Text string
+	// LatencyMs is what the flow controller took to rule. Zero where nothing was asked.
+	LatencyMs float64
+}
+
+func (Decided) isAgentEvent() {}
 
 // Responding means the agent has asked the model for a reply.
 type Responding struct {

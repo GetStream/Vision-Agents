@@ -31,8 +31,11 @@ const settleFor = 3 * time.Second
 
 // loopbackEdge is a call with no network in it: audio is pushed in from the test and
 // whatever the agent says is kept for inspection.
+// It also satisfies Roster, so a test can say somebody arrived without anybody speaking,
+// which is what an agent answering a call has to react to.
 type loopbackEdge struct {
-	inbound chan InboundAudio
+	inbound   chan InboundAudio
+	attending chan Attendance
 
 	mu        sync.Mutex
 	published []audio.PcmData
@@ -41,7 +44,10 @@ type loopbackEdge struct {
 }
 
 func newLoopbackEdge() *loopbackEdge {
-	return &loopbackEdge{inbound: make(chan InboundAudio, 16)}
+	return &loopbackEdge{
+		inbound:   make(chan InboundAudio, 16),
+		attending: make(chan Attendance, 16),
+	}
 }
 
 func (e *loopbackEdge) Join(context.Context) error {
@@ -52,6 +58,8 @@ func (e *loopbackEdge) Join(context.Context) error {
 }
 
 func (e *loopbackEdge) Audio() <-chan InboundAudio { return e.inbound }
+
+func (e *loopbackEdge) Attendance() <-chan Attendance { return e.attending }
 
 func (e *loopbackEdge) PublishAudio(pcm audio.PcmData) error {
 	e.mu.Lock()
@@ -68,6 +76,7 @@ func (e *loopbackEdge) Leave() error {
 	}
 	e.left = true
 	close(e.inbound)
+	close(e.attending)
 	return nil
 }
 
@@ -732,6 +741,36 @@ func (s *AgentSuite) TestJoiningTwiceIsRejected() {
 	s.join(true)
 
 	s.ErrorContains(s.agent.Join(s.ctx), "already joined")
+}
+
+func (s *AgentSuite) TestSomebodyArrivingIsReportedBeforeTheySpeak() {
+	// This is what an agent answering a phone waits on. Nobody has said anything, so
+	// audio is not evidence the caller is there.
+	s.join(true)
+
+	s.edge.attending <- Attendance{
+		Participant: stt.Participant{ID: "session-1", UserID: "sip-+15550001111"},
+		Joined:      true,
+	}
+
+	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 1 },
+		"the arrival was never reported")
+	arrived, _ := firstOf[ParticipantJoined](s.reported())
+	s.Equal("sip-+15550001111", arrived.Participant.UserID)
+	s.False(arrived.At.IsZero())
+}
+
+func (s *AgentSuite) TestSomebodyLeavingIsReportedSeparately() {
+	s.join(true)
+	participant := stt.Participant{ID: "session-1", UserID: "sip-+15550001111"}
+	s.edge.attending <- Attendance{Participant: participant, Joined: true}
+
+	s.edge.attending <- Attendance{Participant: participant, Joined: false}
+
+	s.eventually(func() bool { return countOf[ParticipantLeft](s.reported()) == 1 },
+		"the caller hanging up was never reported")
+	s.Equal(1, countOf[ParticipantJoined](s.reported()),
+		"leaving must not read as arriving again")
 }
 
 func (s *AgentSuite) TestParticipantAudioIsTranscribed() {

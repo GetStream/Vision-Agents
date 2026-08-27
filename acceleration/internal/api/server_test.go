@@ -65,6 +65,81 @@ func (s *ServerSuite) TestNewServerRequiresARouter() {
 	s.ErrorContains(err, "at least one router is required")
 }
 
+func (s *ServerSuite) TestASocketMayNameItsCustomerInTheQuery() {
+	// The browser WebSocket API cannot set a header, and a dashboard watching a live call
+	// is exactly the caller that has to open one.
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/stt/providers?customer_id=acme", nil)
+	s.handler.ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusOK, recorder.Code)
+}
+
+func (s *ServerSuite) TestABrowserIsTurnedAwayUnlessItsOriginWasNamed() {
+	allowed := s.origins("https://dash.example")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+	request.Header.Set("Origin", "https://somewhere.else")
+	allowed.ServeHTTP(recorder, request)
+
+	s.Empty(recorder.Header().Get("Access-Control-Allow-Origin"),
+		"an origin nobody named is a browser that gets nothing back")
+}
+
+func (s *ServerSuite) TestANamedOriginMayReadTheApiAndSendTheCustomerHeader() {
+	allowed := s.origins("https://dash.example")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+	request.Header.Set("Origin", "https://dash.example")
+	allowed.ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusOK, recorder.Code)
+	s.Equal("https://dash.example", recorder.Header().Get("Access-Control-Allow-Origin"))
+	s.Contains(recorder.Header().Get("Access-Control-Allow-Headers"), CustomerHeader)
+}
+
+func (s *ServerSuite) TestAPreflightIsAnsweredWithoutReachingAHandler() {
+	allowed := s.origins("https://dash.example")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodOptions, "/v1/agents/calls", nil)
+	request.Header.Set("Origin", "https://dash.example")
+	allowed.ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusNoContent, recorder.Code)
+	s.Contains(recorder.Header().Get("Access-Control-Allow-Methods"), http.MethodPatch)
+}
+
+func (s *ServerSuite) TestWithoutNamedOriginsNoBrowserIsLetIn() {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+	request.Header.Set("Origin", "https://dash.example")
+	s.handler.ServeHTTP(recorder, request)
+
+	s.Empty(recorder.Header().Get("Access-Control-Allow-Origin"))
+}
+
+// origins builds a handler that lets the named browser origins in.
+func (s *ServerSuite) origins(allowed ...string) http.Handler {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	speech, err := sttrouter.New(sttrouter.Options{
+		Config:   config[routing.STT],
+		Registry: sttrouter.DefaultRegistry(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(speech.Close)
+
+	server, err := NewServer(Options{
+		Routers:     map[routing.Modality]routing.Inspector{routing.STT: speech},
+		CORSOrigins: allowed,
+	})
+	s.Require().NoError(err)
+	return server.Handler()
+}
+
 func (s *ServerSuite) TestHealthNeedsNoCustomerHeader() {
 	recorder := s.get("/health", "")
 

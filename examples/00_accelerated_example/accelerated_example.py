@@ -2,10 +2,8 @@ import logging
 from typing import Any, Dict
 
 from dotenv import load_dotenv
-from vision_agents.core import Agent, AgentLauncher, Runner, User
-from vision_agents.core.harness import Daytona, DefaultHarness
+from vision_agents.core import Agent, AgentLauncher, Runner
 from vision_agents.core.utils.examples import get_weather_by_location
-from vision_agents.plugins import getstream, stream
 
 logger = logging.getLogger(__name__)
 
@@ -27,24 +25,8 @@ INSTRUCTIONS = "You're a voice AI assistant. Keep responses short and conversati
 
 async def create_agent(**kwargs) -> Agent:
     agent = Agent(
-        edge=getstream.Edge(),
-        agent_user=User(name="My accelerated AI friend", id="agent"),
-        instructions=INSTRUCTIONS,
-        # The whole pipeline runs in Go: no stt, tts or turn detection is configured here
-        # because none of it happens here.
-        llm=stream.Accelerated(
-            model="llm-fast",
-            stt="en-low-latency",
-            tts="en-low-latency",
-        ),
-        # Work the fast model should not answer itself is handed to a slower one, which
-        # can run code in a sandbox to do it.
-        harness=DefaultHarness(
-            use_skills=True, subagents={"default": "llm-smart"}, vm=Daytona
-        ),
-        # Every request the call makes is billed under these labels.
+        config="coding_support_agent",
         cost_tracking={"project": "examples", "environment": "dev"},
-        # Who the memories are about, and what narrows them further.
         memory_filter={"user_id": "222", "company_id": "12312"},
     )
 

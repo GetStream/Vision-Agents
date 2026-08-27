@@ -31,3 +31,22 @@ type Edge interface {
 	PublishAudio(pcm audio.PcmData) error
 	Leave() error
 }
+
+// Attendance is somebody arriving in or leaving the call.
+type Attendance struct {
+	Participant stt.Participant
+	// Joined is false when they left.
+	Joined bool
+}
+
+// Roster is an edge that can say who else is in the call.
+//
+// Separate from Edge rather than a fifth method on it, because it is only answerable by a
+// transport with other people in it. It matters for a call the agent did not start: an agent
+// answering a phone has to know the caller is there before it says hello, and until somebody
+// speaks, audio says nothing about who is listening.
+type Roster interface {
+	// Attendance reports who comes and goes, starting with whoever was already there when
+	// the edge joined. The channel closes when the edge leaves.
+	Attendance() <-chan Attendance
+}

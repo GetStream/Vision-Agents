@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -118,7 +119,7 @@ func (s *TelnyxSuite) TestBuyingANumberOrdersItOnTheConnectionThatReachesTheBrid
 	s.answer(`{"data":{"id":"order-9","phone_numbers":[
 		{"phone_number":"+15125551234","country_code":"US","features":[{"name":"voice"}]}]}}`)
 
-	bought, err := s.provider.BuyNumber(s.ctx, "+15125551234")
+	bought, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
 	s.Require().NoError(err)
 
 	s.Equal(http.MethodPost, s.seen.method)
@@ -197,6 +198,44 @@ func (s *TelnyxSuite) TestDiallingOutLinksTheAnsweredCallToTheTrunk() {
 	s.Equal("agent", s.seen.body["sip_auth_username"])
 	s.Equal("cc-1", placed.VendorCallID)
 	s.Equal("dialing", placed.Status)
+}
+
+func (s *TelnyxSuite) TestEveryTermOfTheCallIsCarriedOnTheOneRequest() {
+	// Telnyx is the widest of these vendors here, taking all three on the dial itself,
+	// which is why the contract has all three to declare.
+	s.answer(`{"data":{"call_control_id":"cc-1","is_alive":true}}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:          "+15125551234",
+		To:            "+15550001111",
+		Bridge:        phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+		RingTimeout:   25 * time.Second,
+		InitialDigits: "ww1234#",
+		Headers:       map[string]string{"X-Ticket": "42", "X-Agent": "john"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal(float64(25), s.seen.body["timeout_secs"])
+	s.Equal("ww1234#", s.seen.body["send_digits_on_answer"])
+	s.Equal([]any{
+		map[string]any{"name": "X-Agent", "value": "john"},
+		map[string]any{"name": "X-Ticket", "value": "42"},
+	}, s.seen.body["custom_headers"], "headers are sorted so the same call twice is the same request")
+}
+
+func (s *TelnyxSuite) TestACallWithNoTermsLeavesTelnyxItsOwnDefaults() {
+	s.answer(`{"data":{"call_control_id":"cc-1","is_alive":true}}`)
+
+	_, err := s.provider.Dial(s.ctx, phone.Outbound{
+		From:   "+15125551234",
+		To:     "+15550001111",
+		Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+	})
+	s.Require().NoError(err)
+
+	s.NotContains(s.seen.body, "timeout_secs", "zero would be a call that gives up before it rings")
+	s.NotContains(s.seen.body, "send_digits_on_answer")
+	s.NotContains(s.seen.body, "custom_headers")
 }
 
 func (s *TelnyxSuite) TestPressingDigitsActsOnTheLegWithoutEndingIt() {

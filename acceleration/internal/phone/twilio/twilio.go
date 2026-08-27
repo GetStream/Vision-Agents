@@ -39,6 +39,9 @@ const errorBodyLimit = 2048
 // microsPerDollar converts Twilio's dollar strings into the micros used everywhere else.
 const microsPerDollar = 1_000_000
 
+// maxRingSeconds is the longest Twilio will ring a number for.
+const maxRingSeconds = 600
+
 // Options configures a Provider. The credentials fall back to the environment.
 type Options struct {
 	// AccountSID defaults to TWILIO_ACCOUNT_SID.
@@ -103,10 +106,14 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	if search.Contains != "" {
 		query.Set("Contains", search.Contains)
 	}
+	if search.Locality != "" {
+		query.Set("InLocality", search.Locality)
+	}
 	if search.Limit > 0 {
 		query.Set("PageSize", strconv.Itoa(search.Limit))
 	}
-	// Twilio filters by capability with one flag each rather than a list.
+	// Twilio filters by capability with one flag each rather than a list, and only names
+	// the four every vendor has.
 	for _, capability := range search.Capabilities {
 		switch capability {
 		case phone.Voice:
@@ -120,8 +127,16 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 		}
 	}
 
-	path := fmt.Sprintf("/2010-04-01/Accounts/%s/AvailablePhoneNumbers/%s/Local.json",
-		p.accountSID, strings.ToUpper(search.Country))
+	kind := search.Type
+	if kind == "" {
+		kind = phone.Local
+	}
+	resource, ok := resources[kind]
+	if !ok {
+		return nil, fmt.Errorf("twilio: does not sell %s numbers", kind)
+	}
+	path := fmt.Sprintf("/2010-04-01/Accounts/%s/AvailablePhoneNumbers/%s/%s.json",
+		p.accountSID, strings.ToUpper(search.Country), resource)
 
 	var response availableNumbers
 	if err := p.get(ctx, path, query, &response); err != nil {
@@ -132,22 +147,50 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	for _, number := range response.AvailablePhoneNumbers {
 		offered = append(offered, phone.Available{
 			E164:         number.PhoneNumber,
+			Vendor:       p.Vendor(),
 			Country:      number.ISOCountry,
 			Region:       number.Region,
 			Locality:     number.Locality,
+			Type:         kind,
 			Capabilities: number.Capabilities.list(),
 		})
 	}
 	return offered, nil
 }
 
-// BuyNumber buys a number, which is what starts Twilio charging for it.
-func (p *Provider) BuyNumber(ctx context.Context, e164 string) (phone.Number, error) {
-	if e164 == "" {
+// resources are the paths Twilio sells each kind of number under, since the type is part of
+// the URL rather than a filter.
+var resources = map[phone.NumberType]string{
+	phone.Local:    "Local",
+	phone.TollFree: "TollFree",
+	phone.Mobile:   "Mobile",
+}
+
+// Supports is everything except a state and an anchored prefix.
+//
+// Twilio's search takes a locality but has no state parameter, and its Contains matches
+// anywhere in the number rather than at the front. Claiming either would answer a search for
+// Colorado with numbers from anywhere, so those searches go to a vendor that can do them.
+func (p *Provider) Supports(filter phone.Filter) bool {
+	return filter != phone.FilterAdministrativeArea && filter != phone.FilterPrefix
+}
+
+// Dials everything but custom headers.
+//
+// Twilio's call takes a ring timeout and digits to press on answer as parameters. Headers
+// would have to go on the TwiML that bridges the call, and <Sip> has nowhere to put them.
+func (p *Provider) Dials(feature phone.CallFeature) bool {
+	return feature != phone.FeatureCustomHeaders
+}
+
+// BuyNumber buys a number, which is what starts Twilio charging for it. Twilio buys by
+// number, so the order's country is not needed.
+func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
+	if order.E164 == "" {
 		return phone.Number{}, errors.New("twilio: a number is required")
 	}
 
-	form := url.Values{"PhoneNumber": {e164}}
+	form := url.Values{"PhoneNumber": {order.E164}}
 	path := fmt.Sprintf("/2010-04-01/Accounts/%s/IncomingPhoneNumbers.json", p.accountSID)
 
 	var bought incomingNumber
@@ -206,12 +249,14 @@ func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) 
 
 // Dial places a call and bridges the answered leg into the Stream trunk. Stream's SIP is
 // inbound only, so the vendor originates and the agent is already waiting on the trunk.
+//
+// The ring timeout and the digits to press on answer are parameters on the call rather than
+// anything in the TwiML, because both concern the leg to the person: Timeout is how long to
+// ring them, and SendDigits is pressed at them once they answer, before the <Dial> to the
+// trunk runs.
 func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dialed, error) {
-	if outbound.From == "" || outbound.To == "" {
-		return phone.Dialed{}, errors.New("twilio: a call needs a from and a to")
-	}
-	if err := outbound.Bridge.Validate(); err != nil {
-		return phone.Dialed{}, err
+	if err := outbound.Validate(); err != nil {
+		return phone.Dialed{}, fmt.Errorf("twilio: %w", err)
 	}
 
 	instructions, err := dialBridge(outbound.Bridge)
@@ -224,6 +269,18 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		"To":   {outbound.To},
 		// Twiml carries the instruction inline, so answering does not have to fetch it.
 		"Twiml": {instructions},
+	}
+	if outbound.RingTimeout > 0 {
+		seconds := int(outbound.RingTimeout.Seconds())
+		if seconds > maxRingSeconds {
+			return phone.Dialed{}, fmt.Errorf(
+				"twilio: %ds is longer than the %ds twilio will ring for",
+				seconds, maxRingSeconds)
+		}
+		form.Set("Timeout", strconv.Itoa(seconds))
+	}
+	if outbound.InitialDigits != "" {
+		form.Set("SendDigits", outbound.InitialDigits)
 	}
 	path := fmt.Sprintf("/2010-04-01/Accounts/%s/Calls.json", p.accountSID)
 

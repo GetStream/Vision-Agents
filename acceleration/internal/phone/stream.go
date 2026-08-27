@@ -70,8 +70,12 @@ type Trunk struct {
 	// Password authenticates the vendor. Empty lets Stream generate one, which is then
 	// returned in the bridge.
 	Password string
-	// AllowedIPs are the vendor's signalling addresses, as IPs or CIDR blocks. Leaving it
-	// empty accepts calls from anywhere that has the password.
+	// AllowedIPs are the vendor's signalling addresses, as IPs or CIDR blocks.
+	//
+	// Setting them replaces the password rather than adding to it: Stream accepts a call
+	// from a listed address without challenging it, and refuses one from anywhere else
+	// outright. Leaving them empty does not mean "password only" — it accepts every
+	// address unchallenged, so an empty allowlist is an open trunk.
 	AllowedIPs []string
 }
 
@@ -125,6 +129,10 @@ type Route struct {
 	CallID string
 	// CallType is the Stream call type. Empty means "default".
 	CallType string
+	// Custom is put on the call itself, where whoever is in it can read it. It is the only
+	// place Stream takes arbitrary data about a call, the routing rule's own configuration
+	// holding just the id and the type.
+	Custom map[string]string
 }
 
 // CreateRoute points a trunk's calls at a Stream call.
@@ -151,19 +159,27 @@ func (s *Stream) CreateRoute(ctx context.Context, route Route) (string, error) {
 		callID = "phone-{{called_number}}"
 	}
 
-	response, err := s.client.Video().CreateSIPInboundRoutingRule(ctx,
-		&getstream.CreateSIPInboundRoutingRuleRequest{
-			Name:          route.Name,
-			TrunkIds:      route.TrunkIDs,
-			CalledNumbers: route.CalledNumbers,
-			// The caller becomes a participant, and their id has to be stable for the
-			// length of the call because per-participant transcription is keyed on it.
-			CallerConfigs: getstream.SIPCallerConfigsRequest{ID: callerTemplate},
-			DirectRoutingConfigs: &getstream.SIPDirectRoutingRuleCallConfigsRequest{
-				CallID:   callID,
-				CallType: callType,
-			},
-		})
+	request := &getstream.CreateSIPInboundRoutingRuleRequest{
+		Name:          route.Name,
+		TrunkIds:      route.TrunkIDs,
+		CalledNumbers: route.CalledNumbers,
+		// The caller becomes a participant, and their id has to be stable for the length
+		// of the call because per-participant transcription is keyed on it.
+		CallerConfigs: getstream.SIPCallerConfigsRequest{ID: callerTemplate},
+		DirectRoutingConfigs: &getstream.SIPDirectRoutingRuleCallConfigsRequest{
+			CallID:   callID,
+			CallType: callType,
+		},
+	}
+	if len(route.Custom) > 0 {
+		custom := make(map[string]any, len(route.Custom))
+		for key, value := range route.Custom {
+			custom[key] = value
+		}
+		request.CallConfigs = &getstream.SIPCallConfigsRequest{CustomData: custom}
+	}
+
+	response, err := s.client.Video().CreateSIPInboundRoutingRule(ctx, request)
 	if err != nil {
 		return "", fmt.Errorf("phone: create sip routing rule: %w", err)
 	}

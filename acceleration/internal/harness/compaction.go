@@ -29,25 +29,26 @@ type compaction struct {
 }
 
 // MaybeCompact starts private summary work when history is large and prefix caching has
-// stopped paying for keeping the full transcript verbatim.
-func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens int64) error {
+// stopped paying for keeping the full transcript verbatim. It reports whether it started
+// any, so the conversation can record that its own memory was rewritten.
+func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens int64) (bool, error) {
 	if h.tasks == nil || len(history) < compactionMinMessages || inputTokens < compactionMinTokens {
-		return nil
+		return false, nil
 	}
 	if float64(cachedTokens)/float64(inputTokens) >= compactionCacheRatio {
-		return nil
+		return false, nil
 	}
 
 	prefixLength := len(history) - compactionKeepRecent
 	if prefixLength <= 0 {
-		return nil
+		return false, nil
 	}
 	prefix := append([]llm.Message(nil), history[:prefixLength]...)
 
 	h.mu.Lock()
 	if h.compaction != nil {
 		h.mu.Unlock()
-		return nil
+		return false, nil
 	}
 	h.compaction = &compaction{prefix: prefix}
 	h.mu.Unlock()
@@ -57,10 +58,10 @@ func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens 
 		h.mu.Lock()
 		h.compaction = nil
 		h.mu.Unlock()
-		return fmt.Errorf("harness: compact conversation: %w", err)
+		return false, fmt.Errorf("harness: compact conversation: %w", err)
 	}
 	h.logger.Debug("compacting conversation", "task", taskID, "messages", prefixLength)
-	return nil
+	return true, nil
 }
 
 func (h *Harness) finishCompaction(result Result) {

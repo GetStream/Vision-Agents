@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -41,6 +43,9 @@ func (s *Server) ListPhoneVendors(
 			Ready:        usable,
 			Capabilities: phoneCapabilities(vendor.Capabilities),
 		}
+		if operations := phoneOperations(vendor.Operations); len(operations) > 0 {
+			listed.Operations = &operations
+		}
 		if missing := vendor.Missing(); len(missing) > 0 {
 			listed.MissingCredentials = &missing
 		}
@@ -49,7 +54,7 @@ func (s *Server) ListPhoneVendors(
 	return ListPhoneVendors200JSONResponse(vendors), nil
 }
 
-// SearchPhoneNumbers asks a vendor what it has for sale.
+// SearchPhoneNumbers asks what is for sale, at one vendor or at every usable one.
 func (s *Server) SearchPhoneNumbers(
 	ctx context.Context,
 	request SearchPhoneNumbersRequestObject,
@@ -61,6 +66,8 @@ func (s *Server) SearchPhoneNumbers(
 		return SearchPhoneNumbers400JSONResponse{noTelephony()}, nil
 	}
 
+	// Voice is what an agent needs, so it is always required, on top of whatever else
+	// was asked for.
 	search := phone.Search{
 		Country:      request.Params.Country,
 		Capabilities: []phone.Capability{phone.Voice},
@@ -71,11 +78,30 @@ func (s *Server) SearchPhoneNumbers(
 	if request.Params.Contains != nil {
 		search.Contains = *request.Params.Contains
 	}
+	if request.Params.Prefix != nil {
+		search.Prefix = *request.Params.Prefix
+	}
+	if request.Params.Locality != nil {
+		search.Locality = *request.Params.Locality
+	}
+	if request.Params.AdministrativeArea != nil {
+		search.AdministrativeArea = *request.Params.AdministrativeArea
+	}
+	if request.Params.NumberType != nil {
+		search.Type = phone.NumberType(*request.Params.NumberType)
+	}
+	if request.Params.Features != nil {
+		for _, feature := range *request.Params.Features {
+			if capability := phone.Capability(feature); capability != phone.Voice {
+				search.Capabilities = append(search.Capabilities, capability)
+			}
+		}
+	}
 	if request.Params.Limit != nil {
 		search.Limit = *request.Params.Limit
 	}
 
-	offered, err := s.phone.Search(ctx, request.Params.Vendor, search)
+	offers, err := s.searchOffers(ctx, request.Params.Vendor, search)
 	if errors.Is(err, phone.ErrNotImplemented) {
 		return SearchPhoneNumbers404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
 	}
@@ -83,10 +109,14 @@ func (s *Server) SearchPhoneNumbers(
 		return SearchPhoneNumbers400JSONResponse{badRequest(err.Error())}, nil
 	}
 
-	numbers := make([]AvailableNumber, 0, len(offered))
-	for _, number := range offered {
+	result := NumberSearchResult{
+		Numbers: make([]AvailableNumber, 0, len(offers.Numbers)),
+		Skipped: make([]SkippedVendor, 0, len(offers.Skipped)),
+	}
+	for _, number := range offers.Numbers {
 		available := AvailableNumber{
 			E164:         number.E164,
+			Vendor:       number.Vendor,
 			Country:      number.Country,
 			Capabilities: phoneCapabilities(number.Capabilities),
 		}
@@ -96,13 +126,40 @@ func (s *Server) SearchPhoneNumbers(
 		if number.Locality != "" {
 			available.Locality = &number.Locality
 		}
+		if number.Type != "" {
+			kind := PhoneNumberType(number.Type)
+			available.NumberType = &kind
+		}
 		if number.MonthlyCostMicros != 0 {
 			cost := number.MonthlyCostMicros
 			available.MonthlyCostMicros = &cost
 		}
-		numbers = append(numbers, available)
+		result.Numbers = append(result.Numbers, available)
 	}
-	return SearchPhoneNumbers200JSONResponse(numbers), nil
+	for _, skipped := range offers.Skipped {
+		result.Skipped = append(result.Skipped, SkippedVendor{
+			Vendor: skipped.Vendor,
+			Reason: skipped.Reason,
+		})
+	}
+	return SearchPhoneNumbers200JSONResponse(result), nil
+}
+
+// searchOffers asks one vendor when one is named and all of them when none is, so both
+// answer in the same shape.
+func (s *Server) searchOffers(
+	ctx context.Context,
+	vendor *string,
+	search phone.Search,
+) (phone.Offers, error) {
+	if vendor == nil || *vendor == "" {
+		return s.phone.SearchAll(ctx, search)
+	}
+	offered, err := s.phone.Search(ctx, *vendor, search)
+	if err != nil {
+		return phone.Offers{}, err
+	}
+	return phone.Offers{Numbers: offered}, nil
 }
 
 // ListPhoneNumbers returns what the calling customer holds.
@@ -152,11 +209,16 @@ func (s *Server) BuyPhoneNumber(
 		return BuyPhoneNumber400JSONResponse{badRequest(err.Error())}, nil
 	}
 
-	bought, err := s.phone.Buy(ctx, phone.Purchase{
+	purchase := phone.Purchase{
 		Vendor: request.Body.Vendor,
 		E164:   request.Body.E164,
 		Owner:  routing.Owner{CustomerID: customerID, Tags: tags},
-	})
+	}
+	if request.Body.Country != nil {
+		purchase.Country = *request.Body.Country
+	}
+
+	bought, err := s.phone.Buy(ctx, purchase)
 	if errors.Is(err, phone.ErrNotImplemented) {
 		return BuyPhoneNumber404JSONResponse{NotFoundJSONResponse{Error: err.Error()}}, nil
 	}
@@ -256,8 +318,28 @@ func (s *Server) PlacePhoneCall(
 		From:  request.Body.From,
 		To:    request.Body.To,
 	}
-	if request.Body.SipUri != nil {
-		call.Bridge = phone.Bridge{URI: *request.Body.SipUri}
+	if request.Body.CallId != nil {
+		call.CallID = *request.Body.CallId
+	}
+	if request.Body.CallType != nil {
+		call.CallType = *request.Body.CallType
+	}
+	if request.Body.RingTimeoutSeconds != nil {
+		if *request.Body.RingTimeoutSeconds < 0 {
+			return PlacePhoneCall400JSONResponse{
+				badRequest("a call cannot ring for less than no time"),
+			}, nil
+		}
+		call.RingTimeout = time.Duration(*request.Body.RingTimeoutSeconds) * time.Second
+	}
+	if request.Body.InitialDigits != nil {
+		call.InitialDigits = *request.Body.InitialDigits
+	}
+	if request.Body.Headers != nil {
+		call.Headers = *request.Body.Headers
+	}
+	if request.Body.Custom != nil {
+		call.Custom = *request.Body.Custom
 	}
 
 	placed, err := s.phone.Call(ctx, call)
@@ -271,7 +353,38 @@ func (s *Server) PlacePhoneCall(
 	return PlacePhoneCall202JSONResponse{
 		VendorCallId: placed.VendorCallID,
 		Status:       placed.Status,
+		Vendor:       &placed.Vendor,
+		CallId:       &placed.CallID,
+		CallType:     &placed.CallType,
 	}, nil
+}
+
+// answerPhoneCall serves the call plan a vendor fetches when the person it called picks up.
+//
+// This is the one path here a telephony vendor reaches rather than a customer, so it carries
+// no customer header and is authenticated by the single-use token in its own path. It serves
+// that vendor's XML rather than this API's JSON, which is why it is hand-written rather than
+// generated. Vendors retry on a non-2xx and some of them use POST, so both verbs answer.
+func (s *Server) answerPhoneCall(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	if s.phone == nil {
+		http.Error(w, "telephony is not configured", http.StatusNotFound)
+		return
+	}
+
+	plan, err := s.phone.Answer(r.Context(), token)
+	if err != nil {
+		// The vendor is about to bridge a live call to nowhere, so this is worth a log
+		// line even though there is nobody to return the detail to.
+		s.logger.Error("could not answer a placed call", "error", err)
+		http.Error(w, "that call is not waiting to be answered", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", plan.ContentType)
+	if _, err := w.Write(plan.Body); err != nil {
+		s.logger.Error("could not serve a call plan", "error", err)
+	}
 }
 
 // TransferPhoneCall brings a human onto a call that is already happening.
@@ -372,6 +485,14 @@ func phoneCapabilities(capabilities []phone.Capability) []PhoneCapability {
 	rendered := make([]PhoneCapability, 0, len(capabilities))
 	for _, capability := range capabilities {
 		rendered = append(rendered, PhoneCapability(capability))
+	}
+	return rendered
+}
+
+func phoneOperations(operations []phone.Operation) []PhoneOperation {
+	rendered := make([]PhoneOperation, 0, len(operations))
+	for _, operation := range operations {
+		rendered = append(rendered, PhoneOperation(operation))
 	}
 	return rendered
 }

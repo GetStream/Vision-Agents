@@ -19,6 +19,7 @@ from vision_agents.core.llm.llm import LLM, LLMResponseEvent, OmniLLM
 from vision_agents.core.llm.remote import RemoteCall, RemoteEvent
 from vision_agents.core.processors.base_processor import AudioPublisher
 from vision_agents.core.stt import STT as BaseSTT
+from vision_agents.core.telephony import InboundCall, OutboundCall, PlacedCall
 from vision_agents.core.tts import TTS
 from vision_agents.core.turn_detection import TurnDetector
 from vision_agents.core.utils.video_track import QueuedVideoTrack
@@ -70,6 +71,23 @@ class DummyLLM(LLM, Warmable[bool]):
         self.warmed_up = True
 
 
+class DummyPhone:
+    """Somewhere to place a call that records what it was asked to place."""
+
+    def __init__(self):
+        self.placed: Optional[OutboundCall] = None
+
+    async def place(self, call: OutboundCall) -> PlacedCall:
+        self.placed = call
+        return PlacedCall(
+            vendor_call_id="CA123",
+            status="queued",
+            vendor="twilio",
+            call_id=call.call_id,
+            call_type=call.call_type,
+        )
+
+
 class DummyEdge(EdgeTransport):
     def __init__(
         self,
@@ -81,6 +99,7 @@ class DummyEdge(EdgeTransport):
         self.exc_on_join = exc_on_join
         self.exc_on_publish_tracks = exc_on_publish_tracks
         self.authenticate_call_count = 0
+        self.created_calls: list[str] = []
 
     async def authenticate(self, user: User) -> None:
         self.authenticate_call_count += 1
@@ -89,6 +108,7 @@ class DummyEdge(EdgeTransport):
     async def create_call(
         self, call_id: str, agent_user_id: Optional[str] = None, **kwargs
     ) -> Call:
+        self.created_calls.append(call_id)
         return DummyCall(call_id=call_id)
 
     def create_audio_track(self, *args, **kwargs) -> AudioStreamTrack:
@@ -683,6 +703,99 @@ class TestAgent:
         await agent.authenticate()
         await agent.create_call("default", "call-1")
         assert edge.authenticate_call_count == 1
+
+    async def test_an_outbound_call_rings_the_person_and_joins_where_they_land(self):
+        # The call exists and the agent is in it before the phone rings, so nobody
+        # answers to silence.
+        phone = DummyPhone()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            phone=phone,
+        )
+
+        async with agent.outbound_call(
+            from_="+17195551234",
+            to="+13035559876",
+            call_id="support-line",
+            ring_timeout=20.0,
+            initial_digits="ww1234#",
+        ) as placed:
+            assert agent.call is not None
+            assert agent.call.id == "support-line"
+            assert placed.vendor_call_id == "CA123"
+
+        assert phone.placed is not None
+        assert phone.placed.from_ == "+17195551234"
+        assert phone.placed.to == "+13035559876"
+        # The call the vendor is told to bridge into is the one just created, or the
+        # person answers into an empty room.
+        assert phone.placed.call_id == "support-line"
+        assert phone.placed.ring_timeout == 20.0
+        assert phone.placed.initial_digits == "ww1234#"
+
+    async def test_an_outbound_call_without_a_phone_says_what_to_pass(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        with pytest.raises(ValueError, match="phone="):
+            async with agent.outbound_call(from_="+17195551234", to="+13035559876"):
+                pass
+
+    async def test_answering_joins_the_call_the_caller_is_already_in(self):
+        # The caller reached the call over SIP before anything here knew about it, so
+        # creating a second one would leave the agent talking to an empty room.
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        arriving = InboundCall(
+            call_id="phone-+15125551234",
+            call_type="default",
+            called_number="+15125551234",
+            caller_number="+15550001111",
+        )
+
+        async with agent.answer(arriving):
+            assert agent.call is not None
+            assert agent.call.id == "phone-+15125551234"
+
+        assert edge.created_calls == ["phone-+15125551234"]
+
+    async def test_answering_uses_the_call_type_the_call_arrived_on(self):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        async with agent.answer(
+            InboundCall(call_id="the-support-line", call_type="support")
+        ):
+            assert agent._call_type == "support"
+
+    async def test_answering_a_call_that_names_no_call_is_refused(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        with pytest.raises(ValueError, match="names? the call"):
+            async with agent.answer(InboundCall(call_id="")):
+                pass
 
     async def test_join_authenticates_automatically(self, call: Call):
         edge = DummyEdge()
