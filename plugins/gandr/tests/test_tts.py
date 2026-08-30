@@ -1,4 +1,5 @@
 import os
+from collections.abc import AsyncIterator
 
 import pytest
 from vision_agents.plugins import gandr
@@ -37,8 +38,12 @@ class TestGandrTTS:
 @pytest.mark.integration
 class TestGandrTTSIntegration:
     @pytest.fixture
-    async def tts(self) -> gandr.TTS:
-        return gandr.TTS(api_key=_require_gandr_api_key())
+    async def tts(self) -> AsyncIterator[gandr.TTS]:
+        tts = gandr.TTS(api_key=_require_gandr_api_key())
+        try:
+            yield tts
+        finally:
+            await tts.close()
 
     async def test_gandr_convert_text_to_audio(self, tts):
         out = []
