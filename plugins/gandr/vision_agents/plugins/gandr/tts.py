@@ -40,15 +40,20 @@ class TTS(BaseTTS):
             model: Model name (default ``tts-1``).
             voice: Gandr voice, one of ``gandr-mia``, ``gandr-ava``,
                 ``gandr-jenny``, ``gandr-dane``, ``gandr-leo``, ``gandr-lewis``.
-            base_url: Gandr API base URL.
-            client: Optionally pass in your own ``AsyncOpenAI`` client.
+            base_url: Gandr API base URL. Must use HTTPS.
+            client: Optionally pass in your own ``AsyncOpenAI`` client. When
+                set, ``api_key`` and ``base_url`` are ignored.
         """
         super().__init__(provider_name="gandr")
-        api_key = api_key or os.environ.get("GANDR_API_KEY")
-        if not api_key:
-            raise ValueError("GANDR_API_KEY env var or api_key parameter required")
         self._owns_client = client is None
-        self.client = client or AsyncOpenAI(api_key=api_key, base_url=base_url)
+        if client is None:
+            if not base_url.startswith("https://"):
+                raise ValueError("base_url must use HTTPS")
+            api_key = api_key or os.environ.get("GANDR_API_KEY")
+            if not api_key:
+                raise ValueError("GANDR_API_KEY env var or api_key parameter required")
+            client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self.client = client
         self.model = model
         self.voice = voice
 
