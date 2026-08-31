@@ -337,6 +337,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 		tags := config.Tags
 		rendered.Tags = &tags
 	}
+	rendered.SyncHash = optional(config.SyncHash)
 	return rendered
 }
 

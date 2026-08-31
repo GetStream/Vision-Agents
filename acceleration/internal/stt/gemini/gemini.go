@@ -3,9 +3,13 @@
 //
 // The Live API is a conversational protocol that happens to expose what it heard. Only
 // the listening half is used here: the session is set up with input transcription on, and
-// whatever the model would have said back is dropped. Transcription arrives as
-// incremental text with no finality of its own, so a chunk is a delta and the turn
-// boundary the server reports is what settles it.
+// whatever the model would have said back is dropped.
+//
+// What it heard arrives twice. While the caller is still talking the server sends an
+// interim hypothesis roughly every half second, each one restating the turn from its
+// beginning rather than adding to the last, so a hypothesis replaces the one before it.
+// When the turn finishes it sends the finalized transcript of the whole turn, which is
+// what settles it and what the rest of the call is built on.
 package gemini
 
 import (
@@ -47,18 +51,41 @@ var audioMimeType = fmt.Sprintf("audio/pcm;rate=%d", stt.SampleRate)
 // provider and the Python side of this repository already use for the same key.
 const apiKeyEnvVar = "GOOGLE_API_KEY"
 
+// flushGrace is how long Close waits for the tail when the server has no utterance in
+// flight. It only has to cover the caller who spoke in the moment before hanging up, too
+// recently for a hypothesis to have arrived: the model finalizes a turn about 1.4s after
+// the last word, and a hypothesis of it lands within 700ms of the first.
+const flushGrace = 1500 * time.Millisecond
+
+// TranscriptionMode is how faithfully the transcript follows what was said.
+type TranscriptionMode string
+
+const (
+	// ModeVerbatim writes down every word, the filler and the false starts included. It
+	// is what the server does when it is not asked for anything else.
+	ModeVerbatim TranscriptionMode = "VERBATIM"
+	// ModeSmart drops the filler, resolves a spoken self-correction to whichever answer
+	// the caller settled on, and punctuates. It reads better at the cost of no longer
+	// being word for word, which is the wrong trade when the words are the record.
+	ModeSmart TranscriptionMode = "SMART"
+)
+
 // Options configures the provider. APIKey falls back to GOOGLE_API_KEY.
 type Options struct {
 	APIKey string
 	Model  string
 	URL    string
-	// Keyterms are the words the model would otherwise get wrong. The Live API has no
-	// vocabulary field, so they are put in the system instruction, which is the lever it
-	// does give for steering what the model writes down.
+	// Keyterms are the words the model would otherwise get wrong, sent as the
+	// transcriber's custom vocabulary. The API takes up to a thousand of them and
+	// recommends no more than a hundred, which is what stt.MaxKeyterms allows.
 	Keyterms []string
-	// LanguageHints narrow what is expected. Same story as Keyterms: there is no field
-	// for them, and the model detects the language on its own regardless.
+	// LanguageHints narrow what is expected, as BCP-47 codes such as "en-US" or "es-ES".
+	// Empty leaves the model to detect the language itself, including a caller who
+	// switches between two of them mid-sentence.
 	LanguageHints []string
+	// Mode is how much tidying up the transcript gets. Empty leaves it to the server,
+	// which is verbatim.
+	Mode TranscriptionMode
 	// HandshakeTimeout bounds the initial connect and the setup exchange.
 	HandshakeTimeout time.Duration
 	// FlushTimeout bounds how long Close waits for the tail of the last utterance.
@@ -74,22 +101,22 @@ type clientMessage struct {
 
 // setup is the first frame, which configures the session.
 type setup struct {
-	Model                   string           `json:"model"`
-	GenerationConfig        generationConfig `json:"generationConfig"`
-	SystemInstruction       *content         `json:"systemInstruction,omitempty"`
-	InputAudioTranscription *json.RawMessage `json:"inputAudioTranscription,omitempty"`
+	Model                   string              `json:"model"`
+	GenerationConfig        generationConfig    `json:"generationConfig"`
+	InputAudioTranscription *audioTranscription `json:"inputAudioTranscription,omitempty"`
 }
 
 type generationConfig struct {
 	ResponseModalities []string `json:"responseModalities"`
 }
 
-type content struct {
-	Parts []part `json:"parts"`
-}
-
-type part struct {
-	Text string `json:"text"`
+// audioTranscription configures the transcriber: the vocabulary to lean on, the languages
+// to expect and how much of a tidy-up to apply. Sending it at all is what asks for
+// transcription, so an empty one still has a job to do.
+type audioTranscription struct {
+	LanguageCodes    []string `json:"languageCodes,omitempty"`
+	CustomVocabulary []string `json:"customVocabulary,omitempty"`
+	Mode             string   `json:"mode,omitempty"`
 }
 
 // realtimeInput carries audio, or the note that there will be no more of it.
@@ -113,6 +140,11 @@ type serverMessage struct {
 }
 
 type serverContent struct {
+	// InterimInputTranscription is what the caller seems to be saying, restated in full
+	// each time and superseded by the next one.
+	InterimInputTranscription *transcription `json:"interimInputTranscription"`
+	// InputTranscription is the finalized transcript of a turn, sent once the server has
+	// committed to it and immediately before it reports the turn over.
 	InputTranscription *transcription `json:"inputTranscription"`
 	TurnComplete       bool           `json:"turnComplete"`
 	GenerationComplete bool           `json:"generationComplete"`
@@ -149,9 +181,9 @@ type STT struct {
 	// lastAudioAt is when audio was last sent, so latency can be reported as the delay
 	// between sending audio and hearing about it.
 	lastAudioAt time.Time
-	// spoken accumulates the deltas of the current utterance, so the turn boundary can
-	// be reported as one settled transcript rather than only as the last fragment.
-	spoken strings.Builder
+	// hypothesis is the latest interim text, kept so a turn cut off before the server
+	// finalized it still settles on the words that were heard.
+	hypothesis string
 	// utterance counts the runs of speech seen so far, and ended marks that the current
 	// one is over so the next transcript starts a new one.
 	utterance int64
@@ -179,6 +211,12 @@ func New(options Options) (*STT, error) {
 	}
 	if len(options.Keyterms) > stt.MaxKeyterms {
 		return nil, fmt.Errorf("gemini: at most %d keyterms, got %d", stt.MaxKeyterms, len(options.Keyterms))
+	}
+	switch options.Mode {
+	case "", ModeVerbatim, ModeSmart:
+	default:
+		return nil, fmt.Errorf("gemini: mode must be %s or %s, got %s",
+			ModeVerbatim, ModeSmart, options.Mode)
 	}
 	if options.HandshakeTimeout == 0 {
 		options.HandshakeTimeout = 30 * time.Second
@@ -272,13 +310,19 @@ func (s *STT) Close() error {
 		return nil
 	}
 	conn := s.conn
-	// Whether anything is still being transcribed is the server's business, not ours: a
-	// delta may simply not have arrived yet. Any audio at all is reason to ask.
 	heard := !s.lastAudioAt.IsZero()
+	// An outstanding hypothesis is the server holding an utterance it has not finalized,
+	// which is the tail worth waiting the full timeout for. With nothing outstanding the
+	// last turn is already settled and no further boundary is coming, so waiting that
+	// long would spend it in full on every hangup.
+	patience := s.options.FlushTimeout
+	if s.hypothesis == "" {
+		patience = min(flushGrace, s.options.FlushTimeout)
+	}
 	s.mu.Unlock()
 
 	if conn != nil && heard {
-		s.flush()
+		s.flush(patience)
 	}
 
 	s.mu.Lock()
@@ -312,14 +356,12 @@ func (s *STT) endpoint() string {
 
 // handshake configures the session and waits for the server to accept it.
 func (s *STT) handshake() error {
-	transcribe := json.RawMessage(`{}`)
 	frame := clientMessage{Setup: &setup{
 		Model: "models/" + s.options.Model,
 		// Text, because a spoken reply is neither wanted nor free. What the model would
 		// have said is dropped either way; asking for audio would only bill for it.
 		GenerationConfig:        generationConfig{ResponseModalities: []string{"TEXT"}},
-		SystemInstruction:       s.instruction(),
-		InputAudioTranscription: &transcribe,
+		InputAudioTranscription: s.transcription(),
 	}}
 	if err := s.send(frame); err != nil {
 		return fmt.Errorf("gemini: send setup: %w", err)
@@ -346,28 +388,19 @@ func (s *STT) handshake() error {
 	return nil
 }
 
-// instruction is what the model is told before it hears anything, or nil when there is
-// nothing worth saying. It exists because the Live API has no field for vocabulary or for
-// the language to expect, and the system instruction is the one lever it does offer.
-func (s *STT) instruction() *content {
-	var said []string
-	if terms := stt.CleanKeyterms(s.options.Keyterms); len(terms) > 0 {
-		said = append(said, "These words appear in this conversation and are spelled "+
-			"exactly as written here: "+strings.Join(terms, ", ")+".")
+// transcription is how the session is asked to listen. It is never nil: an empty one is
+// what turns transcription on, and every field in it is a bias the caller may not want.
+func (s *STT) transcription() *audioTranscription {
+	return &audioTranscription{
+		LanguageCodes:    s.options.LanguageHints,
+		CustomVocabulary: stt.CleanKeyterms(s.options.Keyterms),
+		Mode:             string(s.options.Mode),
 	}
-	if len(s.options.LanguageHints) > 0 {
-		said = append(said, "Expect this audio to be in: "+
-			strings.Join(s.options.LanguageHints, ", ")+".")
-	}
-	if len(said) == 0 {
-		return nil
-	}
-	return &content{Parts: []part{{Text: strings.Join(said, " ")}}}
 }
 
 // flush tells the server the audio has stopped and waits for it to settle the turn, so
 // the tail of a call is not lost. A dead connection must not stop teardown.
-func (s *STT) flush() {
+func (s *STT) flush(patience time.Duration) {
 	// Forget the boundaries of turns that are already over, so the wait below is for one
 	// that comes after the audio stopped.
 	select {
@@ -382,8 +415,8 @@ func (s *STT) flush() {
 
 	select {
 	case <-s.settled:
-	case <-time.After(s.options.FlushTimeout):
-		s.logger.Debug("timed out waiting for the last words")
+	case <-time.After(patience):
+		s.logger.Debug("timed out waiting for the last words", "patience", patience)
 	}
 }
 
@@ -455,30 +488,36 @@ func (s *STT) handleMessage(message serverMessage) {
 	}
 	server := *message.ServerContent
 
+	if server.InterimInputTranscription != nil {
+		s.heard(server.InterimInputTranscription.Text)
+	}
 	if server.InputTranscription != nil {
-		s.delta(server.InputTranscription.Text)
+		s.settle(server.InputTranscription.Text)
 	}
 	if server.TurnComplete || server.GenerationComplete || server.Interrupted {
-		s.settle()
+		s.reachedTheEndOfATurn()
 	}
 }
 
-// delta reports more of what is being said. Gemini sends transcription in pieces that
-// append, so each one is emitted as it arrives rather than held back for a turn that may
-// be several seconds away.
-func (s *STT) delta(text string) {
+// heard reports what the caller seems to be saying, which is worth showing at once: it
+// arrives while they are still talking, seconds before the turn is finalized.
+//
+// Each hypothesis restates the turn so far, so it replaces its predecessor rather than
+// adding to it. Appending them would spell the sentence out several times over.
+func (s *STT) heard(text string) {
+	text = strings.TrimSpace(text)
 	if text == "" {
 		return
 	}
 
 	s.mu.Lock()
-	s.spoken.WriteString(text)
+	s.hypothesis = text
 	s.mu.Unlock()
 
 	participant, latencyMs := s.snapshot()
 	s.emitter.Send(stt.Transcript{
 		Participant:      participant,
-		Mode:             stt.ModeDelta,
+		Mode:             stt.ModeReplacement,
 		Utterance:        s.utteranceID(),
 		Text:             text,
 		Provider:         ProviderName,
@@ -487,22 +526,18 @@ func (s *STT) delta(text string) {
 	})
 }
 
-// settle reports the whole utterance now that the server says it is over.
-//
-// The final repeats words already sent as deltas. That is deliberate: it is the only
-// frame carrying the utterance as one piece, and downstream treats a restatement of an
-// answered turn as the transcriber settling rather than as the caller repeating himself.
-func (s *STT) settle() {
-	s.mu.Lock()
-	text := strings.TrimSpace(s.spoken.String())
-	s.spoken.Reset()
-	s.mu.Unlock()
-
-	// A boundary with nothing before it is the server drawing breath, not a turn.
+// settle reports the turn the server has committed to, which supersedes the hypotheses
+// before it. In smart mode this is also where the tidied-up wording arrives, so it is not
+// necessarily the last hypothesis with a full stop on the end.
+func (s *STT) settle(text string) {
+	text = strings.TrimSpace(text)
 	if text == "" {
-		s.reachedABoundary()
 		return
 	}
+
+	s.mu.Lock()
+	s.hypothesis = ""
+	s.mu.Unlock()
 
 	participant, latencyMs := s.snapshot()
 	s.emitter.Send(stt.Transcript{
@@ -516,6 +551,23 @@ func (s *STT) settle() {
 	})
 
 	s.endUtterance()
+	s.reachedABoundary()
+}
+
+// reachedTheEndOfATurn settles whatever the server left outstanding.
+//
+// It normally finalizes a turn before saying it is over, so there is nothing here to do
+// but let a waiting Close know. A turn cut short is the exception, and words heard before
+// the cut are still words that were said.
+func (s *STT) reachedTheEndOfATurn() {
+	s.mu.Lock()
+	outstanding := s.hypothesis
+	s.mu.Unlock()
+
+	if outstanding != "" {
+		s.settle(outstanding)
+		return
+	}
 	s.reachedABoundary()
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // InboundIntegrationSuite covers the half of the inbound hook the unit suite cannot: an

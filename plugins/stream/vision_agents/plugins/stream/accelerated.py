@@ -122,6 +122,11 @@ class Accelerated(OmniLLM):
         self._running: set[asyncio.Task] = set()
         self._events: asyncio.Queue[Optional[RemoteEvent]] = asyncio.Queue()
 
+    @property
+    def router_session_id(self) -> Optional[str]:
+        """The session the router is running this call in, once it has joined."""
+        return self.session.id if self.session else None
+
     async def join_remote(self, call: RemoteCall) -> None:
         """Create the session and start watching it.
 
@@ -144,7 +149,9 @@ class Accelerated(OmniLLM):
         # Decisions are the router explaining itself several times a second, which is what
         # a dashboard watching a call wants and what this would only throw away.
         self._socket = Socket(
-            self.backend.socket(f"/v1/agents/sessions/{created.id}/events?decisions=false"),
+            self.backend.socket(
+                f"/v1/agents/sessions/{created.id}/events?decisions=false"
+            ),
             self.backend.headers,
         )
         await self._socket.connect()

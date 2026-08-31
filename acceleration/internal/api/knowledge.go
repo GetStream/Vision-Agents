@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -35,19 +36,34 @@ func (s *Server) IngestKnowledge(ctx context.Context, request IngestKnowledgeReq
 		}, nil
 	}
 
+	read, passages, err := s.fillKnowledge(ctx, namespace, request.Body.Documents, request.Body.ChunkSize)
+	if err != nil {
+		return IngestKnowledge400JSONResponse{badRequest(err.Error())}, nil
+	}
+
+	s.logger.Info("filled a knowledge base",
+		"namespace", namespace, "documents", read, "passages", passages)
+	return IngestKnowledge200JSONResponse{
+		Namespace: namespace,
+		Documents: read,
+		Passages:  passages,
+	}, nil
+}
+
+// fillKnowledge cuts documents into passages and writes them. The count of documents
+// actually read can be less than what was sent: a file of only whitespace is skipped.
+func (s *Server) fillKnowledge(ctx context.Context, namespace string, documents []KnowledgeDocument, chunkSize *int) (int, int, error) {
 	size := ingest.DefaultChunk
-	if request.Body.ChunkSize != nil && *request.Body.ChunkSize > 0 {
-		size = *request.Body.ChunkSize
+	if chunkSize != nil && *chunkSize > 0 {
+		size = *chunkSize
 	}
 
 	var passages []knowledge.Document
 	read := 0
-	for _, document := range request.Body.Documents {
+	for _, document := range documents {
 		source := strings.TrimSpace(document.Source)
 		if source == "" {
-			return IngestKnowledge400JSONResponse{
-				badRequest("every document needs a source, which is what its passages are keyed by"),
-			}, nil
+			return 0, 0, errors.New("every document needs a source, which is what its passages are keyed by")
 		}
 		// A document that is only whitespace is skipped rather than refused: a directory
 		// posted whole often has one in it, and failing the lot over it helps nobody.
@@ -59,19 +75,10 @@ func (s *Server) IngestKnowledge(ctx context.Context, request IngestKnowledgeReq
 	}
 
 	if len(passages) == 0 {
-		return IngestKnowledge400JSONResponse{
-			badRequest("there is nothing to read in these documents"),
-		}, nil
+		return 0, 0, errors.New("there is nothing to read in these documents")
 	}
 	if err := s.knowledge.Upsert(ctx, namespace, passages); err != nil {
-		return IngestKnowledge400JSONResponse{badRequest(err.Error())}, nil
+		return 0, 0, err
 	}
-
-	s.logger.Info("filled a knowledge base",
-		"namespace", namespace, "documents", read, "passages", len(passages))
-	return IngestKnowledge200JSONResponse{
-		Namespace: namespace,
-		Documents: read,
-		Passages:  len(passages),
-	}, nil
+	return read, len(passages), nil
 }

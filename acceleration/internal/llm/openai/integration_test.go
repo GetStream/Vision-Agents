@@ -13,6 +13,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 type OpenAIIntegrationSuite struct {

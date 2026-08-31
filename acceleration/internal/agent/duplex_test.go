@@ -138,6 +138,21 @@ func (s *DuplexSuite) TestACallerWhoNeverAnswersIsLeftInPeace() {
 		"somebody who has not answered twice has walked away, and asking again is nagging")
 }
 
+func (s *DuplexSuite) TestALaterSilenceIsNotOpenedWithTheSameQuestion() {
+	listener := newDuplex(DuplexOptions{})
+	alice := stt.Participant{ID: "alice"}
+	silent := time.Now().Add(-defaultIdleGap - time.Second)
+
+	// A caller who pauses, comes back, and pauses again hears the opening question of
+	// each silence. Those are the ones that grate, so those are the ones that must differ.
+	first := listener.Idle(silent, true)
+	listener.Heard(alice, "sorry, I am back", true)
+	second := listener.Idle(silent, true)
+
+	s.NotEqual(first, second,
+		"a caller who goes quiet twice is greeted with the same question both times")
+}
+
 func (s *DuplexSuite) TestASilenceAfterSomebodySpeaksIsAskedAboutAgain() {
 	listener := newDuplex(DuplexOptions{})
 	alice := stt.Participant{ID: "alice"}

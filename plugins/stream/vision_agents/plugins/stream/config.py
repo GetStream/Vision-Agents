@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional, TypeVar, Union
 
@@ -10,14 +11,80 @@ from ._generated.api.default import (
     create_skill,
     list_agent_configs,
     list_skills,
+    sync_agent as sync_agent_request,
     update_agent_config,
     update_skill,
 )
-from ._generated.models import AgentConfig, AgentConfigRequest, Error, SkillRequest
+from ._generated.models import (
+    AgentConfig,
+    AgentConfigRequest,
+    Error,
+    KnowledgeDocument,
+    SkillRequest,
+    SyncAgentRequest,
+    SyncAgentResult,
+)
+from .folder import Folder, load, resolve
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+async def sync_agent(
+    name: str,
+    path: Optional[str] = None,
+    url: Optional[str] = None,
+    customer_id: Optional[str] = None,
+) -> SyncAgentResult:
+    """Store an agent directory's instructions, skills and knowledge.
+
+    Reads `examples/agents/{name}/` (or `path`) and writes what it holds to the
+    acceleration server. A hash of the directory is sent with it: a second call with
+    the same files does nothing.
+
+    Args:
+        name: What the agent is called, which is also its directory's name.
+        path: The directory to read. Defaults to `examples/agents/{name}` walking up
+            from the current working directory.
+        url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
+        customer_id: Who the work is billed to. Defaults to
+            `STREAM_ACCELERATION_CUSTOMER_ID`.
+
+    Returns:
+        What the router stored, and whether it wrote anything.
+    """
+    folder = await asyncio.to_thread(_read_agent, name, path)
+    client = Backend(url=url, customer_id=customer_id).client()
+
+    skills = [
+        SkillRequest(
+            name=skill.name,
+            description=skill.description,
+            instructions=skill.instructions,
+            deadline_ms=int((skill.deadline_seconds or 0) * 1000),
+        )
+        for skill in folder.skills
+    ]
+    knowledge = [
+        KnowledgeDocument(source=document.source, text=document.text)
+        for document in folder.knowledge
+    ]
+
+    body = SyncAgentRequest(name=folder.name, hash_=folder.hash())
+    if folder.instructions:
+        body.instructions = folder.instructions
+    if skills:
+        body.skills = skills
+    if knowledge:
+        body.knowledge = knowledge
+
+    result = _answer(await sync_agent_request.asyncio(client=client, body=body))
+    if result.unchanged:
+        logger.info("agent %s is already in sync", folder.name)
+    else:
+        logger.info("synced agent %s", folder.name)
+    return result
 
 
 async def define_agent(
@@ -139,3 +206,8 @@ def _answer(answer: Union[T, Error, None]) -> T:
     if answer is None:
         raise RuntimeError("the router did not answer")
     return answer
+
+
+def _read_agent(name: str, path: Optional[str]) -> Folder:
+    """Load an agent directory, resolving `name` when no path was given."""
+    return load(path or resolve(name))

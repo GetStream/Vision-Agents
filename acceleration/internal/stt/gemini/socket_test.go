@@ -142,8 +142,10 @@ func (s *GeminiSocketSuite) TestTheSessionAsksForTranscriptionAndNoSpokenReply()
 	s.Equal("models/"+DefaultModel, opened.Model)
 	s.Equal([]string{"TEXT"}, opened.GenerationConfig.ResponseModalities,
 		"a spoken reply is neither wanted nor free")
-	s.NotNil(opened.InputAudioTranscription, "without this the session hears nothing back")
-	s.Nil(opened.SystemInstruction, "nothing was asked for, so nothing should be said")
+	s.Require().NotNil(opened.InputAudioTranscription,
+		"without this the session hears nothing back")
+	s.Empty(opened.InputAudioTranscription.Mode,
+		"nothing was asked for, so the server keeps its own default")
 }
 
 func (s *GeminiSocketSuite) TestTheKeyIsSentBecauseTheresNoHeaderForIt() {
@@ -154,16 +156,20 @@ func (s *GeminiSocketSuite) TestTheKeyIsSentBecauseTheresNoHeaderForIt() {
 	s.Contains(<-fake.url, "key=sec+ret")
 }
 
-func (s *GeminiSocketSuite) TestKeytermsReachTheModelAsAnInstruction() {
+func (s *GeminiSocketSuite) TestTheTranscriberIsToldTheVocabularyLanguagesAndMode() {
 	fake := newFakeLive()
 	defer fake.close()
-	s.connect(fake, Options{Keyterms: []string{"Vision Agents"}, LanguageHints: []string{"es"}})
+	s.connect(fake, Options{
+		Keyterms:      []string{"Vision Agents"},
+		LanguageHints: []string{"es-ES"},
+		Mode:          ModeSmart,
+	})
 
 	opened := <-fake.setups
-	s.Require().NotNil(opened.SystemInstruction)
-	said := opened.SystemInstruction.Parts[0].Text
-	s.Contains(said, "Vision Agents")
-	s.Contains(said, "es")
+	s.Require().NotNil(opened.InputAudioTranscription)
+	s.Equal([]string{"Vision Agents"}, opened.InputAudioTranscription.CustomVocabulary)
+	s.Equal([]string{"es-ES"}, opened.InputAudioTranscription.LanguageCodes)
+	s.Equal("SMART", opened.InputAudioTranscription.Mode)
 }
 
 func (s *GeminiSocketSuite) TestAudioArrivesAsThePcmItWasGiven() {
@@ -230,6 +236,98 @@ func (s *GeminiSocketSuite) TestClosingWaitsForTheTailOfTheLastTurnEvenAfterAnEa
 
 	s.Equal("goodbye", s.nextFinal(provider),
 		"closing should wait for the words that had not been transcribed yet")
+}
+
+func (s *GeminiSocketSuite) TestClosingASettledCallDoesNotWaitOutTheTimeout() {
+	// Nothing is outstanding once a turn has been finalized, and no further boundary is
+	// coming. Waiting the full timeout here is five seconds of every hangup spent on a
+	// reply the server has no reason to send.
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{FlushTimeout: time.Minute})
+
+	// The server settles the turn and then says nothing more, whatever it is told.
+	go func() {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(says("hello", true)))
+	}()
+
+	s.speak(provider, []int16{1, 2, 3})
+	s.Equal("hello", s.nextFinal(provider))
+
+	closing := time.Now()
+	s.Require().NoError(provider.Close())
+	s.Less(time.Since(closing), 5*time.Second,
+		"closing a call whose last turn already settled should not wait for a boundary")
+}
+
+func (s *GeminiSocketSuite) TestClosingMidUtteranceWaitsLongerThanTheGrace() {
+	// A hypothesis the server has not finalized is the tail Close exists for, so it gets
+	// the full timeout rather than the grace a settled call gets.
+	fake := newFakeLive()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{FlushTimeout: 10 * time.Second})
+
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		// Heard, but not settled: the caller is still mid-sentence.
+		hypothesis, _ := json.Marshal(serverMessage{ServerContent: &serverContent{
+			InterimInputTranscription: &transcription{Text: "in a quiet"},
+		}})
+		if err := conn.WriteMessage(websocket.TextMessage, hypothesis); err != nil {
+			return
+		}
+		for {
+			if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				return
+			}
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var frame clientMessage
+			if err := json.Unmarshal(raw, &frame); err != nil {
+				return
+			}
+			if frame.RealtimeInput != nil && frame.RealtimeInput.AudioStreamEnd {
+				// Later than the grace a settled call is given, so a Close that used it
+				// would hang up on these words.
+				time.Sleep(flushGrace + 500*time.Millisecond)
+				_ = conn.WriteMessage(websocket.TextMessage,
+					[]byte(says("in a quiet village", true)))
+				return
+			}
+		}
+	}()
+
+	s.speak(provider, []int16{1, 2, 3})
+	s.Equal("in a quiet", s.nextHeard(provider), "the hypothesis should arrive first")
+
+	s.Require().NoError(provider.Close())
+	<-served
+
+	s.Equal("in a quiet village", s.nextFinal(provider),
+		"the words the server was still holding should not be cut off")
+}
+
+// nextHeard returns the text of the next transcript that has not settled.
+func (s *GeminiSocketSuite) nextHeard(provider *STT) string {
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event, open := <-provider.Events():
+			if !open {
+				s.FailNow("the session ended before anything was heard")
+				return ""
+			}
+			if transcript, ok := event.(stt.Transcript); ok && !transcript.Final() {
+				return transcript.Text
+			}
+		case <-deadline:
+			s.FailNow("timed out waiting for a hypothesis")
+			return ""
+		}
+	}
 }
 
 // nextFinal returns the text of the next settled turn.

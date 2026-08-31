@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // dsnEnvVar is where the tests look for a Postgres to run against.

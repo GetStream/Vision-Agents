@@ -5,11 +5,13 @@ package testaudio
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -43,6 +45,33 @@ func Asset(name string) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// Reference returns what is actually said in a fixture, read from the sidecar JSON the
+// Python suite already keeps beside it. It is the yardstick a transcript is scored
+// against, so a provider that drops half a sentence is caught rather than credited for
+// the words it did get.
+func Reference(name string) (string, error) {
+	path, err := Asset(strings.TrimSuffix(name, filepath.Ext(name)) + ".json")
+	if err != nil {
+		return "", err
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("testaudio: reading %s: %w", path, err)
+	}
+
+	var metadata struct {
+		Transcript string `json:"transcript"`
+	}
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return "", fmt.Errorf("testaudio: parsing %s: %w", path, err)
+	}
+	if metadata.Transcript == "" {
+		return "", fmt.Errorf("testaudio: %s has no transcript", path)
+	}
+	return metadata.Transcript, nil
 }
 
 // Load16kMono decodes an audio file to the 16 kHz mono PCM16 the providers expect.

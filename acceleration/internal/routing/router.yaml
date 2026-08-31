@@ -113,6 +113,84 @@ stt:
       price:
         per_audio_hour: 0.079
 
+    # The same weights as the entry above, on Together's serverless endpoint rather than
+    # our own deployment. Kept as a separate provider because the bill and the pager are
+    # not shared, so routing has to be able to pick between them. Together charge
+    # $0.0035 a minute for the streaming variant, which is the rate below.
+    - provider: together-parakeet
+      model: nvidia/parakeet-tdt-0.6b-v3-realtime
+      languages:
+        [
+          bg,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          et,
+          fi,
+          fr,
+          hr,
+          hu,
+          it,
+          lt,
+          lv,
+          mt,
+          nl,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sl,
+          sv,
+          uk,
+        ]
+      realtime: true
+      tier: low-latency
+      price:
+        per_audio_hour: 0.21
+
+    # xAI's Speech to Text. The languages are the ones the `language` parameter accepts,
+    # which is what turns on the written form of numbers and currencies; the model
+    # transcribes any of them either way. Billed at $0.20 an hour of streaming audio,
+    # against $0.10 for the batch endpoint this does not use.
+    - provider: grok
+      model: grok-stt
+      languages:
+        [
+          ar,
+          cs,
+          da,
+          de,
+          en,
+          es,
+          fa,
+          fil,
+          fr,
+          hi,
+          id,
+          it,
+          ja,
+          ko,
+          mk,
+          ms,
+          nl,
+          pl,
+          pt,
+          ro,
+          ru,
+          sv,
+          th,
+          tr,
+          vi,
+        ]
+      realtime: true
+      tier: low-latency
+      price:
+        per_audio_hour: 0.20
+
   aliases:
     en-low-latency:
       languages: [en]

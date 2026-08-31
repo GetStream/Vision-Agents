@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -397,6 +398,9 @@ type AgentSuite struct {
 	model *stubLLM
 	flow  *stubLLM
 	ears  *stubSTT
+	// opened counts the transcription sessions the agent asked for, which is how a test
+	// tells a transcriber that was replaced from one that was never reopened.
+	opened atomic.Int64
 	// subagent is the second model, present only when a test asks for delegation.
 	subagent *stubLLM
 	// skills are what the model may hand over, when a test gives the agent a subagent.
@@ -530,6 +534,7 @@ func (s *AgentSuite) joinText() {
 func (s *AgentSuite) join(streamingVoice bool) {
 	s.edge = newLoopbackEdge()
 	s.ears = newStubSTT()
+	s.opened.Store(0)
 	s.model = newStubLLM()
 	s.flow = newStubLLM()
 	s.voice = newStubTTS(streamingVoice)
@@ -543,7 +548,10 @@ func (s *AgentSuite) join(streamingVoice bool) {
 	logger := slog.New(slog.DiscardHandler)
 
 	transcription := sttrouter.NewRegistry()
-	transcription.Register("stub", func(routing.Spec) (stt.STT, error) { return s.ears, nil })
+	transcription.Register("stub", func(routing.Spec) (stt.STT, error) {
+		s.opened.Add(1)
+		return s.ears, nil
+	})
 	transcriber, err := sttrouter.New(sttrouter.Options{
 		Config: stubConfig(), Registry: transcription, Logger: logger,
 	})
@@ -1388,6 +1396,30 @@ func (s *AgentSuite) TestAskingWhetherAnythingElseIsNeededIsSomethingTheAgentSai
 	s.Equal(llm.Assistant, history[0].Role)
 	s.Equal("Is there anything else I can help with?", history[0].Content)
 	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "the question never reached the call")
+}
+
+func (s *AgentSuite) TestATranscriberThatDiesIsReplacedOnTheNextAudio() {
+	// A provider cuts a session that has been idle, and the socket is dead afterwards.
+	// The agent keeps one transcriber per participant, so without replacing it every
+	// later chunk goes to a socket nobody is listening on: the caller talks for the rest
+	// of the call and is never heard, which reads as an agent that has become very slow
+	// rather than one that has stopped hearing.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.eventually(func() bool { return s.opened.Load() == 1 }, "nobody started listening")
+
+	s.ears.emitter.Send(stt.Error{
+		Provider: "stub", Model: "stub-stt", Context: "read", Fatal: true,
+		Err: errors.New("websocket: close 1011 (internal server error): Deadline expired"),
+	})
+
+	// The caller keeps talking, as they would on a real call: the replacement is opened
+	// by the next audio to arrive rather than by the failure itself.
+	s.eventually(func() bool {
+		s.speak(participant)
+		return s.opened.Load() == 2
+	}, "the dead transcriber was kept, so nothing this participant says is heard again")
 }
 
 func (s *AgentSuite) TestSomeoneCarryingOnAfterAMurmurIsNotAnInterruption() {

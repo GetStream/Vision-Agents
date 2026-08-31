@@ -1,7 +1,5 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-
 import { clock, Empty, ms, Panel } from "@/components/ui";
 import type { CallEvent, DecisionKind } from "@/lib/router";
 import type { Decision } from "@/lib/useSession";
@@ -61,12 +59,9 @@ export function DecisionLog({
   live: Decision[];
 }) {
   const judgements = merge(stored, live);
-  const bottom = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [judgements.length]);
-
+  // Like the transcript, this does not follow new judgements: the panel scrolls on its
+  // own, and jumping to the newest one takes the one being read out from under the reader.
   return (
     <Panel
       title="What the conversation decided"
@@ -108,7 +103,6 @@ export function DecisionLog({
               ) : null}
             </li>
           ))}
-          <div ref={bottom} />
         </ol>
       )}
     </Panel>

@@ -10,6 +10,10 @@ from datetime import datetime
 from typing import Optional, Protocol
 
 
+class _Joined(Protocol):
+    async def wait_for_participant(self, timeout: Optional[float] = None) -> None: ...
+
+
 @dataclass
 class OutboundCall:
     """The terms a call is placed on.
@@ -83,6 +87,20 @@ class InboundCall:
     caller_number: str = ""
     custom: dict[str, str] = field(default_factory=dict)
     at: Optional[datetime] = None
+    _joined: Optional[_Joined] = field(default=None, repr=False, compare=False)
+
+    async def wait_for_phone_participant(self, timeout: Optional[float] = None) -> None:
+        """Wait until the caller is in the call.
+
+        Join first: there is nobody to wait for until the agent is in the call they
+        arrived on.
+        """
+        if self._joined is None:
+            raise RuntimeError("join the call before waiting for the caller")
+        await self._joined.wait_for_participant(timeout=timeout)
+
+
+CallContext = InboundCall
 
 
 class Telephony(Protocol):

@@ -36,6 +36,8 @@ class AgentConfig:
         keyterms (list[str] | Unset):
         knowledge_namespace (str | Unset):
         tags (AgentConfigTags | Unset):
+        sync_hash (str | Unset): Fingerprint of the last directory synced onto this config. Empty if it was never synced
+            from a directory.
     """
 
     id: str
@@ -53,6 +55,7 @@ class AgentConfig:
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     tags: AgentConfigTags | Unset = UNSET
+    sync_hash: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -92,6 +95,8 @@ class AgentConfig:
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
 
+        sync_hash = self.sync_hash
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -124,6 +129,8 @@ class AgentConfig:
             field_dict["knowledge_namespace"] = knowledge_namespace
         if tags is not UNSET:
             field_dict["tags"] = tags
+        if sync_hash is not UNSET:
+            field_dict["sync_hash"] = sync_hash
 
         return field_dict
 
@@ -167,6 +174,8 @@ class AgentConfig:
         else:
             tags = AgentConfigTags.from_dict(_tags)
 
+        sync_hash = d.pop("sync_hash", UNSET)
+
         agent_config = cls(
             id=id,
             name=name,
@@ -183,6 +192,7 @@ class AgentConfig:
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
             tags=tags,
+            sync_hash=sync_hash,
         )
 
         agent_config.additional_properties = d

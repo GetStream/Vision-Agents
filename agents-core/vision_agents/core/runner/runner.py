@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import warnings
+import webbrowser
 from typing import Optional
 from uuid import uuid4
 
@@ -10,7 +11,8 @@ import click
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from vision_agents.core import AgentLauncher
+from vision_agents.core import Agent, AgentLauncher
+from vision_agents.core.llm import RemotePipeline
 from vision_agents.core.utils import get_vision_agents_version
 from vision_agents.core.utils.logging import (
     configure_fastapi_loggers,
@@ -34,6 +36,68 @@ _SPLASH = """\
 ░█░█░▀█▀░█▀▀░▀█▀░█▀█░█▀█░░░█▀█░█▀▀░█▀▀░█▀█░▀█▀░█▀▀
 ░▀▄▀░░█░░▀▀█░░█░░█░█░█░█░░░█▀█░█░█░█▀▀░█░█░░█░░▀▀█
 ░░▀░░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀░▀░░░▀░▀░▀▀▀░▀▀▀░▀░▀░░▀░░▀▀▀"""
+
+
+# DASHBOARD_BASE_URL is where the local dashboard is served from. A call the router runs
+# has a page there with the transcript, what the agent decided, and a button to join and
+# talk to it.
+_DASHBOARD_BASE_URL_ENV = "DASHBOARD_BASE_URL"
+_DEFAULT_DASHBOARD_BASE_URL = "http://localhost:3000"
+
+# How long to give a remote pipeline to join before opening the UI without it. Joining
+# takes a few seconds, and the call is worth watching from the start.
+_JOIN_WAIT_SECONDS = 20.0
+_JOIN_POLL_SECONDS = 0.2
+
+
+async def _open_ui(agent: Agent, call_type: str, call_id: str) -> None:
+    """Open whichever UI can show this call.
+
+    A call running on the router has a dashboard page, keyed by the router's session
+    rather than by the call id. A pipeline running in this process has no such page, so
+    that falls back to the transport's own demo.
+    """
+    session_id = await _router_session_id(agent)
+    if session_id:
+        base = os.getenv(_DASHBOARD_BASE_URL_ENV, _DEFAULT_DASHBOARD_BASE_URL)
+        url = f"{base.rstrip('/')}/calls/{session_id}"
+        # Logged before opening, so the URL is still usable where there is no browser to
+        # open it with, as in a container or over ssh.
+        logger.info(f"🌐 Opening the dashboard: {url}")
+        await asyncio.to_thread(webbrowser.open, url)
+        return
+
+    if hasattr(agent.edge, "open_demo_for_agent"):
+        logger.info("🌐 Opening demo UI...")
+        await agent.edge.open_demo_for_agent(agent, call_type, call_id)
+
+
+async def _router_session_id(agent: Agent) -> Optional[str]:
+    """Wait for the router to name the session it is running the call in.
+
+    A remote pipeline joins in the background, so the session is not there the instant
+    the call starts and there is nothing to wait on that does not also wait for a caller
+    to arrive. Only a remote pipeline is waited for: a local one will never have a
+    session, and holding the demo back for it would be a delay for nothing.
+    """
+    llm = agent.llm
+    if llm is None or not isinstance(llm, RemotePipeline):
+        return None
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _JOIN_WAIT_SECONDS
+    while True:
+        session_id = llm.router_session_id
+        if session_id:
+            return session_id
+        if loop.time() >= deadline:
+            logger.warning(
+                "The pipeline has not joined after %ss, so there is no dashboard page "
+                "to open yet",
+                _JOIN_WAIT_SECONDS,
+            )
+            return None
+        await asyncio.sleep(_JOIN_POLL_SECONDS)
 
 
 def _print_splash() -> None:
@@ -152,13 +216,8 @@ class Runner:
                 )
                 # Open demo UI by default
                 agent = session.agent
-                if (
-                    not no_demo
-                    and hasattr(agent, "edge")
-                    and hasattr(agent.edge, "open_demo_for_agent")
-                ):
-                    logger.info("🌐 Opening demo UI...")
-                    await agent.edge.open_demo_for_agent(agent, call_type, call_id)
+                if not no_demo:
+                    await _open_ui(agent, call_type, call_id)
 
                 await session.wait()
             except asyncio.CancelledError:

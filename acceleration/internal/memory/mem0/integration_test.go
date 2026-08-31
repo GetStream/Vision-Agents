@@ -13,6 +13,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // extractionGrace is how long mem0 is given to turn a handed-over conversation into

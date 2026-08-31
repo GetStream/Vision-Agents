@@ -557,6 +557,36 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/sync:
+    post:
+      operationId: syncAgent
+      summary: Store an agent directory's instructions, skills and knowledge
+      description: >
+        Reads as "this is what the agent is", from a directory of instructions.md,
+        skills/ and knowledge/. The hash is a fingerprint of that directory: a second
+        call with the same hash does nothing, so a process that syncs on startup is
+        cheap when nothing has changed.
+
+        Models, voice and the rest of a config are left alone. This path only writes
+        what a directory can hold.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncAgentRequest"
+      responses:
+        "200":
+          description: The config as stored, or as it already was
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncAgentResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/agents/configs:
     get:
       operationId: listAgentConfigs
@@ -1297,6 +1327,36 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/calls/{id}/token:
+    post:
+      operationId: createCallToken
+      summary: What a browser needs to join this call
+      description: >
+        Mints a Stream token so a person can join the call from a browser and talk to the
+        agent, and says which call to join with it. The secret stays here: the browser is
+        handed a token that expires, never the key that signs one.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CallTokenRequest"
+      responses:
+        "200":
+          description: The credentials, and the call they are for
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/sessions:
     get:
       operationId: listSessions
@@ -1799,12 +1859,50 @@ components:
           type: object
           additionalProperties:
             type: string
+        sync_hash:
+          type: string
+          description: >
+            Fingerprint of the last directory synced onto this config. Empty if it was
+            never synced from a directory.
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+
+    SyncAgentRequest:
+      type: object
+      required: [name, hash]
+      properties:
+        name:
+          type: string
+          description: What the config is called, which is also the directory's name.
+        hash:
+          type: string
+          description: >
+            A fingerprint of the directory. A second sync with the same hash does
+            nothing.
+        instructions:
+          type: string
+        skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillRequest"
+        knowledge:
+          type: array
+          items:
+            $ref: "#/components/schemas/KnowledgeDocument"
+
+    SyncAgentResult:
+      type: object
+      required: [unchanged, config]
+      properties:
+        unchanged:
+          type: boolean
+          description: True when the hash matched and nothing was written.
+        config:
+          $ref: "#/components/schemas/AgentConfig"
 
     VoiceRequest:
       type: object
@@ -2151,6 +2249,41 @@ components:
         text:
           type: string
         created_at:
+          type: string
+          format: date-time
+
+    CallTokenRequest:
+      type: object
+      properties:
+        user_id:
+          type: string
+          description: >
+            Who the browser joins as. Somebody watching a call is not the agent, so this
+            defaults to a listener of its own rather than to the agent's user.
+        user_name:
+          type: string
+          description: The name the other participants see. Defaults to the user id.
+
+    CallToken:
+      type: object
+      required: [api_key, token, user_id, user_name, call_id, call_type, expires_at]
+      properties:
+        api_key:
+          type: string
+          description: The Stream app the call is in, which the browser SDK joins against.
+        token:
+          type: string
+        user_id:
+          type: string
+        user_name:
+          type: string
+        call_id:
+          type: string
+          description: >
+            The Stream call to join, which is not the id this call is held by here.
+        call_type:
+          type: string
+        expires_at:
           type: string
           format: date-time
 

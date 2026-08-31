@@ -98,6 +98,54 @@ func (e CreateSessionRequestSandbox) Valid() bool {
 	}
 }
 
+// Defines values for DecisionKind.
+const (
+	Answer      DecisionKind = "answer"
+	Ask         DecisionKind = "ask"
+	Backchannel DecisionKind = "backchannel"
+	Compact     DecisionKind = "compact"
+	Delegate    DecisionKind = "delegate"
+	Fail        DecisionKind = "fail"
+	Ignore      DecisionKind = "ignore"
+	Interrupt   DecisionKind = "interrupt"
+	Queue       DecisionKind = "queue"
+	Shorten     DecisionKind = "shorten"
+	Supersede   DecisionKind = "supersede"
+	Wait        DecisionKind = "wait"
+)
+
+// Valid indicates whether the value is a known member of the DecisionKind enum.
+func (e DecisionKind) Valid() bool {
+	switch e {
+	case Answer:
+		return true
+	case Ask:
+		return true
+	case Backchannel:
+		return true
+	case Compact:
+		return true
+	case Delegate:
+		return true
+	case Fail:
+		return true
+	case Ignore:
+		return true
+	case Interrupt:
+		return true
+	case Queue:
+		return true
+	case Shorten:
+		return true
+	case Supersede:
+		return true
+	case Wait:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Granularity.
 const (
 	Daily  Granularity = "daily"
@@ -310,21 +358,24 @@ func (e VoiceBindingState) Valid() bool {
 
 // AgentConfig defines model for AgentConfig.
 type AgentConfig struct {
-	CreatedAt          time.Time          `json:"created_at"`
-	Greeting           *string            `json:"greeting,omitempty"`
-	Id                 string             `json:"id"`
-	Instructions       *string            `json:"instructions,omitempty"`
-	Keyterms           *[]string          `json:"keyterms,omitempty"`
-	KnowledgeNamespace *string            `json:"knowledge_namespace,omitempty"`
-	Llm                *string            `json:"llm,omitempty"`
-	Name               string             `json:"name"`
-	Skills             *[]string          `json:"skills,omitempty"`
-	Stt                *string            `json:"stt,omitempty"`
-	Subagent           *string            `json:"subagent,omitempty"`
-	Tags               *map[string]string `json:"tags,omitempty"`
-	Tts                *string            `json:"tts,omitempty"`
-	UpdatedAt          time.Time          `json:"updated_at"`
-	Voice              *string            `json:"voice,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	Greeting           *string   `json:"greeting,omitempty"`
+	Id                 string    `json:"id"`
+	Instructions       *string   `json:"instructions,omitempty"`
+	Keyterms           *[]string `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
+	Llm                *string   `json:"llm,omitempty"`
+	Name               string    `json:"name"`
+	Skills             *[]string `json:"skills,omitempty"`
+	Stt                *string   `json:"stt,omitempty"`
+	Subagent           *string   `json:"subagent,omitempty"`
+
+	// SyncHash Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
+	SyncHash  *string            `json:"sync_hash,omitempty"`
+	Tags      *map[string]string `json:"tags,omitempty"`
+	Tts       *string            `json:"tts,omitempty"`
+	UpdatedAt time.Time          `json:"updated_at"`
+	Voice     *string            `json:"voice,omitempty"`
 }
 
 // AgentConfigRequest defines model for AgentConfigRequest.
@@ -453,6 +504,52 @@ type Call struct {
 // CallDirection defines model for Call.Direction.
 type CallDirection string
 
+// CallEvent defines model for CallEvent.
+type CallEvent struct {
+	At time.Time `json:"at"`
+
+	// Kind What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent.
+	Kind DecisionKind `json:"kind"`
+
+	// LatencyMs What the flow controller took to rule, where anything was asked.
+	LatencyMs *float64 `json:"latency_ms,omitempty"`
+
+	// Participant Who it concerned.
+	Participant *string `json:"participant,omitempty"`
+
+	// Reason Why the conversation chose it, in words.
+	Reason string `json:"reason"`
+
+	// Said What was heard, or what the agent decided to say.
+	Said *string `json:"said,omitempty"`
+
+	// TurnId The exchange it was about, which lines it up against that turn's timings.
+	TurnId *string `json:"turn_id,omitempty"`
+}
+
+// CallToken defines model for CallToken.
+type CallToken struct {
+	// ApiKey The Stream app the call is in, which the browser SDK joins against.
+	ApiKey string `json:"api_key"`
+
+	// CallId The Stream call to join, which is not the id this call is held by here.
+	CallId    string    `json:"call_id"`
+	CallType  string    `json:"call_type"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Token     string    `json:"token"`
+	UserId    string    `json:"user_id"`
+	UserName  string    `json:"user_name"`
+}
+
+// CallTokenRequest defines model for CallTokenRequest.
+type CallTokenRequest struct {
+	// UserId Who the browser joins as. Somebody watching a call is not the agent, so this defaults to a listener of its own rather than to the agent's user.
+	UserId *string `json:"user_id,omitempty"`
+
+	// UserName The name the other participants see. Defaults to the user id.
+	UserName *string `json:"user_name,omitempty"`
+}
+
 // Campaign defines model for Campaign.
 type Campaign struct {
 	Concurrency int                `json:"concurrency"`
@@ -544,7 +641,7 @@ type CreateSessionRequest struct {
 	// Languages Language hints, which narrow the candidates in every modality.
 	Languages *[]string `json:"languages,omitempty"`
 
-	// Llm A provider/model or a capability shortcut.
+	// Llm A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
 	Llm       *string `json:"llm,omitempty"`
 	MaxTokens *int    `json:"max_tokens,omitempty"`
 
@@ -568,7 +665,9 @@ type CreateSessionRequest struct {
 
 	// Skills Omit for the built-in set of think, recall and explain.
 	Skills *[]SessionSkill `json:"skills,omitempty"`
-	Stt    *string         `json:"stt,omitempty"`
+
+	// Stt Omit it and the config decides, or en-low-latency when there is no config.
+	Stt *string `json:"stt,omitempty"`
 
 	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
 	Subagent *string `json:"subagent,omitempty"`
@@ -585,7 +684,9 @@ type CreateSessionRequest struct {
 	// ToolTimeoutMs How long the model waits for a tool result. Zero is the default.
 	ToolTimeoutMs *int           `json:"tool_timeout_ms,omitempty"`
 	Tools         *[]SessionTool `json:"tools,omitempty"`
-	Tts           *string        `json:"tts,omitempty"`
+
+	// Tts Omit it and the config decides, or en-low-latency when there is no config.
+	Tts *string `json:"tts,omitempty"`
 
 	// UserId Who the agent joins the call as.
 	UserId   *string `json:"user_id,omitempty"`
@@ -597,6 +698,9 @@ type CreateSessionRequest struct {
 
 // CreateSessionRequestSandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 type CreateSessionRequestSandbox string
+
+// DecisionKind What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent.
+type DecisionKind string
 
 // Error defines model for Error.
 type Error struct {
@@ -960,6 +1064,26 @@ type StatsBucket struct {
 	Uptime *float64 `json:"uptime,omitempty"`
 }
 
+// SyncAgentRequest defines model for SyncAgentRequest.
+type SyncAgentRequest struct {
+	// Hash A fingerprint of the directory. A second sync with the same hash does nothing.
+	Hash         string               `json:"hash"`
+	Instructions *string              `json:"instructions,omitempty"`
+	Knowledge    *[]KnowledgeDocument `json:"knowledge,omitempty"`
+
+	// Name What the config is called, which is also the directory's name.
+	Name   string          `json:"name"`
+	Skills *[]SkillRequest `json:"skills,omitempty"`
+}
+
+// SyncAgentResult defines model for SyncAgentResult.
+type SyncAgentResult struct {
+	Config AgentConfig `json:"config"`
+
+	// Unchanged True when the hash matched and nothing was written.
+	Unchanged bool `json:"unchanged"`
+}
+
 // TagStatsBucket defines model for TagStatsBucket.
 type TagStatsBucket struct {
 	AudioMsTotal           int64     `json:"audio_ms_total"`
@@ -1148,6 +1272,12 @@ type ListCallsParams struct {
 	Limit *int       `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// GetCallEventsParams defines parameters for GetCallEvents.
+type GetCallEventsParams struct {
+	// Limit How many to return, oldest first.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListPhoneNumbersParams defines parameters for ListPhoneNumbers.
 type ListPhoneNumbersParams struct {
 	// IncludeReleased Include numbers that have been given back. A released number keeps its row, because what it cost while it was held is still part of that month's bill.
@@ -1227,6 +1357,9 @@ type GetTagStatsParams struct {
 	To time.Time `form:"to" json:"to"`
 }
 
+// CreateCallTokenJSONRequestBody defines body for CreateCallToken for application/json ContentType.
+type CreateCallTokenJSONRequestBody = CallTokenRequest
+
 // CreateCampaignJSONRequestBody defines body for CreateCampaign for application/json ContentType.
 type CreateCampaignJSONRequestBody = CampaignRequest
 
@@ -1259,6 +1392,9 @@ type CreateSkillJSONRequestBody = SkillRequest
 
 // UpdateSkillJSONRequestBody defines body for UpdateSkill for application/json ContentType.
 type UpdateSkillJSONRequestBody = SkillRequest
+
+// SyncAgentJSONRequestBody defines body for SyncAgent for application/json ContentType.
+type SyncAgentJSONRequestBody = SyncAgentRequest
 
 // CreateVoiceJSONRequestBody defines body for CreateVoice for application/json ContentType.
 type CreateVoiceJSONRequestBody = VoiceRequest
@@ -1381,12 +1517,37 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/calls/{id} (the `GetCall` operationId).
 	GetCall(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetCallEvents What the conversation decided, and why
+	//
+	// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+	//
+	// Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
+	GetCallEvents(ctx context.Context, id ResourceID, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetCallTimeline The call as it unfolded, said and measured together
 	//
 	// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/timeline (the `GetCallTimeline` operationId).
 	GetCallTimeline(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCallTokenWithBody What a browser needs to join this call
+	//
+	// Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
+	CreateCallTokenWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCallToken What a browser needs to join this call
+	//
+	// Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
+	CreateCallToken(ctx context.Context, id ResourceID, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetCallTranscript What was said on a call
 	//
@@ -1671,6 +1832,26 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
 	UpdateSkill(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SyncAgentWithBody Store an agent directory's instructions, skills and knowledge
+	//
+	// Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Models, voice and the rest of a config are left alone. This path only writes what a directory can hold.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
+	SyncAgentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SyncAgent Store an agent directory's instructions, skills and knowledge
+	//
+	// Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Models, voice and the rest of a config are left alone. This path only writes what a directory can hold.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
+	SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListVoices The voices the calling customer has brought with them
 	//
@@ -1966,6 +2147,23 @@ func (c *Client) GetCall(ctx context.Context, id ResourceID, reqEditors ...Reque
 	return c.Client.Do(req)
 }
 
+// GetCallEvents What the conversation decided, and why
+//
+// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+//
+// Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
+func (c *Client) GetCallEvents(ctx context.Context, id ResourceID, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCallEventsRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetCallTimeline The call as it unfolded, said and measured together
 //
 // Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
@@ -1973,6 +2171,44 @@ func (c *Client) GetCall(ctx context.Context, id ResourceID, reqEditors ...Reque
 // Corresponds with GET /v1/agents/calls/{id}/timeline (the `GetCallTimeline` operationId).
 func (c *Client) GetCallTimeline(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCallTimelineRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCallTokenWithBody What a browser needs to join this call
+//
+// Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
+func (c *Client) CreateCallTokenWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCallTokenRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateCallToken What a browser needs to join this call
+//
+// Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
+func (c *Client) CreateCallToken(ctx context.Context, id ResourceID, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCallTokenRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2637,6 +2873,46 @@ func (c *Client) UpdateSkillWithBody(ctx context.Context, id ResourceID, content
 // Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
 func (c *Client) UpdateSkill(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateSkillRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SyncAgentWithBody Store an agent directory's instructions, skills and knowledge
+//
+// Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Models, voice and the rest of a config are left alone. This path only writes what a directory can hold.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
+func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSyncAgentRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SyncAgent Store an agent directory's instructions, skills and knowledge
+//
+// Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Models, voice and the rest of a config are left alone. This path only writes what a directory can hold.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
+func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSyncAgentRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3388,6 +3664,67 @@ func NewGetCallRequest(server string, id ResourceID) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetCallEventsRequest constructs an http.Request for the GetCallEvents method
+func NewGetCallEventsRequest(server string, id ResourceID, params *GetCallEventsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/calls/%s/events", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetCallTimelineRequest constructs an http.Request for the GetCallTimeline method
 func NewGetCallTimelineRequest(server string, id ResourceID) (*http.Request, error) {
 	var err error
@@ -3418,6 +3755,53 @@ func NewGetCallTimelineRequest(server string, id ResourceID) (*http.Request, err
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewCreateCallTokenRequest calls the generic CreateCallToken builder with application/json body
+func NewCreateCallTokenRequest(server string, id ResourceID, body CreateCallTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCallTokenRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateCallTokenRequestWithBody constructs an http.Request for the CreateCallToken method, with any body, and a specified content type
+func NewCreateCallTokenRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/calls/%s/token", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -4411,6 +4795,46 @@ func NewUpdateSkillRequestWithBody(server string, id ResourceID, contentType str
 	}
 
 	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSyncAgentRequest calls the generic SyncAgent builder with application/json body
+func NewSyncAgentRequest(server string, body SyncAgentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSyncAgentRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSyncAgentRequestWithBody constructs an http.Request for the SyncAgent method, with any body, and a specified content type
+func NewSyncAgentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sync")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -5648,6 +6072,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/calls/{id} (the `GetCall` operationId).
 	GetCallWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetCallResponse, error)
 
+	// GetCallEventsWithResponse What the conversation decided, and why
+	//
+	// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
+	GetCallEventsWithResponse(ctx context.Context, id ResourceID, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*GetCallEventsResponse, error)
+
 	// GetCallTimelineWithResponse The call as it unfolded, said and measured together
 	//
 	// Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
@@ -5656,6 +6089,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/calls/{id}/timeline (the `GetCallTimeline` operationId).
 	GetCallTimelineWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetCallTimelineResponse, error)
+
+	// CreateCallTokenWithBodyWithResponse What a browser needs to join this call
+	//
+	// Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
+	CreateCallTokenWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error)
+
+	// CreateCallTokenWithResponse What a browser needs to join this call
+	//
+	// Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
+	CreateCallTokenWithResponse(ctx context.Context, id ResourceID, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error)
 
 	// GetCallTranscriptWithResponse What was said on a call
 	//
@@ -5972,6 +6423,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /v1/agents/skills/{id} (the `UpdateSkill` operationId).
 	UpdateSkillWithResponse(ctx context.Context, id ResourceID, body UpdateSkillJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateSkillResponse, error)
+
+	// SyncAgentWithBodyWithResponse Store an agent directory's instructions, skills and knowledge
+	//
+	// Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Models, voice and the rest of a config are left alone. This path only writes what a directory can hold.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
+	SyncAgentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error)
+
+	// SyncAgentWithResponse Store an agent directory's instructions, skills and knowledge
+	//
+	// Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+	// Models, voice and the rest of a config are left alone. This path only writes what a directory can hold.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
+	SyncAgentWithResponse(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error)
 
 	// ListVoicesWithResponse The voices the calling customer has brought with them
 	//
@@ -6409,6 +6880,68 @@ func (r GetCallResponse) ContentType() string {
 	return ""
 }
 
+type GetCallEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]CallEvent
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCallEventsResponse) GetJSON200() *[]CallEvent {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetCallEventsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetCallEventsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetCallEventsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCallEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCallEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCallEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCallEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetCallTimelineResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6465,6 +6998,68 @@ func (r GetCallTimelineResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetCallTimelineResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateCallTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CallToken
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateCallTokenResponse) GetJSON200() *CallToken {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateCallTokenResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateCallTokenResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateCallTokenResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateCallTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateCallTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateCallTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateCallTokenResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -8012,6 +8607,61 @@ func (r UpdateSkillResponse) ContentType() string {
 	return ""
 }
 
+type SyncAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SyncAgentResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SyncAgentResponse) GetJSON200() *SyncAgentResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SyncAgentResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SyncAgentResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r SyncAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SyncAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SyncAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SyncAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListVoicesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -9333,6 +9983,21 @@ func (c *ClientWithResponses) GetCallWithResponse(ctx context.Context, id Resour
 	return ParseGetCallResponse(rsp)
 }
 
+// GetCallEventsWithResponse What the conversation decided, and why
+//
+// A timeline says what a call cost the caller in waiting. This says why the call went the way it did: why the agent waited rather than answering, why it read something as not meant for it, why it stopped mid-sentence. Read in order they are the reasoning behind the conversation, which is the only thing that explains a call that surprised somebody. A call still running reports the same decisions live on the session socket.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/calls/{id}/events (the `GetCallEvents` operationId).
+func (c *ClientWithResponses) GetCallEventsWithResponse(ctx context.Context, id ResourceID, params *GetCallEventsParams, reqEditors ...RequestEditorFn) (*GetCallEventsResponse, error) {
+	rsp, err := c.GetCallEvents(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCallEventsResponse(rsp)
+}
+
 // GetCallTimelineWithResponse The call as it unfolded, said and measured together
 //
 // Each exchange with what was said in it and what it cost the caller in waiting: how long the answer took to start, how much the agent spoke, and whether it was talked over.
@@ -9346,6 +10011,36 @@ func (c *ClientWithResponses) GetCallTimelineWithResponse(ctx context.Context, i
 		return nil, err
 	}
 	return ParseGetCallTimelineResponse(rsp)
+}
+
+// CreateCallTokenWithBodyWithResponse What a browser needs to join this call
+//
+// Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
+func (c *ClientWithResponses) CreateCallTokenWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error) {
+	rsp, err := c.CreateCallTokenWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCallTokenResponse(rsp)
+}
+
+// CreateCallTokenWithResponse What a browser needs to join this call
+//
+// Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/calls/{id}/token (the `CreateCallToken` operationId).
+func (c *ClientWithResponses) CreateCallTokenWithResponse(ctx context.Context, id ResourceID, body CreateCallTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCallTokenResponse, error) {
+	rsp, err := c.CreateCallToken(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCallTokenResponse(rsp)
 }
 
 // GetCallTranscriptWithResponse What was said on a call
@@ -9890,6 +10585,38 @@ func (c *ClientWithResponses) UpdateSkillWithResponse(ctx context.Context, id Re
 		return nil, err
 	}
 	return ParseUpdateSkillResponse(rsp)
+}
+
+// SyncAgentWithBodyWithResponse Store an agent directory's instructions, skills and knowledge
+//
+// Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Models, voice and the rest of a config are left alone. This path only writes what a directory can hold.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
+func (c *ClientWithResponses) SyncAgentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error) {
+	rsp, err := c.SyncAgentWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSyncAgentResponse(rsp)
+}
+
+// SyncAgentWithResponse Store an agent directory's instructions, skills and knowledge
+//
+// Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+// Models, voice and the rest of a config are left alone. This path only writes what a directory can hold.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
+func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error) {
+	rsp, err := c.SyncAgent(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSyncAgentResponse(rsp)
 }
 
 // ListVoicesWithResponse The voices the calling customer has brought with them
@@ -10474,6 +11201,53 @@ func ParseGetCallResponse(rsp *http.Response) (*GetCallResponse, error) {
 	return response, nil
 }
 
+// ParseGetCallEventsResponse parses an HTTP response from a GetCallEventsWithResponse call
+func ParseGetCallEventsResponse(rsp *http.Response) (*GetCallEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCallEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []CallEvent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetCallTimelineResponse parses an HTTP response from a GetCallTimelineWithResponse call
 func ParseGetCallTimelineResponse(rsp *http.Response) (*GetCallTimelineResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -10490,6 +11264,53 @@ func ParseGetCallTimelineResponse(rsp *http.Response) (*GetCallTimelineResponse,
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest []TimelineEntry
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateCallTokenResponse parses an HTTP response from a CreateCallTokenWithResponse call
+func ParseCreateCallTokenResponse(rsp *http.Response) (*CreateCallTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateCallTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CallToken
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -11672,6 +12493,46 @@ func ParseUpdateSkillResponse(rsp *http.Response) (*UpdateSkillResponse, error) 
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSyncAgentResponse parses an HTTP response from a SyncAgentWithResponse call
+func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SyncAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SyncAgentResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	}
 

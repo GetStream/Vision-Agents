@@ -495,6 +495,37 @@ func (s *HarnessSuite) TestARequestForHelpIsDelegatedAndNotSpoken() {
 	s.Equal("think", s.awaitDelegated(1)[0].Skill)
 }
 
+func (s *HarnessSuite) TestATurnNobodyPromptedHasSomethingToAnswer() {
+	// Work coming back is a turn nobody asked for, so the conversation ends with the
+	// agent's own reply rather than a caller's sentence. Asked to follow its own turn,
+	// Gemini refuses the request outright -- "requests ending with a model turn are not
+	// supported" -- and the caller never hears what came back.
+	s.build(true)
+
+	s.Require().NoError(s.harness.Respond(Turn{
+		ID:           "turn-1",
+		Instructions: "be brief",
+		History: []llm.Message{
+			{Role: llm.User, Content: "travel advice for Boulder?"},
+			{Role: llm.Assistant, Content: "Let me look into that."},
+		},
+	}))
+
+	asked := s.fast.requests()[0].Messages
+	s.Equal(llm.User, asked[len(asked)-1].Role, "the model was asked to follow its own turn")
+	s.Len(s.harness.history, 2, "what was added is the request's, not the conversation's")
+}
+
+func (s *HarnessSuite) TestAnAnsweredTurnIsSentAsItStands() {
+	s.build(true)
+
+	s.respond("turn-1", "what is 15% of 84.20")
+
+	asked := s.fast.requests()[0].Messages
+	s.Require().Len(asked, 1, "there was already something to answer")
+	s.Equal("what is 15% of 84.20", asked[0].Content)
+}
+
 func (s *HarnessSuite) TestDelegatingDoesNotWaitForTheAnswer() {
 	// This is the whole point: the fast model keeps talking while the slow one works.
 	s.build(true)

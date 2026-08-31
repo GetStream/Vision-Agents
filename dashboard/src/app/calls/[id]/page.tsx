@@ -4,7 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { use } from "react";
 
 import { DecisionLog } from "@/components/DecisionLog";
+import { JoinCall } from "@/components/JoinCall";
 import { LatencyPanel } from "@/components/LatencyPanel";
+import { LiveCaptions } from "@/components/LiveCaptions";
 import { SpeakingTimeline } from "@/components/SpeakingTimeline";
 import { Transcript } from "@/components/Transcript";
 import { VoicePanel } from "@/components/VoicePanel";
@@ -42,10 +44,12 @@ export default function CallPage({
     enabled: !running,
   });
 
+  // The channel is polled during a running call rather than assembled from the socket, so
+  // a page opened halfway through shows everything said before it was.
   const transcript = useQuery({
     queryKey: ["call-transcript", id],
     queryFn: () => router.callTranscript(id),
-    enabled: !running,
+    refetchInterval: running ? 5_000 : false,
     retry: false,
   });
 
@@ -82,7 +86,17 @@ export default function CallPage({
         }
       />
 
-      {running ? <VoicePanel className="mb-6" voice={session.voice} /> : null}
+      {running ? (
+        <>
+          <VoicePanel className="mb-3" voice={session.voice} />
+          <JoinCall className="mb-3" callID={id} />
+          <LiveCaptions
+            className="mb-6"
+            lines={session.lines}
+            hearing={session.hearing}
+          />
+        </>
+      ) : null}
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile
@@ -122,12 +136,7 @@ export default function CallPage({
       />
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Transcript
-          running={running}
-          hearing={session.hearing}
-          lines={session.lines}
-          stored={transcript.data ?? []}
-        />
+        <Transcript running={running} stored={transcript.data ?? []} />
         <DecisionLog stored={events.data ?? []} live={session.decisions} />
       </div>
 

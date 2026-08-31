@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // audioArrivesWithin bounds how long a real call is given to carry the first speech. It

@@ -267,6 +267,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Store an agent directory's instructions, skills and knowledge
+         * @description Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+         *     Models, voice and the rest of a config are left alone. This path only writes what a directory can hold.
+         */
+        post: operations["syncAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/configs": {
         parameters: {
             query?: never;
@@ -656,6 +677,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/calls/{id}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What a browser needs to join this call
+         * @description Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
+         */
+        post: operations["createCallToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/sessions": {
         parameters: {
             query?: never;
@@ -935,10 +976,26 @@ export interface components {
             tags?: {
                 [key: string]: string;
             };
+            /** @description Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory. */
+            sync_hash?: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        SyncAgentRequest: {
+            /** @description What the config is called, which is also the directory's name. */
+            name: string;
+            /** @description A fingerprint of the directory. A second sync with the same hash does nothing. */
+            hash: string;
+            instructions?: string;
+            skills?: components["schemas"]["SkillRequest"][];
+            knowledge?: components["schemas"]["KnowledgeDocument"][];
+        };
+        SyncAgentResult: {
+            /** @description True when the hash matched and nothing was written. */
+            unchanged: boolean;
+            config: components["schemas"]["AgentConfig"];
         };
         VoiceRequest: {
             /** @description What an agent config names the voice by, which is unique among the customer's own voices. */
@@ -1133,6 +1190,24 @@ export interface components {
             text: string;
             /** Format: date-time */
             created_at: string;
+        };
+        CallTokenRequest: {
+            /** @description Who the browser joins as. Somebody watching a call is not the agent, so this defaults to a listener of its own rather than to the agent's user. */
+            user_id?: string;
+            /** @description The name the other participants see. Defaults to the user id. */
+            user_name?: string;
+        };
+        CallToken: {
+            /** @description The Stream app the call is in, which the browser SDK joins against. */
+            api_key: string;
+            token: string;
+            user_id: string;
+            user_name: string;
+            /** @description The Stream call to join, which is not the id this call is held by here. */
+            call_id: string;
+            call_type: string;
+            /** Format: date-time */
+            expires_at: string;
         };
         TimelineEntry: {
             turn_id: string;
@@ -2135,6 +2210,32 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    syncAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description The config as stored, or as it already was */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncAgentResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     listAgentConfigs: {
         parameters: {
             query?: never;
@@ -2921,6 +3022,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CallEvent"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createCallToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CallTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description The credentials, and the call they are for */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallToken"];
                 };
             };
             400: components["responses"]["BadRequest"];

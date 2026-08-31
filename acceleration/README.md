@@ -108,6 +108,8 @@ to play audio, or `-out` to write a file instead.
 | `OPENAI_API_KEY`        | OpenAI credentials                                         |
 | `GOOGLE_API_KEY`        | Gemini credentials, from AI Studio; used by the LLM and the transcriber |
 | `BASETEN_API_KEY`       | Baseten credentials, for the Model APIs and both deployments |
+| `XAI_API_KEY`           | xAI credentials, used by the Grok transcriber              |
+| `TOGETHER_API_KEY`      | Together AI credentials, used by the Together-hosted Parakeet |
 | `PARAKEET_WS_URL`       | The Parakeet WebSocket endpoint                            |
 | `S2PRO_WS_URL`          | The S2 Pro WebSocket endpoint. Not yet deployed, see above |
 | `BREEZE_WS_URL`         | The Breeze TTS 2 WebSocket endpoint. Not yet deployed, see above |
@@ -116,8 +118,8 @@ to play audio, or `-out` to write a file instead.
 | `LIVEKIT_URL`           | LiveKit host, used by `cmd/transcribe`                     |
 | `LIVEKIT_API_KEY`       | LiveKit credentials                                        |
 | `LIVEKIT_API_SECRET`    | LiveKit credentials                                        |
-| `STREAM_API_KEY`        | Stream credentials, used by `cmd/agent`                    |
-| `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them |
+| `STREAM_API_KEY`        | Stream credentials, used by `cmd/agent` and to say which app a browser joins |
+| `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them, and the router mints a browser's |
 | `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
 | `EXAMPLE_BASE_URL`      | Optional; points `cmd/agent`'s demo link at another deployment |
 
@@ -171,14 +173,21 @@ events to separate out.
 
 ### Transcribers, and what Gemini does differently
 
-| Model                              | Languages | Per audio hour |
-| ---------------------------------- | --------- | -------------- |
-| `deepgram/flux-general-en`          | en        | $0.276         |
-| `deepgram/flux-general-multi`       | 12        | $0.276         |
-| `gemini/gemini-3.5-transcribe-live` | 85+       | ~$0.54         |
-| `parakeet/parakeet-tdt-0.6b-v3`     | 25        | $0.079         |
+| Model                                                    | Languages | Per audio hour |
+| -------------------------------------------------------- | --------- | -------------- |
+| `deepgram/flux-general-en`                               | en        | $0.276         |
+| `deepgram/flux-general-multi`                            | 12        | $0.276         |
+| `gemini/gemini-3.5-transcribe-live`                      | 85+       | ~$0.54         |
+| `grok/grok-stt`                                          | 25        | $0.20          |
+| `parakeet/parakeet-tdt-0.6b-v3`                          | 25        | $0.079         |
+| `together-parakeet/nvidia/parakeet-tdt-0.6b-v3-realtime` | 25        | $0.21          |
 
-Deepgram and Parakeet are speech recognisers. Gemini 3.5 Transcribe is a Gemini model that
+The two Parakeets are the same weights in two places: `parakeet` is our own Baseten
+deployment and `together-parakeet` is Together's serverless endpoint. They are separate
+providers because the bill and the pager are not shared, so routing can pick between them
+and fail over from one to the other.
+
+Deepgram, Grok and Parakeet are speech recognisers. Gemini 3.5 Transcribe is a Gemini model that
 happens to be listening, reached over the Live API's `BidiGenerateContent` socket with the
 talking half turned off, and that difference shows in three places.
 

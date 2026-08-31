@@ -147,10 +147,33 @@ func (h *Harness) Respond(turn Turn) error {
 	return h.options.Model.Respond(llm.Request{
 		ID:           turn.ID,
 		Instructions: instructions,
-		Messages:     turn.History,
+		Messages:     answerable(turn.History),
 		MaxTokens:    h.options.MaxTokens,
 		Tools:        h.options.Tools.Requests(),
 	})
+}
+
+// resumption is what a turn nobody prompted is asked, when the conversation so far ends
+// with the agent's own words. What came back is already in the instructions, so this only
+// has to say that it has.
+const resumption = "The work you handed over has come back, and is in your instructions. " +
+	"Tell the caller what it found."
+
+// answerable returns a history with something at the end of it to reply to.
+//
+// A completion answers whatever came last, so a history ending in the assistant's own turn
+// asks the model to follow itself. Providers disagree on what that means and Gemini refuses
+// it outright, which left the caller never hearing what came back. Only a turn nobody
+// prompted ends that way: the agent builds one when delegated work returns and there is no
+// new sentence from the caller to answer.
+//
+// The added turn belongs to the request rather than the conversation, so it is not kept.
+func answerable(history []llm.Message) []llm.Message {
+	if len(history) == 0 || history[len(history)-1].Role != llm.Assistant {
+		return history
+	}
+	return append(append([]llm.Message(nil), history...),
+		llm.Message{Role: llm.User, Content: resumption})
 }
 
 // Requested reports the tools the model asked to have run in one reply.

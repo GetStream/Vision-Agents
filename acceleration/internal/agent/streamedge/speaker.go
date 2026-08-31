@@ -66,6 +66,9 @@ type speaker struct {
 	// a provider changes rate, which is what happens when routing fails over mid-call.
 	pipeline  media.PCM16Writer
 	inputRate int
+	// unflushed is set while the pipeline may still be holding the tail of an utterance,
+	// so it is only pushed out once rather than on every quiet frame.
+	unflushed bool
 	speaking  bool
 	closed    bool
 }
@@ -111,6 +114,7 @@ func (s *speaker) Write(pcm audio.PcmData) error {
 	if err := s.pipeline.WriteSample(media.PCM16Sample(pcm.Samples)); err != nil {
 		return fmt.Errorf("streamedge: encode speech: %w", err)
 	}
+	s.unflushed = true
 
 	if len(s.frames) <= playoutFrames || s.closed {
 		return nil
@@ -143,6 +147,9 @@ func (s *speaker) NextSample(ctx context.Context) (webrtcmedia.Sample, error) {
 		s.logger.Debug("the call started taking the agent's audio")
 	}
 	if len(s.frames) == 0 {
+		s.flush()
+	}
+	if len(s.frames) == 0 {
 		s.speaking = false
 		return webrtcmedia.Sample{Data: silenceFrame, Duration: opusFrameDuration}, nil
 	}
@@ -153,6 +160,27 @@ func (s *speaker) NextSample(ctx context.Context) (webrtcmedia.Sample, error) {
 	s.drained.Signal()
 
 	return webrtcmedia.Sample{Data: frame, Duration: opusFrameDuration}, nil
+}
+
+// flush pushes the end of an utterance out of the pipeline. The caller must hold the lock.
+//
+// The resampler runs a chunk behind: what was written last is held until more audio comes
+// along to take its place. That is fine mid-sentence, but at the end of a reply nothing
+// more is coming, and without this the last chunk of every utterance stays in the pipeline
+// and the caller hears the agent stop short of its final word.
+//
+// Silence is what displaces it, which costs nothing: it is what the track sends anyway
+// once the queue is empty.
+func (s *speaker) flush() {
+	if s.pipeline == nil || !s.unflushed {
+		return
+	}
+	s.unflushed = false
+
+	quiet := make([]int16, s.inputRate/50)
+	if err := s.pipeline.WriteSample(media.PCM16Sample(quiet)); err != nil {
+		s.logger.Debug("could not flush the end of an utterance", "error", err)
+	}
 }
 
 // CurrentAudioLevel is what the SDK puts in the audio-level RTP header extension, which is

@@ -35,9 +35,11 @@ const ProviderName = "elevenlabs"
 // DefaultModel is the low-latency model, which is what a live conversation wants.
 const DefaultModel = "eleven_flash_v2_5"
 
-// DefaultVoiceID is Arnold from the public voice library, so the provider works without a
-// voice having been picked.
-const DefaultVoiceID = "VR6AewLTigWG4xSOukaG"
+// DefaultVoiceID is George from the public voice library, so the provider works without a
+// voice having been picked. It is deliberately not one of the older premade voices: those
+// are legacy, are absent from accounts made since, and the v3 models reject one with
+// "Invalid argument received." at the point they try to generate rather than on connect.
+const DefaultVoiceID = "JBFqnCBsd6RMkjVDRZzb"
 
 // DefaultSampleRate is the highest rate the PCM output format offers without paying for
 // bandwidth nobody hears.

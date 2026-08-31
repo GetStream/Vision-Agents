@@ -1,92 +1,57 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-
 import { clock, Empty, Panel } from "@/components/ui";
 import type { TranscriptMessage } from "@/lib/router";
-import type { Hearing, Line } from "@/lib/useSession";
 
+/**
+ * Transcript is the conversation as it was written down, from the Stream Chat channel the
+ * agent logs into rather than from this page's socket.
+ *
+ * Reading the channel rather than the frames means a page opened halfway through a call
+ * shows the whole of it, and shows the same thing a finished call does. What is happening
+ * this second is above, under the orb.
+ */
 export function Transcript({
   running,
-  hearing,
-  lines,
   stored,
 }: {
   running: boolean;
-  hearing: Hearing | null;
-  lines: Line[];
   stored: TranscriptMessage[];
 }) {
-  const bottom = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [lines.length, hearing?.text]);
-
-  const said = running
-    ? lines.map((line) => ({
-        agent: line.agent,
-        speaker: line.speaker,
-        text: line.text,
-        at: new Date(line.at).toISOString(),
-      }))
-    : stored.map((message) => ({
-        agent: message.speaker === "agent",
-        speaker: message.speaker,
-        text: message.text,
-        at: message.created_at,
-      }));
-
+  // The panel deliberately does not follow new lines. It scrolls on its own, and jumping
+  // to the newest message takes the one being read out from under the reader.
   return (
     <Panel
       title={running ? "What is being said" : "What was said"}
-      aside={
-        running ? (
-          <span className="text-xs text-muted">live from the call</span>
-        ) : null
-      }
+      aside={<span className="text-xs text-muted">from the chat channel</span>}
     >
-      {said.length === 0 && !hearing ? (
+      {stored.length === 0 ? (
         <Empty>
           {running
-            ? "Waiting for somebody to speak."
+            ? "Nothing has reached the channel yet."
             : "Nothing was written down for this call."}
         </Empty>
       ) : (
         <div className="max-h-[28rem] space-y-3 overflow-y-auto px-4 py-3">
-          {said.map((line, index) => (
-            <div key={`${line.at}-${index}`} className="text-sm">
+          {stored.map((message, index) => (
+            <div key={`${message.created_at}-${index}`} className="text-sm">
               <div className="mb-0.5 flex items-baseline gap-2">
                 <span
                   className={`text-xs font-medium ${
-                    line.agent ? "text-emerald-600" : "text-sky-600"
+                    message.speaker === "agent"
+                      ? "text-emerald-600"
+                      : "text-sky-600"
                   }`}
                 >
-                  {line.speaker}
+                  {message.speaker}
                 </span>
                 <span className="font-mono text-xs tabular-nums text-muted">
-                  {clock(line.at)}
+                  {clock(message.created_at)}
                 </span>
               </div>
-              <p className="leading-relaxed">{line.text}</p>
+              <p className="leading-relaxed">{message.text}</p>
             </div>
           ))}
-          {hearing ? (
-            <div className="text-sm">
-              <div className="mb-0.5 text-xs font-medium text-sky-600">
-                {hearing.participant.name ??
-                  hearing.participant.user_id ??
-                  "caller"}
-              </div>
-              {/* The words are still changing, which is what the agent is looking at
-                  while it decides whether they have finished. */}
-              <p className="leading-relaxed text-muted italic">
-                {hearing.text}
-                <span className="ml-0.5 animate-pulse">▍</span>
-              </p>
-            </div>
-          ) : null}
-          <div ref={bottom} />
         </div>
       )}
     </Panel>

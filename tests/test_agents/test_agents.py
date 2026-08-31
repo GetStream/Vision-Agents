@@ -797,6 +797,37 @@ class TestAgent:
             async with agent.answer(InboundCall(call_id="")):
                 pass
 
+    async def test_joining_an_inbound_call_attaches_to_the_call_the_caller_is_in(self):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+        arriving = InboundCall(
+            call_id="phone-+15125551234",
+            call_type="default",
+            called_number="+15125551234",
+        )
+
+        async with agent.join(arriving):
+            assert agent.call is not None
+            assert agent.call.id == "phone-+15125551234"
+            await arriving.wait_for_phone_participant()
+
+        assert edge.created_calls == ["phone-+15125551234"]
+
+    async def test_waiting_for_the_caller_before_joining_says_so(self):
+        arriving = InboundCall(call_id="phone-+15125551234")
+
+        with pytest.raises(RuntimeError, match="join the call"):
+            await arriving.wait_for_phone_participant()
+
+    async def test_an_agent_without_an_llm_needs_a_config(self):
+        with pytest.raises(ValueError, match="config="):
+            Agent()
+
     async def test_join_authenticates_automatically(self, call: Call):
         edge = DummyEdge()
         agent = Agent(

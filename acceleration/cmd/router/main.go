@@ -50,16 +50,20 @@ const (
 	// anyone reaches it.
 	publicURLEnvVar = "ROUTER_PUBLIC_URL"
 	// streamSecretEnvVar signs the call events Stream sends to the inbound hook. It is the
-	// app secret rather than a webhook-specific one.
+	// app secret rather than a webhook-specific one, and it also signs the tokens a
+	// browser joins a call with.
 	streamSecretEnvVar = "STREAM_API_SECRET"
+	// streamKeyEnvVar names the Stream app those tokens are for, which a browser needs in
+	// order to join with one.
+	streamKeyEnvVar = "STREAM_API_KEY"
 	// corsOriginsEnvVar names the browser origins allowed to call this API directly,
 	// comma separated. It exists for the dashboard, which talks to the router rather than
 	// through a server of its own. Unset means no browser may.
 	corsOriginsEnvVar = "ROUTER_CORS_ORIGINS"
 	logLevelEnvVar    = "ROUTER_LOG_LEVEL"
-	defaultAddress     = ":8080"
-	shutdownGrace      = 10 * time.Second
-	readHeaderTimeout  = 10 * time.Second
+	defaultAddress    = ":8080"
+	shutdownGrace     = 10 * time.Second
+	readHeaderTimeout = 10 * time.Second
 )
 
 func main() {
@@ -268,6 +272,7 @@ func run(logger *slog.Logger) error {
 		Campaigns:    campaigns,
 		Dispatch:     workers,
 		StreamSecret: os.Getenv(streamSecretEnvVar),
+		StreamKey:    os.Getenv(streamKeyEnvVar),
 		CORSOrigins:  splitList(os.Getenv(corsOriginsEnvVar)),
 		Logger:       logger,
 	}
@@ -275,6 +280,10 @@ func run(logger *slog.Logger) error {
 		logger.Warn("no "+streamSecretEnvVar+" set, so inbound calls cannot be dispatched: "+
 			"the call events Stream sends cannot be told apart from anyone who found the url",
 			"hook", "POST /v1/phone/hooks/stream")
+	}
+	if options.StreamKey == "" {
+		logger.Warn("no "+streamKeyEnvVar+" set, so nobody can join a call from a browser",
+			"endpoint", "POST /v1/agents/calls/{id}/token")
 	}
 	// A nil *turbopuffer.Store in an interface is not a nil interface, so the absence has
 	// to stay absent rather than becoming a value that says it is there.

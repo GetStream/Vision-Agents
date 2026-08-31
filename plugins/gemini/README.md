@@ -61,7 +61,7 @@ llm=gemini.Realtime(fps=3)  # forward video at 3 frames per second
 ```
 
 The `Agent` subscribes to track events internally, so no manual wiring is needed.
-For a full runnable example, see `examples/02_golf_coach_example/golf_coach_example.py`.
+For a full runnable example, see `examples/old/02_golf_coach_example/golf_coach_example.py`.
 
 ### Gemini Vision (VLM)
 

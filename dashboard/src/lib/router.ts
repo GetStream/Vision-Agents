@@ -7,6 +7,8 @@ export type CallEvent = Schemas["CallEvent"];
 export type DecisionKind = Schemas["DecisionKind"];
 export type TimelineEntry = Schemas["TimelineEntry"];
 export type TranscriptMessage = Schemas["TranscriptMessage"];
+export type CallToken = Schemas["CallToken"];
+export type CallTokenRequest = Schemas["CallTokenRequest"];
 export type StatsBucket = Schemas["StatsBucket"];
 export type TurnStatsBucket = Schemas["TurnStatsBucket"];
 export type AgentConfig = Schemas["AgentConfig"];
@@ -102,6 +104,8 @@ export const router = {
     send<TimelineEntry[]>("GET", `/v1/agents/calls/${id}/timeline`),
   callTranscript: (id: string) =>
     send<TranscriptMessage[]>("GET", `/v1/agents/calls/${id}/transcript`),
+  callToken: (id: string, body: CallTokenRequest = {}) =>
+    send<CallToken>("POST", `/v1/agents/calls/${id}/token`, { body }),
 
   stats: (modality: string, from: Date, to: Date) =>
     send<StatsBucket[]>("GET", `/v1/${modality}/stats`, {

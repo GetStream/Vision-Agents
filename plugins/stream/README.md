@@ -52,6 +52,25 @@ events the backend sends back are recorded into the same places.
 on the backend. Only the subagent is offered it: running code takes seconds, and the model
 holding the conversation has none to spare.
 
+## An agent as a directory
+
+`sync_agent("customer_support")` reads `examples/agents/customer_support/` —
+`instructions.md`, `skills/*.md` and `knowledge/` — and stores them on the
+backend. A hash of the directory goes with it, so a second call with the same
+files does nothing.
+
+```python
+from vision_agents.plugins import stream as acceleration
+
+await acceleration.sync_agent("customer_support")
+
+agent = Agent(config="customer_support")
+```
+
+`Agent(config=)` fills in the edge, the remote pipeline and a phone, so the Go
+backend handles routing. See `examples/agents/` for customer support, an outbound
+recruiter and an inbound restaurant.
+
 ## A conversation held in writing
 
 The same agent, with the voice left off. No call is joined, nothing is transcribed and
@@ -90,7 +109,7 @@ around work handed to a skill, and `answer` when the turn is finished. Delegated
 outlives the turn that asked for it, so the model says something while it runs and the answer
 arrives when it comes back.
 
-See [example 12](../../examples/12_docs_agent_example) for the whole thing, including reading
+See [example 12](../../examples/old/12_docs_agent_example) for the whole thing, including reading
 this repo's markdown into a knowledge base.
 
 A config can also be named rather than looked up by id, which is what an agent usually
@@ -135,7 +154,7 @@ call rather than placing it without: a ring timeout that was dropped is a call s
 somebody's voicemail. Seven of the backend's eight implemented vendors can place a call at
 all; DIDWW cannot, because it has no call control API.
 
-See [example 13](../../examples/13_outbound_call_example) for the whole thing.
+See [example 13](../../examples/old/13_outbound_call_example) for the whole thing.
 
 ## One modality at a time
 

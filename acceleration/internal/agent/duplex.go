@@ -31,6 +31,10 @@ const (
 	// there is anything else. Long enough to let somebody think, short enough that they
 	// are not left wondering whether the agent is still on the line.
 	defaultIdleGap = 30 * time.Second
+	// idleAsks is how often one silence is asked about before the agent lets it stand.
+	// Somebody who has not answered twice is not going to answer a third time, and
+	// asking again is nagging a caller who has walked away.
+	idleAsks = 2
 )
 
 // defaultPhrases are what the agent murmurs to show it is still listening. They are
@@ -50,12 +54,16 @@ var workingPhrases = []string{
 // idlePhrases are what the agent says to a call nobody is talking on, so a silence ends
 // in an invitation rather than in the caller wondering whether anyone is still there.
 //
-// The list is also the limit: each is used once and then the agent lets the silence
-// stand, because somebody who has not answered twice is not going to answer a third
-// time and asking again is nagging a caller who has walked away.
+// They rotate across the whole call rather than restarting with each silence. A caller
+// who pauses several times over a long call would otherwise be asked the same opening
+// question every time, which is the point at which a stock phrase starts to grate.
 var idlePhrases = []string{
 	"Is there anything else I can help with?",
-	"Anything else I can do for you?",
+	"Anything else on your mind?",
+	"Was there anything else?",
+	"What else can I do for you?",
+	"Happy to keep going if there is more.",
+	"Anything else you wanted to look at?",
 }
 
 // uncertainNote is what the model is told about a turn the transcriber was doubtful
@@ -97,7 +105,11 @@ type duplex struct {
 	// working rotates what is said while a tool runs, separately from the murmurs so
 	// that using one does not skip the other along.
 	working int
-	// idle rotates what is said to a call that has gone quiet.
+	// asked counts how often the silence in hand has been asked about, and is cleared
+	// when somebody speaks. It caps the nagging without deciding the words.
+	asked int
+	// idle rotates what is said to a call that has gone quiet. It runs on across the
+	// whole call, so a later silence does not open with the same question as the first.
 	idle int
 }
 
@@ -128,8 +140,9 @@ func (d *duplex) Heard(participant stt.Participant, text string, quiet bool) str
 	defer d.mu.Unlock()
 
 	// Somebody is talking, so a silence that had been given up on is over and a later
-	// one is worth asking about again.
-	d.idle = 0
+	// one is worth asking about again. Only the count is cleared: the rotation carries
+	// on, so the next silence is not opened with the same question as the last.
+	d.asked = 0
 	current := d.speakerFor(participant)
 
 	if !d.options.Backchannel || !quiet {
@@ -175,10 +188,11 @@ func (d *duplex) Idle(lastActivity time.Time, quiet bool) string {
 	if !quiet || lastActivity.IsZero() || time.Since(lastActivity) < defaultIdleGap {
 		return ""
 	}
-	if d.idle >= len(idlePhrases) {
+	if d.asked >= idleAsks {
 		return ""
 	}
-	phrase := idlePhrases[d.idle]
+	phrase := idlePhrases[d.idle%len(idlePhrases)]
+	d.asked++
 	d.idle++
 	return phrase
 }

@@ -2,6 +2,25 @@
 
 ## New Features
 
+### `sync_agent`: push an agent directory to the acceleration server
+
+`stream.sync_agent("customer_support")` reads `examples/agents/customer_support/`
+(instructions.md, skills/, knowledge/) and stores them on the Go backend. A hash
+of the directory is sent with it, so a second call with the same files does
+nothing. `Agent(config="customer_support")` then runs that config: the backend
+handles LLM routing, and edge, llm and phone default to the acceleration
+plugins.
+
+```python
+from vision_agents.plugins import stream as acceleration
+
+await acceleration.sync_agent("customer_support")
+
+agent = Agent(config="customer_support")
+```
+
+See `examples/agents/`.
+
 ### Inbound calling: wait for a call and answer it
 
 `stream.StreamDispatch()` connects out to the acceleration backend and waits;
@@ -30,7 +49,7 @@ over rather than queued behind.
 
 The router hears about an arriving call by webhook, which is an app-wide setting,
 so run `go run ./cmd/phone hooks -url $ROUTER_PUBLIC_URL` once; it leaves any
-other hooks your app has alone. See `examples/14_inbound_call_example`.
+other hooks your app has alone. See `examples/old/14_inbound_call_example`.
 
 ### `Agent.outbound_call`: ring a phone and hold the conversation
 
@@ -52,7 +71,7 @@ they need `ROUTER_PUBLIC_URL` pointed at somewhere they can reach.
 
 `stream.Accelerated(config="john")` names a stored agent config instead of
 repeating the models, resolved when the agent joins. See
-`examples/13_outbound_call_example`.
+`examples/old/13_outbound_call_example`.
 
 ### `stream` plugin: the whole voice pipeline in the acceleration backend
 
@@ -69,7 +88,7 @@ For a pipeline that stays in Python, `stream.STT(target)`, `stream.TTS(target,
 voice=)` and `stream.LLM(target)` route one modality each through the same
 router, with the same failover and cost tracking. `stream.Router(target)` asks
 which modality serves a name and returns the plugin for it, at the cost of a
-request at startup. See `examples/00_accelerated_example`.
+request at startup. See `examples/old/00_accelerated_example`.
 
 ### `Agent`: `harness`, `cost_tracking` and `memory_filter`
 

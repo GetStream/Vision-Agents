@@ -19,7 +19,7 @@ cp env.example .env
 ## Running
 
 ```bash
-uv run examples/01_simple_agent_example/simple_agent_example.py run
+uv run examples/old/01_simple_agent_example/simple_agent_example.py run
 ```
 
 ### Running with a video file as input

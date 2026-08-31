@@ -28,6 +28,10 @@ it with `ROUTER_CORS_ORIGINS=http://localhost:3000`.
 - `/` - the last calls and what they cost
 - `/calls/{id}` - one call: who was talking when, what the agent heard, every judgement it
   made and what each turn took. Live while the call runs, from storage once it has ended.
+  A call that is still running can also be joined from here, to talk to the agent: the
+  router mints the token, so the secret stays where the rest of them are and this page
+  still has no server behind it. You join with the camera off and the microphone on, and
+  which microphone, speaker and camera is yours to pick.
 - `/agents` - agent configs: instructions, models, skills, knowledge
 - `/voices` - voices of your own, their recordings and how each provider is getting on with
   them

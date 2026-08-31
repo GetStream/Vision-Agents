@@ -6,6 +6,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	getstream "github.com/GetStream/getstream-go/v5"
 )
 
 // noCalls and noTranscripts are what the call paths say on a deployment that cannot
@@ -15,7 +16,16 @@ const (
 	noCalls       = "calls are not available: no database configured"
 	noTranscripts = "transcripts are not available: no chat credentials configured"
 	unknownCall   = "no such call"
+	noStreamKeys  = "joining is not available: no stream credentials configured"
 )
+
+// listenerTokenValidity is how long a browser's token lasts. A call outliving it is a call
+// nobody is still on, which is the same bet the Python examples make.
+const listenerTokenValidity = time.Hour
+
+// defaultCallType is what a call is joined as when nothing said otherwise. It matches the
+// session default, which is what created the call in the first place.
+const defaultCallType = "default"
 
 // ListCalls returns the calling customer's calls, newest first.
 func (s *Server) ListCalls(ctx context.Context, request ListCallsRequestObject) (ListCallsResponseObject, error) {
@@ -67,6 +77,70 @@ func (s *Server) GetCall(ctx context.Context, request GetCallRequestObject) (Get
 		return GetCall404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
 	}
 	return GetCall200JSONResponse(callOf(call)), nil
+}
+
+// CreateCallToken mints what a browser needs to join a call and talk to the agent.
+//
+// The token is signed here rather than fetched, so this makes no network calls, and the
+// user is not registered either: the coordinator does that when the browser connects. The
+// call type comes from the running session when there is one, because only the session
+// knows what it joined as.
+func (s *Server) CreateCallToken(ctx context.Context, request CreateCallTokenRequestObject) (CreateCallTokenResponseObject, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return CreateCallToken401JSONResponse{missingCustomer()}, nil
+	}
+	if s.store == nil {
+		return CreateCallToken400JSONResponse{badRequest(noCalls)}, nil
+	}
+	if s.streamKey == "" || s.streamSecret == "" {
+		return CreateCallToken400JSONResponse{badRequest(noStreamKeys)}, nil
+	}
+
+	call, err := s.store.Call(ctx, customerID, request.Id)
+	if err != nil {
+		return CreateCallToken404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
+	}
+
+	var wanted CallTokenRequest
+	if request.Body != nil {
+		wanted = *request.Body
+	}
+	userID := value(wanted.UserId)
+	if userID == "" {
+		userID = "listener-" + call.ID
+	}
+	userName := value(wanted.UserName)
+	if userName == "" {
+		userName = userID
+	}
+
+	callType := defaultCallType
+	if s.sessions != nil {
+		if found, running := s.sessions.Get(call.ID, customerID); running {
+			callType = found.Spec().CallType
+		}
+	}
+
+	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
+	if err != nil {
+		return nil, err
+	}
+	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
+	token, err := client.CreateToken(userID, getstream.WithExpiration(listenerTokenValidity))
+	if err != nil {
+		return nil, err
+	}
+
+	return CreateCallToken200JSONResponse{
+		ApiKey:    s.streamKey,
+		Token:     token,
+		UserId:    userID,
+		UserName:  userName,
+		CallId:    call.CallID,
+		CallType:  callType,
+		ExpiresAt: expiresAt,
+	}, nil
 }
 
 // GetCallTranscript returns what was said, read back out of the channel it was written to

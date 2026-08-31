@@ -47,7 +47,7 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 
 	result, err := s.db.NewUpdate().Model(config).
 		Column("name", "stt", "tts", "voice", "llm", "subagent", "instructions",
-			"greeting", "skills", "keyterms", "knowledge_namespace", "tags", "updated_at").
+			"greeting", "skills", "keyterms", "knowledge_namespace", "tags", "sync_hash", "updated_at").
 		Where("id = ?", config.ID).
 		Where("customer_id = ?", config.CustomerID).
 		Where("deleted_at IS NULL").
@@ -111,6 +111,28 @@ func (s *Store) AgentConfig(ctx context.Context, customerID, id string) (AgentCo
 		return AgentConfig{}, fmt.Errorf("store: agent config: %w", err)
 	}
 	return config, nil
+}
+
+// AgentConfigByName returns the config a customer holds under this name.
+func (s *Store) AgentConfigByName(ctx context.Context, customerID, name string) (AgentConfig, bool, error) {
+	if customerID == "" || name == "" {
+		return AgentConfig{}, false, errors.New("store: a customer and a config name are required")
+	}
+
+	var config AgentConfig
+	err := s.db.NewSelect().Model(&config).
+		Where("customer_id = ?", customerID).
+		Where("name = ?", name).
+		Where("deleted_at IS NULL").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentConfig{}, false, nil
+	}
+	if err != nil {
+		return AgentConfig{}, false, fmt.Errorf("store: agent config by name: %w", err)
+	}
+	return config, true, nil
 }
 
 // CustomerAgentConfigs returns the configs a customer holds, newest first.

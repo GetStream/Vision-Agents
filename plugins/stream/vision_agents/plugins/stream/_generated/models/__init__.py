@@ -13,6 +13,8 @@ from .call import Call
 from .call_direction import CallDirection
 from .call_event import CallEvent
 from .call_tags import CallTags
+from .call_token import CallToken
+from .call_token_request import CallTokenRequest
 from .campaign import Campaign
 from .campaign_request import CampaignRequest
 from .campaign_request_tags import CampaignRequestTags
@@ -68,6 +70,8 @@ from .skill import Skill
 from .skill_request import SkillRequest
 from .skipped_vendor import SkippedVendor
 from .stats_bucket import StatsBucket
+from .sync_agent_request import SyncAgentRequest
+from .sync_agent_result import SyncAgentResult
 from .tag_stats_bucket import TagStatsBucket
 from .tier import Tier
 from .timeline_entry import TimelineEntry
@@ -96,6 +100,8 @@ __all__ = (
     "CallDirection",
     "CallEvent",
     "CallTags",
+    "CallToken",
+    "CallTokenRequest",
     "Campaign",
     "CampaignRequest",
     "CampaignRequestTags",
@@ -151,6 +157,8 @@ __all__ = (
     "SkillRequest",
     "SkippedVendor",
     "StatsBucket",
+    "SyncAgentRequest",
+    "SyncAgentResult",
     "TagStatsBucket",
     "Tier",
     "TimelineEntry",

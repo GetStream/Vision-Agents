@@ -73,8 +73,12 @@ type Options struct {
 	// accepting a worker whose calls would never arrive.
 	Dispatch *dispatch.Pool
 	// StreamSecret signs the call events Stream sends. Without it the webhook refuses
-	// every request, because an unsigned webhook is anyone who found the URL.
+	// every request, because an unsigned webhook is anyone who found the URL. It also
+	// mints the tokens a browser joins a call with, which is why it never leaves here.
 	StreamSecret string
+	// StreamKey names the Stream app those tokens are for. A browser needs it to join,
+	// so unlike the secret it is meant to be handed out.
+	StreamKey string
 	// CORSOrigins are the browser origins allowed to call this API directly, which is
 	// what a dashboard talking to the router without a proxy in between needs. Empty
 	// means no browser may, which is right for a deployment only servers reach.
@@ -96,6 +100,7 @@ type Server struct {
 	voices       *voices.Service
 	dispatch     *dispatch.Pool
 	streamSecret string
+	streamKey    string
 	corsOrigins  []string
 	logger       *slog.Logger
 }
@@ -128,6 +133,7 @@ func NewServer(options Options) (*Server, error) {
 		voices:       options.Voices,
 		dispatch:     options.Dispatch,
 		streamSecret: options.StreamSecret,
+		streamKey:    options.StreamKey,
 		corsOrigins:  options.CORSOrigins,
 		logger:       logger,
 	}, nil

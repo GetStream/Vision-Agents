@@ -751,13 +751,37 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	a.mu.Unlock()
 
 	a.running.Add(1)
-	go a.consumeSTT(session)
+	go a.consumeSTT(participant.ID, session)
 	return session, nil
 }
 
+// dropListener retires a transcription session that cannot carry on, so the next audio
+// from that participant opens a new one.
+//
+// A transcriber does not only stop when the call does: a provider will cut a session that
+// has been idle, and the socket is not usable afterwards. Left in the map, that session is
+// handed every later chunk and the agent is deaf to the participant for the rest of the
+// call rather than for a moment.
+func (a *Agent) dropListener(participantID string, session *sttrouter.Session) {
+	a.mu.Lock()
+	// Only when it is still the one in use: a replacement may already have been opened,
+	// and retiring that would put us back where we started.
+	if a.listeners[participantID] == session {
+		delete(a.listeners, participantID)
+	}
+	a.mu.Unlock()
+
+	// Closing releases the provider's socket and ends the stream of events this was
+	// reading. Doing it twice is safe, which is what lets Close race with this.
+	if err := session.Close(); err != nil {
+		a.logger.Debug("closing a dropped transcriber failed", "error", err)
+	}
+}
+
 // consumeSTT feeds transcript revisions to the cadence controller.
-func (a *Agent) consumeSTT(session *sttrouter.Session) {
+func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 	defer a.running.Done()
+	defer a.dropListener(participantID, session)
 
 	for event := range session.Events() {
 		switch typed := event.(type) {
@@ -788,11 +812,17 @@ func (a *Agent) consumeSTT(session *sttrouter.Session) {
 					"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
 				continue
 			}
-			a.logger.Warn("the transcriber dropped, nothing more will be heard from it",
+			a.logger.Warn("the transcriber dropped, a new one opens on the next audio",
 				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
+			return
 
 		case stt.Error:
 			a.fail(typed.Err, "stt")
+			// A fatal error has already ended the session upstream. Reading on would be
+			// waiting for words from a socket that is gone.
+			if typed.Fatal {
+				return
+			}
 		}
 	}
 }

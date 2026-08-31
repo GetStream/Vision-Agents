@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/suite"
+
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // Event hooks are one setting on the whole app, so this runs against a real one: the thing

@@ -117,6 +117,15 @@ class LLM(Component):
         participant: Optional[Participant] = None,
     ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]: ...
 
+    @property
+    def router_session_id(self) -> Optional[str]:
+        """The id a dashboard knows this call by, for a pipeline running elsewhere.
+
+        None for a pipeline that runs in this process, which no dashboard has a page
+        for, and None for a remote one that has not joined yet.
+        """
+        return None
+
     async def close(self) -> None:
         """
         Close the LLM and release the resources.

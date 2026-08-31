@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
@@ -87,6 +88,10 @@ func (s *APIIntegrationSuite) SetupSuite() {
 		Store:  pgStore,
 		Live:   liveClient,
 		Voices: s.voiceService(pgStore),
+		// Minting a token signs one rather than fetching it, so a made-up app is enough
+		// to exercise the join path without a real Stream account behind it.
+		StreamKey:    testStreamKey,
+		StreamSecret: testStreamSecret,
 	})
 	s.Require().NoError(err)
 	s.server = httptest.NewServer(server.Handler())
@@ -504,6 +509,51 @@ func (s *APIIntegrationSuite) TestASkillWithoutADescriptionIsRefused() {
 	s.Contains(failure.Error, "description")
 }
 
+func (s *APIIntegrationSuite) TestSyncingAnAgentStoresItsInstructionsAndSkills() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/sync", `{
+		"name":"support","hash":"v1",
+		"instructions":"Be brief.",
+		"skills":[{"name":"refund","description":"work out a refund","instructions":"Read the policy."}]
+	}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var first SyncAgentResult
+	s.Require().NoError(json.Unmarshal(payload, &first))
+	s.False(first.Unchanged)
+	s.Equal("support", first.Config.Name)
+	s.Require().NotNil(first.Config.Instructions)
+	s.Equal("Be brief.", *first.Config.Instructions)
+	s.Require().NotNil(first.Config.Skills)
+	s.Equal([]string{"refund"}, *first.Config.Skills)
+	s.Require().NotNil(first.Config.SyncHash)
+	s.Equal("v1", *first.Config.SyncHash)
+
+	again, payload := s.do(http.MethodPost, "/v1/agents/sync", `{
+		"name":"support","hash":"v1",
+		"instructions":"Be brief.",
+		"skills":[{"name":"refund","description":"work out a refund","instructions":"Read the policy."}]
+	}`)
+	s.Require().Equal(http.StatusOK, again.StatusCode, string(payload))
+
+	var second SyncAgentResult
+	s.Require().NoError(json.Unmarshal(payload, &second))
+	s.True(second.Unchanged, "the same hash means nothing was written")
+	s.Equal(first.Config.Id, second.Config.Id)
+
+	changed, payload := s.do(http.MethodPost, "/v1/agents/sync", `{
+		"name":"support","hash":"v2",
+		"instructions":"Be even briefer."
+	}`)
+	s.Require().Equal(http.StatusOK, changed.StatusCode, string(payload))
+
+	var third SyncAgentResult
+	s.Require().NoError(json.Unmarshal(payload, &third))
+	s.False(third.Unchanged)
+	s.Equal(first.Config.Id, third.Config.Id)
+	s.Require().NotNil(third.Config.Instructions)
+	s.Equal("Be even briefer.", *third.Config.Instructions)
+}
+
 // campaign creates a campaign over a stored config and returns it.
 func (s *APIIntegrationSuite) campaign(concurrency int) Campaign {
 	_, payload := s.do(http.MethodPost, "/v1/agents/configs", `{"name":"winback","llm":"llm-fast"}`)
@@ -676,6 +726,84 @@ func (s *APIIntegrationSuite) TestACallIsFoundAfterTheSessionRunningItIsGone() {
 	s.Require().NotNil(read.ToNumber)
 	s.Equal("+15550101", *read.ToNumber)
 	s.Nil(read.EndedAt, "a call nobody has ended is still running")
+}
+
+// testStreamKey and testStreamSecret stand in for a Stream app. The secret signs the join
+// tokens, which is what lets a test read one back and see who it was minted for.
+const (
+	testStreamKey    = "test-app"
+	testStreamSecret = "test-secret"
+)
+
+func (s *APIIntegrationSuite) TestAJoinTokenSaysWhichCallToJoinAndWhoAsIt() {
+	// The browser is handed a token and a call, never the secret: whoever holds this can
+	// join one call as one user until it expires, and can sign nothing of their own.
+	call := store.Call{
+		ID: "session-" + s.customerID, CustomerID: s.customerID,
+		CallID: "call-1", AgentID: "agent-1", StartedAt: s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+
+	response, payload := s.do(http.MethodPost, "/v1/agents/calls/"+call.ID+"/token", `{}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var minted CallToken
+	s.Require().NoError(json.Unmarshal(payload, &minted))
+	s.Equal(testStreamKey, minted.ApiKey)
+	s.Equal("call-1", minted.CallId, "the Stream call, not the id we hold it by")
+	s.Equal("default", minted.CallType)
+	s.NotEqual("agent-1", minted.UserId, "a listener is not the agent")
+	s.True(minted.ExpiresAt.After(time.Now()), "a token that has expired is no use")
+
+	claimed := jwt.MapClaims{}
+	_, err := jwt.ParseWithClaims(minted.Token, claimed, func(*jwt.Token) (any, error) {
+		return []byte(testStreamSecret), nil
+	})
+	s.Require().NoError(err, "the token is signed with the app secret")
+	s.Equal(minted.UserId, claimed["user_id"], "and it is signed for the user it names")
+}
+
+func (s *APIIntegrationSuite) TestAJoinTokenIsMintedForTheUserTheCallerAsksFor() {
+	call := store.Call{
+		ID: "session-" + s.customerID, CustomerID: s.customerID,
+		CallID: "call-1", AgentID: "agent-1", StartedAt: s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+
+	_, payload := s.do(http.MethodPost, "/v1/agents/calls/"+call.ID+"/token",
+		`{"user_id":"thierry","user_name":"Thierry"}`)
+
+	var minted CallToken
+	s.Require().NoError(json.Unmarshal(payload, &minted))
+	s.Equal("thierry", minted.UserId)
+	s.Equal("Thierry", minted.UserName)
+
+	claimed := jwt.MapClaims{}
+	_, err := jwt.ParseWithClaims(minted.Token, claimed, func(*jwt.Token) (any, error) {
+		return []byte(testStreamSecret), nil
+	})
+	s.Require().NoError(err)
+	s.Equal("thierry", claimed["user_id"])
+}
+
+func (s *APIIntegrationSuite) TestACallAnotherCustomerHoldsCannotBeJoined() {
+	// Handing out a token for somebody else's call would be handing out their call.
+	call := store.Call{
+		ID: "session-" + s.customerID, CustomerID: s.customerID,
+		CallID: "call-1", AgentID: "agent-1", StartedAt: s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodPost,
+		s.server.URL+"/v1/agents/calls/"+call.ID+"/token", strings.NewReader(`{}`))
+	s.Require().NoError(err)
+	request.Header.Set(CustomerHeader, "somebody-else")
+
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
 }
 
 func (s *APIIntegrationSuite) TestTheRunningCallsAreTheOnesThatHaveNotEnded() {

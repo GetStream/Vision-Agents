@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // Buying a number costs money and releasing it is not instant, so these only read.

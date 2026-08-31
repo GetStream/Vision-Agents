@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // Buying a number costs money, so these only read, apart from the one call that rings a

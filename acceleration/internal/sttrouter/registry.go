@@ -5,7 +5,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/deepgram"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/gemini"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/grok"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/parakeet"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/togetherparakeet"
 )
 
 // NewRegistry returns an empty registry.
@@ -42,5 +44,28 @@ func DefaultRegistry() *Registry {
 		return parakeet.New(parakeet.Options{Model: spec.Model, Logger: spec.Logger})
 	})
 
+	registry.Register(grok.ProviderName, func(spec routing.Spec) (stt.STT, error) {
+		return grok.New(grok.Options{
+			Model:    spec.Model,
+			Keyterms: spec.Keyterms,
+			Language: firstLanguage(spec.LanguageHints),
+			Logger:   spec.Logger,
+		})
+	})
+
+	registry.Register(togetherparakeet.ProviderName, func(spec routing.Spec) (stt.STT, error) {
+		return togetherparakeet.New(togetherparakeet.Options{Model: spec.Model, Logger: spec.Logger})
+	})
+
 	return registry
+}
+
+// firstLanguage picks the language to format the transcript for. xAI takes one code, and
+// it only decides how numbers and currencies are written, so a list of hints has one
+// useful answer in it.
+func firstLanguage(hints []string) string {
+	if len(hints) == 0 {
+		return ""
+	}
+	return hints[0]
 }

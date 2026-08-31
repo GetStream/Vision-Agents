@@ -42,8 +42,43 @@ socket while the call is running, `GET /v1/agents/calls/{id}/events` once it has
 call with no decisions recorded falls back to `getCallTimeline`, which is per-turn rather
 than per-judgement and coarser for it. See [observability](observability.md).
 
+## The call debug screen
+
+`/calls/{id}` on a running call is read top to bottom, and each band answers a different
+question about the same moment.
+
+| Band                | Question it answers                                              |
+| ------------------- | ---------------------------------------------------------------- |
+| The orb             | Who holds the floor — listening, thinking, speaking, or quiet     |
+| The call bar        | Can I get in and hear it myself, and through which devices        |
+| The captions        | What is being said this second                                    |
+| The panels below    | What was said, what was decided, and what each turn cost          |
+
+The three live bands sit together above the tiles because they are one thought: the orb is
+a state, the captions are that state's content, and the bar is how the reader joins it. The
+captions are deliberately outside the orb's box and only three turns long — anything longer
+belongs in the transcript, and growing them would push the rest of the page down while
+somebody is watching it.
+
+The call bar is the dashboard's own controls rather than the SDK's, which is why it does not
+import the Stream theme: a themed widget in the middle of the page reads as something
+pasted in. Microphone and speaker can be picked before joining, from
+`enumerateDevices`, and that choice is applied to the call on the way in; afterwards the
+same two selects are driven by the call's own device managers. Because no video is
+rendered, `ParticipantsAudio` has to be mounted explicitly — without it the reader joins a
+call they cannot hear.
+
+**The transcript panel reads the chat channel, not the socket.** It polls
+`GET /v1/agents/calls/{id}/transcript`, which is
+[the Stream Chat channel](transcript-storage.md) the agent logs into. A page opened halfway
+through a call therefore shows the whole conversation rather than the part that happened
+after it loaded, and a running call and a finished one render from the same source.
+
 ## Not done
 
+- **The transcript is per agent, not per call.** The channel is `messaging:{agentID}`, so a
+  running call shows earlier calls by the same agent above it. Scoping it wants either a
+  channel per call or a filter on the call's time window.
 - **The review score is a placeholder.** `review_score` is a column nothing computes.
 - **Spend is not broken down by tag**, though `GET /v1/{modality}/stats/tags` would serve it.
 - **[Campaigns](campaigns.md) have no page**, only an API.

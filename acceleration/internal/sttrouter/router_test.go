@@ -102,6 +102,33 @@ func (s *STTRouterSuite) TestRegistryPassesKeytermsAndHintsToGemini() {
 	s.NoError(err)
 }
 
+func (s *STTRouterSuite) TestRegistryNarrowsAListOfHintsForGrok() {
+	registry := DefaultRegistry()
+	s.T().Setenv("XAI_API_KEY", "test-key")
+
+	// xAI takes one language code. A multilingual request arrives with several, and
+	// refusing to build over that would lose the session rather than the formatting.
+	built, err := registry.Build("grok", routing.Spec{
+		Model:         "grok-stt",
+		LanguageHints: []string{"es", "fr"},
+	})
+	s.Require().NoError(err)
+	s.Equal("grok-stt", built.Model())
+}
+
+func (s *STTRouterSuite) TestRegistryBuildsTheTogetherHostedParakeet() {
+	registry := DefaultRegistry()
+	s.T().Setenv("TOGETHER_API_KEY", "test-key")
+
+	built, err := registry.Build("together-parakeet", routing.Spec{
+		Model: "nvidia/parakeet-tdt-0.6b-v3-realtime",
+	})
+	s.Require().NoError(err)
+	s.Equal("nvidia/parakeet-tdt-0.6b-v3-realtime", built.Model())
+	s.Equal("together-parakeet", built.Provider(),
+		"the self-hosted deployment of the same weights is a different provider")
+}
+
 func (s *STTRouterSuite) TestStartRequiresACustomer() {
 	_, err := s.newRouter().Start(s.ctx, Request{Target: "en-low-latency"})
 	s.ErrorContains(err, "customer id is required")

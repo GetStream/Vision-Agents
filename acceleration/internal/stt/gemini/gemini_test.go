@@ -39,8 +39,15 @@ func (s *GeminiSuite) drain(provider *STT) []stt.Event {
 	}
 }
 
-// heard is a frame carrying more of what the caller is saying.
-func heard(text string) serverMessage {
+// hearing is a frame carrying the server's hypothesis of the turn so far.
+func hearing(text string) serverMessage {
+	return serverMessage{ServerContent: &serverContent{
+		InterimInputTranscription: &transcription{Text: text},
+	}}
+}
+
+// settled is a frame carrying the transcript the server has committed to.
+func settled(text string) serverMessage {
 	return serverMessage{ServerContent: &serverContent{InputTranscription: &transcription{Text: text}}}
 }
 
@@ -104,55 +111,53 @@ func (s *GeminiSuite) TestTheKeyTravelsOnTheQueryStringBecauseTheresNowhereElse(
 	s.True(strings.HasPrefix(provider.endpoint(), DefaultURL+"?"))
 }
 
-func (s *GeminiSuite) TestATranscriptionChunkAppendsRatherThanReplacing() {
+func (s *GeminiSuite) TestAHypothesisReplacesTheOneBeforeItRatherThanAddingToIt() {
 	provider := s.newSTT()
 
-	provider.handleMessage(heard("in a quiet "))
-	provider.handleMessage(heard("village"))
+	provider.handleMessage(hearing("in a"))
+	provider.handleMessage(hearing("in a quiet village"))
 
 	said := transcripts(s.drain(provider))
 	s.Require().Len(said, 2)
-	s.Equal(stt.ModeDelta, said[0].Mode, "Gemini sends the words in pieces that append")
-	s.Equal("in a quiet ", said[0].Text)
-	s.Equal("village", said[1].Text)
+	s.Equal(stt.ModeReplacement, said[0].Mode, "each hypothesis restates the turn so far")
+	s.Equal("in a", said[0].Text)
+	s.Equal("in a quiet village", said[1].Text)
+	s.False(said[1].Final(), "the caller has not stopped talking yet")
 	s.Equal(ProviderName, said[0].Provider)
 	s.Equal(DefaultModel, said[0].Model)
 }
 
-func (s *GeminiSuite) TestTheEndOfATurnSettlesTheWholeUtterance() {
+func (s *GeminiSuite) TestTheFinalizedTranscriptSettlesTheTurn() {
 	provider := s.newSTT()
 
-	provider.handleMessage(heard("in a quiet "))
-	provider.handleMessage(heard("village"))
+	provider.handleMessage(hearing("in a quiet"))
+	provider.handleMessage(settled("In a quiet village."))
 	provider.handleMessage(stopped())
 
 	said := transcripts(s.drain(provider))
-	s.Require().Len(said, 3)
-	s.True(said[2].Final())
-	s.Equal("in a quiet village", said[2].Text,
-		"the final is the one frame carrying the utterance as a whole")
+	s.Require().Len(said, 2, "the boundary after a finalized turn settles nothing further")
+	s.True(said[1].Final())
+	s.Equal("In a quiet village.", said[1].Text)
 }
 
 func (s *GeminiSuite) TestTheNextTurnStartsAfreshRatherThanCarryingWordsOver() {
 	provider := s.newSTT()
 
-	provider.handleMessage(heard("hello"))
-	provider.handleMessage(stopped())
-	provider.handleMessage(heard("goodbye"))
-	provider.handleMessage(stopped())
+	provider.handleMessage(settled("hello"))
+	provider.handleMessage(settled("goodbye"))
 
 	said := transcripts(s.drain(provider))
-	s.Require().Len(said, 4)
-	s.Equal("goodbye", said[3].Text, "the second turn must not repeat the first")
+	s.Require().Len(said, 2)
+	s.Equal("goodbye", said[1].Text, "the second turn must not repeat the first")
 }
 
-func (s *GeminiSuite) TestTheDeltasOfATurnShareTheUtteranceOfTheFinalTheyBecome() {
+func (s *GeminiSuite) TestTheHypothesesOfATurnShareTheUtteranceOfTheFinalTheySettleInto() {
 	provider := s.newSTT()
 
-	provider.handleMessage(heard("in a quiet "))
-	provider.handleMessage(heard("village"))
-	provider.handleMessage(stopped())
-	provider.handleMessage(heard("forgotten"))
+	provider.handleMessage(hearing("in a"))
+	provider.handleMessage(hearing("in a quiet village"))
+	provider.handleMessage(settled("In a quiet village."))
+	provider.handleMessage(hearing("forgotten"))
 
 	said := transcripts(s.drain(provider))
 	s.Require().Len(said, 4)
@@ -173,7 +178,8 @@ func (s *GeminiSuite) TestATurnBoundaryWithNothingBeforeItIsNotATurn() {
 func (s *GeminiSuite) TestAnEmptyChunkIsNotEmitted() {
 	provider := s.newSTT()
 
-	provider.handleMessage(heard(""))
+	provider.handleMessage(hearing(""))
+	provider.handleMessage(settled("   "))
 
 	s.Empty(s.drain(provider))
 }
@@ -181,12 +187,13 @@ func (s *GeminiSuite) TestAnEmptyChunkIsNotEmitted() {
 func (s *GeminiSuite) TestBeingInterruptedStillSettlesWhatWasHeard() {
 	provider := s.newSTT()
 
-	provider.handleMessage(heard("wait actually"))
+	provider.handleMessage(hearing("wait actually"))
 	provider.handleMessage(serverMessage{ServerContent: &serverContent{Interrupted: true}})
 
 	said := transcripts(s.drain(provider))
 	s.Require().Len(said, 2)
 	s.True(said[1].Final(), "words cut short are still words that were said")
+	s.Equal("wait actually", said[1].Text)
 }
 
 func (s *GeminiSuite) TestAWarningThatTheSessionIsEndingIsNotATranscript() {
@@ -197,18 +204,34 @@ func (s *GeminiSuite) TestAWarningThatTheSessionIsEndingIsNotATranscript() {
 	s.Empty(s.drain(provider))
 }
 
-func (s *GeminiSuite) TestKeytermsAreToldToTheModelBecauseTheresNoFieldForThem() {
-	provider, err := New(Options{APIKey: "k", Keyterms: []string{"Vision Agents", "  ", "Stream"}})
+func (s *GeminiSuite) TestKeytermsBecomeTheCustomVocabulary() {
+	provider, err := New(Options{
+		APIKey:        "k",
+		Keyterms:      []string{"Vision Agents", "  ", "Stream"},
+		LanguageHints: []string{"en-US"},
+		Mode:          ModeSmart,
+	})
 	s.Require().NoError(err)
 
-	said := provider.instruction()
-	s.Require().NotNil(said)
-	s.Contains(said.Parts[0].Text, "Vision Agents, Stream",
-		"a term nobody meant to add should not be passed on")
+	asked := provider.transcription()
+	s.Equal([]string{"Vision Agents", "Stream"}, asked.CustomVocabulary,
+		"a term nobody meant to add should not take up one of the places")
+	s.Equal([]string{"en-US"}, asked.LanguageCodes)
+	s.Equal("SMART", asked.Mode)
 }
 
-func (s *GeminiSuite) TestAVoiceWithNothingToSayIsGivenNoInstruction() {
-	s.Nil(s.newSTT().instruction(), "an empty instruction is worse than none")
+func (s *GeminiSuite) TestTranscriptionIsAskedForEvenWithNothingToConfigure() {
+	asked := s.newSTT().transcription()
+
+	s.Require().NotNil(asked, "sending this at all is what turns transcription on")
+	s.Empty(asked.CustomVocabulary)
+	s.Empty(asked.LanguageCodes)
+	s.Empty(asked.Mode, "an unset mode leaves the server on its own default")
+}
+
+func (s *GeminiSuite) TestNewRejectsAModeTheAPIDoesNotHave() {
+	_, err := New(Options{APIKey: "k", Mode: "smart"})
+	s.ErrorContains(err, "mode must be VERBATIM or SMART")
 }
 
 func (s *GeminiSuite) TestProcessAudioRejectsWrongAudioFormat() {

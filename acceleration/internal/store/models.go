@@ -248,9 +248,12 @@ type AgentConfig struct {
 	// KnowledgeNamespace is what the agent may look things up in.
 	KnowledgeNamespace string            `bun:"knowledge_namespace,notnull"`
 	Tags               map[string]string `bun:"tags,type:jsonb"`
-	CreatedAt          time.Time         `bun:"created_at,notnull"`
-	UpdatedAt          time.Time         `bun:"updated_at,notnull"`
-	DeletedAt          *time.Time        `bun:"deleted_at"`
+	// SyncHash is a fingerprint of the last directory written onto this config. Empty
+	// if it was never synced from a directory.
+	SyncHash  string     `bun:"sync_hash,notnull"`
+	CreatedAt time.Time  `bun:"created_at,notnull"`
+	UpdatedAt time.Time  `bun:"updated_at,notnull"`
+	DeletedAt *time.Time `bun:"deleted_at"`
 }
 
 // Skill is one kind of work worth handing to the slower model, stored so a config can name

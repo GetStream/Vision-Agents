@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/deepseek"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // flashModel is the model the test routes to. It is on Baseten's shared Model APIs, so no

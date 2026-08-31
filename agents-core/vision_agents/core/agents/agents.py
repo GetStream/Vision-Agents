@@ -136,11 +136,11 @@ class Agent:
     def __init__(
         self,
         # edge network for video & audio
-        edge: EdgeTransport,
+        edge: Optional[EdgeTransport] = None,
         # llm, optionally with sts/realtime capabilities
-        llm: LLM | AudioLLM | VideoLLM,
+        llm: Optional[LLM | AudioLLM | VideoLLM] = None,
         # the agent's user info
-        agent_user: User,
+        agent_user: Optional[User] = None,
         # instructions
         instructions: str = "Keep your replies short and dont use special characters.",
         # setup stt, tts, and turn detection if not using a realtime llm
@@ -174,6 +174,9 @@ class Agent:
         memory_filter: Optional[dict[str, str]] = None,
         # Where outbound calls are placed, for agents that ring people
         phone: Optional[Telephony] = None,
+        # A stored agent config on the acceleration backend. Fills in edge, llm,
+        # agent_user and phone when they are not passed.
+        config: str = "",
     ):
         """Initialize the Agent.
 
@@ -215,8 +218,21 @@ class Agent:
             memory_filter: Scope keys narrowing which memories a remote call recalls.
             phone: Where `outbound_call` places calls, e.g. `stream.Phone()`. Without one
                 the agent can be joined to calls but cannot ring anybody.
+            config: The name of a stored agent config. When set, the Go backend handles
+                LLM routing, and `edge`, `llm`, `agent_user` and `phone` default to the
+                acceleration plugins.
 
         """
+        if config:
+            edge, llm, agent_user, phone = _accelerated_defaults(
+                config, edge, llm, agent_user, phone
+            )
+        if edge is None or llm is None or agent_user is None:
+            raise ValueError(
+                "an agent needs an edge, an llm and a user; pass them, or pass "
+                "config= for the acceleration backend to fill them in"
+            )
+
         self._agent_user_initialized = False
         self.agent_user = agent_user
         if self.agent_user.id:
@@ -535,7 +551,9 @@ class Agent:
 
     @asynccontextmanager
     async def join(
-        self, call: Call, participant_wait_timeout: Optional[float] = 10.0
+        self,
+        call: Call | InboundCall,
+        participant_wait_timeout: Optional[float] = 10.0,
     ) -> AsyncIterator[None]:
         """
         Join the given call.
@@ -543,15 +561,30 @@ class Agent:
         The agent can join the call only once.
         Once the call is ended, the agent closes itself.
 
+        An arriving phone call (`InboundCall`) is joined immediately; wait for the
+        caller with `call.wait_for_phone_participant()` before greeting them.
+
         Args:
-            call: the call to join.
+            call: the call to join, or an inbound call to attach to.
             participant_wait_timeout: timeout in seconds to wait for other participants to join before proceeding.
                  If `0`, do not wait at all. If `None`, wait forever.
-                 Default - `10.0`.
+                 Default - `10.0`, or `0` for an inbound call.
 
         Returns:
 
         """
+        if isinstance(call, InboundCall):
+            if not call.call_id:
+                raise ValueError(
+                    "an inbound call has to name the call the caller is in"
+                )
+            inbound = call
+            call = await self.create_call(
+                inbound.call_type or "default", inbound.call_id
+            )
+            inbound._joined = self
+            if participant_wait_timeout == 10.0:
+                participant_wait_timeout = 0.0
         if self._call_ended_event is not None:
             raise RuntimeError("Agent already joined the call")
 
@@ -1695,6 +1728,45 @@ def _component_info(component: Component) -> dict[str, MetadataValue]:
     if model and isinstance(model, str):
         info["model"] = model
     return info
+
+
+def _accelerated_defaults(
+    config: str,
+    edge: Optional[EdgeTransport],
+    llm: Optional[LLM | AudioLLM | VideoLLM],
+    agent_user: Optional[User],
+    phone: Optional[Telephony],
+) -> tuple[EdgeTransport, LLM | AudioLLM | VideoLLM, User, Optional[Telephony]]:
+    """Fill in the acceleration plugins when an agent is built from a stored config."""
+    try:
+        from vision_agents.plugins import getstream, stream
+    except ImportError as exc:
+        raise ValueError(
+            "Agent(config=) needs vision-agents-plugins-stream and "
+            "vision-agents-plugins-getstream"
+        ) from exc
+
+    if edge is None:
+        edge = getstream.Edge()
+    if llm is None:
+        llm = stream.Accelerated(config=config)
+    if agent_user is None:
+        agent_user = User(name=config, id=_user_id_of(config))
+    if phone is None:
+        phone = stream.Phone()
+    return edge, llm, agent_user, phone
+
+
+def _user_id_of(name: str) -> str:
+    """Turn a config name into something a call can be joined under."""
+    chars: list[str] = []
+    for char in name:
+        if char.isalnum() or char in "-_":
+            chars.append(char.lower())
+        else:
+            chars.append("-")
+    slug = "".join(chars).strip("-")
+    return slug or "vision-agent"
 
 
 class _AgentLoggerAdapter(logging.LoggerAdapter):

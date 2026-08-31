@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // answerWithin bounds how long a real subagent is given. It is far longer than a skill's

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // DSNEnvVar is where the tests look for a Postgres to run against.

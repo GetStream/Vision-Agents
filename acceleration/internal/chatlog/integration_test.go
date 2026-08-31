@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // writeGrace is how long the asynchronous writer is given to drain, since a conversation
