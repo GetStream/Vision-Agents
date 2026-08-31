@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -42,6 +43,9 @@ type loopbackEdge struct {
 	published []audio.PcmData
 	joined    bool
 	left      bool
+	// unheard is speech that has been published but has not gone out yet, which is what a
+	// real edge holds while a reply is being spoken.
+	unheard bool
 }
 
 func newLoopbackEdge() *loopbackEdge {
@@ -67,6 +71,20 @@ func (e *loopbackEdge) PublishAudio(pcm audio.PcmData) error {
 	defer e.mu.Unlock()
 	e.published = append(e.published, pcm)
 	return nil
+}
+
+func (e *loopbackEdge) SpeechPending() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.unheard
+}
+
+// holdSpeech makes the edge report published speech as still on its way out, the way a real
+// one does while a reply is being spoken.
+func (e *loopbackEdge) holdSpeech(unheard bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.unheard = unheard
 }
 
 func (e *loopbackEdge) Leave() error {
@@ -422,6 +440,9 @@ type AgentSuite struct {
 	// base, and namespace is which one it reads.
 	knows     *stubKnowledge
 	namespace string
+	// finds is what the agent may find out about now, when a test gives it a search
+	// provider.
+	finds *stubSearch
 	// performing is what a voice that acts stage directions asks to have said about it.
 	// It is set before joining, because the stub voice is built there.
 	performing string
@@ -443,6 +464,7 @@ func (s *AgentSuite) SetupTest() {
 	s.remembers = nil
 	s.knows = nil
 	s.namespace = ""
+	s.finds = nil
 	s.subagent = nil
 	s.skills = harness.Skills{}
 	s.line = nil
@@ -592,6 +614,13 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		reading = s.knows
 	}
 
+	var finding *searchrouter.Router
+	searchTarget := ""
+	if s.finds != nil {
+		finding = s.searchRouter()
+		searchTarget = "stub/now"
+	}
+
 	agent, err := New(Options{
 		Edge:               s.edge,
 		Instructions:       "be brief",
@@ -614,6 +643,8 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		Memory:             remembering,
 		Knowledge:          reading,
 		KnowledgeNamespace: s.namespace,
+		Search:             finding,
+		SearchTarget:       searchTarget,
 		Logger:             logger,
 	})
 	s.Require().NoError(err)
@@ -1643,6 +1674,27 @@ func (s *AgentSuite) TestFinishWaitsForTheAgentToStopTalking() {
 		SynthesisID:     s.voice.spoken()[0].ID,
 		AudioDurationMs: 900,
 	})
+	s.NoError(s.agent.Finish(s.ctx))
+}
+
+func (s *AgentSuite) TestFinishWaitsForTheReplyToBeHeard() {
+	// A voice streams a reply far faster than it is spoken, so an utterance the provider
+	// has finished sending is still on its way out of the edge. Leaving on that word
+	// discards the rest, and the caller hears the agent stop short of its last words.
+	s.join(true)
+	s.edge.holdSpeech(true)
+
+	s.Require().NoError(s.agent.Say(s.ctx, "the last thing the caller hears"))
+	s.voice.emitter.Send(tts.SynthesisComplete{
+		SynthesisID:     s.voice.spoken()[0].ID,
+		AudioDurationMs: 900,
+	})
+
+	ctx, cancel := context.WithTimeout(s.ctx, 50*time.Millisecond)
+	defer cancel()
+	s.Error(s.agent.Finish(ctx), "the reply has not been heard yet, so finishing waits")
+
+	s.edge.holdSpeech(false)
 	s.NoError(s.agent.Finish(s.ctx))
 }
 

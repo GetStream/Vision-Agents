@@ -49,6 +49,7 @@ class CreateSessionRequest:
         tts (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
         subagent (str | Unset): The model that does the thinking. Empty means the voice model answers everything itself,
             and skills mean nothing.
+        search (str | Unset): Omit it and the config decides, or search-fast when there is no config.
         voice (str | Unset): Provider-specific voice id.
         languages (list[str] | Unset): Language hints, which narrow the candidates in every modality.
         keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong. Up to 100
@@ -87,6 +88,7 @@ class CreateSessionRequest:
     stt: str | Unset = UNSET
     tts: str | Unset = UNSET
     subagent: str | Unset = UNSET
+    search: str | Unset = UNSET
     voice: str | Unset = UNSET
     languages: list[str] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
@@ -132,6 +134,8 @@ class CreateSessionRequest:
         tts = self.tts
 
         subagent = self.subagent
+
+        search = self.search
 
         voice = self.voice
 
@@ -218,6 +222,8 @@ class CreateSessionRequest:
             field_dict["tts"] = tts
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
+        if search is not UNSET:
+            field_dict["search"] = search
         if voice is not UNSET:
             field_dict["voice"] = voice
         if languages is not UNSET:
@@ -253,7 +259,9 @@ class CreateSessionRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.create_session_request_tags import CreateSessionRequestTags
+        from ..models.create_session_request_tags import (
+            CreateSessionRequestTags,
+        )
         from ..models.session_memory import SessionMemory
         from ..models.session_phone import SessionPhone
         from ..models.session_skill import SessionSkill
@@ -287,6 +295,8 @@ class CreateSessionRequest:
         tts = d.pop("tts", UNSET)
 
         subagent = d.pop("subagent", UNSET)
+
+        search = d.pop("search", UNSET)
 
         voice = d.pop("voice", UNSET)
 
@@ -367,6 +377,7 @@ class CreateSessionRequest:
             stt=stt,
             tts=tts,
             subagent=subagent,
+            search=search,
             voice=voice,
             languages=languages,
             keyterms=keyterms,

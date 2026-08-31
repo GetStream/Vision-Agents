@@ -481,6 +481,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/knowledge/urls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The pages a knowledge base is kept filled from */
+        get: operations["listKnowledgeUrls"];
+        put?: never;
+        /**
+         * Keep a knowledge base filled from a page
+         * @description Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+         *     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+         */
+        post: operations["addKnowledgeUrl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/knowledge/urls/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page, and when it was last read */
+        get: operations["getKnowledgeUrl"];
+        put?: never;
+        post?: never;
+        /**
+         * Stop filling a knowledge base from a page
+         * @description The passages the page wrote are removed too. Leaving them would have the agent go on answering out of a page nobody subscribes to any more, which is worse than it saying it does not know.
+         */
+        delete: operations["deleteKnowledgeUrl"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/knowledge/urls/{id}/index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read a page again
+         * @description Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+         */
+        post: operations["indexKnowledgeUrl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/campaigns": {
         parameters: {
             query?: never;
@@ -947,6 +1010,8 @@ export interface components {
             llm?: string;
             /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
             subagent?: string;
+            /** @description What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way. */
+            search?: string;
             instructions?: string;
             greeting?: string;
             /** @description Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set. */
@@ -968,6 +1033,7 @@ export interface components {
             voice?: string;
             llm?: string;
             subagent?: string;
+            search?: string;
             instructions?: string;
             greeting?: string;
             skills?: string[];
@@ -1102,6 +1168,44 @@ export interface components {
             /** @description How many passages they were cut into and written as. */
             passages: number;
         };
+        KnowledgeUrlRequest: {
+            /**
+             * @description The knowledge base to fill, which is what a config's knowledge_namespace names.
+             * @example docs
+             */
+            namespace: string;
+            /**
+             * @description The page to read. It must be http or https: this is handed to a crawler and then used to key the passages it becomes.
+             * @example https://example.com/pricing
+             */
+            url: string;
+        };
+        /**
+         * @description Where the page has got to. Pending means it has been added but not yet read, which is also what a read that died halfway through leaves behind.
+         * @enum {string}
+         */
+        KnowledgeUrlState: "pending" | "indexed" | "failed";
+        KnowledgeUrl: {
+            id: string;
+            namespace: string;
+            url: string;
+            /** @description What the page called itself when it was last read. */
+            title?: string;
+            state: components["schemas"]["KnowledgeUrlState"];
+            /** @description Why the last read failed. Empty otherwise. */
+            error?: string;
+            /** @description How many passages the page was last cut into. */
+            passages: number;
+            /**
+             * Format: date-time
+             * @description When it was last read successfully. Absent means never, which is what separates a page that has never worked from one that worked and has since broken.
+             */
+            last_indexed_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         CampaignRequest: {
             name: string;
             /** @description The agent config the calls are made with. */
@@ -1175,6 +1279,18 @@ export interface components {
              * @description Absent while the call is still running.
              */
             ended_at?: string;
+            /** @description The transcription target the call ran with, after a session's overrides were folded into whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is several models and routing fails over between them, so per-turn providers are in the request rows. */
+            stt?: string;
+            /** @description The voice target, on the same terms as stt. */
+            tts?: string;
+            /** @description The target that held the conversation. */
+            llm?: string;
+            /** @description The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. */
+            subagent?: string;
+            /** @description What the agent was told to be on this call. */
+            instructions?: string;
+            /** @description What the fast model could hand to the subagent. The instructions behind each name are in the skill registry. */
+            skills?: string[];
             /** @description What a model made of the call, written once it was over. */
             summary?: string;
             /** @description How well the agent handled it, from 1 to 5. */
@@ -1240,19 +1356,19 @@ export interface components {
             turn_id?: string;
             /** @description Who it concerned. */
             participant?: string;
-            /** @description What was heard, or what the agent decided to say. */
+            /** @description What was heard, what the agent decided to say, or what the subagent came back with. */
             said?: string;
             /**
              * Format: double
-             * @description What the flow controller took to rule, where anything was asked.
+             * @description What the flow controller took to rule, or what the subagent took to answer. Zero where nothing was asked.
              */
             latency_ms?: number;
         };
         /**
-         * @description What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent.
+         * @description What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.
          * @enum {string}
          */
-        DecisionKind: "ask" | "wait" | "ignore" | "answer" | "queue" | "interrupt" | "shorten" | "backchannel" | "supersede" | "compact" | "delegate" | "fail";
+        DecisionKind: "ask" | "wait" | "ignore" | "answer" | "queue" | "interrupt" | "shorten" | "backchannel" | "supersede" | "compact" | "delegate" | "settle" | "fail";
         CreateSessionRequest: {
             /** @description The call to join. Required unless the session is text. */
             call_id?: string;
@@ -1290,6 +1406,8 @@ export interface components {
             tts?: string;
             /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
             subagent?: string;
+            /** @description Omit it and the config decides, or search-fast when there is no config. */
+            search?: string;
             /** @description Provider-specific voice id. */
             voice?: string;
             /** @description Language hints, which narrow the candidates in every modality. */
@@ -1367,11 +1485,11 @@ export interface components {
             };
         };
         /**
-         * @description What kind of work was done. The first three are routed across providers. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+         * @description What kind of work was done. The first four are routed across providers. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
          * @example tts
          * @enum {string}
          */
-        Modality: "stt" | "tts" | "llm" | "memory" | "knowledge" | "phone";
+        Modality: "stt" | "tts" | "llm" | "search" | "memory" | "knowledge" | "phone";
         /**
          * @default hourly
          * @enum {string}
@@ -2704,6 +2822,133 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    listKnowledgeUrls: {
+        parameters: {
+            query?: {
+                /** @description One knowledge base. Omit to list every page the customer has. */
+                namespace?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The customer's pages, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeUrl"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    addKnowledgeUrl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeUrlRequest"];
+            };
+        };
+        responses: {
+            /** @description The page was stored, read or not */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeUrl"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getKnowledgeUrl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeUrl"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteKnowledgeUrl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page and its passages are gone */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    indexKnowledgeUrl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page as it now is */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeUrl"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
         };
     };
     listCampaigns: {

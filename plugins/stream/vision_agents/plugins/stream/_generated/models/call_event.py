@@ -24,12 +24,13 @@ class CallEvent:
             to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and
             shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a
             ruling about words that have since changed; compacting replaces old history with a summary; delegating hands
-            work to the subagent.
+            work to the subagent and settling is that work coming back, answered or not.
         reason (str): Why the conversation chose it, in words.
         turn_id (str | Unset): The exchange it was about, which lines it up against that turn's timings.
         participant (str | Unset): Who it concerned.
-        said (str | Unset): What was heard, or what the agent decided to say.
-        latency_ms (float | Unset): What the flow controller took to rule, where anything was asked.
+        said (str | Unset): What was heard, what the agent decided to say, or what the subagent came back with.
+        latency_ms (float | Unset): What the flow controller took to rule, or what the subagent took to answer. Zero
+            where nothing was asked.
     """
 
     at: datetime.datetime

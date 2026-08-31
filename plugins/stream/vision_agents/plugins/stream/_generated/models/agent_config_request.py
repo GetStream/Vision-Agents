@@ -27,6 +27,8 @@ class AgentConfigRequest:
         llm (str | Unset): The model holding the conversation.
         subagent (str | Unset): The model that does the thinking. Empty means the voice model answers everything itself,
             and skills mean nothing.
+        search (str | Unset): What the agent finds out today's answers with, as a provider/model or a capability
+            shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
         instructions (str | Unset):
         greeting (str | Unset):
         skills (list[str] | Unset): Skill names, either the customer's own or one of the built-in think, recall and
@@ -44,6 +46,7 @@ class AgentConfigRequest:
     voice: str | Unset = UNSET
     llm: str | Unset = UNSET
     subagent: str | Unset = UNSET
+    search: str | Unset = UNSET
     instructions: str | Unset = UNSET
     greeting: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
@@ -64,6 +67,8 @@ class AgentConfigRequest:
         llm = self.llm
 
         subagent = self.subagent
+
+        search = self.search
 
         instructions = self.instructions
 
@@ -100,6 +105,8 @@ class AgentConfigRequest:
             field_dict["llm"] = llm
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
+        if search is not UNSET:
+            field_dict["search"] = search
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
         if greeting is not UNSET:
@@ -117,7 +124,9 @@ class AgentConfigRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.agent_config_request_tags import AgentConfigRequestTags
+        from ..models.agent_config_request_tags import (
+            AgentConfigRequestTags,
+        )
 
         d = dict(src_dict)
         name = d.pop("name")
@@ -131,6 +140,8 @@ class AgentConfigRequest:
         llm = d.pop("llm", UNSET)
 
         subagent = d.pop("subagent", UNSET)
+
+        search = d.pop("search", UNSET)
 
         instructions = d.pop("instructions", UNSET)
 
@@ -156,6 +167,7 @@ class AgentConfigRequest:
             voice=voice,
             llm=llm,
             subagent=subagent,
+            search=search,
             instructions=instructions,
             greeting=greeting,
             skills=skills,

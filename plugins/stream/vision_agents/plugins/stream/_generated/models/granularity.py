@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class Granularity(str, Enum):
+class Granularity(StrEnum):
     DAILY = "daily"
     HOURLY = "hourly"
 

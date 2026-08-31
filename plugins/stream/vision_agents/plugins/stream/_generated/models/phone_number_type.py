@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class PhoneNumberType(str, Enum):
+class PhoneNumberType(StrEnum):
     LOCAL = "local"
     MOBILE = "mobile"
     TOLL_FREE = "toll_free"

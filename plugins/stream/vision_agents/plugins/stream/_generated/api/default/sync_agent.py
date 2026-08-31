@@ -70,9 +70,9 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
 ) -> Response[Error | SyncAgentResult]:
-    r"""Store an agent directory's instructions, skills and knowledge
+    """Store an agent directory's instructions, skills and knowledge
 
-     Reads as \"this is what the agent is\", from a directory of instructions.md, skills/ and knowledge/.
+     Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/.
     The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a
     process that syncs on startup is cheap when nothing has changed.
     Models, voice and the rest of a config are left alone. This path only writes what a directory can
@@ -105,9 +105,9 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
 ) -> Error | SyncAgentResult | None:
-    r"""Store an agent directory's instructions, skills and knowledge
+    """Store an agent directory's instructions, skills and knowledge
 
-     Reads as \"this is what the agent is\", from a directory of instructions.md, skills/ and knowledge/.
+     Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/.
     The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a
     process that syncs on startup is cheap when nothing has changed.
     Models, voice and the rest of a config are left alone. This path only writes what a directory can
@@ -135,9 +135,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
 ) -> Response[Error | SyncAgentResult]:
-    r"""Store an agent directory's instructions, skills and knowledge
+    """Store an agent directory's instructions, skills and knowledge
 
-     Reads as \"this is what the agent is\", from a directory of instructions.md, skills/ and knowledge/.
+     Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/.
     The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a
     process that syncs on startup is cheap when nothing has changed.
     Models, voice and the rest of a config are left alone. This path only writes what a directory can
@@ -168,9 +168,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
 ) -> Error | SyncAgentResult | None:
-    r"""Store an agent directory's instructions, skills and knowledge
+    """Store an agent directory's instructions, skills and knowledge
 
-     Reads as \"this is what the agent is\", from a directory of instructions.md, skills/ and knowledge/.
+     Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/.
     The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a
     process that syncs on startup is cheap when nothing has changed.
     Models, voice and the rest of a config are left alone. This path only writes what a directory can

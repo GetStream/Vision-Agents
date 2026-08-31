@@ -364,7 +364,7 @@ func note(result Result) string {
 	case result.Answered():
 		return fmt.Sprintf("Your colleague has come back on the %s you asked for: %s. "+
 			"Tell the caller, in your own words.", result.Skill, result.Text)
-	case result.State == Failed:
+	case result.State == Failed, result.Reason == ReasonDeadline:
 		return fmt.Sprintf("The %s you asked for did not come back. Tell the caller you "+
 			"could not find out, and carry on.", result.Skill)
 	}

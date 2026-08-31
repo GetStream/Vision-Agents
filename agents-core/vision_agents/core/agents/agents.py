@@ -84,6 +84,11 @@ from .transcript import TranscriptStore
 
 logger = logging.getLogger(__name__)
 
+# What an agent is told to be when nobody says. An agent built from a config is the
+# exception: the config carries its own instructions, and a default sent alongside them
+# would override what it says.
+DEFAULT_INSTRUCTIONS = "Keep your replies short and dont use special characters."
+
 # Empty PCM used to drain a track's resampler tail on a bare end-of-turn marker
 # (an AudioOutputChunk with final=True but no data). With no samples nothing is
 # resampled — write(..., final=True) only flushes the tail — so the rate is inert.
@@ -142,7 +147,7 @@ class Agent:
         # the agent's user info
         agent_user: Optional[User] = None,
         # instructions
-        instructions: str = "Keep your replies short and dont use special characters.",
+        instructions: Optional[str] = None,
         # setup stt, tts, and turn detection if not using a realtime llm
         stt: Optional[STT] = None,
         tts: Optional[TTS] = None,
@@ -185,6 +190,8 @@ class Agent:
             llm: LLM, optionally with audio/video/realtime capabilities.
             agent_user: The agent's user identity.
             instructions: System instructions for the LLM. Supports `@file.md` references.
+                Left out, an agent built from a config is told what to be by the config,
+                and any other agent gets `DEFAULT_INSTRUCTIONS`.
             stt: Speech-to-text service. Not needed when using a realtime LLM.
             tts: Text-to-speech service. Not needed when using a realtime LLM.
             turn_detection: Turn detector for managing conversational turns.
@@ -262,6 +269,8 @@ class Agent:
             multi_speaker_filter or FirstSpeakerWinsFilter()
         )
 
+        if instructions is None:
+            instructions = "" if config else DEFAULT_INSTRUCTIONS
         self.instructions = Instructions(input_text=instructions)
         self.edge = edge
         self.phone = phone

@@ -7,17 +7,6 @@
 
 
 
-## Latency benchmark
-
-Start an incoming and an outgoing call on each vendor in a region you want to have a phone number. Lets take the 10 most populous cities in the USA as a measurement point.
-
-Measure end to end latency
-
-Build a matrix of each provider calling each other provider in a certain city
-For each cell in the matrix run the tests 10 times
-Encode a timestamp as an audio fragment, so you can measure the delay
-This matrix allows you to calculate how much latency is added by the caller and by who you’re calling
-
 
 # Customer database model
 

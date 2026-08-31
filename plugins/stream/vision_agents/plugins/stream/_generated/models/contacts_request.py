@@ -42,7 +42,9 @@ class ContactsRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.contacts_request_contacts_item import ContactsRequestContactsItem
+        from ..models.contacts_request_contacts_item import (
+            ContactsRequestContactsItem,
+        )
 
         d = dict(src_dict)
         contacts = []

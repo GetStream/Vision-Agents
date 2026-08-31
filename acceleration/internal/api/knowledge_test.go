@@ -34,6 +34,16 @@ func (b *base) Upsert(_ context.Context, namespace string, documents []knowledge
 	return nil
 }
 
+func (b *base) Delete(_ context.Context, _ string, ids []string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for _, id := range ids {
+		delete(b.passages, id)
+	}
+	return nil
+}
+
 func (b *base) stored() (string, map[string]knowledge.Document) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -182,6 +192,34 @@ func (s *ServerSuite) TestTheChunkSizeCanBeMadeSmallerThanTheDefault() {
 
 	_, passages := written.stored()
 	s.Len(passages, result.Passages)
+}
+
+func (s *ServerSuite) TestAddingAKnowledgeUrlRequiresTheCustomerHeader() {
+	recorder := s.post("/v1/agents/knowledge/urls", "",
+		`{"namespace":"docs","url":"https://example.com/pricing"}`)
+
+	s.Equal(http.StatusUnauthorized, recorder.Code)
+}
+
+func (s *ServerSuite) TestWithoutACrawlerAUrlWouldBeASubscriptionNothingHonours() {
+	recorder := s.post("/v1/agents/knowledge/urls", "acme",
+		`{"namespace":"docs","url":"https://example.com/pricing"}`)
+
+	s.Equal(http.StatusBadRequest, recorder.Code)
+
+	var failure Error
+	s.decode(recorder, &failure)
+	s.Contains(failure.Error, "knowledge urls are not available")
+}
+
+func (s *ServerSuite) TestListingKnowledgeUrlsSaysWhatTheDeploymentIsMissing() {
+	recorder := s.get("/v1/agents/knowledge/urls", "acme")
+
+	s.Equal(http.StatusBadRequest, recorder.Code)
+
+	var failure Error
+	s.decode(recorder, &failure)
+	s.Contains(failure.Error, "no database or no way to read a page")
 }
 
 // quote renders a string as a JSON one, for building a body by hand.

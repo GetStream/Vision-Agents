@@ -18,6 +18,7 @@ const (
 	toolTransfer = "transfer"
 	toolPress    = "press"
 	toolLookup   = "lookup"
+	toolSearch   = "search"
 )
 
 // arrivalTimeout bounds how long a warm transfer waits for the human to pick up. Past it
@@ -165,6 +166,13 @@ func (a *Agent) callTool(call llm.ToolCall) (string, bool, error) {
 		return a.lookup(ctx, call)
 	}
 
+	if call.Name == toolSearch {
+		if a.searcher == nil {
+			return "", false, errors.New("agent: this agent cannot search")
+		}
+		return a.search(ctx, call)
+	}
+
 	if a.options.ToolRunner == nil {
 		return "", false, fmt.Errorf("agent: %s is not a tool this agent can run", call.Name)
 	}
@@ -186,6 +194,8 @@ func (a *Agent) availableTools() harness.Tools {
 			runnable = a.options.Telephony != nil
 		case tool.Name == toolLookup:
 			runnable = a.knowledge != nil
+		case tool.Name == toolSearch:
+			runnable = a.searcher != nil
 		}
 		if runnable {
 			available.Tools = append(available.Tools, tool)

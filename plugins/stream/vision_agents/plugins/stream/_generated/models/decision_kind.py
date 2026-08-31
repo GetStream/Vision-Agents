@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class DecisionKind(str, Enum):
+class DecisionKind(StrEnum):
     ANSWER = "answer"
     ASK = "ask"
     BACKCHANNEL = "backchannel"
@@ -11,6 +11,7 @@ class DecisionKind(str, Enum):
     IGNORE = "ignore"
     INTERRUPT = "interrupt"
     QUEUE = "queue"
+    SETTLE = "settle"
     SHORTEN = "shorten"
     SUPERSEDE = "supersede"
     WAIT = "wait"

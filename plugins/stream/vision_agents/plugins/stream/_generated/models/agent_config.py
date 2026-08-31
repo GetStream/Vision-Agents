@@ -30,6 +30,7 @@ class AgentConfig:
         voice (str | Unset):
         llm (str | Unset):
         subagent (str | Unset):
+        search (str | Unset):
         instructions (str | Unset):
         greeting (str | Unset):
         skills (list[str] | Unset):
@@ -49,6 +50,7 @@ class AgentConfig:
     voice: str | Unset = UNSET
     llm: str | Unset = UNSET
     subagent: str | Unset = UNSET
+    search: str | Unset = UNSET
     instructions: str | Unset = UNSET
     greeting: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
@@ -76,6 +78,8 @@ class AgentConfig:
         llm = self.llm
 
         subagent = self.subagent
+
+        search = self.search
 
         instructions = self.instructions
 
@@ -117,6 +121,8 @@ class AgentConfig:
             field_dict["llm"] = llm
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
+        if search is not UNSET:
+            field_dict["search"] = search
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
         if greeting is not UNSET:
@@ -157,6 +163,8 @@ class AgentConfig:
 
         subagent = d.pop("subagent", UNSET)
 
+        search = d.pop("search", UNSET)
+
         instructions = d.pop("instructions", UNSET)
 
         greeting = d.pop("greeting", UNSET)
@@ -186,6 +194,7 @@ class AgentConfig:
             voice=voice,
             llm=llm,
             subagent=subagent,
+            search=search,
             instructions=instructions,
             greeting=greeting,
             skills=skills,

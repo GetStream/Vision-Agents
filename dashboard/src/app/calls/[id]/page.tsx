@@ -7,6 +7,7 @@ import { DecisionLog } from "@/components/DecisionLog";
 import { JoinCall } from "@/components/JoinCall";
 import { LatencyPanel } from "@/components/LatencyPanel";
 import { LiveCaptions } from "@/components/LiveCaptions";
+import { Pipeline } from "@/components/Pipeline";
 import { SpeakingTimeline } from "@/components/SpeakingTimeline";
 import { Transcript } from "@/components/Transcript";
 import { VoicePanel } from "@/components/VoicePanel";
@@ -117,6 +118,8 @@ export default function CallPage({
           hint="Judgements the conversation made"
         />
       </div>
+
+      <Pipeline className="mb-6" call={call.data} />
 
       {call.data.summary ? (
         <Panel title="Summary" className="mb-6">

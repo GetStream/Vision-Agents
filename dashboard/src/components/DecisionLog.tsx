@@ -21,6 +21,7 @@ const styles: Record<string, string> = {
   supersede: "bg-zinc-500/10 text-zinc-500 border-zinc-500/20",
   compact: "bg-blue-500/10 text-blue-600 border-blue-500/20",
   delegate: "bg-indigo-500/10 text-indigo-600 border-indigo-500/20",
+  settle: "bg-indigo-500/10 text-indigo-600 border-indigo-500/20",
   fail: "bg-red-500/10 text-red-600 border-red-500/20",
 };
 

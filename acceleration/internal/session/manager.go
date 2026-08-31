@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
@@ -61,6 +62,8 @@ type ManagerOptions struct {
 	Memory memory.Store
 	// Knowledge is optional, and is what a session with a namespace looks things up in.
 	Knowledge knowledge.Store
+	// Search is optional, and is what every session finds out what is true now with.
+	Search *searchrouter.Router
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 
@@ -163,6 +166,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		logger:   m.logger,
 		watchers: map[uint64]*watcher{},
 		state:    Live,
+		skills:   skills,
 	}
 	created.tools = newBridge(
 		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
@@ -173,7 +177,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// after the caller's so a caller cannot quietly replace a transfer, and the agent
 	// drops whichever of them nothing on this call can carry out.
 	tools := append([]harness.Tool(nil), spec.Tools...)
-	if line != nil || m.reading(spec) {
+	if line != nil || m.reading(spec) || m.searching(spec) {
 		builtin, err := harness.DefaultTools()
 		if err != nil {
 			return nil, err
@@ -210,6 +214,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		Memory:             m.options.Memory,
 		Knowledge:          m.options.Knowledge,
 		KnowledgeNamespace: spec.KnowledgeNamespace,
+		Search:             m.options.Search,
+		SearchTarget:       spec.SearchTarget,
 		AppID:              spec.Memory.AppID,
 		MemoryUserID:       spec.Memory.UserID,
 		MemoryFilter:       spec.Memory.Filter,
@@ -381,6 +387,12 @@ func (m *Manager) box(spec Spec) (sandbox.Sandbox, error) {
 // knowledge store and a namespace to read out of it.
 func (m *Manager) reading(spec Spec) bool {
 	return m.options.Knowledge != nil && spec.KnowledgeNamespace != ""
+}
+
+// searching reports whether this session can find out what is true now. Unlike a handbook
+// today is not scoped to a customer, so all this asks is that something routes the search.
+func (m *Manager) searching(spec Spec) bool {
+	return m.options.Search != nil && spec.SearchTarget != ""
 }
 
 // line is what the session may do to the call it is on, which is nothing unless it was

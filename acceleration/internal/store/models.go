@@ -232,12 +232,14 @@ type AgentConfig struct {
 	ID         string `bun:"id,pk"`
 	CustomerID string `bun:"customer_id,notnull"`
 	Name       string `bun:"name,notnull"`
-	// STT, TTS, LLM and Subagent are routing targets. Empty leaves the session default.
+	// STT, TTS, LLM, Subagent and Search are routing targets. Empty leaves the session
+	// default.
 	STT          string `bun:"stt,notnull"`
 	TTS          string `bun:"tts,notnull"`
 	Voice        string `bun:"voice,notnull"`
 	LLM          string `bun:"llm,notnull"`
 	Subagent     string `bun:"subagent,notnull"`
+	Search       string `bun:"search,notnull"`
 	Instructions string `bun:"instructions,notnull"`
 	Greeting     string `bun:"greeting,notnull"`
 	// Skills names entries in the skill registry rather than carrying their instructions,
@@ -274,6 +276,44 @@ type Skill struct {
 	CreatedAt  time.Time  `bun:"created_at,notnull"`
 	UpdatedAt  time.Time  `bun:"updated_at,notnull"`
 	DeletedAt  *time.Time `bun:"deleted_at"`
+}
+
+// Where a knowledge url has got to.
+const (
+	// KnowledgeURLPending means it has been added but not yet read.
+	KnowledgeURLPending = "pending"
+	// KnowledgeURLIndexed means the page is in the knowledge base and can be looked up.
+	KnowledgeURLIndexed = "indexed"
+	// KnowledgeURLFailed means it could not be read, and Error says why.
+	KnowledgeURLFailed = "failed"
+)
+
+// KnowledgeURL is a page an agent's knowledge base is kept filled from.
+//
+// The passages are in turbopuffer rather than here; this is the subscription to them. It
+// carries how many were written because that is what makes removing them exact: the ids
+// are the url and a position, so knowing the count is knowing which ids to delete.
+type KnowledgeURL struct {
+	bun.BaseModel `bun:"table:knowledge_urls,alias:ku"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// Namespace is the knowledge base the page is read into.
+	Namespace string `bun:"namespace,notnull"`
+	URL       string `bun:"url,notnull"`
+	// Title is what the page called itself, as of the last time it was read.
+	Title string `bun:"title,notnull"`
+	// State is pending, indexed or failed.
+	State string `bun:"state,notnull"`
+	// Error is why the last read failed, and is empty otherwise.
+	Error string `bun:"error,notnull"`
+	// Passages is how many the page was last cut into.
+	Passages int `bun:"passages,notnull"`
+	// LastIndexedAt is when it was last read successfully. Nil means never.
+	LastIndexedAt *time.Time `bun:"last_indexed_at"`
+	CreatedAt     time.Time  `bun:"created_at,notnull"`
+	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
+	DeletedAt     *time.Time `bun:"deleted_at"`
 }
 
 // What a provider has made of a voice's samples.
@@ -372,6 +412,19 @@ type Call struct {
 	StartedAt time.Time `bun:"started_at,notnull"`
 	// EndedAt is nil while the call is still running.
 	EndedAt *time.Time `bun:"ended_at"`
+	// STT, TTS, LLM and Subagent are the targets the call ran with, after a session's
+	// overrides were folded into whatever config it named. They are what was asked for
+	// rather than what each turn resolved to: a shortcut is several models and routing
+	// fails over between them, so per-turn providers live in requests.
+	STT      string `bun:"stt,nullzero"`
+	TTS      string `bun:"tts,nullzero"`
+	LLM      string `bun:"llm,nullzero"`
+	Subagent string `bun:"subagent,nullzero"`
+	// Instructions is what the agent was told to be on this call.
+	Instructions string `bun:"instructions,nullzero"`
+	// Skills names what the fast model could hand to the subagent. The instructions
+	// behind each name live in the skill registry.
+	Skills []string `bun:"skills,type:jsonb,nullzero"`
 	// Summary, ReviewScore and ReviewNotes are written after the call by a short model
 	// pass over the transcript, so they are empty until it has run.
 	Summary     string            `bun:"summary,nullzero"`

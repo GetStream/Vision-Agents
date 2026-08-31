@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class Tier(str, Enum):
+class Tier(StrEnum):
     HIGH_QUALITY = "high-quality"
     LOW_LATENCY = "low-latency"
 

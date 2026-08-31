@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class SessionState(str, Enum):
+class SessionState(StrEnum):
     ENDED = "ended"
     LIVE = "live"
 

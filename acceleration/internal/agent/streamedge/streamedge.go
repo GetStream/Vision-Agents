@@ -197,6 +197,10 @@ func (e *Edge) Attendance() <-chan agent.Attendance { return e.attending.Events(
 // PublishAudio sends a chunk of the agent's speech to the call.
 func (e *Edge) PublishAudio(pcm audio.PcmData) error { return e.speaker.Write(pcm) }
 
+// SpeechPending reports whether published speech is still waiting to go out, satisfying
+// agent.Playout.
+func (e *Edge) SpeechPending() bool { return e.speaker.pending() }
+
 // Leave releases the call. It is safe to call more than once.
 func (e *Edge) Leave() error {
 	var err error

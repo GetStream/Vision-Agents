@@ -235,6 +235,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	spec.STTTarget = override(spec.STTTarget, request.Stt)
 	spec.TTSTarget = override(spec.TTSTarget, request.Tts)
 	spec.SubagentTarget = override(spec.SubagentTarget, request.Subagent)
+	spec.SearchTarget = override(spec.SearchTarget, request.Search)
 	spec.Voice = override(spec.Voice, request.Voice)
 	spec.MaxTokens = override(spec.MaxTokens, request.MaxTokens)
 	spec.Tasks = override(spec.Tasks, request.Tasks)

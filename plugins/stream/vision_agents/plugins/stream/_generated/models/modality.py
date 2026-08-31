@@ -1,11 +1,12 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class Modality(str, Enum):
+class Modality(StrEnum):
     KNOWLEDGE = "knowledge"
     LLM = "llm"
     MEMORY = "memory"
     PHONE = "phone"
+    SEARCH = "search"
     STT = "stt"
     TTS = "tts"
 

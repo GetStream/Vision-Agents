@@ -47,7 +47,9 @@ class HealthStatus:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.health_status_dependencies import HealthStatusDependencies
+        from ..models.health_status_dependencies import (
+            HealthStatusDependencies,
+        )
 
         d = dict(src_dict)
         status = HealthStatusStatus(d.pop("status"))

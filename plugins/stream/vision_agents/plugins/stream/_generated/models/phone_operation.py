@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class PhoneOperation(str, Enum):
+class PhoneOperation(StrEnum):
     PHONE_OPERATION_ATTACH = "attach"
     PHONE_OPERATION_BUY = "buy"
     PHONE_OPERATION_DIAL = "dial"

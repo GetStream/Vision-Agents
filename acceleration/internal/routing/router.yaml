@@ -624,3 +624,111 @@ llm:
     llm-fast:
       require_realtime: true
       tier: low-latency
+
+# What is true today, which neither a model nor a handbook can answer. These providers all
+# read the same web, so what separates them is whether a model writes the answer before it
+# comes back: the low-latency tier returns pages and lets the conversation's own model read
+# them, and the high-quality tier pays a second model and the seconds it takes to have the
+# sentence written for it.
+#
+# Every one of them is billed by the call rather than by what it read, which is what
+# per_thousand_requests prices. The languages are the ones this deployment routes on; all
+# three search in more than these.
+search:
+  providers:
+    # Exa's fast search: its own index, no crawl and no model, which is why it is the
+    # quickest way to put sources in front of a conversation. $5 per 1,000 searches.
+    - provider: exa
+      model: fast
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_thousand_requests: 5.0
+
+    # Perplexity's ranked index, which is the same endpoint their own answers are built on
+    # with nothing written on top. $5 per 1,000 requests, whatever the request found.
+    - provider: perplexity
+      model: search
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_thousand_requests: 5.0
+
+    # Tavily searches its index and summarises in the same round trip, so it is the one
+    # low-latency provider that answers in a sentence. Priced at the entry self-serve rate
+    # of one credit a search.
+    - provider: tavily
+      model: basic
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_thousand_requests: 8.0
+
+    # Exa deciding for itself between its neural and keyword indexes. Better recall on a
+    # question phrased the way somebody speaks, and slower than fast.
+    - provider: exa
+      model: auto
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      price:
+        per_thousand_requests: 5.0
+
+    # Tavily's advanced depth crawls the pages it finds rather than trusting the index
+    # snippet, at two credits a search and roughly double the latency.
+    - provider: tavily
+      model: advanced
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      price:
+        per_thousand_requests: 16.0
+
+    # Sonar reads the pages and writes the answer, so this is a language model in the
+    # middle of a conversation and is priced and timed like one. The rate is the $5 per
+    # 1,000 request fee at low context plus an allowance for the tokens a search-shaped
+    # question spends, which is what makes it an estimate rather than a published number.
+    - provider: perplexity
+      model: sonar
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      price:
+        per_thousand_requests: 6.0
+
+    # Sonar Pro searches more widely before it answers and costs more per request to do it.
+    - provider: perplexity
+      model: sonar-pro
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      price:
+        per_thousand_requests: 12.0
+
+  aliases:
+    en-low-latency:
+      languages: [en]
+      require_realtime: true
+      tier: low-latency
+
+    multilingual-low-latency:
+      multilingual: true
+      require_realtime: true
+      tier: low-latency
+
+    en-high-accuracy:
+      languages: [en]
+      tier: high-quality
+
+    multilingual-high-accuracy:
+      multilingual: true
+      tier: high-quality
+
+    # Whichever provider answers quickest, in whatever language. The shorthand a session
+    # gets when nobody said which one they wanted.
+    search-fast:
+      require_realtime: true
+      tier: low-latency

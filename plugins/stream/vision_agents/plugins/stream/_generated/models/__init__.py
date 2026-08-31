@@ -38,6 +38,9 @@ from .ingest_knowledge_request import IngestKnowledgeRequest
 from .ingested_knowledge import IngestedKnowledge
 from .instructions_request import InstructionsRequest
 from .knowledge_document import KnowledgeDocument
+from .knowledge_url import KnowledgeUrl
+from .knowledge_url_request import KnowledgeUrlRequest
+from .knowledge_url_state import KnowledgeUrlState
 from .modality import Modality
 from .number_search_result import NumberSearchResult
 from .phone_capability import PhoneCapability
@@ -125,6 +128,9 @@ __all__ = (
     "IngestedKnowledge",
     "InstructionsRequest",
     "KnowledgeDocument",
+    "KnowledgeUrl",
+    "KnowledgeUrlRequest",
+    "KnowledgeUrlState",
     "Modality",
     "NumberSearchResult",
     "PhoneCapability",

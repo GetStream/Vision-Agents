@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class PhoneCapability(str, Enum):
+class PhoneCapability(StrEnum):
     EMERGENCY = "emergency"
     FAX = "fax"
     HD_VOICE = "hd_voice"

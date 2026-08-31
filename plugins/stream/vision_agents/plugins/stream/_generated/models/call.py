@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -33,6 +33,16 @@ class Call:
         from_number (str | Unset):
         to_number (str | Unset):
         ended_at (datetime.datetime | Unset): Absent while the call is still running.
+        stt (str | Unset): The transcription target the call ran with, after a session's overrides were folded into
+            whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is
+            several models and routing fails over between them, so per-turn providers are in the request rows.
+        tts (str | Unset): The voice target, on the same terms as stt.
+        llm (str | Unset): The target that held the conversation.
+        subagent (str | Unset): The slower target delegated work ran on. Empty means nothing was delegated, which also
+            means the skills below were never offered.
+        instructions (str | Unset): What the agent was told to be on this call.
+        skills (list[str] | Unset): What the fast model could hand to the subagent. The instructions behind each name
+            are in the skill registry.
         summary (str | Unset): What a model made of the call, written once it was over.
         review_score (int | Unset): How well the agent handled it, from 1 to 5.
         review_notes (str | Unset):
@@ -50,6 +60,12 @@ class Call:
     from_number: str | Unset = UNSET
     to_number: str | Unset = UNSET
     ended_at: datetime.datetime | Unset = UNSET
+    stt: str | Unset = UNSET
+    tts: str | Unset = UNSET
+    llm: str | Unset = UNSET
+    subagent: str | Unset = UNSET
+    instructions: str | Unset = UNSET
+    skills: list[str] | Unset = UNSET
     summary: str | Unset = UNSET
     review_score: int | Unset = UNSET
     review_notes: str | Unset = UNSET
@@ -80,6 +96,20 @@ class Call:
         ended_at: str | Unset = UNSET
         if not isinstance(self.ended_at, Unset):
             ended_at = self.ended_at.isoformat()
+
+        stt = self.stt
+
+        tts = self.tts
+
+        llm = self.llm
+
+        subagent = self.subagent
+
+        instructions = self.instructions
+
+        skills: list[str] | Unset = UNSET
+        if not isinstance(self.skills, Unset):
+            skills = self.skills
 
         summary = self.summary
 
@@ -114,6 +144,18 @@ class Call:
             field_dict["to_number"] = to_number
         if ended_at is not UNSET:
             field_dict["ended_at"] = ended_at
+        if stt is not UNSET:
+            field_dict["stt"] = stt
+        if tts is not UNSET:
+            field_dict["tts"] = tts
+        if llm is not UNSET:
+            field_dict["llm"] = llm
+        if subagent is not UNSET:
+            field_dict["subagent"] = subagent
+        if instructions is not UNSET:
+            field_dict["instructions"] = instructions
+        if skills is not UNSET:
+            field_dict["skills"] = skills
         if summary is not UNSET:
             field_dict["summary"] = summary
         if review_score is not UNSET:
@@ -157,6 +199,18 @@ class Call:
         else:
             ended_at = datetime.datetime.fromisoformat(_ended_at)
 
+        stt = d.pop("stt", UNSET)
+
+        tts = d.pop("tts", UNSET)
+
+        llm = d.pop("llm", UNSET)
+
+        subagent = d.pop("subagent", UNSET)
+
+        instructions = d.pop("instructions", UNSET)
+
+        skills = cast(list[str], d.pop("skills", UNSET))
+
         summary = d.pop("summary", UNSET)
 
         review_score = d.pop("review_score", UNSET)
@@ -182,6 +236,12 @@ class Call:
             from_number=from_number,
             to_number=to_number,
             ended_at=ended_at,
+            stt=stt,
+            tts=tts,
+            llm=llm,
+            subagent=subagent,
+            instructions=instructions,
+            skills=skills,
             summary=summary,
             review_score=review_score,
             review_notes=review_notes,

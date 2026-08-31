@@ -109,6 +109,7 @@ const (
 	Ignore      DecisionKind = "ignore"
 	Interrupt   DecisionKind = "interrupt"
 	Queue       DecisionKind = "queue"
+	Settle      DecisionKind = "settle"
 	Shorten     DecisionKind = "shorten"
 	Supersede   DecisionKind = "supersede"
 	Wait        DecisionKind = "wait"
@@ -134,6 +135,8 @@ func (e DecisionKind) Valid() bool {
 	case Interrupt:
 		return true
 	case Queue:
+		return true
+	case Settle:
 		return true
 	case Shorten:
 		return true
@@ -182,12 +185,34 @@ func (e HealthStatusStatus) Valid() bool {
 	}
 }
 
+// Defines values for KnowledgeUrlState.
+const (
+	KnowledgeUrlStateFailed  KnowledgeUrlState = "failed"
+	KnowledgeUrlStateIndexed KnowledgeUrlState = "indexed"
+	KnowledgeUrlStatePending KnowledgeUrlState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the KnowledgeUrlState enum.
+func (e KnowledgeUrlState) Valid() bool {
+	switch e {
+	case KnowledgeUrlStateFailed:
+		return true
+	case KnowledgeUrlStateIndexed:
+		return true
+	case KnowledgeUrlStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Modality.
 const (
 	Knowledge Modality = "knowledge"
 	Llm       Modality = "llm"
 	Memory    Modality = "memory"
 	Phone     Modality = "phone"
+	Search    Modality = "search"
 	Stt       Modality = "stt"
 	Tts       Modality = "tts"
 )
@@ -202,6 +227,8 @@ func (e Modality) Valid() bool {
 	case Memory:
 		return true
 	case Phone:
+		return true
+	case Search:
 		return true
 	case Stt:
 		return true
@@ -366,6 +393,7 @@ type AgentConfig struct {
 	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
 	Llm                *string   `json:"llm,omitempty"`
 	Name               string    `json:"name"`
+	Search             *string   `json:"search,omitempty"`
 	Skills             *[]string `json:"skills,omitempty"`
 	Stt                *string   `json:"stt,omitempty"`
 	Subagent           *string   `json:"subagent,omitempty"`
@@ -394,6 +422,9 @@ type AgentConfigRequest struct {
 
 	// Name What the config is called, which is unique among the customer's own.
 	Name string `json:"name"`
+
+	// Search What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
+	Search *string `json:"search,omitempty"`
 
 	// Skills Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
 	Skills *[]string `json:"skills,omitempty"`
@@ -488,17 +519,35 @@ type Call struct {
 	FromNumber *string    `json:"from_number,omitempty"`
 
 	// Id The session that ran the call, which is what it is held by.
-	Id          string  `json:"id"`
+	Id string `json:"id"`
+
+	// Instructions What the agent was told to be on this call.
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Llm The target that held the conversation.
+	Llm         *string `json:"llm,omitempty"`
 	ReviewNotes *string `json:"review_notes,omitempty"`
 
 	// ReviewScore How well the agent handled it, from 1 to 5.
-	ReviewScore *int      `json:"review_score,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
+	ReviewScore *int `json:"review_score,omitempty"`
+
+	// Skills What the fast model could hand to the subagent. The instructions behind each name are in the skill registry.
+	Skills    *[]string `json:"skills,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+
+	// Stt The transcription target the call ran with, after a session's overrides were folded into whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is several models and routing fails over between them, so per-turn providers are in the request rows.
+	Stt *string `json:"stt,omitempty"`
+
+	// Subagent The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered.
+	Subagent *string `json:"subagent,omitempty"`
 
 	// Summary What a model made of the call, written once it was over.
 	Summary  *string            `json:"summary,omitempty"`
 	Tags     *map[string]string `json:"tags,omitempty"`
 	ToNumber *string            `json:"to_number,omitempty"`
+
+	// Tts The voice target, on the same terms as stt.
+	Tts *string `json:"tts,omitempty"`
 }
 
 // CallDirection defines model for Call.Direction.
@@ -508,10 +557,10 @@ type CallDirection string
 type CallEvent struct {
 	At time.Time `json:"at"`
 
-	// Kind What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent.
+	// Kind What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.
 	Kind DecisionKind `json:"kind"`
 
-	// LatencyMs What the flow controller took to rule, where anything was asked.
+	// LatencyMs What the flow controller took to rule, or what the subagent took to answer. Zero where nothing was asked.
 	LatencyMs *float64 `json:"latency_ms,omitempty"`
 
 	// Participant Who it concerned.
@@ -520,7 +569,7 @@ type CallEvent struct {
 	// Reason Why the conversation chose it, in words.
 	Reason string `json:"reason"`
 
-	// Said What was heard, or what the agent decided to say.
+	// Said What was heard, what the agent decided to say, or what the subagent came back with.
 	Said *string `json:"said,omitempty"`
 
 	// TurnId The exchange it was about, which lines it up against that turn's timings.
@@ -660,6 +709,9 @@ type CreateSessionRequest struct {
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *CreateSessionRequestSandbox `json:"sandbox,omitempty"`
 
+	// Search Omit it and the config decides, or search-fast when there is no config.
+	Search *string `json:"search,omitempty"`
+
 	// SkillNames Skills to look up rather than spell out: the customer's own, or one of the built-in think, recall and explain. Ignored when skills are given in full, and a name nothing defines is refused rather than dropped.
 	SkillNames *[]string `json:"skill_names,omitempty"`
 
@@ -699,7 +751,7 @@ type CreateSessionRequest struct {
 // CreateSessionRequestSandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 type CreateSessionRequestSandbox string
 
-// DecisionKind What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent.
+// DecisionKind What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.
 type DecisionKind string
 
 // Error defines model for Error.
@@ -762,7 +814,49 @@ type KnowledgeDocument struct {
 	Text string `json:"text"`
 }
 
-// Modality What kind of work was done. The first three are routed across providers. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// KnowledgeUrl defines model for KnowledgeUrl.
+type KnowledgeUrl struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// Error Why the last read failed. Empty otherwise.
+	Error *string `json:"error,omitempty"`
+	Id    string  `json:"id"`
+
+	// LastIndexedAt When it was last read successfully. Absent means never, which is what separates a page that has never worked from one that worked and has since broken.
+	LastIndexedAt *time.Time `json:"last_indexed_at,omitempty"`
+	Namespace     string     `json:"namespace"`
+
+	// Passages How many passages the page was last cut into.
+	Passages int `json:"passages"`
+
+	// State Where the page has got to. Pending means it has been added but not yet read, which is also what a read that died halfway through leaves behind.
+	State KnowledgeUrlState `json:"state"`
+
+	// Title What the page called itself when it was last read.
+	Title     *string   `json:"title,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Url       string    `json:"url"`
+}
+
+// KnowledgeUrlRequest defines model for KnowledgeUrlRequest.
+type KnowledgeUrlRequest struct {
+	// Namespace The knowledge base to fill, which is what a config's knowledge_namespace names.
+	//
+	//
+	// Example: docs
+	Namespace string `json:"namespace"`
+
+	// Url The page to read. It must be http or https: this is handed to a crawler and then used to key the passages it becomes.
+	//
+	//
+	// Example: https://example.com/pricing
+	Url string `json:"url"`
+}
+
+// KnowledgeUrlState Where the page has got to. Pending means it has been added but not yet read, which is also what a read that died halfway through leaves behind.
+type KnowledgeUrlState string
+
+// Modality What kind of work was done. The first four are routed across providers. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 //
 // Example: tts
 type Modality string
@@ -1278,6 +1372,12 @@ type GetCallEventsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListKnowledgeUrlsParams defines parameters for ListKnowledgeUrls.
+type ListKnowledgeUrlsParams struct {
+	// Namespace One knowledge base. Omit to list every page the customer has.
+	Namespace *string `form:"namespace,omitempty" json:"namespace,omitempty"`
+}
+
 // ListPhoneNumbersParams defines parameters for ListPhoneNumbers.
 type ListPhoneNumbersParams struct {
 	// IncludeReleased Include numbers that have been given back. A released number keeps its row, because what it cost while it was held is still part of that month's bill.
@@ -1374,6 +1474,9 @@ type UpdateAgentConfigJSONRequestBody = AgentConfigRequest
 
 // IngestKnowledgeJSONRequestBody defines body for IngestKnowledge for application/json ContentType.
 type IngestKnowledgeJSONRequestBody = IngestKnowledgeRequest
+
+// AddKnowledgeUrlJSONRequestBody defines body for AddKnowledgeUrl for application/json ContentType.
+type AddKnowledgeUrlJSONRequestBody = KnowledgeUrlRequest
 
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
@@ -1693,6 +1796,50 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/knowledge (the `IngestKnowledge` operationId).
 	IngestKnowledge(ctx context.Context, body IngestKnowledgeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListKnowledgeUrls The pages a knowledge base is kept filled from
+	//
+	// Corresponds with GET /v1/agents/knowledge/urls (the `ListKnowledgeUrls` operationId).
+	ListKnowledgeUrls(ctx context.Context, params *ListKnowledgeUrlsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddKnowledgeUrlWithBody Keep a knowledge base filled from a page
+	//
+	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/knowledge/urls (the `AddKnowledgeUrl` operationId).
+	AddKnowledgeUrlWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddKnowledgeUrl Keep a knowledge base filled from a page
+	//
+	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/knowledge/urls (the `AddKnowledgeUrl` operationId).
+	AddKnowledgeUrl(ctx context.Context, body AddKnowledgeUrlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteKnowledgeUrl Stop filling a knowledge base from a page
+	//
+	// The passages the page wrote are removed too. Leaving them would have the agent go on answering out of a page nobody subscribes to any more, which is worse than it saying it does not know.
+	//
+	// Corresponds with DELETE /v1/agents/knowledge/urls/{id} (the `DeleteKnowledgeUrl` operationId).
+	DeleteKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetKnowledgeUrl One page, and when it was last read
+	//
+	// Corresponds with GET /v1/agents/knowledge/urls/{id} (the `GetKnowledgeUrl` operationId).
+	GetKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// IndexKnowledgeUrl Read a page again
+	//
+	// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+	//
+	// Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
+	IndexKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSessions The sessions the calling customer is running
 	//
@@ -2544,6 +2691,110 @@ func (c *Client) IngestKnowledgeWithBody(ctx context.Context, contentType string
 // Corresponds with POST /v1/agents/knowledge (the `IngestKnowledge` operationId).
 func (c *Client) IngestKnowledge(ctx context.Context, body IngestKnowledgeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIngestKnowledgeRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListKnowledgeUrls The pages a knowledge base is kept filled from
+//
+// Corresponds with GET /v1/agents/knowledge/urls (the `ListKnowledgeUrls` operationId).
+func (c *Client) ListKnowledgeUrls(ctx context.Context, params *ListKnowledgeUrlsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListKnowledgeUrlsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddKnowledgeUrlWithBody Keep a knowledge base filled from a page
+//
+// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/knowledge/urls (the `AddKnowledgeUrl` operationId).
+func (c *Client) AddKnowledgeUrlWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddKnowledgeUrlRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AddKnowledgeUrl Keep a knowledge base filled from a page
+//
+// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/knowledge/urls (the `AddKnowledgeUrl` operationId).
+func (c *Client) AddKnowledgeUrl(ctx context.Context, body AddKnowledgeUrlJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddKnowledgeUrlRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteKnowledgeUrl Stop filling a knowledge base from a page
+//
+// The passages the page wrote are removed too. Leaving them would have the agent go on answering out of a page nobody subscribes to any more, which is worse than it saying it does not know.
+//
+// Corresponds with DELETE /v1/agents/knowledge/urls/{id} (the `DeleteKnowledgeUrl` operationId).
+func (c *Client) DeleteKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteKnowledgeUrlRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetKnowledgeUrl One page, and when it was last read
+//
+// Corresponds with GET /v1/agents/knowledge/urls/{id} (the `GetKnowledgeUrl` operationId).
+func (c *Client) GetKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetKnowledgeUrlRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// IndexKnowledgeUrl Read a page again
+//
+// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+//
+// Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
+func (c *Client) IndexKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIndexKnowledgeUrlRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -4308,6 +4559,202 @@ func NewIngestKnowledgeRequestWithBody(server string, contentType string, body i
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListKnowledgeUrlsRequest constructs an http.Request for the ListKnowledgeUrls method
+func NewListKnowledgeUrlsRequest(server string, params *ListKnowledgeUrlsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge/urls")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Namespace != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "namespace", *params.Namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAddKnowledgeUrlRequest calls the generic AddKnowledgeUrl builder with application/json body
+func NewAddKnowledgeUrlRequest(server string, body AddKnowledgeUrlJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddKnowledgeUrlRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewAddKnowledgeUrlRequestWithBody constructs an http.Request for the AddKnowledgeUrl method, with any body, and a specified content type
+func NewAddKnowledgeUrlRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge/urls")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteKnowledgeUrlRequest constructs an http.Request for the DeleteKnowledgeUrl method
+func NewDeleteKnowledgeUrlRequest(server string, id ResourceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge/urls/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetKnowledgeUrlRequest constructs an http.Request for the GetKnowledgeUrl method
+func NewGetKnowledgeUrlRequest(server string, id ResourceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge/urls/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewIndexKnowledgeUrlRequest constructs an http.Request for the IndexKnowledgeUrl method
+func NewIndexKnowledgeUrlRequest(server string, id ResourceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge/urls/%s/index", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -6271,6 +6718,58 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/knowledge (the `IngestKnowledge` operationId).
 	IngestKnowledgeWithResponse(ctx context.Context, body IngestKnowledgeJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestKnowledgeResponse, error)
 
+	// ListKnowledgeUrlsWithResponse The pages a knowledge base is kept filled from
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/knowledge/urls (the `ListKnowledgeUrls` operationId).
+	ListKnowledgeUrlsWithResponse(ctx context.Context, params *ListKnowledgeUrlsParams, reqEditors ...RequestEditorFn) (*ListKnowledgeUrlsResponse, error)
+
+	// AddKnowledgeUrlWithBodyWithResponse Keep a knowledge base filled from a page
+	//
+	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/knowledge/urls (the `AddKnowledgeUrl` operationId).
+	AddKnowledgeUrlWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddKnowledgeUrlResponse, error)
+
+	// AddKnowledgeUrlWithResponse Keep a knowledge base filled from a page
+	//
+	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/knowledge/urls (the `AddKnowledgeUrl` operationId).
+	AddKnowledgeUrlWithResponse(ctx context.Context, body AddKnowledgeUrlJSONRequestBody, reqEditors ...RequestEditorFn) (*AddKnowledgeUrlResponse, error)
+
+	// DeleteKnowledgeUrlWithResponse Stop filling a knowledge base from a page
+	//
+	// The passages the page wrote are removed too. Leaving them would have the agent go on answering out of a page nobody subscribes to any more, which is worse than it saying it does not know.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/knowledge/urls/{id} (the `DeleteKnowledgeUrl` operationId).
+	DeleteKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteKnowledgeUrlResponse, error)
+
+	// GetKnowledgeUrlWithResponse One page, and when it was last read
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/knowledge/urls/{id} (the `GetKnowledgeUrl` operationId).
+	GetKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetKnowledgeUrlResponse, error)
+
+	// IndexKnowledgeUrlWithResponse Read a page again
+	//
+	// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
+	IndexKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*IndexKnowledgeUrlResponse, error)
+
 	// ListSessionsWithResponse The sessions the calling customer is running
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -7886,6 +8385,295 @@ func (r IngestKnowledgeResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r IngestKnowledgeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListKnowledgeUrlsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]KnowledgeUrl
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListKnowledgeUrlsResponse) GetJSON200() *[]KnowledgeUrl {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListKnowledgeUrlsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListKnowledgeUrlsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r ListKnowledgeUrlsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListKnowledgeUrlsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListKnowledgeUrlsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListKnowledgeUrlsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AddKnowledgeUrlResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *KnowledgeUrl
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r AddKnowledgeUrlResponse) GetJSON201() *KnowledgeUrl {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r AddKnowledgeUrlResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AddKnowledgeUrlResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r AddKnowledgeUrlResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AddKnowledgeUrlResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddKnowledgeUrlResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AddKnowledgeUrlResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteKnowledgeUrlResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteKnowledgeUrlResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteKnowledgeUrlResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteKnowledgeUrlResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteKnowledgeUrlResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteKnowledgeUrlResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteKnowledgeUrlResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteKnowledgeUrlResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetKnowledgeUrlResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *KnowledgeUrl
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetKnowledgeUrlResponse) GetJSON200() *KnowledgeUrl {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetKnowledgeUrlResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetKnowledgeUrlResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetKnowledgeUrlResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetKnowledgeUrlResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetKnowledgeUrlResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetKnowledgeUrlResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetKnowledgeUrlResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type IndexKnowledgeUrlResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *KnowledgeUrl
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r IndexKnowledgeUrlResponse) GetJSON200() *KnowledgeUrl {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r IndexKnowledgeUrlResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r IndexKnowledgeUrlResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r IndexKnowledgeUrlResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r IndexKnowledgeUrlResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r IndexKnowledgeUrlResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IndexKnowledgeUrlResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IndexKnowledgeUrlResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -10320,6 +11108,94 @@ func (c *ClientWithResponses) IngestKnowledgeWithResponse(ctx context.Context, b
 	return ParseIngestKnowledgeResponse(rsp)
 }
 
+// ListKnowledgeUrlsWithResponse The pages a knowledge base is kept filled from
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/knowledge/urls (the `ListKnowledgeUrls` operationId).
+func (c *ClientWithResponses) ListKnowledgeUrlsWithResponse(ctx context.Context, params *ListKnowledgeUrlsParams, reqEditors ...RequestEditorFn) (*ListKnowledgeUrlsResponse, error) {
+	rsp, err := c.ListKnowledgeUrls(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListKnowledgeUrlsResponse(rsp)
+}
+
+// AddKnowledgeUrlWithBodyWithResponse Keep a knowledge base filled from a page
+//
+// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/knowledge/urls (the `AddKnowledgeUrl` operationId).
+func (c *ClientWithResponses) AddKnowledgeUrlWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddKnowledgeUrlResponse, error) {
+	rsp, err := c.AddKnowledgeUrlWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddKnowledgeUrlResponse(rsp)
+}
+
+// AddKnowledgeUrlWithResponse Keep a knowledge base filled from a page
+//
+// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/knowledge/urls (the `AddKnowledgeUrl` operationId).
+func (c *ClientWithResponses) AddKnowledgeUrlWithResponse(ctx context.Context, body AddKnowledgeUrlJSONRequestBody, reqEditors ...RequestEditorFn) (*AddKnowledgeUrlResponse, error) {
+	rsp, err := c.AddKnowledgeUrl(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddKnowledgeUrlResponse(rsp)
+}
+
+// DeleteKnowledgeUrlWithResponse Stop filling a knowledge base from a page
+//
+// The passages the page wrote are removed too. Leaving them would have the agent go on answering out of a page nobody subscribes to any more, which is worse than it saying it does not know.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/knowledge/urls/{id} (the `DeleteKnowledgeUrl` operationId).
+func (c *ClientWithResponses) DeleteKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteKnowledgeUrlResponse, error) {
+	rsp, err := c.DeleteKnowledgeUrl(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteKnowledgeUrlResponse(rsp)
+}
+
+// GetKnowledgeUrlWithResponse One page, and when it was last read
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/knowledge/urls/{id} (the `GetKnowledgeUrl` operationId).
+func (c *ClientWithResponses) GetKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetKnowledgeUrlResponse, error) {
+	rsp, err := c.GetKnowledgeUrl(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetKnowledgeUrlResponse(rsp)
+}
+
+// IndexKnowledgeUrlWithResponse Read a page again
+//
+// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
+func (c *ClientWithResponses) IndexKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*IndexKnowledgeUrlResponse, error) {
+	rsp, err := c.IndexKnowledgeUrl(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIndexKnowledgeUrlResponse(rsp)
+}
+
 // ListSessionsWithResponse The sessions the calling customer is running
 //
 // Returns a wrapper object for the known response body format(s).
@@ -11955,6 +12831,223 @@ func ParseIngestKnowledgeResponse(rsp *http.Response) (*IngestKnowledgeResponse,
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListKnowledgeUrlsResponse parses an HTTP response from a ListKnowledgeUrlsWithResponse call
+func ParseListKnowledgeUrlsResponse(rsp *http.Response) (*ListKnowledgeUrlsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListKnowledgeUrlsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []KnowledgeUrl
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAddKnowledgeUrlResponse parses an HTTP response from a AddKnowledgeUrlWithResponse call
+func ParseAddKnowledgeUrlResponse(rsp *http.Response) (*AddKnowledgeUrlResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddKnowledgeUrlResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest KnowledgeUrl
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteKnowledgeUrlResponse parses an HTTP response from a DeleteKnowledgeUrlWithResponse call
+func ParseDeleteKnowledgeUrlResponse(rsp *http.Response) (*DeleteKnowledgeUrlResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteKnowledgeUrlResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetKnowledgeUrlResponse parses an HTTP response from a GetKnowledgeUrlWithResponse call
+func ParseGetKnowledgeUrlResponse(rsp *http.Response) (*GetKnowledgeUrlResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetKnowledgeUrlResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest KnowledgeUrl
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIndexKnowledgeUrlResponse parses an HTTP response from a IndexKnowledgeUrlWithResponse call
+func ParseIndexKnowledgeUrlResponse(rsp *http.Response) (*IndexKnowledgeUrlResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IndexKnowledgeUrlResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest KnowledgeUrl
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 

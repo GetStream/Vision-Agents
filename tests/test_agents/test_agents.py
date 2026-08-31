@@ -9,6 +9,7 @@ import pytest
 from getstream.video.rtc import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import Agent, User
+from vision_agents.core.agents.agents import DEFAULT_INSTRUCTIONS
 from vision_agents.core.agents.events import UserTranscriptEvent
 from vision_agents.core.agents.inference import AudioOutputChunk, AudioOutputStream
 from vision_agents.core.avatars import Avatar
@@ -827,6 +828,41 @@ class TestAgent:
     async def test_an_agent_without_an_llm_needs_a_config(self):
         with pytest.raises(ValueError, match="config="):
             Agent()
+
+    async def test_an_agent_nobody_instructed_gets_the_default(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        assert agent.instructions.full_reference == DEFAULT_INSTRUCTIONS
+
+    async def test_an_agent_built_from_a_config_is_instructed_by_it(self):
+        # The config carries its own instructions, and the backend lets anything the
+        # agent says override them, so a default here would replace what it says.
+        agent = Agent(
+            config="support",
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        assert agent.instructions.full_reference == ""
+
+    async def test_instructions_passed_alongside_a_config_still_win(self):
+        agent = Agent(
+            config="support",
+            instructions="Only speak Dutch.",
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        assert agent.instructions.full_reference == "Only speak Dutch."
 
     async def test_join_authenticates_automatically(self, call: Call):
         edge = DummyEdge()

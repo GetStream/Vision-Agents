@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class ContactState(str, Enum):
+class ContactState(StrEnum):
     CALLING = "calling"
     DONE = "done"
     FAILED = "failed"

@@ -55,8 +55,12 @@ type Spec struct {
 	STTTarget      string
 	TTSTarget      string
 	SubagentTarget string
-	Voice          string
-	LanguageHints  []string
+	// SearchTarget routes what the agent finds out about today. Unlike the three above it
+	// is not needed for a conversation to happen, so a deployment that routes no search
+	// simply leaves the tool unoffered.
+	SearchTarget  string
+	Voice         string
+	LanguageHints []string
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	// A provider that cannot be told about vocabulary ignores them.
 	Keyterms  []string
@@ -138,6 +142,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Voice:              config.Voice,
 		LLMTarget:          config.LLM,
 		SubagentTarget:     config.Subagent,
+		SearchTarget:       config.Search,
 		Instructions:       config.Instructions,
 		Greeting:           config.Greeting,
 		SkillNames:         config.Skills,
@@ -179,6 +184,9 @@ func (s *Spec) Normalize() error {
 	}
 	if s.LLMTarget == "" {
 		s.LLMTarget = defaultLLMTarget
+	}
+	if s.SearchTarget == "" {
+		s.SearchTarget = defaultSearchTarget
 	}
 	// Neither speech target means anything without a voice, and defaulting them would
 	// have a text session refused by a deployment that routes only a model.

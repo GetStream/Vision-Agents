@@ -55,14 +55,19 @@ type Result struct {
 func (r Result) Answered() bool { return r.State == Done && r.Text != "" }
 
 // Actionable reports whether the caller is owed something because of this result: an
-// answer, a question, or the news that the answer is not coming. A cancelled task is
-// not, because its premise is gone and nobody was still waiting on it.
+// answer, a question, or the news that the answer is not coming.
 func (r Result) Actionable() bool {
 	switch r.State {
 	case Done:
 		return r.Text != "" || r.Question != ""
 	case Failed:
 		return true
+	case Cancelled:
+		// Work that ran out of time is the one cancellation the caller is still waiting
+		// on: nothing replaced it and they never moved on from it, so going quiet leaves
+		// them holding a question the agent has silently given up on. The other reasons
+		// are the premise being gone, and nobody is owed anything for those.
+		return r.Reason == ReasonDeadline
 	}
 	return false
 }

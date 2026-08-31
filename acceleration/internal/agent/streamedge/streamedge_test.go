@@ -200,6 +200,42 @@ func (s *StreamEdgeSuite) TestTheEndOfAnUtteranceReachesTheCall() {
 		"the end of the utterance never reached the call")
 }
 
+func (s *StreamEdgeSuite) TestSpeechNotHeardYetIsReportedAsWaiting() {
+	// A voice streams a reply far faster than it is spoken, so when the provider says it
+	// has finished, most of the reply is still queued here. Leaving the call throws that
+	// queue away, so whoever is about to leave has to be able to ask whether it is empty:
+	// without this the caller hears the agent stop short of its last words.
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+
+	// Until the track asks for a frame nothing is draining the queue, so what is held is
+	// reported as settled rather than leaving a caller waiting on a queue that cannot move.
+	s.False(talker.pending(), "a track that is not taking audio has nothing to wait for")
+	_, err := talker.NextSample(s.ctx)
+	s.Require().NoError(err)
+
+	s.Require().NoError(talker.Write(speech(24_000, 200)))
+	s.True(talker.pending(), "the reply has not reached the track yet")
+
+	s.drain(talker)
+	s.False(talker.pending(), "the whole reply has gone out")
+}
+
+func (s *StreamEdgeSuite) TestLeavingWhileSpeakingIsNotReportedAsWaiting() {
+	// Leaving discards the queue, so a caller waiting for it to empty would wait for
+	// something that is never going to happen.
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+
+	_, err := talker.NextSample(s.ctx)
+	s.Require().NoError(err)
+	s.Require().NoError(talker.Write(speech(24_000, 200)))
+	s.Require().True(talker.pending())
+
+	s.Require().NoError(talker.Close())
+
+	s.False(talker.pending(), "there is nothing left to be heard once the call is left")
+}
+
 func (s *StreamEdgeSuite) TestAnyInputRateIsResampled() {
 	// A voice provider's rate is its own business, and a failover mid-call can change it.
 	// The resampler holds the first chunk back by design, so speech is written twice here

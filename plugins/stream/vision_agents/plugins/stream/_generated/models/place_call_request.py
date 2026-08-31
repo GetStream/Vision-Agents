@@ -102,9 +102,15 @@ class PlaceCallRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.place_call_request_custom import PlaceCallRequestCustom
-        from ..models.place_call_request_headers import PlaceCallRequestHeaders
-        from ..models.place_call_request_tags import PlaceCallRequestTags
+        from ..models.place_call_request_custom import (
+            PlaceCallRequestCustom,
+        )
+        from ..models.place_call_request_headers import (
+            PlaceCallRequestHeaders,
+        )
+        from ..models.place_call_request_tags import (
+            PlaceCallRequestTags,
+        )
 
         d = dict(src_dict)
         from_ = d.pop("from")

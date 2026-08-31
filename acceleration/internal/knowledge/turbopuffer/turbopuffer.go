@@ -188,7 +188,7 @@ func (s *Store) Upsert(ctx context.Context, namespace string, documents []knowle
 
 		body := writeRequest{
 			UpsertRows: rows,
-			Schema: writeSchema{
+			Schema: &writeSchema{
 				Text:   attributeSchema{Type: "string", FullTextSearch: true},
 				Source: attributeSchema{Type: "string"},
 			},
@@ -202,6 +202,37 @@ func (s *Store) Upsert(ctx context.Context, namespace string, documents []knowle
 			return fmt.Errorf("turbopuffer: %s does not exist and was not created", namespace)
 		}
 		s.logger.Debug("wrote passages", "namespace", namespace, "rows", response.RowsUpserted)
+	}
+	return nil
+}
+
+// Delete removes passages by id.
+//
+// It is what lets a document be taken out of a knowledge base rather than only replaced:
+// re-writing a source that got shorter leaves the passages past its new end behind, and an
+// agent answering out of half a page nobody subscribes to any more is worse than one that
+// says it does not know.
+func (s *Store) Delete(ctx context.Context, namespace string, ids []string) error {
+	if strings.TrimSpace(namespace) == "" {
+		return errors.New("turbopuffer: a namespace is required")
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	path := "/v2/namespaces/" + url.PathEscape(namespace)
+	for batch := range slices.Chunk(ids, upsertBatch) {
+		var response writeResponse
+		found, err := s.call(ctx, path, writeRequest{Deletes: batch}, &response)
+		if err != nil {
+			return err
+		}
+		// A namespace nobody has written to holds none of these passages, which is the
+		// state the caller asked for.
+		if !found {
+			return nil
+		}
+		s.logger.Debug("removed passages", "namespace", namespace, "rows", response.RowsDeleted)
 	}
 	return nil
 }
@@ -291,9 +322,13 @@ type queryResponse struct {
 	Rows []map[string]json.RawMessage `json:"rows"`
 }
 
+// writeRequest is one write, which turbopuffer takes as any combination of writing and
+// removing. The fields are omitted when empty because a delete carries no schema, and a
+// schema declaring nothing is refused rather than ignored.
 type writeRequest struct {
-	UpsertRows []upsertRow `json:"upsert_rows"`
-	Schema     writeSchema `json:"schema"`
+	UpsertRows []upsertRow  `json:"upsert_rows,omitempty"`
+	Deletes    []string     `json:"deletes,omitempty"`
+	Schema     *writeSchema `json:"schema,omitempty"`
 }
 
 // upsertRow is one passage. There is no vector on it, which is what lets the namespace be
@@ -318,4 +353,5 @@ type attributeSchema struct {
 
 type writeResponse struct {
 	RowsUpserted int `json:"rows_upserted"`
+	RowsDeleted  int `json:"rows_deleted"`
 }

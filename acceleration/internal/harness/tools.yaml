@@ -41,6 +41,24 @@ tools:
             handbook was written in the same ones.
       required: [query]
 
+  - name: search
+    description: >
+      Find out something that is true right now and that no handbook records: traffic,
+      weather, a score, whether a place is open, news. Use it whenever the answer depends
+      on today rather than on what you know, instead of saying you cannot check. What you
+      remember about any of these is out of date. Say something that fills the pause while
+      you look.
+    parameters:
+      type: object
+      properties:
+        query:
+          type: string
+          description: >
+            What to find out, written as you would type it into a search box. Include the
+            place and the road or name the caller gave, since that is what makes the answer
+            theirs rather than somewhere else's.
+      required: [query]
+
   - name: press
     description: >
       Press digits on the keypad, for when you have called a number and reached a menu. Use

@@ -532,3 +532,61 @@ func (s *ConverseSuite) TestEveryJudgementIsReportedWithItsReason() {
 	s.InDelta(42, answered.LatencyMs, 0.001)
 	s.False(answered.At.IsZero())
 }
+
+func (s *ConverseSuite) TestDelegatedWorkIsRecordedComingBackAsWellAsGoingOut() {
+	// A trail that says work went out and never what became of it reads the same whether
+	// the subagent answered or ran out of time, which is the one thing worth knowing about
+	// a call where the caller never got their answer.
+	s.converse.Delegating("task-1", "think", "traffic on I-70", "turn-7")
+	s.converse.Delegated(harness.Result{
+		TaskID:    "task-1",
+		Skill:     "think",
+		State:     harness.Done,
+		Text:      "The tunnel is clear.",
+		ElapsedMs: 4200,
+	})
+
+	s.eventually(func() bool { return len(s.decisions()) == 2 }, "the delegation was never reported")
+
+	s.Equal(string(ActDelegate), s.decisions()[0].Kind)
+
+	back := s.decisions()[1]
+	s.Equal(string(ActSettle), back.Kind)
+	s.Equal("turn-7", back.TurnID, "what came back belongs to the exchange that asked for it")
+	s.Equal("The tunnel is clear.", back.Text)
+	s.InDelta(4200, back.LatencyMs, 0.001)
+	s.Contains(back.Reason, "answered")
+}
+
+func (s *ConverseSuite) TestWorkThatWasAbandonedSaysWhyRatherThanGoingQuiet() {
+	s.converse.Delegating("task-1", "think", "traffic on I-70", "turn-7")
+	s.converse.Delegated(harness.Result{
+		TaskID: "task-1",
+		Skill:  "think",
+		State:  harness.Cancelled,
+		Reason: harness.ReasonDeadline,
+	})
+
+	s.eventually(func() bool { return len(s.decisions()) == 2 }, "the delegation was never reported")
+
+	back := s.decisions()[1]
+	s.Equal(string(ActSettle), back.Kind)
+	s.Contains(back.Reason, harness.ReasonDeadline,
+		"a caller left without an answer has to be able to read why")
+}
+
+func (s *ConverseSuite) TestWorkThatNeedsTheCallerAskedRecordsTheQuestion() {
+	s.converse.Delegating("task-1", "think", "best route", "turn-7")
+	s.converse.Delegated(harness.Result{
+		TaskID:   "task-1",
+		Skill:    "think",
+		State:    harness.Done,
+		Question: "Where are you starting from?",
+	})
+
+	s.eventually(func() bool { return len(s.decisions()) == 2 }, "the delegation was never reported")
+
+	back := s.decisions()[1]
+	s.Equal("Where are you starting from?", back.Text,
+		"the question is the useful half of what came back")
+}

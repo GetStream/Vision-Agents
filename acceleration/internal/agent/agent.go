@@ -26,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -137,6 +138,14 @@ type Options struct {
 	// KnowledgeLimit caps how many passages one lookup returns. Zero leaves the store's
 	// own default.
 	KnowledgeLimit int
+	// Search is what the agent may find out that neither it nor the handbook knows,
+	// because it depends on today. Without it, or without a target, the search tool is not
+	// offered, for the same reason the lookup is not: an agent that promises to check and
+	// then cannot is worse than one that never offered.
+	Search *searchrouter.Router
+	// SearchTarget routes the search, and is a target on that router the way LLMTarget is
+	// on its own.
+	SearchTarget string
 	// Store records what each turn cost the participant in waiting. Without it the
 	// timings are still emitted as Turn events, they are just not persisted.
 	Store  *store.Store
@@ -168,6 +177,9 @@ type Agent struct {
 	// knowledge answers what the business already wrote down, when the agent has a
 	// namespace to read.
 	knowledge *knowledgeReader
+	// searcher answers what is true now, when the deployment has a search provider. It is
+	// nil until Start has routed one.
+	searcher *searchrouter.Session
 	// recalled is what the agent already knew on joining, rendered as a system message
 	// and prepended to the instructions on every turn.
 	recalled string
@@ -419,6 +431,10 @@ func (a *Agent) Join(ctx context.Context) error {
 		}
 	}
 
+	// Searching is routed before the tools are worked out, because whether the model is
+	// offered one depends on whether a provider answered.
+	a.startSearching(a.ctx)
+
 	a.harness, err = harness.New(harness.Options{
 		Model:      model,
 		Controller: controller,
@@ -580,7 +596,7 @@ func (a *Agent) Finish(ctx context.Context) error {
 		a.mu.Lock()
 		quiet := a.utterances == 0
 		a.mu.Unlock()
-		if quiet && !a.delegating() {
+		if quiet && !a.delegating() && !a.speechPending() {
 			return nil
 		}
 
@@ -671,6 +687,9 @@ func (a *Agent) close() error {
 	}
 	if a.knowledge != nil {
 		a.knowledge.Close()
+	}
+	if a.searcher != nil {
+		failures = append(failures, a.searcher.Close())
 	}
 
 	return errors.Join(failures...)
@@ -1417,7 +1436,7 @@ func (a *Agent) consumeHarness() {
 			a.applyCompaction(typed)
 
 		case harness.Delegated:
-			a.converse.Delegating(typed.Skill, typed.Prompt, typed.TurnID)
+			a.converse.Delegating(typed.TaskID, typed.Skill, typed.Prompt, typed.TurnID)
 			a.emitter.Send(Delegated{
 				TaskID: typed.TaskID,
 				Skill:  typed.Skill,
@@ -1429,22 +1448,25 @@ func (a *Agent) consumeHarness() {
 			a.runTool(typed)
 
 		case harness.Settled:
+			a.converse.Delegated(typed.Result)
 			if typed.State == harness.Cancelled {
 				a.emitter.Send(TaskCancelled{
 					TaskID: typed.TaskID,
 					Skill:  typed.Skill,
 					Reason: typed.Reason,
 				})
-				continue
+			} else {
+				a.emitter.Send(TaskSettled{
+					TaskID:    typed.TaskID,
+					Skill:     typed.Skill,
+					Text:      typed.Text,
+					Question:  typed.Question,
+					ElapsedMs: typed.ElapsedMs,
+					Err:       typed.Err,
+				})
 			}
-			a.emitter.Send(TaskSettled{
-				TaskID:    typed.TaskID,
-				Skill:     typed.Skill,
-				Text:      typed.Text,
-				Question:  typed.Question,
-				ElapsedMs: typed.ElapsedMs,
-				Err:       typed.Err,
-			})
+			// Asked after the report rather than instead of it: work that ran out of time
+			// is cancelled and still owes the caller a word.
 			if typed.Actionable() {
 				a.followUp()
 			}
@@ -1671,6 +1693,15 @@ func (a *Agent) respondQueued() {
 	if action, waiting := a.converse.Waiting(a.floor()); waiting {
 		a.perform(action)
 	}
+}
+
+// speechPending reports whether speech the agent has already published is still waiting to
+// be heard. A voice reporting an utterance finished only means it sent the last of it, so
+// the tail is still on its way out of the edge. An edge that cannot say has nothing to wait
+// for, which is what an in-process loopback is.
+func (a *Agent) speechPending() bool {
+	playout, ok := a.options.Edge.(Playout)
+	return ok && playout.SpeechPending()
 }
 
 // speaking reports whether a turn is still the one allowed to produce audio.

@@ -289,6 +289,27 @@ class TestAccelerated:
         assert router.created is not None
         assert router.created["config_id"] == "config-7"
 
+    async def test_what_the_agent_does_not_decide_is_left_for_the_config_to_say(
+        self, router: Router
+    ):
+        # The backend lets the request override the config field by field, so sending an
+        # empty instruction or greeting would replace what the config says with nothing.
+        pipeline = stream.Accelerated(config="john", url=router.url, customer_id="acme")
+
+        await pipeline.join_remote(
+            RemoteCall(
+                call_type="default",
+                call_id="call-2",
+                agent_user_id="agent",
+                instructions="",
+            )
+        )
+        await pipeline.leave_remote()
+
+        assert router.created is not None
+        assert "instructions" not in router.created
+        assert "greeting" not in router.created
+
     async def test_a_config_name_nothing_is_stored_under_says_so(
         self, router: Router, call: RemoteCall
     ):

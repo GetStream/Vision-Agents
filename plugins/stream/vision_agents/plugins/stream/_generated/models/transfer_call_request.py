@@ -65,7 +65,9 @@ class TransferCallRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.transfer_call_request_tags import TransferCallRequestTags
+        from ..models.transfer_call_request_tags import (
+            TransferCallRequestTags,
+        )
 
         d = dict(src_dict)
         from_ = d.pop("from")

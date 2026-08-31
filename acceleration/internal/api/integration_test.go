@@ -18,8 +18,10 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -85,9 +87,10 @@ func (s *APIIntegrationSuite) SetupSuite() {
 			routing.STT: speech,
 			routing.TTS: voice,
 		},
-		Store:  pgStore,
-		Live:   liveClient,
-		Voices: s.voiceService(pgStore),
+		Store:         pgStore,
+		Live:          liveClient,
+		Voices:        s.voiceService(pgStore),
+		KnowledgeURLs: s.knowledgeURLs(pgStore),
 		// Minting a token signs one rather than fetching it, so a made-up app is enough
 		// to exercise the join path without a real Stream account behind it.
 		StreamKey:    testStreamKey,
@@ -119,6 +122,30 @@ func (s *APIIntegrationSuite) voiceService(pgStore *store.Store) *voices.Service
 	service, err := voices.NewService(voices.Options{Store: pgStore, Bucket: bucket, Cloners: cloners})
 	s.Require().NoError(err)
 	return service
+}
+
+// knowledgeURLs wires the url paths against a crawler that always answers and a knowledge
+// base in memory, so the HTTP surface can be exercised without fetching anything for real.
+func (s *APIIntegrationSuite) knowledgeURLs(pgStore *store.Store) *urls.Service {
+	service, err := urls.New(urls.Options{
+		Store:  pgStore,
+		Reader: pageReader{},
+		Writer: newBase(),
+	})
+	s.Require().NoError(err)
+	return service
+}
+
+// pageReader answers every url with the same page, which is enough for the endpoints to be
+// exercised: what a real crawler makes of a real page is the provider's own suite.
+type pageReader struct{}
+
+func (pageReader) Read(_ context.Context, address string) (search.Page, error) {
+	return search.Page{
+		URL:   address,
+		Title: "Pricing",
+		Text:  "# Pricing\n\nA call costs a penny.\n",
+	}, nil
 }
 
 func (s *APIIntegrationSuite) TearDownSuite() {
@@ -494,6 +521,103 @@ func (s *APIIntegrationSuite) TestASkillIsStoredAndListed() {
 	s.Require().NoError(json.Unmarshal(payload, &listed))
 	s.Require().Len(listed, 1)
 	s.Equal("refund", listed[0].Name)
+}
+
+func (s *APIIntegrationSuite) TestAKnowledgeUrlIsReadStoredAndListed() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/knowledge/urls",
+		`{"namespace":"docs","url":"https://example.com/pricing"}`)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	var created KnowledgeUrl
+	s.Require().NoError(json.Unmarshal(payload, &created))
+	s.Equal(KnowledgeUrlStateIndexed, created.State)
+	s.Equal(1, created.Passages)
+	s.Require().NotNil(created.LastIndexedAt)
+	s.Require().NotNil(created.Title)
+	s.Equal("Pricing", *created.Title)
+
+	response, payload = s.do(http.MethodGet, "/v1/agents/knowledge/urls?namespace=docs", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var listed []KnowledgeUrl
+	s.Require().NoError(json.Unmarshal(payload, &listed))
+	s.Require().Len(listed, 1)
+	s.Equal("https://example.com/pricing", listed[0].Url)
+}
+
+func (s *APIIntegrationSuite) TestADeletedKnowledgeUrlIsNoLongerSubscribedTo() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/knowledge/urls",
+		`{"namespace":"docs","url":"https://example.com/pricing"}`)
+	var created KnowledgeUrl
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	response, _ := s.do(http.MethodDelete, "/v1/agents/knowledge/urls/"+created.Id, "")
+	s.Require().Equal(http.StatusNoContent, response.StatusCode)
+
+	response, _ = s.do(http.MethodGet, "/v1/agents/knowledge/urls/"+created.Id, "")
+	s.Equal(http.StatusNotFound, response.StatusCode)
+
+	// The url is free again, which is what makes removing one usable rather than final.
+	response, payload = s.do(http.MethodPost, "/v1/agents/knowledge/urls",
+		`{"namespace":"docs","url":"https://example.com/pricing"}`)
+	s.Equal(http.StatusCreated, response.StatusCode, string(payload))
+}
+
+func (s *APIIntegrationSuite) TestReadingAPageAgainMovesWhenItWasLastIndexed() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/knowledge/urls",
+		`{"namespace":"docs","url":"https://example.com/pricing"}`)
+	var created KnowledgeUrl
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	response, payload := s.do(http.MethodPost,
+		"/v1/agents/knowledge/urls/"+created.Id+"/index", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var reindexed KnowledgeUrl
+	s.Require().NoError(json.Unmarshal(payload, &reindexed))
+	s.Equal(created.Id, reindexed.Id)
+	s.Require().NotNil(reindexed.LastIndexedAt)
+	s.False(reindexed.LastIndexedAt.Before(*created.LastIndexedAt))
+}
+
+func (s *APIIntegrationSuite) TestSomethingThatIsNotAFetchablePageIsRefused() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/knowledge/urls",
+		`{"namespace":"docs","url":"mailto:sales@example.com"}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode)
+
+	var failure Error
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Contains(failure.Error, "mailto:sales@example.com")
+}
+
+func (s *APIIntegrationSuite) TestAnotherCustomersKnowledgeUrlIsNotFound() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/knowledge/urls",
+		`{"namespace":"docs","url":"https://example.com/pricing"}`)
+	var created KnowledgeUrl
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodGet,
+		s.server.URL+"/v1/agents/knowledge/urls/"+created.Id, strings.NewReader(""))
+	s.Require().NoError(err)
+	request.Header.Set(CustomerHeader, "somebody-else")
+
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+func (s *APIIntegrationSuite) TestAConfigRemembersWhichSearchItRoutesTo() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/configs",
+		`{"name":"support","search":"en-high-accuracy"}`)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	var created AgentConfig
+	s.Require().NoError(json.Unmarshal(payload, &created))
+	s.Require().NotNil(created.Search)
+	s.Equal("en-high-accuracy", *created.Search)
 }
 
 func (s *APIIntegrationSuite) TestASkillWithoutADescriptionIsRefused() {

@@ -249,6 +249,18 @@ type LookedUp struct {
 
 func (LookedUp) isAgentEvent() {}
 
+// Searched means the agent found out something that is true now to answer a question. Like
+// a lookup it carries how many sources came back rather than the sources themselves.
+type Searched struct {
+	TurnID string
+	Query  string
+	// Results is how many sources bore on the question. Zero means the search found
+	// nothing, which is why the agent said it could not find out.
+	Results int
+}
+
+func (Searched) isAgentEvent() {}
+
 // Backchannel means the agent made a listening noise while a participant was still
 // talking, which is not a turn and does not go near the model.
 type Backchannel struct {

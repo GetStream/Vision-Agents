@@ -113,6 +113,16 @@ func row(created *Session) store.Call {
 		Direction:  store.Inbound,
 		StartedAt:  created.created.UTC(),
 		Tags:       spec.Tags,
+		// The spec here has already had a config folded into it, so these are what the
+		// call actually ran with rather than what either side asked for on its own.
+		STT:          spec.STTTarget,
+		TTS:          spec.TTSTarget,
+		LLM:          spec.LLMTarget,
+		Subagent:     spec.SubagentTarget,
+		Instructions: spec.prompt(),
+	}
+	for _, skill := range created.skills.Skills {
+		call.Skills = append(call.Skills, skill.Name)
 	}
 	if spec.Phone != nil {
 		call.FromNumber = spec.Phone.Number

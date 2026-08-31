@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class CampaignState(str, Enum):
+class CampaignState(StrEnum):
     DRAFT = "draft"
     FINISHED = "finished"
     PAUSED = "paused"

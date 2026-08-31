@@ -38,6 +38,8 @@ const (
 	ActCompact ActionKind = "compact"
 	// ActDelegate hands a piece of work to the subagent.
 	ActDelegate ActionKind = "delegate"
+	// ActSettle is delegated work coming back, answered or not.
+	ActSettle ActionKind = "settle"
 	// ActFail is a judgement that could not be made.
 	ActFail ActionKind = "fail"
 )
@@ -122,6 +124,10 @@ type converse struct {
 	queued *queuedCandidate
 	// lastCandidate owns delegated work from the last relevant caller turn.
 	lastCandidate string
+	// delegated is the turn each piece of delegated work was asked for in, so what comes
+	// back lands against the exchange that wanted it. A subagent's result names the task
+	// and not the turn, and by the time it arrives the conversation has usually moved on.
+	delegated map[string]string
 }
 
 // queuedCandidate is a turn held back until the agent stops talking.
@@ -147,6 +153,7 @@ func newConverse(
 		logger:     logger,
 		record:     record,
 		candidates: map[string]candidate{},
+		delegated:  map[string]string{},
 	}
 }
 
@@ -452,13 +459,65 @@ func (c *converse) Compact(current *harness.Harness, history []llm.Message, inpu
 
 // Delegating records that the model handed work to the subagent, which is a decision the
 // model made rather than one this made, and belongs in the same trail regardless.
-func (c *converse) Delegating(skill, prompt, turnID string) {
+func (c *converse) Delegating(taskID, skill, prompt, turnID string) {
+	c.mu.Lock()
+	c.delegated[taskID] = turnID
+	c.mu.Unlock()
+
 	c.decide(Action{
 		Kind:   ActDelegate,
 		Reason: "the model handed " + skill + " to the subagent and carried on talking",
 		TurnID: turnID,
 		Text:   prompt,
 	})
+}
+
+// Delegated records delegated work coming back.
+//
+// Without it the trail says work went out and never what became of it, so a call where the
+// subagent ran out of time reads exactly like one where it answered and the answer was
+// never spoken. What it took is recorded too: the caller spent that long being kept
+// company, which is the cost of having asked.
+func (c *converse) Delegated(result harness.Result) {
+	c.mu.Lock()
+	turnID := c.delegated[result.TaskID]
+	delete(c.delegated, result.TaskID)
+	c.mu.Unlock()
+
+	// A task that needs something from the caller has a question instead of an answer, and
+	// the question is the useful half of what came back.
+	text := result.Text
+	if text == "" {
+		text = result.Question
+	}
+
+	c.decide(Action{
+		Kind:      ActSettle,
+		Reason:    settlement(result),
+		TurnID:    turnID,
+		Text:      text,
+		LatencyMs: result.ElapsedMs,
+	})
+}
+
+// settlement says in words what became of a piece of delegated work.
+func settlement(result harness.Result) string {
+	switch result.State {
+	case harness.Done:
+		if result.Question != "" {
+			return "the subagent needs the caller asked something before it can answer " + result.Skill
+		}
+		if result.Text == "" {
+			return "the subagent finished " + result.Skill + " with nothing to say"
+		}
+		return "the subagent answered " + result.Skill
+	case harness.Cancelled:
+		return "the subagent's " + result.Skill + " was abandoned: " + result.Reason
+	}
+	if result.Err != nil {
+		return "the subagent could not answer " + result.Skill + ": " + result.Err.Error()
+	}
+	return "the subagent could not answer " + result.Skill
 }
 
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who

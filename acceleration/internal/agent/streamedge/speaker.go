@@ -183,6 +183,24 @@ func (s *speaker) flush() {
 	}
 }
 
+// pending reports whether any of the speech written here is still waiting to go out,
+// whether queued as frames or held inside the pipeline.
+//
+// A voice provider streams an utterance far faster than it is spoken, so when it reports an
+// utterance finished it has only sent the last of it: up to playoutFrames of the reply is
+// still queued here, and closing on that word would throw the tail away.
+//
+// A track that has never asked for a frame has nothing draining it, so what it holds is
+// reported as settled rather than leaving a caller waiting for a queue that cannot move.
+func (s *speaker) pending() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || !s.pulled {
+		return false
+	}
+	return len(s.frames) > 0 || s.unflushed
+}
+
 // CurrentAudioLevel is what the SDK puts in the audio-level RTP header extension, which is
 // how the other participants' clients know the agent is the one talking.
 func (s *speaker) CurrentAudioLevel() uint8 {

@@ -33,6 +33,9 @@ type quietEdge struct {
 	mu     sync.Mutex
 	joined bool
 	left   bool
+	// unheard is speech that has been published but has not gone out yet, which is what a
+	// real edge holds while a reply is being spoken.
+	unheard bool
 }
 
 func newQuietEdge() *quietEdge {
@@ -49,6 +52,20 @@ func (e *quietEdge) Join(context.Context) error {
 func (e *quietEdge) Audio() <-chan agent.InboundAudio { return e.inbound }
 
 func (e *quietEdge) PublishAudio(audio.PcmData) error { return nil }
+
+func (e *quietEdge) SpeechPending() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.unheard
+}
+
+// holdSpeech makes the edge report published speech as still on its way out, the way a real
+// one does while a reply is being spoken.
+func (e *quietEdge) holdSpeech(unheard bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.unheard = unheard
+}
 
 func (e *quietEdge) Leave() error {
 	e.mu.Lock()
@@ -355,6 +372,59 @@ func (s *SessionSuite) TestASessionIsListedAndFoundByTheCustomerRunningIt() {
 	s.Len(s.manager.List("acme"), 1)
 }
 
+func (s *SessionSuite) TestTheRecordedCallSaysWhatItWasRunWith() {
+	// A config decides these until a session overrides one, so neither answers "what
+	// spoke on this call" alone. The row is what a finished call is read back from.
+	created := &Session{
+		id:      "session-9",
+		created: time.Now(),
+		spec: Spec{
+			CustomerID:     "acme",
+			CallID:         "call-9",
+			AgentID:        "call-9",
+			LLMTarget:      "gemini/gemini-3.5-flash-lite",
+			STTTarget:      "gemini/gemini-3.5-transcribe-live",
+			TTSTarget:      "elevenlabs/eleven_v3_conversational",
+			SubagentTarget: "openai/gpt-5.6-sol",
+			Instructions:   "Keep it short.",
+		},
+		skills: harness.Skills{Skills: []harness.Skill{
+			{Name: "think", Description: "work it through", Instructions: "Reason."},
+		}},
+	}
+
+	recorded := row(created)
+
+	s.Equal("gemini/gemini-3.5-flash-lite", recorded.LLM)
+	s.Equal("gemini/gemini-3.5-transcribe-live", recorded.STT)
+	s.Equal("elevenlabs/eleven_v3_conversational", recorded.TTS)
+	s.Equal("openai/gpt-5.6-sol", recorded.Subagent)
+	s.Equal("Keep it short.", recorded.Instructions)
+	s.Equal([]string{"think"}, recorded.Skills,
+		"the row carries the names; the instructions behind them are in the registry")
+}
+
+func (s *SessionSuite) TestACallThatDelegatesNothingRecordsNoSkills() {
+	// Without a subagent there is nobody to hand work to, so listing skills on the row
+	// would claim the call could do something it could not.
+	s.manages()
+
+	created := s.joins(Spec{CallID: "call-10"})
+
+	recorded := row(created)
+
+	s.Empty(recorded.Subagent)
+	s.Empty(recorded.Skills)
+}
+
+func (s *SessionSuite) TestACallThatNamesNoSkillsRecordsTheBuiltInSet() {
+	s.manages()
+
+	created := s.joins(Spec{CallID: "call-11", SubagentTarget: "en-low-latency"})
+
+	s.Contains(row(created).Skills, "think")
+}
+
 // writes creates a session that holds the conversation in writing.
 func (s *SessionSuite) writes(spec Spec) *Session {
 	spec.Text = true
@@ -556,6 +626,35 @@ func (s *SessionSuite) TestEndingACallStopsAToolWaitingOnAnAnswer() {
 		s.ErrorContains(err, "the call ended")
 	case <-time.After(settleFor):
 		s.Fail("the tool was still waiting on a call that had ended")
+	}
+}
+
+func (s *SessionSuite) TestEndingACallWaitsForTheReplyToBeHeard() {
+	// Leaving the call discards the audio that has not gone out yet, and a voice streams a
+	// reply far faster than it is spoken. Ending the moment the provider stops sending
+	// would cut the last of the reply off mid-word.
+	s.manages()
+	created := s.joins(Spec{})
+	edge := s.edges[len(s.edges)-1]
+	edge.holdSpeech(true)
+
+	ended := make(chan error, 1)
+	go func() { ended <- created.Close() }()
+
+	select {
+	case <-ended:
+		s.Fail("the call was left while the reply was still on its way out")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	edge.holdSpeech(false)
+
+	select {
+	case err := <-ended:
+		s.Require().NoError(err)
+		s.True(edge.gone(), "the call is left once the reply has been heard")
+	case <-time.After(settleFor):
+		s.Fail("the call never ended")
 	}
 }
 

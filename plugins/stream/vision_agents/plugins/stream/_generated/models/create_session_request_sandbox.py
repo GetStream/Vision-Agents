@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class CreateSessionRequestSandbox(str, Enum):
+class CreateSessionRequestSandbox(StrEnum):
     DAYTONA = "daytona"
 
     def __str__(self) -> str:

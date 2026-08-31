@@ -22,6 +22,8 @@ and billing as a direct API call.
 | `internal/ttsrouter` | Text-to-speech providers and sessions                              |
 | `internal/llm`       | The LLM contract: messages in, streamed text and token counts out  |
 | `internal/llmrouter` | LLM providers and sessions                                         |
+| `internal/search`    | The search contract: a question in, an answer and its sources out  |
+| `internal/searchrouter` | Search providers and sessions                                   |
 | `internal/agent`     | The conversation: transcribe, answer, speak, with barge-in          |
 | `internal/harness`   | Sits between the caller and the model: skills, delegation, cancellation |
 | `internal/agent/streamedge` | The agent's transport: a Stream call over WebRTC             |
@@ -29,6 +31,7 @@ and billing as a direct API call.
 | `internal/memory`    | What an agent remembers between calls; `mem0/` is the one provider  |
 | `internal/knowledge` | What the business wrote down; `turbopuffer/` is the one provider    |
 | `internal/knowledge/ingest` | Cutting documents into passages, for both the command and the endpoint |
+| `internal/knowledge/urls` | Keeping a knowledge base filled from pages published elsewhere   |
 | `internal/phone`     | Telephony: the vendor contract, the Stream SIP trunk, the service   |
 | `internal/phone/twilio`, `internal/phone/telnyx` | The two vendors that also answer on a number |
 | `internal/phone/sinch`, `.../bandwidth`, `.../vonage`, `.../bird`, `.../plivo` | Five more that buy numbers and call out on them |
@@ -93,6 +96,9 @@ to play audio, or `-out` to write a file instead.
 | `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
 | `MEM0_API_KEY`          | mem0 credentials. Without it the agent remembers nothing   |
 | `TURBOPUFFER_API_KEY`   | turbopuffer credentials. Without it an agent looks nothing up |
+| `TAVILY_API_KEY`        | Tavily credentials, one of three ways to find out what is true today |
+| `EXA_API_KEY`           | Exa credentials. Also what reads a URL into a knowledge base |
+| `PERPLEXITY_API_KEY`    | Perplexity credentials, for the ranked index and for Sonar |
 | `DAYTONA_API_KEY`       | Daytona credentials. Without it a session cannot ask for a sandbox |
 | `TWILIO_ACCOUNT_SID`    | Twilio credentials, for buying and operating numbers       |
 | `TWILIO_AUTH_TOKEN`     | Twilio credentials                                         |
@@ -522,6 +528,7 @@ inline in the request overrides it, so a config can be reused and one call still
 | `GET /v1/agents/calls/{id}/timeline`        | Each exchange, said and measured together    |
 | `GET /v1/agents/calls/{id}/events`          | What the conversation decided, and why       |
 | `POST /v1/agents/knowledge`                 | Fill a knowledge base from documents         |
+| `/v1/agents/knowledge/urls`                 | Pages a knowledge base is kept filled from   |
 | `/v1/agents/campaigns`                      | Lists of people to ring, and how far they got |
 
 **Skills are named rather than spelled out.** A config carries skill names, and they are
@@ -535,6 +542,58 @@ runtime lookup is unchanged.
 question about prices or opening hours is answered out of the handbook rather than guessed
 at. Each search is a `requests` row with modality `knowledge`, like everything else that
 costs money.
+
+**Search is what is true today.** Neither the model nor the handbook can answer what the
+traffic is doing, whether a place is open or what a score is: one was trained months ago and
+the other was written down once. A session gets a `search` tool wherever a provider can be
+built for it, and an agent asked about any of those looks it up instead of saying it cannot
+check.
+
+Search is routed the way the three model modalities are. A config's `search` names a target,
+which is a `provider/model` or one of the same capability shortcuts the others use, and the
+router ranks the candidates, fails over past a provider whose key is missing, and files one
+`requests` row per search under modality `search`. There are three providers and they differ
+more between their own modes than they do from each other, which is what the models select
+between:
+
+| Target                | What it does                                                     |
+| --------------------- | ---------------------------------------------------------------- |
+| `exa/fast`            | Exa's index, no crawl and no model: the quickest sources          |
+| `perplexity/search`   | Perplexity's ranked index, results only                           |
+| `tavily/basic`        | Index plus a written summary in the same round trip               |
+| `exa/auto`            | Exa choosing between its neural and keyword indexes               |
+| `tavily/advanced`     | Crawls the pages it finds rather than trusting the snippet        |
+| `perplexity/sonar`, `perplexity/sonar-pro` | A model reads the pages and writes the answer |
+
+A session that names nothing gets `search-fast`. Sonar is a target rather than a fork:
+because it is a language model in the middle of a conversation, whether it is worth its
+latency is a routing decision.
+
+The answer lands in the conversation as a tool result, which is what puts it in front of the
+subagent too: a caller who asks for the best route given the closures gets the fast model
+finding out what the closures are and the subagent reasoning over them. Nothing extra is
+configured for that, and nothing is offered at all without a key for something.
+
+**A knowledge base can also be filled from URLs.** Posting a document happens once; a url is
+a subscription, because the page behind it changes and nobody re-posts it. With
+`EXA_API_KEY` set alongside turbopuffer and a database, `/v1/agents/knowledge/urls` fetches
+the page, turns it into markdown and cuts it into passages the same way a document is:
+
+```bash
+curl -X POST localhost:8080/v1/agents/knowledge/urls \
+  -H "X-Customer-Id: acme" -H "Content-Type: application/json" \
+  -d '{"namespace":"docs","url":"https://example.com/pricing"}'
+```
+
+Each row records when the page was last read successfully, what it was called and how many
+passages it became. That last number is what makes removing it exact: passages are keyed by
+the url and a position, so deleting a subscription takes its passages with it, and
+re-reading a page that got shorter leaves no orphans behind. A page that could not be
+fetched is still stored, in the `failed` state with the reason on it, rather than refused
+and forgotten.
+
+Nothing re-crawls on a schedule. `POST /v1/agents/knowledge/urls/{id}/index` reads one
+again, and `last_indexed_at` is what a caller with its own schedule decides from.
 
 `cmd/knowledge` fills one from files:
 
@@ -813,7 +872,8 @@ and the Python side of them in `plugins/stream/.../_socket.py`.
   candidates and fails over; each modality adds only a provider contract and a session that
   knows which of its events count as a unit of work.
 - **One row per unit of work.** A completed turn for speech-to-text, a completed synthesis
-  for text-to-speech, a completed completion for an LLM, alongside rows for sessions that
+  for text-to-speech, a completed completion for an LLM, one question asked for a search,
+  alongside rows for sessions that
   failed to start. Everything is keyed by `modality`, so the same provider can serve two of
   them without its numbers mixing.
 - **Latency is the number the customer felt.** For speech-to-text that is the provider's

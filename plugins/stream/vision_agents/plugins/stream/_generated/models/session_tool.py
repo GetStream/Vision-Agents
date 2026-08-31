@@ -57,7 +57,9 @@ class SessionTool:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.session_tool_parameters import SessionToolParameters
+        from ..models.session_tool_parameters import (
+            SessionToolParameters,
+        )
 
         d = dict(src_dict)
         name = d.pop("name")

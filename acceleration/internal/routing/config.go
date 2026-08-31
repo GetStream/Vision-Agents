@@ -28,6 +28,10 @@ const (
 	STT Modality = "stt"
 	TTS Modality = "tts"
 	LLM Modality = "llm"
+	// Search is routed like the three above: several providers will answer the same
+	// question, they differ in what they cost and how long they take, and which one is
+	// worth asking changes with their health.
+	Search Modality = "search"
 	// Memory, Knowledge and Phone are recorded but not routed: there is one memory store,
 	// one knowledge base and one vendor per number, so there is nothing to choose
 	// between. They are modalities so what they cost shows up in the same reporting as
@@ -62,6 +66,17 @@ type Price struct {
 	PerMillionCachedInputTokens float64 `yaml:"per_million_cached_input_tokens"`
 	// PerMillionOutputTokens prices what the model generated.
 	PerMillionOutputTokens float64 `yaml:"per_million_output_tokens"`
+	// PerThousandRequests prices work a provider bills by the call rather than by what it
+	// read or wrote, which is how a search API charges. The rate is not applied here,
+	// because nothing in Usage counts calls: a caller billed this way sets Stat.CostMicros
+	// from it, the way a phone number's monthly charge is set outright.
+	PerThousandRequests float64 `yaml:"per_thousand_requests"`
+}
+
+// RequestMicros is what one call to a provider billed by the call costs, in millionths of
+// a dollar.
+func (p Price) RequestMicros() int64 {
+	return int64(p.PerThousandRequests * 1_000)
 }
 
 // Usage is what one unit of work consumed. A modality fills in the units it bills by and

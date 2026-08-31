@@ -1,7 +1,7 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class VoiceBindingState(str, Enum):
+class VoiceBindingState(StrEnum):
     FAILED = "failed"
     PENDING = "pending"
     READY = "ready"

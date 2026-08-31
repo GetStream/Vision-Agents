@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
@@ -28,6 +29,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/search/exa"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -64,6 +67,11 @@ const (
 	defaultAddress    = ":8080"
 	shutdownGrace     = 10 * time.Second
 	readHeaderTimeout = 10 * time.Second
+	// crawlTimeout bounds reading one page into a knowledge base. It is generous compared
+	// to a search because nobody is on the phone waiting for it: a page that has to be
+	// crawled live rather than served from an index takes seconds, and giving up on it
+	// leaves a subscription that never works.
+	crawlTimeout = 60 * time.Second
 )
 
 func main() {
@@ -196,6 +204,25 @@ func run(logger *slog.Logger) error {
 		streams.LLM = chat
 	}
 
+	// Search is routed like the three above, so a deployment with no key for any of the
+	// providers still inspects and reports on them: what stops a session searching is a
+	// candidate refusing to be built, not the section being absent.
+	var finding *searchrouter.Router
+	if section, ok := config[routing.Search]; ok {
+		finding, err = searchrouter.New(searchrouter.Options{
+			Config:   section,
+			Registry: searchrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer finding.Close()
+		routers[routing.Search] = finding
+	}
+
 	telephony, err := buildPhone(pgStore, liveClient, logger)
 	if err != nil {
 		return err
@@ -214,7 +241,7 @@ func run(logger *slog.Logger) error {
 	// Conversations need all three modalities, so a deployment configured for only one
 	// still inspects routing and reports statistics while the session paths say there
 	// are none.
-	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, logger)
+	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, finding, logger)
 	if err != nil {
 		return err
 	}
@@ -255,26 +282,35 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
+	// Keeping a knowledge base filled from a url needs a row, a base and a crawler.
+	// Missing any of those, the url paths say so rather than storing a subscription
+	// nothing would ever honour.
+	pages, err := buildKnowledgeURLs(pgStore, base, logger)
+	if err != nil {
+		return err
+	}
+
 	// Inbound calls are answered by whoever is connected to the dispatch socket, so the
 	// pool exists whether or not anybody is: an empty pool is a call nobody answers, which
 	// is a different thing from a deployment that does not dispatch at all.
 	workers := dispatch.NewPool()
 
 	options := api.Options{
-		Routers:      routers,
-		Voices:       voiceService,
-		Store:        pgStore,
-		Live:         liveClient,
-		Phone:        telephony,
-		Sessions:     sessions,
-		Streams:      streams,
-		Transcripts:  transcripts,
-		Campaigns:    campaigns,
-		Dispatch:     workers,
-		StreamSecret: os.Getenv(streamSecretEnvVar),
-		StreamKey:    os.Getenv(streamKeyEnvVar),
-		CORSOrigins:  splitList(os.Getenv(corsOriginsEnvVar)),
-		Logger:       logger,
+		Routers:       routers,
+		Voices:        voiceService,
+		KnowledgeURLs: pages,
+		Store:         pgStore,
+		Live:          liveClient,
+		Phone:         telephony,
+		Sessions:      sessions,
+		Streams:       streams,
+		Transcripts:   transcripts,
+		Campaigns:     campaigns,
+		Dispatch:      workers,
+		StreamSecret:  os.Getenv(streamSecretEnvVar),
+		StreamKey:     os.Getenv(streamKeyEnvVar),
+		CORSOrigins:   splitList(os.Getenv(corsOriginsEnvVar)),
+		Logger:        logger,
 	}
 	if options.StreamSecret == "" {
 		logger.Warn("no "+streamSecretEnvVar+" set, so inbound calls cannot be dispatched: "+
@@ -353,6 +389,7 @@ func buildSessions(
 	liveClient *live.Client,
 	telephony *phone.Service,
 	base *turbopuffer.Store,
+	finding *searchrouter.Router,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.STT == nil || streams.TTS == nil || streams.LLM == nil {
@@ -380,6 +417,7 @@ func buildSessions(
 		TTS:       streams.TTS,
 		Memory:    remembering,
 		Knowledge: reading,
+		Search:    finding,
 		Phone:     telephony,
 		Store:     pgStore,
 		Live:      liveClient,
@@ -401,6 +439,41 @@ func buildSessions(
 				Logger:  logger,
 			})
 		},
+	})
+}
+
+// buildKnowledgeURLs wires the control plane for pages a knowledge base is kept filled
+// from.
+//
+// It returns nil unless there is a database to remember a subscription, a knowledge base to
+// write the passages into and a key for something that can read a page, since a url that is
+// recorded and never fetched is a promise nothing keeps. The url paths report the absence.
+//
+// Exa is built here rather than taken from the search router because the two want opposite
+// timeouts: a search happens while somebody waits on the phone, and a live crawl of a page
+// nobody is listening to can take as long as it takes.
+func buildKnowledgeURLs(
+	pgStore *store.Store,
+	base *turbopuffer.Store,
+	logger *slog.Logger,
+) (*urls.Service, error) {
+	if pgStore == nil || base == nil {
+		logger.Debug("not serving knowledge urls",
+			"database", pgStore != nil, "knowledge", base != nil)
+		return nil, nil
+	}
+
+	reader, err := exa.New(exa.Options{Timeout: crawlTimeout, Logger: logger})
+	if err != nil {
+		logger.Debug("not serving knowledge urls: nothing can read a page", "error", err)
+		return nil, nil
+	}
+
+	return urls.New(urls.Options{
+		Store:  pgStore,
+		Reader: reader,
+		Writer: base,
+		Logger: logger,
 	})
 }
 

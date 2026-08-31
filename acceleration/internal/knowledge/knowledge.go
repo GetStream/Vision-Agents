@@ -68,6 +68,9 @@ type Store interface {
 type Writer interface {
 	// Upsert writes passages, replacing whatever is already stored under their ids.
 	Upsert(ctx context.Context, namespace string, documents []Document) error
+	// Delete removes passages by id. Ids that are not there are not an error: what the
+	// caller asked for is that they are gone.
+	Delete(ctx context.Context, namespace string, ids []string) error
 }
 
 // Prompt renders passages as the answer to a lookup, which is what the model is handed.

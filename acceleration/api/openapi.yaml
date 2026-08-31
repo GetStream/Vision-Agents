@@ -998,6 +998,122 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/agents/knowledge/urls:
+    get:
+      operationId: listKnowledgeUrls
+      summary: The pages a knowledge base is kept filled from
+      parameters:
+        - name: namespace
+          in: query
+          required: false
+          description: One knowledge base. Omit to list every page the customer has.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The customer's pages, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KnowledgeUrl"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: addKnowledgeUrl
+      summary: Keep a knowledge base filled from a page
+      description: >
+        Posting a document is a thing that happens once; a url is a subscription, because
+        the page behind it changes and nobody re-posts it. The page is fetched here, turned
+        into markdown, cut into passages the same way a document is, and written under the
+        url so a later read replaces it rather than adding a second copy.
+
+        The fetch happens before this answers and a live crawl takes seconds, so this is
+        slower than the endpoints around it. A page that could not be read is still stored,
+        in the failed state with the reason on it, rather than refused and forgotten.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeUrlRequest"
+      responses:
+        "201":
+          description: The page was stored, read or not
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeUrl"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/agents/knowledge/urls/{id}:
+    get:
+      operationId: getKnowledgeUrl
+      summary: One page, and when it was last read
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeUrl"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteKnowledgeUrl
+      summary: Stop filling a knowledge base from a page
+      description: >
+        The passages the page wrote are removed too. Leaving them would have the agent go
+        on answering out of a page nobody subscribes to any more, which is worse than it
+        saying it does not know.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "204":
+          description: The page and its passages are gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/knowledge/urls/{id}/index:
+    post:
+      operationId: indexKnowledgeUrl
+      summary: Read a page again
+      description: >
+        Nothing re-reads a page on its own, so this is what a caller with its own schedule
+        calls. Passages past the end of the new version are removed, so a page that got
+        shorter does not leave its old tail behind.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The page as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeUrl"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/campaigns:
     get:
       operationId: listCampaigns
@@ -1793,6 +1909,12 @@ components:
           description: >
             The model that does the thinking. Empty means the voice model answers
             everything itself, and skills mean nothing.
+        search:
+          type: string
+          description: >
+            What the agent finds out today's answers with, as a provider/model or a
+            capability shortcut. Empty leaves the default, and a deployment that routes no
+            search offers the tool to nobody either way.
         instructions:
           type: string
         greeting:
@@ -1840,6 +1962,8 @@ components:
         llm:
           type: string
         subagent:
+          type: string
+        search:
           type: string
         instructions:
           type: string
@@ -2101,6 +2225,64 @@ components:
           type: integer
           description: How many passages they were cut into and written as.
 
+    KnowledgeUrlRequest:
+      type: object
+      required: [namespace, url]
+      properties:
+        namespace:
+          type: string
+          description: >
+            The knowledge base to fill, which is what a config's knowledge_namespace names.
+          example: docs
+        url:
+          type: string
+          description: >
+            The page to read. It must be http or https: this is handed to a crawler and
+            then used to key the passages it becomes.
+          example: https://example.com/pricing
+
+    KnowledgeUrlState:
+      type: string
+      enum: [pending, indexed, failed]
+      description: >
+        Where the page has got to. Pending means it has been added but not yet read, which
+        is also what a read that died halfway through leaves behind.
+
+    KnowledgeUrl:
+      type: object
+      required: [id, namespace, url, state, passages, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        namespace:
+          type: string
+        url:
+          type: string
+        title:
+          type: string
+          description: What the page called itself when it was last read.
+        state:
+          $ref: "#/components/schemas/KnowledgeUrlState"
+        error:
+          type: string
+          description: Why the last read failed. Empty otherwise.
+        passages:
+          type: integer
+          description: How many passages the page was last cut into.
+        last_indexed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >
+            When it was last read successfully. Absent means never, which is what separates
+            a page that has never worked from one that worked and has since broken.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
     CampaignRequest:
       type: object
       required: [name, config_id, from_number]
@@ -2226,6 +2408,34 @@ components:
           type: string
           format: date-time
           description: Absent while the call is still running.
+        stt:
+          type: string
+          description: >
+            The transcription target the call ran with, after a session's overrides were
+            folded into whatever config it named. This is what was asked for rather than
+            what each turn resolved to: a shortcut is several models and routing fails
+            over between them, so per-turn providers are in the request rows.
+        tts:
+          type: string
+          description: The voice target, on the same terms as stt.
+        llm:
+          type: string
+          description: The target that held the conversation.
+        subagent:
+          type: string
+          description: >
+            The slower target delegated work ran on. Empty means nothing was delegated,
+            which also means the skills below were never offered.
+        instructions:
+          type: string
+          description: What the agent was told to be on this call.
+        skills:
+          type: array
+          items:
+            type: string
+          description: >
+            What the fast model could hand to the subagent. The instructions behind each
+            name are in the skill registry.
         summary:
           type: string
           description: What a model made of the call, written once it was over.
@@ -2334,11 +2544,15 @@ components:
           description: Who it concerned.
         said:
           type: string
-          description: What was heard, or what the agent decided to say.
+          description: >
+            What was heard, what the agent decided to say, or what the subagent came back
+            with.
         latency_ms:
           type: number
           format: double
-          description: What the flow controller took to rule, where anything was asked.
+          description: >
+            What the flow controller took to rule, or what the subagent took to answer.
+            Zero where nothing was asked.
 
     DecisionKind:
       type: string
@@ -2349,7 +2563,8 @@ components:
         stopped talking; interrupting abandons the reply being spoken and shortening ends
         it early; a backchannel is a listening noise that never reaches the model;
         superseding drops a ruling about words that have since changed; compacting
-        replaces old history with a summary; delegating hands work to the subagent.
+        replaces old history with a summary; delegating hands work to the subagent and
+        settling is that work coming back, answered or not.
       enum:
         - ask
         - wait
@@ -2362,6 +2577,7 @@ components:
         - supersede
         - compact
         - delegate
+        - settle
         - fail
 
     CreateSessionRequest:
@@ -2430,6 +2646,10 @@ components:
           description: >
             The model that does the thinking. Empty means the voice model answers
             everything itself, and skills mean nothing.
+        search:
+          type: string
+          description: >
+            Omit it and the config decides, or search-fast when there is no config.
         voice:
           type: string
           description: Provider-specific voice id.
@@ -2559,9 +2779,9 @@ components:
 
     Modality:
       type: string
-      enum: [stt, tts, llm, memory, knowledge, phone]
+      enum: [stt, tts, llm, search, memory, knowledge, phone]
       description: >
-        What kind of work was done. The first three are routed across providers.
+        What kind of work was done. The first four are routed across providers.
         Memory, knowledge and phone are recorded but not routed, since there is one
         memory store, one knowledge base and one vendor per number, so the provider
         paths do not serve them while the statistics paths do.

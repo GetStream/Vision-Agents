@@ -283,6 +283,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Voice:              value(request.Voice),
 		LLM:                value(request.Llm),
 		Subagent:           value(request.Subagent),
+		Search:             value(request.Search),
 		Instructions:       value(request.Instructions),
 		Greeting:           value(request.Greeting),
 		KnowledgeNamespace: value(request.KnowledgeNamespace),
@@ -322,6 +323,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.Voice = optional(config.Voice)
 	rendered.Llm = optional(config.LLM)
 	rendered.Subagent = optional(config.Subagent)
+	rendered.Search = optional(config.Search)
 	rendered.Instructions = optional(config.Instructions)
 	rendered.Greeting = optional(config.Greeting)
 	rendered.KnowledgeNamespace = optional(config.KnowledgeNamespace)

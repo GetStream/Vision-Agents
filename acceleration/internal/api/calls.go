@@ -311,9 +311,18 @@ func callOf(call store.Call) Call {
 	rendered.ContactId = optional(call.ContactID)
 	rendered.FromNumber = optional(call.FromNumber)
 	rendered.ToNumber = optional(call.ToNumber)
+	rendered.Stt = optional(call.STT)
+	rendered.Tts = optional(call.TTS)
+	rendered.Llm = optional(call.LLM)
+	rendered.Subagent = optional(call.Subagent)
+	rendered.Instructions = optional(call.Instructions)
 	rendered.Summary = optional(call.Summary)
 	rendered.ReviewNotes = optional(call.ReviewNotes)
 	rendered.ReviewScore = call.ReviewScore
+	if len(call.Skills) > 0 {
+		skills := call.Skills
+		rendered.Skills = &skills
+	}
 	if len(call.Tags) > 0 {
 		tags := call.Tags
 		rendered.Tags = &tags

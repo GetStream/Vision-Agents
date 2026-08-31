@@ -679,6 +679,35 @@ func (s *HarnessSuite) TestWorkThatOutlivesItsDeadlineIsAbandoned() {
 	s.False(s.harness.Delegating())
 }
 
+func (s *HarnessSuite) TestWorkThatRanOutOfTimeStillOwesTheCallerAWord() {
+	// The caller asked and is still waiting: nothing replaced the work and they never moved
+	// on from it. Going quiet leaves them holding a question the agent has given up on,
+	// which is a call that answers "anything else?" to a question never answered.
+	s.build(true)
+	s.harness.options.Skills = Skills{Skills: []Skill{
+		{Name: "think", Description: "hard questions", Instructions: "go on", Deadline: 20 * time.Millisecond},
+	}}
+	s.respond("turn-1", "how is traffic on I-70")
+
+	s.reply("turn-1", `<ask skill="think">traffic on I-70</ask>`)
+
+	settled := s.awaitSettled(1)[0]
+	s.Require().Equal(ReasonDeadline, settled.Reason)
+	s.True(settled.Actionable(), "the caller is owed the news that the answer is not coming")
+	s.True(s.harness.Pending(), "and the next turn has to say so")
+
+	s.respond("turn-2", "")
+	s.Require().Len(s.fast.requests(), 2)
+	s.Contains(s.fast.requests()[1].Instructions, "did not come back")
+}
+
+func (s *HarnessSuite) TestWorkTheCallerMovedPastOwesThemNothing() {
+	// The other cancellations are the premise being gone, and nobody is waiting on those.
+	s.False(Result{State: Cancelled, Reason: ReasonSuperseded}.Actionable())
+	s.False(Result{State: Cancelled, Reason: ReasonDropped}.Actionable())
+	s.False(Result{State: Cancelled, Reason: ReasonClosed}.Actionable())
+}
+
 func (s *HarnessSuite) TestOnlyAsMuchWorkAsWasAllowedRunsAtOnce() {
 	s.build(true)
 	s.harness.options.Tasks = 1

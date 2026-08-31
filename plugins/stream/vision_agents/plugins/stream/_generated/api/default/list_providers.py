@@ -74,7 +74,7 @@ def sync_detailed(
     """List the providers configured for a modality and their live health
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
+        modality (Modality): What kind of work was done. The first four are routed across
             providers. Memory, knowledge and phone are recorded but not routed, since there is one
             memory store, one knowledge base and one vendor per number, so the provider paths do not
             serve them while the statistics paths do.
@@ -107,7 +107,7 @@ def sync(
     """List the providers configured for a modality and their live health
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
+        modality (Modality): What kind of work was done. The first four are routed across
             providers. Memory, knowledge and phone are recorded but not routed, since there is one
             memory store, one knowledge base and one vendor per number, so the provider paths do not
             serve them while the statistics paths do.
@@ -135,7 +135,7 @@ async def asyncio_detailed(
     """List the providers configured for a modality and their live health
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
+        modality (Modality): What kind of work was done. The first four are routed across
             providers. Memory, knowledge and phone are recorded but not routed, since there is one
             memory store, one knowledge base and one vendor per number, so the provider paths do not
             serve them while the statistics paths do.
@@ -166,7 +166,7 @@ async def asyncio(
     """List the providers configured for a modality and their live health
 
     Args:
-        modality (Modality): What kind of work was done. The first three are routed across
+        modality (Modality): What kind of work was done. The first four are routed across
             providers. Memory, knowledge and phone are recorded but not routed, since there is one
             memory store, one knowledge base and one vendor per number, so the provider paths do not
             serve them while the statistics paths do.

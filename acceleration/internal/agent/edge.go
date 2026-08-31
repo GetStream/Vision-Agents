@@ -39,6 +39,18 @@ type Attendance struct {
 	Joined bool
 }
 
+// Playout is an edge that can say whether the speech handed to it has been heard yet.
+//
+// Separate from Edge rather than a fifth method on it, because only a transport that paces
+// audio out has anything to report. It matters at the end of a reply: a voice provider
+// streams an utterance far faster than it is spoken, so the provider saying it has finished
+// means it sent the last chunk, not that the caller heard it. Leaving on that word cuts the
+// agent off mid-word, and an edge that cannot say leaves nothing to wait for.
+type Playout interface {
+	// SpeechPending reports whether audio already published is still waiting to go out.
+	SpeechPending() bool
+}
+
 // Roster is an edge that can say who else is in the call.
 //
 // Separate from Edge rather than a fifth method on it, because it is only answerable by a

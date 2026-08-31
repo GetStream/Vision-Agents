@@ -31,16 +31,24 @@ const watcherBuffer = 256
 // Defaults a caller can leave out. They are the same ones cmd/agent's flags carry, so a
 // session started with an almost empty spec behaves like the demo.
 const (
-	defaultCallType  = "default"
-	defaultUserID    = "vision-agent"
-	defaultUserName  = "Vision Agent"
-	defaultLLMTarget = "llm-fast"
-	defaultSTTTarget = "en-low-latency"
-	defaultTTSTarget = "en-low-latency"
+	defaultCallType     = "default"
+	defaultUserID       = "vision-agent"
+	defaultUserName     = "Vision Agent"
+	defaultLLMTarget    = "llm-fast"
+	defaultSTTTarget    = "en-low-latency"
+	defaultTTSTarget    = "en-low-latency"
+	defaultSearchTarget = "search-fast"
 )
 
 // daytonaProvider is the one sandbox a caller may ask for by name.
 const daytonaProvider = "daytona"
+
+// finishWithin bounds how long a session ending gives the agent to be heard out. Leaving
+// the call discards whatever audio has not gone out yet, and a voice streams a reply faster
+// than it is spoken, so closing the moment the provider stops sending cuts the last of the
+// reply off mid-word. It is a bound rather than a wait: a caller ending a session is not
+// made to sit through a monologue.
+const finishWithin = 5 * time.Second
 
 // State is where a session is in its life.
 type State string
@@ -78,6 +86,10 @@ type Session struct {
 	voiceAgent *agent.Agent
 	tools      *bridge
 	transcript Transcript
+	// skills are what the fast model may hand over, resolved once when the session was
+	// created. Kept so the call's row can say what was on offer: the spec carries names
+	// or nothing at all, and nothing at all means the built-in set.
+	skills harness.Skills
 
 	mu sync.Mutex
 	// watchers are the connections being fanned out to, keyed so one can detach without
@@ -214,6 +226,14 @@ func (s *Session) close() error {
 	// The tools go first so a model waiting on one is told the call ended rather than
 	// waiting out a timeout against a conversation that is already over.
 	s.tools.Close()
+
+	// Hanging up mid-sentence is rude, and leaving is what throws away the audio that has
+	// not been heard yet, so the last utterance is given a moment to land first.
+	finishing, cancel := context.WithTimeout(context.Background(), finishWithin)
+	if err := s.voiceAgent.Finish(finishing); err != nil {
+		s.logger.Debug("the agent was still talking when the session ended", "error", err)
+	}
+	cancel()
 
 	err := s.voiceAgent.Close()
 

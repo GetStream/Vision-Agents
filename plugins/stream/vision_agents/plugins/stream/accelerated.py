@@ -254,10 +254,15 @@ class Accelerated(OmniLLM):
             call_type=call.call_type,
             user_id=call.agent_user_id,
             agent_id=call.agent_user_id,
-            instructions=call.instructions,
-            greeting=self.greeting,
             backchannel=self.backchannel,
         )
+        # Anything named here wins over the stored config, so a field this agent does not
+        # decide is left out rather than sent empty: sending it would replace what the
+        # config says with nothing.
+        if call.instructions:
+            request.instructions = call.instructions
+        if self.greeting:
+            request.greeting = self.greeting
         if self.model:
             request.llm = self.model
         if self.stt:

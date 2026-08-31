@@ -19,6 +19,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -64,6 +65,10 @@ type Options struct {
 	// Absent when the deployment has no knowledge provider, in which case there is nothing
 	// to fill and the path says so.
 	Knowledge knowledge.Writer
+	// KnowledgeURLs keeps those bases filled from pages published elsewhere. Absent
+	// without a database or without something that can read a page, in which case the url
+	// paths say so rather than accepting a subscription nothing would honour.
+	KnowledgeURLs *urls.Service
 	// Voices holds the voices customers brought with them. Absent when the deployment has
 	// no object storage, in which case there is nowhere to keep a recording and the voice
 	// paths say so.
@@ -97,6 +102,7 @@ type Server struct {
 	transcripts  *chatlog.Reader
 	campaigns    *campaign.Runner
 	knowledge    knowledge.Writer
+	pages        *urls.Service
 	voices       *voices.Service
 	dispatch     *dispatch.Pool
 	streamSecret string
@@ -130,6 +136,7 @@ func NewServer(options Options) (*Server, error) {
 		transcripts:  options.Transcripts,
 		campaigns:    options.Campaigns,
 		knowledge:    options.Knowledge,
+		pages:        options.KnowledgeURLs,
 		voices:       options.Voices,
 		dispatch:     options.Dispatch,
 		streamSecret: options.StreamSecret,
