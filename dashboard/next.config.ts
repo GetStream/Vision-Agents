@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Dockerfile copies .next/standalone, which needs the traced server bundle.
+  output: "standalone",
   turbopack: {
     rules: {
       // The orb's shader imports WGSL modules, and the loader resolves that graph

@@ -1,0 +1,62 @@
+name: vision-agents
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: model_router
+    ports:
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d model_router"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  router:
+    build:
+      context: ./acceleration
+      # Fetching the private getstream-go-webrtc module needs the host's SSH agent.
+      ssh:
+        - default
+    # Provider credentials come from the repo-root .env; the three below are the
+    # ones that differ inside the network and so are set here instead.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ROUTER_POSTGRES_DSN: postgres://postgres:postgres@postgres:5432/model_router?sslmode=disable
+      ROUTER_REDIS_ADDR: redis:6379
+      ROUTER_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  dashboard:
+    build:
+      context: ./dashboard
+      args:
+        NEXT_PUBLIC_ROUTER_URL: http://localhost:8080
+        NEXT_PUBLIC_CUSTOMER_ID: examples
+    ports:
+      - "3000:3000"
+    depends_on:
+      - router
+
+volumes:
+  pgdata:
