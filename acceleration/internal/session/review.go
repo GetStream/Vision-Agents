@@ -149,7 +149,7 @@ func (r *reviewer) review(ctx context.Context, call store.Call, target string, s
 		return err
 	}
 
-	answer, err := await(ctx, session, call.ID)
+	answer, err := llmrouter.Await(ctx, session, call.ID)
 	if err != nil {
 		return err
 	}
@@ -164,30 +164,6 @@ func (r *reviewer) review(ctx context.Context, call store.Call, target string, s
 		score = &verdict.Score
 	}
 	return r.store.ReviewCall(ctx, call.CustomerID, call.ID, verdict.Summary, score, verdict.Notes)
-}
-
-// await waits for the one completion this pass asked for.
-func await(ctx context.Context, session *llmrouter.Session, id string) (string, error) {
-	for {
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case event, open := <-session.Events():
-			if !open {
-				return "", errors.New("session: the reviewer's model closed before answering")
-			}
-			switch typed := event.(type) {
-			case llm.CompletionComplete:
-				if typed.CompletionID == id {
-					return typed.Text, nil
-				}
-			case llm.Error:
-				if typed.CompletionID == "" || typed.CompletionID == id {
-					return "", typed.Err
-				}
-			}
-		}
-	}
 }
 
 // conversation is the call as the reviewer reads it. It is quoted rather than replayed as
@@ -213,13 +189,8 @@ func conversation(said []spoken) string {
 }
 
 func parseJudgement(answer string) (judgement, error) {
-	trimmed := strings.TrimSpace(answer)
-	trimmed = strings.TrimPrefix(trimmed, "```json")
-	trimmed = strings.TrimPrefix(trimmed, "```")
-	trimmed = strings.TrimSuffix(trimmed, "```")
-
 	var verdict judgement
-	if err := json.Unmarshal([]byte(strings.TrimSpace(trimmed)), &verdict); err != nil {
+	if err := json.Unmarshal([]byte(llm.Unfence(answer)), &verdict); err != nil {
 		return judgement{}, fmt.Errorf("session: decode review: %w", err)
 	}
 	if strings.TrimSpace(verdict.Summary) == "" {

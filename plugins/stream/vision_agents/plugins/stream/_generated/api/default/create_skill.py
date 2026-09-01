@@ -72,9 +72,9 @@ def sync_detailed(
 ) -> Response[Error | Skill]:
     """Define a kind of work worth handing to the slower model
 
-     Skills live apart from the configs that use them so several configs can share one, and so editing
-    what a skill means changes it everywhere at once. The built-in think, recall and explain need no
-    row: a config may name them without defining them.
+     A skill belongs to one agent config. Two agents that both need the same kind of work have one each,
+    so editing what "explain" means for one leaves the other alone. The built-in think, recall and
+    explain need no row: a config may name them without defining them.
 
     Args:
         body (SkillRequest):
@@ -105,9 +105,9 @@ def sync(
 ) -> Error | Skill | None:
     """Define a kind of work worth handing to the slower model
 
-     Skills live apart from the configs that use them so several configs can share one, and so editing
-    what a skill means changes it everywhere at once. The built-in think, recall and explain need no
-    row: a config may name them without defining them.
+     A skill belongs to one agent config. Two agents that both need the same kind of work have one each,
+    so editing what "explain" means for one leaves the other alone. The built-in think, recall and
+    explain need no row: a config may name them without defining them.
 
     Args:
         body (SkillRequest):
@@ -133,9 +133,9 @@ async def asyncio_detailed(
 ) -> Response[Error | Skill]:
     """Define a kind of work worth handing to the slower model
 
-     Skills live apart from the configs that use them so several configs can share one, and so editing
-    what a skill means changes it everywhere at once. The built-in think, recall and explain need no
-    row: a config may name them without defining them.
+     A skill belongs to one agent config. Two agents that both need the same kind of work have one each,
+    so editing what "explain" means for one leaves the other alone. The built-in think, recall and
+    explain need no row: a config may name them without defining them.
 
     Args:
         body (SkillRequest):
@@ -164,9 +164,9 @@ async def asyncio(
 ) -> Error | Skill | None:
     """Define a kind of work worth handing to the slower model
 
-     Skills live apart from the configs that use them so several configs can share one, and so editing
-    what a skill means changes it everywhere at once. The built-in think, recall and explain need no
-    row: a config may name them without defining them.
+     A skill belongs to one agent config. Two agents that both need the same kind of work have one each,
+    so editing what "explain" means for one leaves the other alone. The built-in think, recall and
+    explain need no row: a config may name them without defining them.
 
     Args:
         body (SkillRequest):

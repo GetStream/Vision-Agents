@@ -43,13 +43,6 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 		return SyncAgent200JSONResponse{Unchanged: true, Config: agentConfigOf(existing)}, nil
 	}
 
-	skills := skillsOf(body.Skills)
-	if len(skills) > 0 {
-		if err := s.upsertSkills(ctx, customerID, skills); err != nil {
-			return SyncAgent400JSONResponse{badRequest(err.Error())}, nil
-		}
-	}
-
 	documents := documentsOf(body.Knowledge)
 	namespace := ""
 	if len(documents) > 0 {
@@ -62,9 +55,10 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 		}
 	}
 
+	skills := skillsOf(body.Skills)
 	named := make([]string, 0, len(skills))
 	for _, skill := range skills {
-		named = append(named, skill.Name)
+		named = append(named, strings.TrimSpace(skill.Name))
 	}
 
 	config := existing
@@ -85,6 +79,14 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 			return SyncAgent400JSONResponse{badRequest(err.Error())}, nil
 		}
 	}
+
+	// The skills belong to the config, so they are written after it: a new agent has no
+	// id to hang them off until it has been stored.
+	if len(skills) > 0 {
+		if err := s.upsertSkills(ctx, customerID, config.ID, skills); err != nil {
+			return SyncAgent400JSONResponse{badRequest(err.Error())}, nil
+		}
+	}
 	return SyncAgent200JSONResponse{Unchanged: false, Config: agentConfigOf(config)}, nil
 }
 
@@ -102,16 +104,19 @@ func documentsOf(list *[]KnowledgeDocument) []KnowledgeDocument {
 	return *list
 }
 
-func (s *Server) upsertSkills(ctx context.Context, customerID string, skills []SkillRequest) error {
+func (s *Server) upsertSkills(ctx context.Context, customerID, configID string, skills []SkillRequest) error {
 	names := make([]string, 0, len(skills))
 	for _, skill := range skills {
+		// The directory names the skill and the config owns it, so the caller does not
+		// repeat the config id per skill and it is filled in here.
+		skill.ConfigId = configID
 		if message, ok := skillComplaint(skill); !ok {
 			return errors.New(message)
 		}
 		names = append(names, strings.TrimSpace(skill.Name))
 	}
 
-	stored, err := s.store.SkillsNamed(ctx, customerID, names)
+	stored, err := s.store.SkillsNamed(ctx, customerID, configID, names)
 	if err != nil {
 		return err
 	}
@@ -121,6 +126,7 @@ func (s *Server) upsertSkills(ctx context.Context, customerID string, skills []S
 	}
 
 	for _, skill := range skills {
+		skill.ConfigId = configID
 		row := storedSkill(skill, customerID)
 		if existing, ok := known[row.Name]; ok {
 			row.ID = existing.ID

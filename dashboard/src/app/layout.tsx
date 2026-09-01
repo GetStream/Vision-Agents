@@ -22,8 +22,10 @@ export const metadata: Metadata = {
 
 const sections = [
   { href: "/", label: "Overview" },
+  { href: "/sessions", label: "Sessions" },
   { href: "/agents", label: "Agents" },
   { href: "/voices", label: "Voices" },
+  { href: "/simulations", label: "Simulations" },
   { href: "/telephony", label: "Telephony" },
 ];
 

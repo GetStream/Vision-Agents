@@ -13,6 +13,7 @@ package llm
 
 import (
 	"context"
+	"strings"
 )
 
 // Role is who authored a message.
@@ -123,4 +124,16 @@ type LLM interface {
 	// A caller on the live path uses it to decide whether to wait for the first
 	// TextDelta or to show thinking in the meantime.
 	Reasoning() bool
+}
+
+// Unfence strips the code fence a model puts around JSON it was asked for.
+//
+// Asking for JSON only mostly works, and a fenced object is the way it mostly fails. The
+// answer is otherwise exactly what was asked for, so it is read rather than rejected.
+func Unfence(answer string) string {
+	trimmed := strings.TrimSpace(answer)
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	return strings.TrimSpace(trimmed)
 }

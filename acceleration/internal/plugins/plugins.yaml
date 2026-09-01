@@ -1,0 +1,35 @@
+plugins:
+  - id: slack
+    name: Slack
+    category: Communication
+    description: Search the workspace, read and send messages, and look people up.
+    url: https://mcp.slack.com/mcp
+    auth: oauth
+  - id: calendly
+    name: Calendly
+    category: Scheduling
+    description: Check availability, create scheduling links, and book meetings.
+    url: https://mcp.calendly.com
+    auth: oauth
+  - id: calcom
+    name: Cal.com
+    category: Scheduling
+    description: Manage bookings, event types and schedules.
+    url: https://mcp.cal.com/mcp
+    auth: oauth
+  - id: shopify
+    name: Shopify
+    category: Commerce
+    description: Orders, products and inventory on a shop.
+    url: https://{instance}/api/mcp
+    auth: oauth
+    instance_required: true
+    instance_hint: The shop hostname, such as mystore.myshopify.com
+  - id: salesforce
+    name: Salesforce
+    category: Customers
+    description: Accounts, contacts and opportunities in an org.
+    url: https://{instance}/mcp
+    auth: oauth
+    instance_required: true
+    instance_hint: The org my-domain, such as mycompany.my.salesforce.com

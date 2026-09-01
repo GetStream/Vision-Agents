@@ -22,8 +22,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 )
@@ -61,6 +63,10 @@ type Options struct {
 	// Campaigns rings lists of people. Absent without telephony or sessions, in which
 	// case a campaign can be written down but not run.
 	Campaigns *campaign.Runner
+	// Simulations puts an agent through a conversation somebody wrote down and rules on
+	// how it went. Absent without sessions or model routing, in which case a simulation
+	// can be written down but not run.
+	Simulations *simulation.Runner
 	// Knowledge fills the bases a config's knowledge_namespace has an agent read from.
 	// Absent when the deployment has no knowledge provider, in which case there is nothing
 	// to fill and the path says so.
@@ -88,7 +94,11 @@ type Options struct {
 	// what a dashboard talking to the router without a proxy in between needs. Empty
 	// means no browser may, which is right for a deployment only servers reach.
 	CORSOrigins []string
-	Logger      *slog.Logger
+	// PublicURL is where this process is reachable, which plugin OAuth callbacks need.
+	PublicURL string
+	// DashboardURL is where a finished plugin login sends the browser.
+	DashboardURL string
+	Logger       *slog.Logger
 }
 
 // Server implements the generated StrictServerInterface.
@@ -101,6 +111,7 @@ type Server struct {
 	streams      *Streams
 	transcripts  *chatlog.Reader
 	campaigns    *campaign.Runner
+	simulations  *simulation.Runner
 	knowledge    knowledge.Writer
 	pages        *urls.Service
 	voices       *voices.Service
@@ -108,6 +119,9 @@ type Server struct {
 	streamSecret string
 	streamKey    string
 	corsOrigins  []string
+	publicURL    string
+	dashboardURL string
+	oauth        *plugins.Auth
 	logger       *slog.Logger
 }
 
@@ -135,6 +149,7 @@ func NewServer(options Options) (*Server, error) {
 		streams:      options.Streams,
 		transcripts:  options.Transcripts,
 		campaigns:    options.Campaigns,
+		simulations:  options.Simulations,
 		knowledge:    options.Knowledge,
 		pages:        options.KnowledgeURLs,
 		voices:       options.Voices,
@@ -142,7 +157,13 @@ func NewServer(options Options) (*Server, error) {
 		streamSecret: options.StreamSecret,
 		streamKey:    options.StreamKey,
 		corsOrigins:  options.CORSOrigins,
-		logger:       logger,
+		publicURL:    options.PublicURL,
+		dashboardURL: options.DashboardURL,
+		oauth: &plugins.Auth{
+			PublicURL:    options.PublicURL,
+			DashboardURL: options.DashboardURL,
+		},
+		logger: logger,
 	}, nil
 }
 
@@ -162,6 +183,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
+	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	return withCORS(s.corsOrigins, withCustomer(HandlerFromMux(NewStrictHandler(s, nil), mux)))
 }
 

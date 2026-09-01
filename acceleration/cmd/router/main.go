@@ -32,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search/exa"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
@@ -96,6 +97,13 @@ func logLevel() slog.Level {
 		return slog.LevelInfo
 	}
 	return level
+}
+
+func dashboardBaseURL() string {
+	if value := os.Getenv("DASHBOARD_BASE_URL"); value != "" {
+		return value
+	}
+	return "http://localhost:3000"
 }
 
 func run(logger *slog.Logger) error {
@@ -265,6 +273,33 @@ func run(logger *slog.Logger) error {
 		defer campaigns.Close()
 	}
 
+	// A simulation is a conversation, a model to judge it and a row, so it too runs only
+	// where all three are configured. Elsewhere a simulation can be written down but the
+	// path that runs it says why it cannot.
+	var simulations *simulation.Runner
+	if pgStore != nil && sessions != nil && streams.LLM != nil {
+		simulations, err = simulation.New(simulation.Options{
+			Store:    pgStore,
+			Sessions: sessions,
+			LLM:      streams.LLM,
+			// Speech is what an audio simulation needs and a text one does not, so it is
+			// passed where it exists rather than required.
+			TTS:    streams.TTS,
+			STT:    streams.STT,
+			Logger: logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer simulations.Close()
+
+		// Runs an older process left going are nobody's to finish: the conversations were
+		// held in it, and it is gone.
+		if err := simulations.Abandon(ctx); err != nil {
+			logger.Error("could not write off the runs an older router left going", "error", err)
+		}
+	}
+
 	// Reading a transcript back needs the same credentials writing one does. Without
 	// them the calls are still listed; only what was said on them is missing.
 	var transcripts *chatlog.Reader
@@ -306,10 +341,13 @@ func run(logger *slog.Logger) error {
 		Streams:       streams,
 		Transcripts:   transcripts,
 		Campaigns:     campaigns,
+		Simulations:   simulations,
 		Dispatch:      workers,
 		StreamSecret:  os.Getenv(streamSecretEnvVar),
 		StreamKey:     os.Getenv(streamKeyEnvVar),
 		CORSOrigins:   splitList(os.Getenv(corsOriginsEnvVar)),
+		PublicURL:     os.Getenv(publicURLEnvVar),
+		DashboardURL:  dashboardBaseURL(),
 		Logger:        logger,
 	}
 	if options.StreamSecret == "" {

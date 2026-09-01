@@ -6,6 +6,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/deepgram"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/gemini"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/grok"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/muse"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/parakeet"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/togetherparakeet"
 )
@@ -50,6 +51,15 @@ func DefaultRegistry() *Registry {
 			Keyterms: spec.Keyterms,
 			Language: firstLanguage(spec.LanguageHints),
 			Logger:   spec.Logger,
+		})
+	})
+
+	registry.Register(muse.ProviderName, func(spec routing.Spec) (stt.STT, error) {
+		return muse.New(muse.Options{
+			Model:         spec.Model,
+			Keyterms:      spec.Keyterms,
+			LanguageHints: spec.LanguageHints,
+			Logger:        spec.Logger,
 		})
 	})
 

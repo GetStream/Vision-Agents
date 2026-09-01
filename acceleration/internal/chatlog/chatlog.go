@@ -34,8 +34,8 @@ const (
 	apiSecretEnvVar = "STREAM_API_SECRET"
 )
 
-// channelType is the Stream Chat channel type transcripts are written to.
-const channelType = "messaging"
+// ChannelType is the Stream Chat channel type transcripts are written to.
+const ChannelType = "messaging"
 
 // queueSize bounds how far the writer may fall behind before messages are dropped.
 const queueSize = 256
@@ -158,7 +158,7 @@ func (l *Log) Start(ctx context.Context) error {
 	if err := l.upsert(ctx, l.agent); err != nil {
 		return err
 	}
-	_, err := l.client.Chat().GetOrCreateChannel(ctx, channelType, l.agentID,
+	_, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.agentID,
 		&getstream.GetOrCreateChannelRequest{
 			Data: &getstream.ChannelInput{CreatedByID: &l.agent.ID},
 		})
@@ -394,7 +394,7 @@ func (w *writer) send(ctx context.Context, author User, text string, generating 
 		w.known[author.ID] = struct{}{}
 	}
 
-	response, err := w.log.client.Chat().SendMessage(ctx, channelType, w.log.agentID,
+	response, err := w.log.client.Chat().SendMessage(ctx, ChannelType, w.log.agentID,
 		&getstream.SendMessageRequest{
 			Message: getstream.MessageRequest{
 				Text:   &text,

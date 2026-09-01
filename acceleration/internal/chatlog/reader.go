@@ -76,7 +76,7 @@ func (r *Reader) Transcript(ctx context.Context, agentID string) ([]Spoken, erro
 	// Without asking for the state the channel comes back without its messages, which
 	// reads as a conversation nobody stored rather than as the error it is.
 	state := true
-	response, err := r.client.Chat().GetOrCreateChannel(ctx, channelType, agentID,
+	response, err := r.client.Chat().GetOrCreateChannel(ctx, ChannelType, agentID,
 		&getstream.GetOrCreateChannelRequest{
 			State:    &state,
 			Messages: &getstream.MessagePaginationParams{Limit: &limit},

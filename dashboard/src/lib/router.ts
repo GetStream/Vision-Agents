@@ -13,14 +13,35 @@ export type StatsBucket = Schemas["StatsBucket"];
 export type TurnStatsBucket = Schemas["TurnStatsBucket"];
 export type AgentConfig = Schemas["AgentConfig"];
 export type AgentConfigRequest = Schemas["AgentConfigRequest"];
+export type AgentMode = Schemas["AgentMode"];
+export type Skill = Schemas["Skill"];
+export type SkillRequest = Schemas["SkillRequest"];
+export type KnowledgeUrl = Schemas["KnowledgeUrl"];
+export type KnowledgeDocument = Schemas["KnowledgeDocument"];
+export type IngestedKnowledge = Schemas["IngestedKnowledge"];
+export type ChatToken = Schemas["ChatToken"];
+export type ChatTokenRequest = Schemas["ChatTokenRequest"];
+export type Session = Schemas["Session"];
+export type CreateSessionRequest = Schemas["CreateSessionRequest"];
+export type Provider = Schemas["Provider"];
 export type Voice = Schemas["Voice"];
 export type VoiceRequest = Schemas["VoiceRequest"];
+export type VoiceSampleRequest = Schemas["VoiceSampleRequest"];
 export type PhoneNumber = Schemas["PhoneNumber"];
 export type AvailableNumber = Schemas["AvailableNumber"];
 export type NumberSearchResult = Schemas["NumberSearchResult"];
 export type AttachedNumber = Schemas["AttachedNumber"];
 export type AttachNumberRequest = Schemas["AttachNumberRequest"];
 export type BuyNumberRequest = Schemas["BuyNumberRequest"];
+export type Simulation = Schemas["Simulation"];
+export type SimulationRequest = Schemas["SimulationRequest"];
+export type SimulationRun = Schemas["SimulationRun"];
+export type SimulationCase = Schemas["SimulationCase"];
+export type SimulationLine = Schemas["SimulationLine"];
+export type Plugin = Schemas["Plugin"];
+export type PluginConnection = Schemas["PluginConnection"];
+export type AuthorizePluginRequest = Schemas["AuthorizePluginRequest"];
+export type AuthorizePluginResponse = Schemas["AuthorizePluginResponse"];
 
 /**
  * Where the router is and who we are talking to it as.
@@ -124,7 +145,11 @@ export const router = {
       },
     }),
 
+  providers: (modality: string) =>
+    send<Provider[]>("GET", `/v1/${modality}/providers`),
+
   configs: () => send<AgentConfig[]>("GET", "/v1/agents/configs"),
+  config: (id: string) => send<AgentConfig>("GET", `/v1/agents/configs/${id}`),
   createConfig: (body: AgentConfigRequest) =>
     send<AgentConfig>("POST", "/v1/agents/configs", { body }),
   updateConfig: (id: string, body: AgentConfigRequest) =>
@@ -132,12 +157,86 @@ export const router = {
   deleteConfig: (id: string) =>
     send<void>("DELETE", `/v1/agents/configs/${id}`),
 
+  simulations: () => send<Simulation[]>("GET", "/v1/agents/simulations"),
+  simulation: (id: string) =>
+    send<Simulation>("GET", `/v1/agents/simulations/${id}`),
+  createSimulation: (body: SimulationRequest) =>
+    send<Simulation>("POST", "/v1/agents/simulations", { body }),
+  updateSimulation: (id: string, body: SimulationRequest) =>
+    send<Simulation>("PUT", `/v1/agents/simulations/${id}`, { body }),
+  deleteSimulation: (id: string) =>
+    send<void>("DELETE", `/v1/agents/simulations/${id}`),
+  runSimulation: (id: string) =>
+    send<SimulationRun>("POST", `/v1/agents/simulations/${id}/run`),
+
+  simulationRuns: (query: { simulationID?: string; limit?: number } = {}) =>
+    send<SimulationRun[]>("GET", "/v1/agents/simulation-runs", {
+      query: { simulation_id: query.simulationID, limit: query.limit },
+    }),
+  simulationRun: (id: string) =>
+    send<SimulationRun>("GET", `/v1/agents/simulation-runs/${id}`),
+  cancelSimulationRun: (id: string) =>
+    send<SimulationRun>("POST", `/v1/agents/simulation-runs/${id}/cancel`),
+
+  skills: (configID?: string) =>
+    send<Skill[]>("GET", "/v1/agents/skills", {
+      query: { config_id: configID },
+    }),
+  createSkill: (body: SkillRequest) =>
+    send<Skill>("POST", "/v1/agents/skills", { body }),
+  updateSkill: (id: string, body: SkillRequest) =>
+    send<Skill>("PUT", `/v1/agents/skills/${id}`, { body }),
+  deleteSkill: (id: string) => send<void>("DELETE", `/v1/agents/skills/${id}`),
+
+  plugins: (query?: string) =>
+    send<Plugin[]>("GET", "/v1/agents/plugins", { query: { q: query } }),
+  pluginConnections: (configID: string) =>
+    send<PluginConnection[]>("GET", `/v1/agents/configs/${configID}/plugins`),
+  authorizePlugin: (configID: string, pluginID: string, instanceURL?: string) =>
+    send<AuthorizePluginResponse>(
+      "POST",
+      `/v1/agents/configs/${configID}/plugins/${pluginID}/authorize`,
+      { body: instanceURL ? { instance_url: instanceURL } : {} },
+    ),
+  disconnectPlugin: (configID: string, pluginID: string) =>
+    send<void>("DELETE", `/v1/agents/configs/${configID}/plugins/${pluginID}`),
+
+  knowledgeUrls: (namespace?: string) =>
+    send<KnowledgeUrl[]>("GET", "/v1/agents/knowledge/urls", {
+      query: { namespace },
+    }),
+  addKnowledgeUrl: (namespace: string, url: string) =>
+    send<KnowledgeUrl>("POST", "/v1/agents/knowledge/urls", {
+      body: { namespace, url },
+    }),
+  indexKnowledgeUrl: (id: string) =>
+    send<KnowledgeUrl>("POST", `/v1/agents/knowledge/urls/${id}/index`),
+  deleteKnowledgeUrl: (id: string) =>
+    send<void>("DELETE", `/v1/agents/knowledge/urls/${id}`),
+  ingestKnowledge: (namespace: string, documents: KnowledgeDocument[]) =>
+    send<IngestedKnowledge>("POST", "/v1/agents/knowledge", {
+      body: { namespace, documents },
+    }),
+
+  chatToken: (body: ChatTokenRequest) =>
+    send<ChatToken>("POST", "/v1/agents/chat-token", { body }),
+
+  // The generated request type marks everything with a schema default as required, which
+  // a caller leaving it to the router is not, so what is actually optional is optional.
+  createSession: (body: Partial<CreateSessionRequest>) =>
+    send<Session>("POST", "/v1/agents/sessions", { body }),
+  respondSession: (id: string, text: string) =>
+    send<void>("POST", `/v1/agents/sessions/${id}/respond`, { body: { text } }),
+  closeSession: (id: string) => send<void>("DELETE", `/v1/agents/sessions/${id}`),
+
   voices: () => send<Voice[]>("GET", "/v1/agents/voices"),
   createVoice: (body: VoiceRequest) =>
     send<Voice>("POST", "/v1/agents/voices", { body }),
   updateVoice: (id: string, body: VoiceRequest) =>
     send<Voice>("PUT", `/v1/agents/voices/${id}`, { body }),
   deleteVoice: (id: string) => send<void>("DELETE", `/v1/agents/voices/${id}`),
+  addVoiceSample: (id: string, body: VoiceSampleRequest) =>
+    send<Voice>("POST", `/v1/agents/voices/${id}/samples`, { body }),
   prepareVoice: (id: string, providers: string[]) =>
     send<Voice>("POST", `/v1/agents/voices/${id}/prepare`, {
       body: { providers },

@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.agent_mode import AgentMode
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -21,7 +22,11 @@ class AgentConfigRequest:
     """
     Attributes:
         name (str): What the config is called, which is unique among the customer's own.
-        stt (str | Unset): A provider/model or a capability shortcut. Empty leaves the default.
+        mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
+            what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
+            speech target and a session created from it needs no call to join.
+        stt (str | Unset): A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores
+            it.
         tts (str | Unset):
         voice (str | Unset): Provider-specific voice id.
         llm (str | Unset): The model holding the conversation.
@@ -33,6 +38,7 @@ class AgentConfigRequest:
         greeting (str | Unset):
         skills (list[str] | Unset): Skill names, either the customer's own or one of the built-in think, recall and
             explain. Omit for the built-in set.
+        plugins (list[str] | Unset): Hosted MCP servers this agent may reach, named from the built-in catalog.
         keyterms (list[str] | Unset): Business-specific words the transcriber would otherwise get wrong, such as product
             or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
         knowledge_namespace (str | Unset): What the agent may look things up in. Empty means it knows only what it was
@@ -41,6 +47,7 @@ class AgentConfigRequest:
     """
 
     name: str
+    mode: AgentMode | Unset = UNSET
     stt: str | Unset = UNSET
     tts: str | Unset = UNSET
     voice: str | Unset = UNSET
@@ -50,6 +57,7 @@ class AgentConfigRequest:
     instructions: str | Unset = UNSET
     greeting: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
+    plugins: list[str] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     tags: AgentConfigRequestTags | Unset = UNSET
@@ -57,6 +65,10 @@ class AgentConfigRequest:
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
+
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
 
         stt = self.stt
 
@@ -78,6 +90,10 @@ class AgentConfigRequest:
         if not isinstance(self.skills, Unset):
             skills = self.skills
 
+        plugins: list[str] | Unset = UNSET
+        if not isinstance(self.plugins, Unset):
+            plugins = self.plugins
+
         keyterms: list[str] | Unset = UNSET
         if not isinstance(self.keyterms, Unset):
             keyterms = self.keyterms
@@ -95,6 +111,8 @@ class AgentConfigRequest:
                 "name": name,
             }
         )
+        if mode is not UNSET:
+            field_dict["mode"] = mode
         if stt is not UNSET:
             field_dict["stt"] = stt
         if tts is not UNSET:
@@ -113,6 +131,8 @@ class AgentConfigRequest:
             field_dict["greeting"] = greeting
         if skills is not UNSET:
             field_dict["skills"] = skills
+        if plugins is not UNSET:
+            field_dict["plugins"] = plugins
         if keyterms is not UNSET:
             field_dict["keyterms"] = keyterms
         if knowledge_namespace is not UNSET:
@@ -130,6 +150,13 @@ class AgentConfigRequest:
 
         d = dict(src_dict)
         name = d.pop("name")
+
+        _mode = d.pop("mode", UNSET)
+        mode: AgentMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = AgentMode(_mode)
 
         stt = d.pop("stt", UNSET)
 
@@ -149,6 +176,8 @@ class AgentConfigRequest:
 
         skills = cast(list[str], d.pop("skills", UNSET))
 
+        plugins = cast(list[str], d.pop("plugins", UNSET))
+
         keyterms = cast(list[str], d.pop("keyterms", UNSET))
 
         knowledge_namespace = d.pop("knowledge_namespace", UNSET)
@@ -162,6 +191,7 @@ class AgentConfigRequest:
 
         agent_config_request = cls(
             name=name,
+            mode=mode,
             stt=stt,
             tts=tts,
             voice=voice,
@@ -171,6 +201,7 @@ class AgentConfigRequest:
             instructions=instructions,
             greeting=greeting,
             skills=skills,
+            plugins=plugins,
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
             tags=tags,

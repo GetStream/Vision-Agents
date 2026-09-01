@@ -283,8 +283,10 @@ func (r *Runner) hold(ctx context.Context, created *session.Session) {
 	}
 }
 
+// close ends a call through the manager rather than the session, which is what takes it off
+// the list of sessions as well as off the phone.
 func (r *Runner) close(created *session.Session) {
-	if err := created.Close(); err != nil {
+	if _, err := r.sessions.Close(created.ID(), created.Spec().CustomerID); err != nil {
 		r.logger.Error("could not end a campaign call", "session", created.ID(), "error", err)
 	}
 }

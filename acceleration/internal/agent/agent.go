@@ -1556,6 +1556,25 @@ func (a *Agent) followUp() {
 	}
 }
 
+// Busy reports whether the agent still has something to finish: a reply it is writing,
+// speech it has not finished saying, work handed to the subagent, or an answer that has
+// come back and still owes the caller a turn.
+//
+// It exists because one thing said to the agent can produce several replies -- the turn
+// that called a tool, the turn that read the tool's answer, the turn a subagent's finding
+// earned -- so a caller who waited only for the first would talk over the rest.
+func (a *Agent) Busy() bool {
+	a.mu.Lock()
+	working := a.generating || a.utterances > 0
+	current := a.harness
+	a.mu.Unlock()
+
+	if working {
+		return true
+	}
+	return current != nil && (current.Delegating() || current.Pending())
+}
+
 // delegating reports whether the subagent is still working on something.
 func (a *Agent) delegating() bool {
 	a.mu.Lock()

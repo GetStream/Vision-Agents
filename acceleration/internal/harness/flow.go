@@ -233,13 +233,8 @@ func millis(took time.Duration) float64 {
 }
 
 func parseFlow(text string) (flowAnswer, error) {
-	trimmed := strings.TrimSpace(text)
-	trimmed = strings.TrimPrefix(trimmed, "```json")
-	trimmed = strings.TrimPrefix(trimmed, "```")
-	trimmed = strings.TrimSuffix(trimmed, "```")
-
 	var answer flowAnswer
-	if err := json.Unmarshal([]byte(strings.TrimSpace(trimmed)), &answer); err != nil {
+	if err := json.Unmarshal([]byte(llm.Unfence(text)), &answer); err != nil {
 		return flowAnswer{}, fmt.Errorf("harness: decode flow decision: %w", err)
 	}
 	if !answer.Disposition.Valid() {

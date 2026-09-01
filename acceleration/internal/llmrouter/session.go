@@ -1,6 +1,8 @@
 package llmrouter
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -181,4 +183,32 @@ func errorCode(failure llm.Error) string {
 		return failure.Context
 	}
 	return "provider_error"
+}
+
+// Await waits for the one completion an off-conversation pass asked for.
+//
+// It is for the model calls nobody is streaming: a reviewer summarising a call, a judge
+// ruling on one, a model asked to rewrite a scenario. Every one of them sends a request and
+// wants the whole answer, so they all wrote this loop until it was moved here.
+func Await(ctx context.Context, session *Session, id string) (string, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case event, open := <-session.Events():
+			if !open {
+				return "", errors.New("llmrouter: the model closed before answering")
+			}
+			switch typed := event.(type) {
+			case llm.CompletionComplete:
+				if typed.CompletionID == id {
+					return typed.Text, nil
+				}
+			case llm.Error:
+				if typed.CompletionID == "" || typed.CompletionID == id {
+					return "", typed.Err
+				}
+			}
+		}
+	}
 }

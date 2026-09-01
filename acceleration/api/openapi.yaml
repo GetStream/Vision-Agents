@@ -695,6 +695,130 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/plugins:
+    get:
+      operationId: listPlugins
+      summary: The hosted MCP servers an agent may attach
+      description: >
+        A built-in catalog, not the customer's own rows. q filters by name, category or
+        description. Connecting one is a login on a config, not a change to this list.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by name, category or description.
+      responses:
+        "200":
+          description: Matching plugins, in catalog order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Plugin"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/agents/plugins/callback:
+    get:
+      operationId: pluginOAuthCallback
+      summary: Finish a plugin login
+      description: >
+        The provider redirects here with a code. The path is unauthenticated because the
+        browser arrives from the identity provider, and the state is the secret.
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "302":
+          description: The browser is sent back to the agent editor
+
+  /v1/agents/configs/{id}/plugins:
+    get:
+      operationId: listConfigPlugins
+      summary: The plugin logins this agent holds
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The config's connections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PluginConnection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/configs/{id}/plugins/{plugin_id}/authorize:
+    post:
+      operationId: authorizePlugin
+      summary: Start a plugin login
+      description: >
+        Discovers the MCP server's OAuth endpoints and returns the URL the browser should
+        open. Shopify and Salesforce need an instance url, because they have no single
+        global host.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+        - $ref: "#/components/parameters/PluginID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthorizePluginRequest"
+      responses:
+        "200":
+          description: The URL the browser should open
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizePluginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/configs/{id}/plugins/{plugin_id}:
+    delete:
+      operationId: disconnectPlugin
+      summary: Drop a plugin login
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+        - $ref: "#/components/parameters/PluginID"
+      responses:
+        "204":
+          description: The login is gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/voices:
     get:
       operationId: listVoices
@@ -869,6 +993,15 @@ paths:
     get:
       operationId: listSkills
       summary: The skills the calling customer has defined
+      parameters:
+        - name: config_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Only the skills belonging to this agent config. Omit for every skill the
+            customer has, across all of their agents.
       responses:
         "200":
           description: The customer's skills, newest first
@@ -886,10 +1019,10 @@ paths:
       operationId: createSkill
       summary: Define a kind of work worth handing to the slower model
       description: >
-        Skills live apart from the configs that use them so several configs can share one,
-        and so editing what a skill means changes it everywhere at once. The built-in
-        think, recall and explain need no row: a config may name them without defining
-        them.
+        A skill belongs to one agent config. Two agents that both need the same kind of
+        work have one each, so editing what "explain" means for one leaves the other
+        alone. The built-in think, recall and explain need no row: a config may name them
+        without defining them.
       requestBody:
         required: true
         content:
@@ -1274,6 +1407,217 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/simulations:
+    get:
+      operationId: listSimulations
+      summary: The simulations the calling customer has
+      responses:
+        "200":
+          description: The customer's simulations, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Simulation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createSimulation
+      summary: Write down a conversation to have with an agent
+      description: >
+        A simulation is a scenario to put an agent through and something that has to be
+        true at the end of it. The scenario is a brief rather than a script: it is given
+        to a model that plays the caller, reads what the agent says back and decides what
+        to say next, so a scenario can say to change your mind once the order is handled.
+        Nothing is run until it is.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SimulationRequest"
+      responses:
+        "201":
+          description: The simulation was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Simulation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/agents/simulations/{id}:
+    get:
+      operationId: getSimulation
+      summary: One simulation
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The simulation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Simulation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateSimulation
+      summary: Replace a simulation
+      description: >
+        Every field is written, so the body is what the simulation now asks rather than
+        what changed about it. The runs it already has keep their own copy of what they
+        tested, so an old result still says what it was a result of.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SimulationRequest"
+      responses:
+        "200":
+          description: The simulation as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Simulation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteSimulation
+      summary: Delete a simulation
+      description: >
+        The runs that named it are kept, so the simulation stops being runnable rather
+        than stops having existed.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "204":
+          description: The simulation is gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/simulations/{id}/run:
+    post:
+      operationId: runSimulation
+      summary: Have the conversations
+      description: >
+        Returns once the run is written rather than once it is over: the conversations
+        happen after the answer, and the run says how far along they are. A simulation
+        asking several ways has them all at once.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "202":
+          description: The run is going
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulationRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/simulation-runs:
+    get:
+      operationId: listSimulationRuns
+      summary: What the simulations have come to, newest first
+      description: >
+        Without a simulation named this is the log of everything that has been run
+        lately, which is the same question as what one simulation has come to, asked of
+        all of them.
+      parameters:
+        - name: simulation_id
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [running, passed, failed, cancelled, errored]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The runs, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SimulationRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/agents/simulation-runs/{id}:
+    get:
+      operationId: getSimulationRun
+      summary: One run, with the conversations it had
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The run and its conversations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulationRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/simulation-runs/{id}/cancel:
+    post:
+      operationId: cancelSimulationRun
+      summary: Stop a run
+      description: >
+        Unlike a paused campaign the conversations in flight are ended too: there is
+        nobody on the other end of them to be hung up on.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The run is stopping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulationRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/agents/calls:
     get:
       operationId: listCalls
@@ -1472,6 +1816,36 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /v1/agents/chat-token:
+    post:
+      operationId: createChatToken
+      summary: What a browser needs to read an agent's conversation
+      description: >
+        An agent writes what was said into the Stream Chat channel messaging:{agent_id},
+        so a client that can read that channel needs no transcript API. This mints the
+        token to read it with, and adds the reader to the channel, since a conversation
+        they are not a member of is one they cannot watch.
+
+        The secret stays here, the same as for a call token: the browser is handed
+        something that expires.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatTokenRequest"
+      responses:
+        "200":
+          description: The credentials, and the channel they are for
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatToken"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /v1/agents/sessions:
     get:
@@ -1776,6 +2150,13 @@ components:
       description: The resource, as returned when it was created.
       schema:
         type: string
+    PluginID:
+      name: plugin_id
+      in: path
+      required: true
+      description: A built-in catalog id such as slack or calendly.
+      schema:
+        type: string
 
   responses:
     BadRequest:
@@ -1886,6 +2267,16 @@ components:
             The outbound leg, set for a call the agent placed. Without one the agent has no
             keypad to press at.
 
+    AgentMode:
+      type: string
+      enum: [voice, text]
+      default: voice
+      description: >
+        Whether the agent is spoken to or written to. A voice agent joins a call,
+        transcribes what it hears and speaks its replies. A text agent holds the same
+        conversation in writing, so it uses neither speech target and a session created
+        from it needs no call to join.
+
     AgentConfigRequest:
       type: object
       required: [name]
@@ -1893,9 +2284,13 @@ components:
         name:
           type: string
           description: What the config is called, which is unique among the customer's own.
+        mode:
+          $ref: "#/components/schemas/AgentMode"
         stt:
           type: string
-          description: A provider/model or a capability shortcut. Empty leaves the default.
+          description: >
+            A provider/model or a capability shortcut. Empty leaves the default, and a
+            text agent ignores it.
         tts:
           type: string
         voice:
@@ -1926,6 +2321,12 @@ components:
           description: >
             Skill names, either the customer's own or one of the built-in think, recall
             and explain. Omit for the built-in set.
+        plugins:
+          type: array
+          items:
+            type: string
+          description: >
+            Hosted MCP servers this agent may reach, named from the built-in catalog.
         keyterms:
           type: array
           items:
@@ -1947,12 +2348,14 @@ components:
 
     AgentConfig:
       type: object
-      required: [id, name, created_at, updated_at]
+      required: [id, name, mode, created_at, updated_at]
       properties:
         id:
           type: string
         name:
           type: string
+        mode:
+          $ref: "#/components/schemas/AgentMode"
         stt:
           type: string
         tts:
@@ -1970,6 +2373,10 @@ components:
         greeting:
           type: string
         skills:
+          type: array
+          items:
+            type: string
+        plugins:
           type: array
           items:
             type: string
@@ -1994,6 +2401,64 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    Plugin:
+      type: object
+      required: [id, name, category, description]
+      description: One hosted MCP server from the built-in catalog.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        instance_required:
+          type: boolean
+        instance_hint:
+          type: string
+
+    PluginConnection:
+      type: object
+      required: [plugin_id, name, status]
+      description: A catalog plugin as this agent has it, including whether it is logged in.
+      properties:
+        plugin_id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        instance_required:
+          type: boolean
+        instance_hint:
+          type: string
+        instance_url:
+          type: string
+        status:
+          type: string
+          enum: [pending, connected, failed]
+
+    AuthorizePluginRequest:
+      type: object
+      properties:
+        instance_url:
+          type: string
+          description: >
+            The shop hostname or Salesforce my-domain. Required for plugins that have no
+            single global URL.
+
+    AuthorizePluginResponse:
+      type: object
+      required: [authorize_url]
+      properties:
+        authorize_url:
+          type: string
+          description: The URL the browser should open to finish the login.
 
     SyncAgentRequest:
       type: object
@@ -2138,11 +2603,17 @@ components:
 
     SkillRequest:
       type: object
-      required: [name, description, instructions]
+      required: [config_id, name, description, instructions]
       properties:
+        config_id:
+          type: string
+          description: >
+            The agent config this skill belongs to. A skill is not shared: two agents that
+            both need one have one each, so editing either leaves the other alone.
         name:
           type: string
-          description: How a config names it, which is unique among the customer's own.
+          description: >
+            How the config names it, which is unique among that config's own skills.
         description:
           type: string
           description: The one line the fast model sees.
@@ -2156,9 +2627,11 @@ components:
 
     Skill:
       type: object
-      required: [id, name, description, instructions, created_at, updated_at]
+      required: [id, config_id, name, description, instructions, created_at, updated_at]
       properties:
         id:
+          type: string
+        config_id:
           type: string
         name:
           type: string
@@ -2376,6 +2849,225 @@ components:
           type: string
           description: Why they could not be rung, when they could not be.
 
+    SimulationRequest:
+      type: object
+      required: [name, config_id, scenario, assertion]
+      properties:
+        name:
+          type: string
+        mode:
+          type: string
+          enum: [text, audio]
+          description: >
+            Text hands the agent the words, which tests everything between hearing and
+            answering. Audio generates speech and runs the whole pipeline, so what is
+            judged is what a caller would actually have heard. Text when left out.
+        config_id:
+          type: string
+          description: The agent being tested.
+        scenario:
+          type: string
+          description: >
+            What to ask, in your own words and over as many turns as it takes. This is a
+            brief for the caller rather than a script, so it may describe things that
+            depend on what the agent says back.
+        assertion:
+          type: string
+          description: What has to be true at the end for the run to have passed.
+        variations:
+          type: integer
+          description: >
+            How many ways of asking the same thing one run tries, up to ten. The scenario
+            as written is always the first of them, and one is what left out means.
+        judge_target:
+          type: string
+          description: >
+            The model that rules on the conversations, named the way any other routing
+            target is. Empty takes a quality tier, since nobody is waiting for it.
+        caller_target:
+          type: string
+          description: The model that plays the caller. Empty takes a fast tier.
+        caller_tts:
+          type: string
+          description: How the caller speaks. Audio simulations only.
+        caller_stt:
+          type: string
+          description: How the caller hears the agent. Audio simulations only.
+        caller_voice:
+          type: string
+          description: The voice the caller speaks in. Audio simulations only.
+        max_turns:
+          type: integer
+          description: >
+            How many times the caller may speak, up to thirty. It is what stops a caller
+            that never decides it is finished. Twelve when left out.
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+
+    Simulation:
+      type: object
+      required: [id, name, mode, config_id, scenario, assertion, variations, max_turns, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        mode:
+          type: string
+          enum: [text, audio]
+        config_id:
+          type: string
+        scenario:
+          type: string
+        assertion:
+          type: string
+        variations:
+          type: integer
+        judge_target:
+          type: string
+        caller_target:
+          type: string
+        caller_tts:
+          type: string
+        caller_stt:
+          type: string
+        caller_voice:
+          type: string
+        max_turns:
+          type: integer
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SimulationRun:
+      type: object
+      required: [id, simulation_id, state, cases, passed, failed, started_at]
+      properties:
+        id:
+          type: string
+        simulation_id:
+          type: string
+        state:
+          type: string
+          enum: [running, passed, failed, cancelled, errored]
+          description: >
+            A run passed only if every one of its conversations did. A conversation that
+            never got as far as a ruling leaves the run errored rather than failed.
+        cases:
+          type: integer
+          description: How many conversations this run is having.
+        passed:
+          type: integer
+        failed:
+          type: integer
+        mode:
+          type: string
+          enum: [text, audio]
+        config_id:
+          type: string
+        scenario:
+          type: string
+        assertion:
+          type: string
+          description: >
+            What was asked of this run, copied when it started. Editing a simulation does
+            not rewrite what an old run tested.
+        judge_target:
+          type: string
+        error:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        conversations:
+          type: array
+          description: >
+            The conversations this run had. Present when one run is asked for, and left
+            out of a list so that reading the log does not mean reading every transcript.
+          items:
+            $ref: "#/components/schemas/SimulationCase"
+
+    SimulationCase:
+      type: object
+      required: [id, variation, scenario, state, turns, started_at]
+      properties:
+        id:
+          type: string
+        variation:
+          type: integer
+          description: Which way of asking this was, and the order they are listed in.
+        scenario:
+          type: string
+          description: The wording this conversation used.
+        state:
+          type: string
+          enum: [pending, running, passed, failed, errored, cancelled]
+        call_id:
+          type: string
+          description: >
+            The session that held it, which is what the call and transcript paths take. It
+            is written as soon as it exists, so a conversation still going can be watched.
+        transcript:
+          type: array
+          items:
+            $ref: "#/components/schemas/SimulationLine"
+        turns:
+          type: integer
+          description: How many times the caller spoke.
+        passed:
+          type: boolean
+          description: >
+            The judge's ruling. Absent when it never got as far as ruling, which is not the
+            same as having ruled against.
+        verdict:
+          type: string
+          description: What in the conversation decided it.
+        score:
+          type: integer
+          description: How sure the judge was, from 1 to 5.
+        ended:
+          type: string
+          enum: [complete, turns, timeout, failed]
+          description: Why the conversation stopped.
+        error:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+
+    SimulationLine:
+      type: object
+      required: [caller, text]
+      properties:
+        caller:
+          type: boolean
+          description: True when the simulated caller said it rather than the agent.
+        text:
+          type: string
+        intended:
+          type: string
+          description: >
+            What the agent meant to say, where that differs from what the caller heard.
+            Only an audio simulation has both, and the difference is what running one is
+            for.
+        at:
+          type: string
+          format: date-time
     Call:
       type: object
       required: [id, call_id, agent_id, direction, started_at]
@@ -2493,6 +3185,48 @@ components:
             The Stream call to join, which is not the id this call is held by here.
         call_type:
           type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    ChatTokenRequest:
+      type: object
+      required: [agent_id]
+      properties:
+        agent_id:
+          type: string
+          description: >
+            Whose conversation to read. This is the session's agent id, which is what
+            names the channel it is written to.
+        user_id:
+          type: string
+          description: >
+            Who the browser reads as. Somebody watching is not the agent, so this defaults
+            to a reader of its own rather than to the agent's user.
+        user_name:
+          type: string
+          description: The name shown against anything they write. Defaults to the user id.
+
+    ChatToken:
+      type: object
+      required:
+        [api_key, token, user_id, user_name, channel_type, channel_id, expires_at]
+      properties:
+        api_key:
+          type: string
+          description: The Stream app the channel is in, which the browser SDK connects to.
+        token:
+          type: string
+        user_id:
+          type: string
+        user_name:
+          type: string
+        channel_type:
+          type: string
+          description: Always messaging, which is the type a conversation is written to.
+        channel_id:
+          type: string
+          description: The channel holding the conversation, which is the agent id.
         expires_at:
           type: string
           format: date-time

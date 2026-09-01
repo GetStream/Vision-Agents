@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
@@ -140,6 +141,82 @@ func (s *Server) CreateCallToken(ctx context.Context, request CreateCallTokenReq
 		CallId:    call.CallID,
 		CallType:  callType,
 		ExpiresAt: expiresAt,
+	}, nil
+}
+
+// CreateChatToken mints what a browser needs to read an agent's conversation.
+//
+// The transcript is already a Stream Chat channel, so a client that can reach it needs no
+// transcript API and sees a reply while it is still being written. Reading it means being
+// in it: the reader is added to the channel here, because a token alone opens nothing.
+func (s *Server) CreateChatToken(ctx context.Context, request CreateChatTokenRequestObject) (CreateChatTokenResponseObject, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return CreateChatToken401JSONResponse{missingCustomer()}, nil
+	}
+	if s.streamKey == "" || s.streamSecret == "" {
+		return CreateChatToken400JSONResponse{badRequest(noStreamKeys)}, nil
+	}
+	if request.Body == nil {
+		return CreateChatToken400JSONResponse{badRequest("a request body is required")}, nil
+	}
+
+	agentID := strings.TrimSpace(request.Body.AgentId)
+	if agentID == "" {
+		return CreateChatToken400JSONResponse{badRequest("an agent id is required, since it names the channel")}, nil
+	}
+
+	userID := value(request.Body.UserId)
+	if userID == "" {
+		// Somebody reading a conversation is not the agent, and two readers of the same
+		// one are not each other, which is why this is per customer rather than shared.
+		userID = "reader-" + customerID
+	}
+	userName := value(request.Body.UserName)
+	if userName == "" {
+		userName = userID
+	}
+
+	client, err := getstream.NewClient(s.streamKey, s.streamSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{
+		Users: map[string]getstream.UserRequest{
+			userID: {ID: userID, Name: &userName},
+		},
+	}); err != nil {
+		return nil, err
+	}
+
+	// The channel is created by whoever holds the conversation, which for an agent nobody
+	// has spoken to yet is nobody. Creating it here means a reader can watch it before
+	// the first word rather than polling until it exists.
+	if _, err := client.Chat().GetOrCreateChannel(ctx, chatlog.ChannelType, agentID,
+		&getstream.GetOrCreateChannelRequest{
+			Data: &getstream.ChannelInput{
+				CreatedByID: &userID,
+				Members:     []getstream.ChannelMemberRequest{{UserID: userID}},
+			},
+		}); err != nil {
+		return nil, err
+	}
+
+	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
+	token, err := client.CreateToken(userID, getstream.WithExpiration(listenerTokenValidity))
+	if err != nil {
+		return nil, err
+	}
+
+	return CreateChatToken200JSONResponse{
+		ApiKey:      s.streamKey,
+		Token:       token,
+		UserId:      userID,
+		UserName:    userName,
+		ChannelType: chatlog.ChannelType,
+		ChannelId:   agentID,
+		ExpiresAt:   expiresAt,
 	}, nil
 }
 

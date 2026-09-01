@@ -18,6 +18,7 @@ class Skill:
     """
     Attributes:
         id (str):
+        config_id (str):
         name (str):
         description (str):
         instructions (str):
@@ -27,6 +28,7 @@ class Skill:
     """
 
     id: str
+    config_id: str
     name: str
     description: str
     instructions: str
@@ -37,6 +39,8 @@ class Skill:
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
+
+        config_id = self.config_id
 
         name = self.name
 
@@ -55,6 +59,7 @@ class Skill:
         field_dict.update(
             {
                 "id": id,
+                "config_id": config_id,
                 "name": name,
                 "description": description,
                 "instructions": instructions,
@@ -72,6 +77,8 @@ class Skill:
         d = dict(src_dict)
         id = d.pop("id")
 
+        config_id = d.pop("config_id")
+
         name = d.pop("name")
 
         description = d.pop("description")
@@ -86,6 +93,7 @@ class Skill:
 
         skill = cls(
             id=id,
+            config_id=config_id,
             name=name,
             description=description,
             instructions=instructions,

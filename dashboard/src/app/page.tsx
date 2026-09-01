@@ -1,19 +1,20 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { useMemo } from "react";
 
+import { SessionTable } from "@/components/SessionTable";
 import {
-  CallLink,
-  duration,
   Empty,
   Failure,
   ms,
+  Notice,
   PageHeading,
   Panel,
   Tile,
 } from "@/components/ui";
-import { router, type Call } from "@/lib/router";
+import { router, type AgentConfig } from "@/lib/router";
 
 /** The window the usage tiles cover. A week is enough to see a change and short enough to load. */
 const days = 7;
@@ -31,6 +32,8 @@ export default function Overview() {
     // A running call is worth seeing before somebody reloads the page.
     refetchInterval: 10_000,
   });
+
+  const configs = useQuery({ queryKey: ["configs"], queryFn: router.configs });
 
   const turns = useQuery({
     queryKey: ["turn-stats", window.from.toISOString()],
@@ -70,12 +73,37 @@ export default function Overview() {
     return { count, interrupted, spoken, typical, cost };
   }, [turns.data, spend.data]);
 
+  const agents = useMemo(
+    () =>
+      Object.fromEntries(
+        (configs.data ?? []).map((config) => [config.id, config.name]),
+      ),
+    [configs.data],
+  );
+
   return (
     <>
       <PageHeading
         title="Overview"
         description={`Calls as they happen, and what the last ${days} days cost.`}
       />
+
+      <Notice className="mb-6">
+        The easiest way to set up a new agent is to ask a coding agent for one:{" "}
+        <span className="text-foreground">
+          Build my voice AI with{" "}
+          <a
+            href="https://streamrtc.ai/skill.md"
+            className="underline underline-offset-2"
+            target="_blank"
+            rel="noreferrer"
+          >
+            streamrtc.ai/skill.md
+          </a>
+        </span>
+        . The skill knows the models, the targets and the shape of a config, so it
+        writes one rather than you filling the form in by hand.
+      </Notice>
 
       <div className="mb-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile
@@ -100,66 +128,85 @@ export default function Overview() {
         />
       </div>
 
-      <Panel title="Latest calls">
+      <Panel
+        title="Agents"
+        className="mb-8"
+        aside={
+          <Link href="/agents" className="text-xs text-muted hover:underline">
+            Manage
+          </Link>
+        }
+      >
+        {configs.isError ? <Failure error={configs.error} /> : null}
+        {configs.data?.length === 0 ? (
+          <Empty>No agents yet. A session without one takes the defaults.</Empty>
+        ) : null}
+        {configs.data?.length ? <ConfigList configs={configs.data} /> : null}
+      </Panel>
+
+      <Panel
+        title="Latest sessions"
+        aside={
+          <Link href="/sessions" className="text-xs text-muted hover:underline">
+            See all
+          </Link>
+        }
+      >
         {calls.isError ? <Failure error={calls.error} /> : null}
         {calls.data?.length === 0 ? (
-          <Empty>No calls yet. One will appear here the moment it starts.</Empty>
+          <Empty>No sessions yet. A call will appear here the moment it starts.</Empty>
         ) : null}
-        {calls.data?.length ? <CallTable calls={calls.data} /> : null}
+        {calls.data?.length ? (
+          <SessionTable calls={calls.data} agents={agents} />
+        ) : null}
       </Panel>
     </>
   );
 }
 
-function CallTable({ calls }: { calls: Call[] }) {
+function ConfigList({ configs }: { configs: AgentConfig[] }) {
   return (
-    <table className="w-full text-sm">
-      <thead className="text-left text-xs uppercase tracking-wide text-muted">
-        <tr className="border-b border-line">
-          <th className="px-4 py-2 font-medium">Who</th>
-          <th className="px-4 py-2 font-medium">Direction</th>
-          <th className="px-4 py-2 font-medium">Started</th>
-          <th className="px-4 py-2 font-medium">Length</th>
-          <th className="px-4 py-2 font-medium">Summary</th>
-          <th className="px-4 py-2 font-medium">Score</th>
-        </tr>
-      </thead>
-      <tbody>
-        {calls.map((call) => {
-          const running = !call.ended_at;
-          return (
-            <tr key={call.id} className="border-b border-line last:border-0">
-              <td className="px-4 py-2 font-medium">
-                <CallLink id={call.id}>
-                  {call.direction === "inbound"
-                    ? (call.from_number ?? "unknown caller")
-                    : (call.to_number ?? "unknown number")}
-                </CallLink>
-              </td>
-              <td className="px-4 py-2 text-muted">{call.direction}</td>
-              <td className="px-4 py-2 text-muted tabular-nums">
-                {new Date(call.started_at).toLocaleString()}
-              </td>
-              <td className="px-4 py-2 tabular-nums">
-                {running ? (
-                  <span className="inline-flex items-center gap-1.5 text-emerald-600">
-                    <span className="size-1.5 rounded-full bg-emerald-500" />
-                    live
+    <ul>
+      {configs.map((config) => {
+        // A config need not name any of these: a session that passes its own targets
+        // stores only what the agent is, so there is nothing to badge.
+        const targets = [
+          config.stt,
+          config.llm,
+          config.tts,
+          config.subagent,
+        ].filter((target): target is string => Boolean(target));
+
+        return (
+          <li
+            key={config.id}
+            className="border-b border-line px-4 py-3 last:border-0"
+          >
+            <Link
+              href={`/agents/${config.id}`}
+              className="font-medium hover:underline"
+            >
+              {config.name}
+            </Link>
+            <p className="mt-0.5 line-clamp-1 text-sm text-muted">
+              {config.instructions || "No instructions."}
+            </p>
+            {targets.length ? (
+              <div className="mt-1.5 flex flex-wrap gap-1.5 text-xs text-muted">
+                {targets.map((target) => (
+                  <span
+                    key={target}
+                    className="rounded-md border border-line px-1.5 py-0.5"
+                  >
+                    {target}
                   </span>
-                ) : (
-                  duration(call.started_at, call.ended_at)
-                )}
-              </td>
-              <td className="max-w-md truncate px-4 py-2 text-muted">
-                {call.summary ?? "—"}
-              </td>
-              <td className="px-4 py-2 tabular-nums">
-                {call.review_score ?? "—"}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+                ))}
+              </div>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
+

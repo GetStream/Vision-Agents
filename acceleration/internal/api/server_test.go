@@ -377,3 +377,50 @@ func (s *ServerSuite) TestRollupRejectsAnInvertedWindow() {
 	s.decode(recorder, &failure)
 	s.Contains(failure.Error, "to must be after from")
 }
+
+func (s *ServerSuite) TestPluginsAreListedFromTheCatalog() {
+	recorder := s.get("/v1/agents/plugins", "acme")
+
+	s.Equal(http.StatusOK, recorder.Code)
+
+	var listed []Plugin
+	s.decode(recorder, &listed)
+	s.Len(listed, 5)
+	s.Equal("slack", listed[0].Id)
+}
+
+func (s *ServerSuite) TestPluginSearchFiltersTheCatalog() {
+	recorder := s.get("/v1/agents/plugins?q=cal", "acme")
+
+	s.Equal(http.StatusOK, recorder.Code)
+
+	var listed []Plugin
+	s.decode(recorder, &listed)
+	s.Len(listed, 2)
+	s.Equal("calendly", listed[0].Id)
+	s.Equal("calcom", listed[1].Id)
+}
+
+func (s *ServerSuite) TestShopifyAuthorizeWithoutAnInstanceIsRefused() {
+	request := httptest.NewRequest(http.MethodPost, "/v1/agents/configs/cfg/plugins/shopify/authorize", strings.NewReader(`{}`))
+	request.Header.Set(CustomerHeader, "acme")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	s.handler.ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusBadRequest, recorder.Code)
+
+	var failure Error
+	s.decode(recorder, &failure)
+	s.Contains(failure.Error, "needs")
+}
+
+func (s *ServerSuite) TestAnUnknownPluginIsRefused() {
+	request := httptest.NewRequest(http.MethodPost, "/v1/agents/configs/cfg/plugins/notion/authorize", strings.NewReader(`{}`))
+	request.Header.Set(CustomerHeader, "acme")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	s.handler.ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusBadRequest, recorder.Code)
+}

@@ -1,6 +1,6 @@
 # Features
 
-Sprints 1 to 15 asked for things in the order they had to be built. This is the same work
+Sprints 1 to 16 asked for things in the order they had to be built. This is the same work
 arranged the other way, one document per feature, so a feature can be read without
 reconstructing it from four sprint files.
 
@@ -24,6 +24,7 @@ edits them.
 | [Inbound calls and dispatch](dispatch.md)      | sprint 14            | Built; round robin, two vendors can be rung |
 | [Transfer and IVR navigation](transfer.md)     | sprint 7             | Built on tool calling; DTMF at Telnyx only |
 | [Campaigns](campaigns.md)                      | sprint 9             | Built; no page in the dashboard         |
+| [Simulate and test](simulations.md)            | sprint 16            | Built for text and audio; nothing schedules one |
 | [The harness](harness.md)                      | sprints 5, 6         | Built with cache-aware compaction        |
 | [Speaking while listening](duplex.md)          | sprints 5, 6, 15     | Built; acknowledgements default on       |
 | [Voices of your own](voices.md)                | sprint 11            | Built; three providers of five can clone |

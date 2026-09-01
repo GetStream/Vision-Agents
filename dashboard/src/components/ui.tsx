@@ -49,6 +49,94 @@ export function Panel({
   );
 }
 
+/**
+ * Section is a panel that folds away.
+ *
+ * Configuring an agent is four unrelated jobs, and all four open at once is a page nobody
+ * can find anything on. The open one is the caller's business rather than the section's,
+ * so several can be open together and reloading the page does not close them.
+ */
+export function Section({
+  title,
+  description,
+  open,
+  onToggle,
+  aside,
+  children,
+  className = "",
+}: {
+  title: string;
+  description?: string;
+  open: boolean;
+  onToggle: () => void;
+  aside?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={`rounded-xl border border-line bg-surface ${className}`}>
+      <header className="flex items-center gap-3 px-4 py-3">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        >
+          <span
+            aria-hidden
+            className={`text-xs text-muted transition-transform ${open ? "rotate-90" : ""}`}
+          >
+            ▶
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">{title}</span>
+            {description ? (
+              <span className="mt-0.5 block text-xs text-muted">{description}</span>
+            ) : null}
+          </span>
+        </button>
+        {aside}
+      </header>
+      {open ? <div className="border-t border-line">{children}</div> : null}
+    </section>
+  );
+}
+
+/**
+ * Tabs switches between two views of the same thing.
+ *
+ * Which one is showing is the caller's business rather than the tabs': a page that keeps it
+ * in the URL and a page that keeps it in state both want the same strip of labels.
+ */
+export function Tabs({
+  tabs,
+  active,
+  onSelect,
+}: {
+  tabs: { id: string; label: string }[];
+  active: string;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div className="mb-4 flex gap-1 border-b border-line">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          onClick={() => onSelect(tab.id)}
+          className={`-mb-px border-b-2 px-3 py-2 text-sm transition ${
+            tab.id === active
+              ? "border-foreground font-medium text-foreground"
+              : "border-transparent text-muted hover:text-foreground"
+          }`}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Tile({
   label,
   value,
@@ -71,6 +159,22 @@ export function Empty({ children }: { children: ReactNode }) {
   return <p className="px-4 py-8 text-center text-sm text-muted">{children}</p>;
 }
 
+export function Notice({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`rounded-xl border border-line bg-surface px-4 py-3 text-sm text-muted ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function Failure({ error }: { error: unknown }) {
   const message = error instanceof Error ? error.message : String(error);
   return (
@@ -86,12 +190,15 @@ export function Button({
   type = "button",
   variant = "primary",
   disabled = false,
+  title,
 }: {
   children: ReactNode;
   onClick?: () => void;
   type?: "button" | "submit";
   variant?: "primary" | "quiet" | "danger";
   disabled?: boolean;
+  /** Why the button is disabled, which the button itself cannot say. */
+  title?: string;
 }) {
   const styles = {
     primary: "bg-foreground text-background hover:opacity-90",
@@ -104,6 +211,7 @@ export function Button({
       type={type}
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={`rounded-lg px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${styles}`}
     >
       {children}

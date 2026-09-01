@@ -32,6 +32,15 @@ func (s *SpecSuite) TestAConfigsKeytermsBecomeTheSessions() {
 	s.Equal([]string{"Vision Agents", "Stream"}, spec.Keyterms)
 }
 
+func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
+	spec := FromConfig(store.AgentConfig{
+		CustomerID: "acme",
+		Plugins:    []string{"slack", "calendly"},
+	})
+
+	s.Equal([]string{"slack", "calendly"}, spec.Plugins)
+}
+
 func (s *SpecSuite) TestKeytermsAreTidiedOnTheWayIn() {
 	spec := s.spec([]string{" Vision Agents ", "", "Stream"})
 

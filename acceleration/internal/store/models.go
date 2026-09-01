@@ -232,6 +232,9 @@ type AgentConfig struct {
 	ID         string `bun:"id,pk"`
 	CustomerID string `bun:"customer_id,notnull"`
 	Name       string `bun:"name,notnull"`
+	// Mode is whether the agent is spoken to or written to: AgentModeVoice or
+	// AgentModeText. A text agent uses neither speech target and joins no call.
+	Mode string `bun:"mode,notnull"`
 	// STT, TTS, LLM, Subagent and Search are routing targets. Empty leaves the session
 	// default.
 	STT          string `bun:"stt,notnull"`
@@ -245,6 +248,10 @@ type AgentConfig struct {
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
+	// Plugins names hosted MCP servers this agent is allowed to reach, from the built-in
+	// catalog. A name here without a connected row is a plugin that was attached and then
+	// the login expired or was revoked.
+	Plugins []string `bun:"plugins,type:jsonb"`
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// KnowledgeNamespace is what the agent may look things up in.
@@ -258,14 +265,27 @@ type AgentConfig struct {
 	DeletedAt *time.Time `bun:"deleted_at"`
 }
 
-// Skill is one kind of work worth handing to the slower model, stored so a config can name
-// it and several configs can share it.
+// How an agent is talked to.
+const (
+	// AgentModeVoice joins a call, transcribes what it hears and speaks its replies.
+	AgentModeVoice = "voice"
+	// AgentModeText holds the same conversation in writing, using neither speech target.
+	AgentModeText = "text"
+)
+
+// Skill is one kind of work worth handing to the slower model, stored so the config that
+// owns it can name it.
+//
+// A skill belongs to one config rather than to the customer: two agents that both need
+// the same kind of work have one each, so editing either leaves the other alone.
 type Skill struct {
 	bun.BaseModel `bun:"table:skills,alias:sk"`
 
 	ID         string `bun:"id,pk"`
 	CustomerID string `bun:"customer_id,notnull"`
-	Name       string `bun:"name,notnull"`
+	// ConfigID is the agent config this skill belongs to.
+	ConfigID string `bun:"config_id,notnull"`
+	Name     string `bun:"name,notnull"`
 	// Description is the one line the fast model sees.
 	Description string `bun:"description,notnull"`
 	// Instructions is the full prompt, which only the subagent sees.
@@ -276,6 +296,41 @@ type Skill struct {
 	CreatedAt  time.Time  `bun:"created_at,notnull"`
 	UpdatedAt  time.Time  `bun:"updated_at,notnull"`
 	DeletedAt  *time.Time `bun:"deleted_at"`
+}
+
+// How far a plugin login has got.
+const (
+	// PluginPending means the browser is still at the provider.
+	PluginPending = "pending"
+	// PluginConnected means tokens are stored and a session may use them.
+	PluginConnected = "connected"
+	// PluginFailed means the exchange did not work.
+	PluginFailed = "failed"
+)
+
+// PluginConnection is one hosted MCP server authorized for one agent config.
+type PluginConnection struct {
+	bun.BaseModel `bun:"table:agent_plugin_connections,alias:apc"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	ConfigID   string `bun:"config_id,notnull"`
+	PluginID   string `bun:"plugin_id,notnull"`
+	// InstanceURL is the shop or org hostname for plugins that have no single global URL.
+	InstanceURL  string     `bun:"instance_url,notnull"`
+	AccessToken  string     `bun:"access_token,notnull"`
+	RefreshToken string     `bun:"refresh_token,notnull"`
+	ExpiresAt    *time.Time `bun:"expires_at"`
+	Status       string     `bun:"status,notnull"`
+	// OAuthState, CodeVerifier, ClientID and TokenEndpoint are what the callback needs
+	// to finish the login. They are cleared once the connection is connected.
+	OAuthState    string     `bun:"oauth_state,notnull"`
+	CodeVerifier  string     `bun:"code_verifier,notnull"`
+	ClientID      string     `bun:"client_id,notnull"`
+	TokenEndpoint string     `bun:"token_endpoint,notnull"`
+	CreatedAt     time.Time  `bun:"created_at,notnull"`
+	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
+	DeletedAt     *time.Time `bun:"deleted_at"`
 }
 
 // Where a knowledge url has got to.
@@ -495,6 +550,158 @@ type Contact struct {
 	VendorCallID string    `bun:"vendor_call_id,nullzero"`
 	Error        string    `bun:"error,nullzero"`
 	CreatedAt    time.Time `bun:"created_at,notnull"`
+}
+
+// Which pipeline a simulation puts the agent through.
+const (
+	// SimulationText hands the agent the words, which tests everything between hearing
+	// and answering without needing a voice.
+	SimulationText = "text"
+	// SimulationAudio generates speech and runs the whole pipeline, so what the caller
+	// hears is what the agent actually said.
+	SimulationAudio = "audio"
+)
+
+// How a run or one of its conversations ended.
+const (
+	// SimulationRunning means the conversations are still being had.
+	SimulationRunning = "running"
+	// SimulationPassed means the judge was satisfied. A run passed only if every one of
+	// its cases did.
+	SimulationPassed = "passed"
+	// SimulationFailed means the judge was not.
+	SimulationFailed = "failed"
+	// SimulationErrored means it never got as far as a ruling.
+	SimulationErrored = "errored"
+	// SimulationCancelled means somebody stopped it, or the process did.
+	SimulationCancelled = "cancelled"
+)
+
+// Why one conversation stopped.
+const (
+	// EndedComplete is the caller deciding it had asked everything it came to ask.
+	EndedComplete = "complete"
+	// EndedTurns is the conversation running out of turns.
+	EndedTurns = "turns"
+	// EndedTimeout is it running out of time.
+	EndedTimeout = "timeout"
+	// EndedFailed is the agent stopping answering.
+	EndedFailed = "failed"
+)
+
+// Simulation is a conversation to have with an agent and something that has to be true at
+// the end of it.
+type Simulation struct {
+	bun.BaseModel `bun:"table:simulations,alias:sm"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	Name       string `bun:"name,notnull"`
+	// Mode is SimulationText or SimulationAudio.
+	Mode string `bun:"mode,notnull"`
+	// ConfigID is the agent being tested.
+	ConfigID string `bun:"config_id,notnull"`
+	// Scenario is what to ask, in the customer's own words. It is a brief for the caller
+	// rather than a script.
+	Scenario string `bun:"scenario,notnull"`
+	// Assertion is what has to be true at the end for the run to have passed.
+	Assertion string `bun:"assertion,notnull"`
+	// Variations is how many ways of asking the same thing one run tries.
+	Variations int `bun:"variations,notnull"`
+	// JudgeTarget and CallerTarget are routing targets like any other. Empty takes the
+	// default.
+	JudgeTarget  string `bun:"judge_target,notnull"`
+	CallerTarget string `bun:"caller_target,notnull"`
+	// CallerTTS, CallerSTT and CallerVoice are how the caller speaks and listens in an
+	// audio simulation, and mean nothing in a text one.
+	CallerTTS   string `bun:"caller_tts,notnull"`
+	CallerSTT   string `bun:"caller_stt,notnull"`
+	CallerVoice string `bun:"caller_voice,notnull"`
+	// MaxTurns bounds one conversation.
+	MaxTurns  int               `bun:"max_turns,notnull"`
+	Tags      map[string]string `bun:"tags,type:jsonb,nullzero"`
+	CreatedAt time.Time         `bun:"created_at,notnull"`
+	UpdatedAt time.Time         `bun:"updated_at,notnull"`
+	DeletedAt *time.Time        `bun:"deleted_at"`
+}
+
+// SimulationRun is one press of Run, and the parent of however many conversations the
+// variations asked for.
+//
+// What was run is copied onto the row rather than referenced, because editing a simulation
+// must not rewrite what an old run tested.
+type SimulationRun struct {
+	bun.BaseModel `bun:"table:simulation_runs,alias:smr"`
+
+	ID           string `bun:"id,pk"`
+	CustomerID   string `bun:"customer_id,notnull"`
+	SimulationID string `bun:"simulation_id,notnull"`
+	State        string `bun:"state,notnull"`
+	// Cases, Passed and Failed are the tally, so the log can list a run without reading
+	// its conversations.
+	Cases       int        `bun:"cases,notnull"`
+	Passed      int        `bun:"passed,notnull"`
+	Failed      int        `bun:"failed,notnull"`
+	Mode        string     `bun:"mode,notnull"`
+	ConfigID    string     `bun:"config_id,notnull"`
+	Scenario    string     `bun:"scenario,notnull"`
+	Assertion   string     `bun:"assertion,notnull"`
+	JudgeTarget string     `bun:"judge_target,notnull"`
+	Error       string     `bun:"error,nullzero"`
+	StartedAt   time.Time  `bun:"started_at,notnull"`
+	FinishedAt  *time.Time `bun:"finished_at"`
+}
+
+// SimulationCase is one conversation. With variations off a run has one of these; with
+// them expanded, ten, each asking the same thing a different way.
+type SimulationCase struct {
+	bun.BaseModel `bun:"table:simulation_cases,alias:smc"`
+
+	ID    string `bun:"id,pk"`
+	RunID string `bun:"run_id,notnull"`
+	// Variation is which way of asking this was, and the order they are listed in.
+	Variation int `bun:"variation,notnull"`
+	// Scenario is the wording this case used.
+	Scenario string `bun:"scenario,notnull"`
+	State    string `bun:"state,notnull"`
+	// CallID is the session that held the conversation, written as soon as it exists so a
+	// run in progress can be watched.
+	CallID string `bun:"call_id,nullzero"`
+	// Transcript is what was said, oldest first.
+	Transcript []SimulationLine `bun:"transcript,type:jsonb"`
+	Turns      int              `bun:"turns,notnull"`
+	// Passed, Verdict and Score are the judge's ruling. A nil Passed means it never got to
+	// rule, which is not the same as having ruled against.
+	Passed  *bool  `bun:"passed"`
+	Verdict string `bun:"verdict,nullzero"`
+	Score   *int   `bun:"score"`
+	// Ended is why the conversation stopped.
+	Ended      string     `bun:"ended,notnull"`
+	Error      string     `bun:"error,nullzero"`
+	StartedAt  time.Time  `bun:"started_at,notnull"`
+	FinishedAt *time.Time `bun:"finished_at"`
+}
+
+// SimulationLine is one thing said, in the order it was said.
+type SimulationLine struct {
+	// Caller is true when the simulated caller said it rather than the agent.
+	Caller bool   `json:"caller"`
+	Text   string `json:"text"`
+	// Intended is what the agent meant to say, where that differs from what the caller
+	// heard. Only an audio simulation has both, and the difference is the whole point of
+	// running one.
+	Intended string    `json:"intended,omitempty"`
+	At       time.Time `json:"at"`
+}
+
+// SimulationRunFilter narrows which runs are listed. Every field is optional, and an empty
+// filter is the customer's most recent runs.
+type SimulationRunFilter struct {
+	CustomerID   string
+	SimulationID string
+	State        string
+	// Limit caps how many come back. Zero leaves the store's own default.
+	Limit int
 }
 
 // CallFilter narrows which calls are listed. Every field is optional, and an empty filter

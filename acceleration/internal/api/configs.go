@@ -121,8 +121,9 @@ func (s *Server) DeleteAgentConfig(ctx context.Context, request DeleteAgentConfi
 	return DeleteAgentConfig204Response{}, nil
 }
 
-// ListSkills returns the calling customer's skills, newest first.
-func (s *Server) ListSkills(ctx context.Context, _ ListSkillsRequestObject) (ListSkillsResponseObject, error) {
+// ListSkills returns the calling customer's skills, newest first, or only the ones
+// belonging to one agent config.
+func (s *Server) ListSkills(ctx context.Context, request ListSkillsRequestObject) (ListSkillsResponseObject, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
 		return ListSkills401JSONResponse{missingCustomer()}, nil
@@ -131,7 +132,7 @@ func (s *Server) ListSkills(ctx context.Context, _ ListSkillsRequestObject) (Lis
 		return ListSkills400JSONResponse{badRequest(noConfigs)}, nil
 	}
 
-	stored, err := s.store.CustomerSkills(ctx, customerID)
+	stored, err := s.store.CustomerSkills(ctx, customerID, value(request.Params.ConfigId))
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +158,9 @@ func (s *Server) CreateSkill(ctx context.Context, request CreateSkillRequestObje
 	}
 	if message, ok := skillComplaint(*request.Body); !ok {
 		return CreateSkill400JSONResponse{badRequest(message)}, nil
+	}
+	if _, err := s.store.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
+		return CreateSkill400JSONResponse{badRequest(unknownConfig)}, nil
 	}
 
 	skill := storedSkill(*request.Body, customerID)
@@ -197,6 +201,9 @@ func (s *Server) UpdateSkill(ctx context.Context, request UpdateSkillRequestObje
 	}
 	if message, ok := skillComplaint(*request.Body); !ok {
 		return UpdateSkill400JSONResponse{badRequest(message)}, nil
+	}
+	if _, err := s.store.AgentConfig(ctx, customerID, request.Body.ConfigId); err != nil {
+		return UpdateSkill400JSONResponse{badRequest(unknownConfig)}, nil
 	}
 
 	existing, err := s.store.Skill(ctx, customerID, request.Id)
@@ -243,10 +250,27 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if strings.TrimSpace(request.Name) == "" {
 		return "an agent config needs a name", false
 	}
+	if _, ok := modeOf(request.Mode); !ok {
+		return fmt.Sprintf("an agent is either %s or %s", store.AgentModeVoice, store.AgentModeText), false
+	}
 	if len(keytermsOf(request.Keyterms)) > stt.MaxKeyterms {
 		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false
 	}
 	return "", true
+}
+
+// modeOf reads the mode a caller sent, which is optional and defaults to voice. An
+// unknown one is refused rather than defaulted, since a text agent asked for as "txt"
+// would otherwise quietly join a call.
+func modeOf(mode *AgentMode) (string, bool) {
+	if mode == nil || *mode == "" {
+		return store.AgentModeVoice, true
+	}
+	switch string(*mode) {
+	case store.AgentModeVoice, store.AgentModeText:
+		return string(*mode), true
+	}
+	return "", false
 }
 
 // keytermsOf reads the terms a caller sent, which are optional and may be blank.
@@ -260,6 +284,9 @@ func keytermsOf(list *[]string) []string {
 // skillComplaint reports what is wrong with a skill, if anything. A skill without a
 // description is one the fast model would never know when to reach for.
 func skillComplaint(request SkillRequest) (string, bool) {
+	if strings.TrimSpace(request.ConfigId) == "" {
+		return "a skill belongs to an agent config, so one has to be named", false
+	}
 	if strings.TrimSpace(request.Name) == "" {
 		return "a skill needs a name", false
 	}
@@ -275,9 +302,11 @@ func skillComplaint(request SkillRequest) (string, bool) {
 // storedConfig turns a request into a row. The customer comes from the trusted header
 // rather than the body, the same way a session's does.
 func storedConfig(request AgentConfigRequest, customerID string) store.AgentConfig {
+	mode, _ := modeOf(request.Mode)
 	config := store.AgentConfig{
 		CustomerID:         customerID,
 		Name:               strings.TrimSpace(request.Name),
+		Mode:               mode,
 		STT:                value(request.Stt),
 		TTS:                value(request.Tts),
 		Voice:              value(request.Voice),
@@ -291,6 +320,9 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.Skills != nil {
 		config.Skills = *request.Skills
 	}
+	if request.Plugins != nil {
+		config.Plugins = *request.Plugins
+	}
 	config.Keyterms = keytermsOf(request.Keyterms)
 	if request.Tags != nil {
 		config.Tags = *request.Tags
@@ -302,6 +334,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 func storedSkill(request SkillRequest, customerID string) store.Skill {
 	return store.Skill{
 		CustomerID:   customerID,
+		ConfigID:     strings.TrimSpace(request.ConfigId),
 		Name:         strings.TrimSpace(request.Name),
 		Description:  request.Description,
 		Instructions: request.Instructions,
@@ -315,6 +348,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered := AgentConfig{
 		Id:        config.ID,
 		Name:      config.Name,
+		Mode:      AgentMode(config.Mode),
 		CreatedAt: config.CreatedAt,
 		UpdatedAt: config.UpdatedAt,
 	}
@@ -330,6 +364,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills
+	}
+	if len(config.Plugins) > 0 {
+		named := config.Plugins
+		rendered.Plugins = &named
 	}
 	if len(config.Keyterms) > 0 {
 		keyterms := config.Keyterms
@@ -347,6 +385,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 func skillOf(skill store.Skill) Skill {
 	rendered := Skill{
 		Id:           skill.ID,
+		ConfigId:     skill.ConfigID,
 		Name:         skill.Name,
 		Description:  skill.Description,
 		Instructions: skill.Instructions,

@@ -46,8 +46,8 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 	normalizeConfig(config)
 
 	result, err := s.db.NewUpdate().Model(config).
-		Column("name", "stt", "tts", "voice", "llm", "subagent", "search", "instructions",
-			"greeting", "skills", "keyterms", "knowledge_namespace", "tags", "sync_hash", "updated_at").
+		Column("name", "mode", "stt", "tts", "voice", "llm", "subagent", "search", "instructions",
+			"greeting", "skills", "plugins", "keyterms", "knowledge_namespace", "tags", "sync_hash", "updated_at").
 		Where("id = ?", config.ID).
 		Where("customer_id = ?", config.CustomerID).
 		Where("deleted_at IS NULL").
@@ -158,6 +158,9 @@ func (s *Store) CreateSkill(ctx context.Context, skill *Skill) error {
 	if skill.CustomerID == "" {
 		return errors.New("store: customer id is required")
 	}
+	if skill.ConfigID == "" {
+		return errors.New("store: a skill belongs to an agent config")
+	}
 	if skill.Name == "" {
 		return errors.New("store: a skill needs a name")
 	}
@@ -186,7 +189,7 @@ func (s *Store) UpdateSkill(ctx context.Context, skill *Skill) error {
 	skill.UpdatedAt = time.Now().UTC()
 
 	result, err := s.db.NewUpdate().Model(skill).
-		Column("name", "description", "instructions", "deadline_ms", "updated_at").
+		Column("config_id", "name", "description", "instructions", "deadline_ms", "updated_at").
 		Where("id = ?", skill.ID).
 		Where("customer_id = ?", skill.CustomerID).
 		Where("deleted_at IS NULL").
@@ -251,37 +254,42 @@ func (s *Store) Skill(ctx context.Context, customerID, id string) (Skill, error)
 	return skill, nil
 }
 
-// CustomerSkills returns the skills a customer holds, newest first.
-func (s *Store) CustomerSkills(ctx context.Context, customerID string) ([]Skill, error) {
+// CustomerSkills returns the skills a customer holds, newest first. A config id narrows
+// them to that agent's own; empty returns every skill across all of them.
+func (s *Store) CustomerSkills(ctx context.Context, customerID, configID string) ([]Skill, error) {
 	if customerID == "" {
 		return nil, errors.New("store: customer id is required")
 	}
 
 	var skills []Skill
-	err := s.db.NewSelect().Model(&skills).
+	query := s.db.NewSelect().Model(&skills).
 		Where("customer_id = ?", customerID).
-		Where("deleted_at IS NULL").
-		Order("created_at DESC").
-		Scan(ctx)
-	if err != nil {
+		Where("deleted_at IS NULL")
+	if configID != "" {
+		query = query.Where("config_id = ?", configID)
+	}
+	if err := query.Order("created_at DESC").Scan(ctx); err != nil {
 		return nil, fmt.Errorf("store: customer skills: %w", err)
 	}
 	return skills, nil
 }
 
-// SkillsNamed returns the customer's skills with any of these names. A name nobody
-// defined is simply absent, so the caller can report which ones it could not find.
-func (s *Store) SkillsNamed(ctx context.Context, customerID string, names []string) ([]Skill, error) {
+// SkillsNamed returns one config's skills with any of these names. A name nobody defined
+// is simply absent, so the caller can report which ones it could not find.
+func (s *Store) SkillsNamed(ctx context.Context, customerID, configID string, names []string) ([]Skill, error) {
 	if customerID == "" {
 		return nil, errors.New("store: customer id is required")
 	}
-	if len(names) == 0 {
+	// Skills belong to a config, so a session that was not created from one reaches
+	// nothing here and takes the built-in set.
+	if configID == "" || len(names) == 0 {
 		return nil, nil
 	}
 
 	var skills []Skill
 	err := s.db.NewSelect().Model(&skills).
 		Where("customer_id = ?", customerID).
+		Where("config_id = ?", configID).
 		Where("name IN (?)", bun.In(names)).
 		Where("deleted_at IS NULL").
 		Scan(ctx)
@@ -292,10 +300,16 @@ func (s *Store) SkillsNamed(ctx context.Context, customerID string, names []stri
 }
 
 // normalizeConfig fills in the JSONB columns a nil slice or map would write as null,
-// which the columns are not.
+// which the columns are not, and the mode a caller that predates it leaves empty.
 func normalizeConfig(config *AgentConfig) {
+	if config.Mode == "" {
+		config.Mode = AgentModeVoice
+	}
 	if config.Skills == nil {
 		config.Skills = []string{}
+	}
+	if config.Plugins == nil {
+		config.Plugins = []string{}
 	}
 	if config.Keyterms == nil {
 		config.Keyterms = []string{}

@@ -4,8 +4,11 @@ from .agent_config import AgentConfig
 from .agent_config_request import AgentConfigRequest
 from .agent_config_request_tags import AgentConfigRequestTags
 from .agent_config_tags import AgentConfigTags
+from .agent_mode import AgentMode
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
+from .authorize_plugin_request import AuthorizePluginRequest
+from .authorize_plugin_response import AuthorizePluginResponse
 from .available_number import AvailableNumber
 from .buy_number_request import BuyNumberRequest
 from .buy_number_request_tags import BuyNumberRequestTags
@@ -21,6 +24,8 @@ from .campaign_request_tags import CampaignRequestTags
 from .campaign_state import CampaignState
 from .campaign_tags import CampaignTags
 from .candidate import Candidate
+from .chat_token import ChatToken
+from .chat_token_request import ChatTokenRequest
 from .contact import Contact
 from .contact_state import ContactState
 from .contacts_request import ContactsRequest
@@ -41,6 +46,7 @@ from .knowledge_document import KnowledgeDocument
 from .knowledge_url import KnowledgeUrl
 from .knowledge_url_request import KnowledgeUrlRequest
 from .knowledge_url_state import KnowledgeUrlState
+from .list_simulation_runs_state import ListSimulationRunsState
 from .modality import Modality
 from .number_search_result import NumberSearchResult
 from .phone_capability import PhoneCapability
@@ -54,6 +60,9 @@ from .place_call_request_custom import PlaceCallRequestCustom
 from .place_call_request_headers import PlaceCallRequestHeaders
 from .place_call_request_tags import PlaceCallRequestTags
 from .placed_call import PlacedCall
+from .plugin import Plugin
+from .plugin_connection import PluginConnection
+from .plugin_connection_status import PluginConnectionStatus
 from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
 from .provider import Provider
@@ -69,6 +78,19 @@ from .session_skill import SessionSkill
 from .session_state import SessionState
 from .session_tool import SessionTool
 from .session_tool_parameters import SessionToolParameters
+from .simulation import Simulation
+from .simulation_case import SimulationCase
+from .simulation_case_ended import SimulationCaseEnded
+from .simulation_case_state import SimulationCaseState
+from .simulation_line import SimulationLine
+from .simulation_mode import SimulationMode
+from .simulation_request import SimulationRequest
+from .simulation_request_mode import SimulationRequestMode
+from .simulation_request_tags import SimulationRequestTags
+from .simulation_run import SimulationRun
+from .simulation_run_mode import SimulationRunMode
+from .simulation_run_state import SimulationRunState
+from .simulation_tags import SimulationTags
 from .skill import Skill
 from .skill_request import SkillRequest
 from .skipped_vendor import SkippedVendor
@@ -94,8 +116,11 @@ __all__ = (
     "AgentConfigRequest",
     "AgentConfigRequestTags",
     "AgentConfigTags",
+    "AgentMode",
     "AttachNumberRequest",
     "AttachedNumber",
+    "AuthorizePluginRequest",
+    "AuthorizePluginResponse",
     "AvailableNumber",
     "BuyNumberRequest",
     "BuyNumberRequestTags",
@@ -111,6 +136,8 @@ __all__ = (
     "CampaignState",
     "CampaignTags",
     "Candidate",
+    "ChatToken",
+    "ChatTokenRequest",
     "Contact",
     "ContactState",
     "ContactsRequest",
@@ -131,6 +158,7 @@ __all__ = (
     "KnowledgeUrl",
     "KnowledgeUrlRequest",
     "KnowledgeUrlState",
+    "ListSimulationRunsState",
     "Modality",
     "NumberSearchResult",
     "PhoneCapability",
@@ -144,6 +172,9 @@ __all__ = (
     "PlaceCallRequestHeaders",
     "PlaceCallRequestTags",
     "PlacedCall",
+    "Plugin",
+    "PluginConnection",
+    "PluginConnectionStatus",
     "PrepareVoiceRequest",
     "PressDigitsRequest",
     "Provider",
@@ -159,6 +190,19 @@ __all__ = (
     "SessionState",
     "SessionTool",
     "SessionToolParameters",
+    "Simulation",
+    "SimulationCase",
+    "SimulationCaseEnded",
+    "SimulationCaseState",
+    "SimulationLine",
+    "SimulationMode",
+    "SimulationRequest",
+    "SimulationRequestMode",
+    "SimulationRequestTags",
+    "SimulationRun",
+    "SimulationRunMode",
+    "SimulationRunState",
+    "SimulationTags",
     "Skill",
     "SkillRequest",
     "SkippedVendor",

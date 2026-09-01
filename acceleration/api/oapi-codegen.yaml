@@ -14,3 +14,4 @@ output-options:
   exclude-operation-ids:
     - watchSession
     - streamModality
+    - pluginOAuthCallback

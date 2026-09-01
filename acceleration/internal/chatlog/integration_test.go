@@ -115,7 +115,7 @@ func (s *ChatlogIntegrationSuite) await(
 	deadline := time.Now().Add(writeGrace)
 
 	for {
-		response, err := s.log.Chat().GetOrCreateChannel(s.ctx, channelType, s.agentID,
+		response, err := s.log.Chat().GetOrCreateChannel(s.ctx, ChannelType, s.agentID,
 			&getstream.GetOrCreateChannelRequest{
 				State:    &state,
 				Messages: &getstream.MessagePaginationParams{Limit: &limit},

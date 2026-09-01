@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.agent_mode import AgentMode
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -23,6 +24,9 @@ class AgentConfig:
     Attributes:
         id (str):
         name (str):
+        mode (AgentMode): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it
+            hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech
+            target and a session created from it needs no call to join.
         created_at (datetime.datetime):
         updated_at (datetime.datetime):
         stt (str | Unset):
@@ -34,6 +38,7 @@ class AgentConfig:
         instructions (str | Unset):
         greeting (str | Unset):
         skills (list[str] | Unset):
+        plugins (list[str] | Unset):
         keyterms (list[str] | Unset):
         knowledge_namespace (str | Unset):
         tags (AgentConfigTags | Unset):
@@ -43,6 +48,7 @@ class AgentConfig:
 
     id: str
     name: str
+    mode: AgentMode
     created_at: datetime.datetime
     updated_at: datetime.datetime
     stt: str | Unset = UNSET
@@ -54,6 +60,7 @@ class AgentConfig:
     instructions: str | Unset = UNSET
     greeting: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
+    plugins: list[str] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     tags: AgentConfigTags | Unset = UNSET
@@ -64,6 +71,8 @@ class AgentConfig:
         id = self.id
 
         name = self.name
+
+        mode = self.mode.value
 
         created_at = self.created_at.isoformat()
 
@@ -89,6 +98,10 @@ class AgentConfig:
         if not isinstance(self.skills, Unset):
             skills = self.skills
 
+        plugins: list[str] | Unset = UNSET
+        if not isinstance(self.plugins, Unset):
+            plugins = self.plugins
+
         keyterms: list[str] | Unset = UNSET
         if not isinstance(self.keyterms, Unset):
             keyterms = self.keyterms
@@ -107,6 +120,7 @@ class AgentConfig:
             {
                 "id": id,
                 "name": name,
+                "mode": mode,
                 "created_at": created_at,
                 "updated_at": updated_at,
             }
@@ -129,6 +143,8 @@ class AgentConfig:
             field_dict["greeting"] = greeting
         if skills is not UNSET:
             field_dict["skills"] = skills
+        if plugins is not UNSET:
+            field_dict["plugins"] = plugins
         if keyterms is not UNSET:
             field_dict["keyterms"] = keyterms
         if knowledge_namespace is not UNSET:
@@ -148,6 +164,8 @@ class AgentConfig:
         id = d.pop("id")
 
         name = d.pop("name")
+
+        mode = AgentMode(d.pop("mode"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
@@ -171,6 +189,8 @@ class AgentConfig:
 
         skills = cast(list[str], d.pop("skills", UNSET))
 
+        plugins = cast(list[str], d.pop("plugins", UNSET))
+
         keyterms = cast(list[str], d.pop("keyterms", UNSET))
 
         knowledge_namespace = d.pop("knowledge_namespace", UNSET)
@@ -187,6 +207,7 @@ class AgentConfig:
         agent_config = cls(
             id=id,
             name=name,
+            mode=mode,
             created_at=created_at,
             updated_at=updated_at,
             stt=stt,
@@ -198,6 +219,7 @@ class AgentConfig:
             instructions=instructions,
             greeting=greeting,
             skills=skills,
+            plugins=plugins,
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
             tags=tags,

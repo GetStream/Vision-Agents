@@ -334,6 +334,100 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The hosted MCP servers an agent may attach
+         * @description A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
+         */
+        get: operations["listPlugins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/plugins/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Finish a plugin login
+         * @description The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
+         */
+        get: operations["pluginOAuthCallback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/configs/{id}/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The plugin logins this agent holds */
+        get: operations["listConfigPlugins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/configs/{id}/plugins/{plugin_id}/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a plugin login
+         * @description Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+         */
+        post: operations["authorizePlugin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/configs/{id}/plugins/{plugin_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Drop a plugin login */
+        delete: operations["disconnectPlugin"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/voices": {
         parameters: {
             query?: never;
@@ -432,7 +526,7 @@ export interface paths {
         put?: never;
         /**
          * Define a kind of work worth handing to the slower model
-         * @description Skills live apart from the configs that use them so several configs can share one, and so editing what a skill means changes it everywhere at once. The built-in think, recall and explain need no row: a config may name them without defining them.
+         * @description A skill belongs to one agent config. Two agents that both need the same kind of work have one each, so editing what "explain" means for one leaves the other alone. The built-in think, recall and explain need no row: a config may name them without defining them.
          */
         post: operations["createSkill"];
         delete?: never;
@@ -643,6 +737,129 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/simulations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The simulations the calling customer has */
+        get: operations["listSimulations"];
+        put?: never;
+        /**
+         * Write down a conversation to have with an agent
+         * @description A simulation is a scenario to put an agent through and something that has to be true at the end of it. The scenario is a brief rather than a script: it is given to a model that plays the caller, reads what the agent says back and decides what to say next, so a scenario can say to change your mind once the order is handled. Nothing is run until it is.
+         */
+        post: operations["createSimulation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/simulations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One simulation */
+        get: operations["getSimulation"];
+        /**
+         * Replace a simulation
+         * @description Every field is written, so the body is what the simulation now asks rather than what changed about it. The runs it already has keep their own copy of what they tested, so an old result still says what it was a result of.
+         */
+        put: operations["updateSimulation"];
+        post?: never;
+        /**
+         * Delete a simulation
+         * @description The runs that named it are kept, so the simulation stops being runnable rather than stops having existed.
+         */
+        delete: operations["deleteSimulation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/simulations/{id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Have the conversations
+         * @description Returns once the run is written rather than once it is over: the conversations happen after the answer, and the run says how far along they are. A simulation asking several ways has them all at once.
+         */
+        post: operations["runSimulation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/simulation-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the simulations have come to, newest first
+         * @description Without a simulation named this is the log of everything that has been run lately, which is the same question as what one simulation has come to, asked of all of them.
+         */
+        get: operations["listSimulationRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/simulation-runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One run, with the conversations it had */
+        get: operations["getSimulationRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/simulation-runs/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop a run
+         * @description Unlike a paused campaign the conversations in flight are ended too: there is nobody on the other end of them to be hung up on.
+         */
+        post: operations["cancelSimulationRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/calls": {
         parameters: {
             query?: never;
@@ -754,6 +971,27 @@ export interface paths {
          * @description Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
          */
         post: operations["createCallToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/chat-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What a browser needs to read an agent's conversation
+         * @description An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
+         *     The secret stays here, the same as for a call token: the browser is handed something that expires.
+         */
+        post: operations["createChatToken"];
         delete?: never;
         options?: never;
         head?: never;
@@ -998,10 +1236,17 @@ export interface components {
             /** @description The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at. */
             vendor_call_id?: string;
         };
+        /**
+         * @description Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
+         * @default voice
+         * @enum {string}
+         */
+        AgentMode: "voice" | "text";
         AgentConfigRequest: {
             /** @description What the config is called, which is unique among the customer's own. */
             name: string;
-            /** @description A provider/model or a capability shortcut. Empty leaves the default. */
+            mode?: components["schemas"]["AgentMode"];
+            /** @description A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it. */
             stt?: string;
             tts?: string;
             /** @description Provider-specific voice id. */
@@ -1016,6 +1261,8 @@ export interface components {
             greeting?: string;
             /** @description Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set. */
             skills?: string[];
+            /** @description Hosted MCP servers this agent may reach, named from the built-in catalog. */
+            plugins?: string[];
             /** @description Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
             keyterms?: string[];
             /** @description What the agent may look things up in. Empty means it knows only what it was told. */
@@ -1028,6 +1275,7 @@ export interface components {
         AgentConfig: {
             id: string;
             name: string;
+            mode: components["schemas"]["AgentMode"];
             stt?: string;
             tts?: string;
             voice?: string;
@@ -1037,6 +1285,7 @@ export interface components {
             instructions?: string;
             greeting?: string;
             skills?: string[];
+            plugins?: string[];
             keyterms?: string[];
             knowledge_namespace?: string;
             tags?: {
@@ -1048,6 +1297,35 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description One hosted MCP server from the built-in catalog. */
+        Plugin: {
+            id: string;
+            name: string;
+            category: string;
+            description: string;
+            instance_required?: boolean;
+            instance_hint?: string;
+        };
+        /** @description A catalog plugin as this agent has it, including whether it is logged in. */
+        PluginConnection: {
+            plugin_id: string;
+            name: string;
+            category?: string;
+            description?: string;
+            instance_required?: boolean;
+            instance_hint?: string;
+            instance_url?: string;
+            /** @enum {string} */
+            status: "pending" | "connected" | "failed";
+        };
+        AuthorizePluginRequest: {
+            /** @description The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL. */
+            instance_url?: string;
+        };
+        AuthorizePluginResponse: {
+            /** @description The URL the browser should open to finish the login. */
+            authorize_url: string;
         };
         SyncAgentRequest: {
             /** @description What the config is called, which is also the directory's name. */
@@ -1118,7 +1396,9 @@ export interface components {
             updated_at: string;
         };
         SkillRequest: {
-            /** @description How a config names it, which is unique among the customer's own. */
+            /** @description The agent config this skill belongs to. A skill is not shared: two agents that both need one have one each, so editing either leaves the other alone. */
+            config_id: string;
+            /** @description How the config names it, which is unique among that config's own skills. */
             name: string;
             /** @description The one line the fast model sees. */
             description: string;
@@ -1132,6 +1412,7 @@ export interface components {
         };
         Skill: {
             id: string;
+            config_id: string;
             name: string;
             description: string;
             instructions: string;
@@ -1259,6 +1540,126 @@ export interface components {
             /** @description Why they could not be rung, when they could not be. */
             error?: string;
         };
+        SimulationRequest: {
+            name: string;
+            /**
+             * @description Text hands the agent the words, which tests everything between hearing and answering. Audio generates speech and runs the whole pipeline, so what is judged is what a caller would actually have heard. Text when left out.
+             * @enum {string}
+             */
+            mode?: "text" | "audio";
+            /** @description The agent being tested. */
+            config_id: string;
+            /** @description What to ask, in your own words and over as many turns as it takes. This is a brief for the caller rather than a script, so it may describe things that depend on what the agent says back. */
+            scenario: string;
+            /** @description What has to be true at the end for the run to have passed. */
+            assertion: string;
+            /** @description How many ways of asking the same thing one run tries, up to ten. The scenario as written is always the first of them, and one is what left out means. */
+            variations?: number;
+            /** @description The model that rules on the conversations, named the way any other routing target is. Empty takes a quality tier, since nobody is waiting for it. */
+            judge_target?: string;
+            /** @description The model that plays the caller. Empty takes a fast tier. */
+            caller_target?: string;
+            /** @description How the caller speaks. Audio simulations only. */
+            caller_tts?: string;
+            /** @description How the caller hears the agent. Audio simulations only. */
+            caller_stt?: string;
+            /** @description The voice the caller speaks in. Audio simulations only. */
+            caller_voice?: string;
+            /** @description How many times the caller may speak, up to thirty. It is what stops a caller that never decides it is finished. Twelve when left out. */
+            max_turns?: number;
+            tags?: {
+                [key: string]: string;
+            };
+        };
+        Simulation: {
+            id: string;
+            name: string;
+            /** @enum {string} */
+            mode: "text" | "audio";
+            config_id: string;
+            scenario: string;
+            assertion: string;
+            variations: number;
+            judge_target?: string;
+            caller_target?: string;
+            caller_tts?: string;
+            caller_stt?: string;
+            caller_voice?: string;
+            max_turns: number;
+            tags?: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        SimulationRun: {
+            id: string;
+            simulation_id: string;
+            /**
+             * @description A run passed only if every one of its conversations did. A conversation that never got as far as a ruling leaves the run errored rather than failed.
+             * @enum {string}
+             */
+            state: "running" | "passed" | "failed" | "cancelled" | "errored";
+            /** @description How many conversations this run is having. */
+            cases: number;
+            passed: number;
+            failed: number;
+            /** @enum {string} */
+            mode?: "text" | "audio";
+            config_id?: string;
+            scenario?: string;
+            /** @description What was asked of this run, copied when it started. Editing a simulation does not rewrite what an old run tested. */
+            assertion?: string;
+            judge_target?: string;
+            error?: string;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at?: string;
+            /** @description The conversations this run had. Present when one run is asked for, and left out of a list so that reading the log does not mean reading every transcript. */
+            conversations?: components["schemas"]["SimulationCase"][];
+        };
+        SimulationCase: {
+            id: string;
+            /** @description Which way of asking this was, and the order they are listed in. */
+            variation: number;
+            /** @description The wording this conversation used. */
+            scenario: string;
+            /** @enum {string} */
+            state: "pending" | "running" | "passed" | "failed" | "errored" | "cancelled";
+            /** @description The session that held it, which is what the call and transcript paths take. It is written as soon as it exists, so a conversation still going can be watched. */
+            call_id?: string;
+            transcript?: components["schemas"]["SimulationLine"][];
+            /** @description How many times the caller spoke. */
+            turns: number;
+            /** @description The judge's ruling. Absent when it never got as far as ruling, which is not the same as having ruled against. */
+            passed?: boolean;
+            /** @description What in the conversation decided it. */
+            verdict?: string;
+            /** @description How sure the judge was, from 1 to 5. */
+            score?: number;
+            /**
+             * @description Why the conversation stopped.
+             * @enum {string}
+             */
+            ended?: "complete" | "turns" | "timeout" | "failed";
+            error?: string;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at?: string;
+        };
+        SimulationLine: {
+            /** @description True when the simulated caller said it rather than the agent. */
+            caller: boolean;
+            text: string;
+            /** @description What the agent meant to say, where that differs from what the caller heard. Only an audio simulation has both, and the difference is what running one is for. */
+            intended?: string;
+            /** Format: date-time */
+            at?: string;
+        };
         Call: {
             /** @description The session that ran the call, which is what it is held by. */
             id: string;
@@ -1322,6 +1723,27 @@ export interface components {
             /** @description The Stream call to join, which is not the id this call is held by here. */
             call_id: string;
             call_type: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        ChatTokenRequest: {
+            /** @description Whose conversation to read. This is the session's agent id, which is what names the channel it is written to. */
+            agent_id: string;
+            /** @description Who the browser reads as. Somebody watching is not the agent, so this defaults to a reader of its own rather than to the agent's user. */
+            user_id?: string;
+            /** @description The name shown against anything they write. Defaults to the user id. */
+            user_name?: string;
+        };
+        ChatToken: {
+            /** @description The Stream app the channel is in, which the browser SDK connects to. */
+            api_key: string;
+            token: string;
+            user_id: string;
+            user_name: string;
+            /** @description Always messaging, which is the type a conversation is written to. */
+            channel_type: string;
+            /** @description The channel holding the conversation, which is the agent id. */
+            channel_id: string;
             /** Format: date-time */
             expires_at: string;
         };
@@ -1855,6 +2277,8 @@ export interface components {
         SessionID: string;
         /** @description The resource, as returned when it was created. */
         ResourceID: string;
+        /** @description A built-in catalog id such as slack or calendly. */
+        PluginID: string;
     };
     requestBodies: never;
     headers: never;
@@ -2482,6 +2906,136 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    listPlugins: {
+        parameters: {
+            query?: {
+                /** @description Filter by name, category or description. */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Matching plugins, in catalog order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Plugin"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    pluginOAuthCallback: {
+        parameters: {
+            query?: {
+                code?: string;
+                state?: string;
+                error?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The browser is sent back to the agent editor */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listConfigPlugins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The config's connections */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginConnection"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    authorizePlugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+                /** @description A built-in catalog id such as slack or calendly. */
+                plugin_id: components["parameters"]["PluginID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AuthorizePluginRequest"];
+            };
+        };
+        responses: {
+            /** @description The URL the browser should open */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthorizePluginResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    disconnectPlugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+                /** @description A built-in catalog id such as slack or calendly. */
+                plugin_id: components["parameters"]["PluginID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The login is gone */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listVoices: {
         parameters: {
             query?: never;
@@ -2672,7 +3226,10 @@ export interface operations {
     };
     listSkills: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only the skills belonging to this agent config. Omit for every skill the customer has, across all of their agents. */
+                config_id?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3133,6 +3690,238 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    listSimulations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The customer's simulations, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Simulation"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createSimulation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SimulationRequest"];
+            };
+        };
+        responses: {
+            /** @description The simulation was stored */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Simulation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getSimulation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The simulation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Simulation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateSimulation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SimulationRequest"];
+            };
+        };
+        responses: {
+            /** @description The simulation as it now is */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Simulation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteSimulation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The simulation is gone */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    runSimulation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run is going */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimulationRun"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listSimulationRuns: {
+        parameters: {
+            query?: {
+                simulation_id?: string;
+                state?: "running" | "passed" | "failed" | "cancelled" | "errored";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The runs, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimulationRun"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getSimulationRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run and its conversations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimulationRun"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    cancelSimulationRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run is stopping */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimulationRun"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listCalls: {
         parameters: {
             query?: {
@@ -3302,6 +4091,32 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    createChatToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description The credentials, and the channel they are for */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatToken"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
         };
     };
     listSessions: {

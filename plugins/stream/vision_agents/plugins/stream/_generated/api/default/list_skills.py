@@ -7,14 +7,24 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.error import Error
 from ...models.skill import Skill
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
-def _get_kwargs() -> dict[str, Any]:
+def _get_kwargs(
+    *,
+    config_id: str | Unset = UNSET,
+) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["config_id"] = config_id
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/agents/skills",
+        "params": params,
     }
 
     return _kwargs
@@ -63,8 +73,12 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
+    config_id: str | Unset = UNSET,
 ) -> Response[Error | list[Skill]]:
     """The skills the calling customer has defined
+
+    Args:
+        config_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -74,7 +88,9 @@ def sync_detailed(
         Response[Error | list[Skill]]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        config_id=config_id,
+    )
 
     response = client.get_httpx_client().request(
         **kwargs,
@@ -86,8 +102,12 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
+    config_id: str | Unset = UNSET,
 ) -> Error | list[Skill] | None:
     """The skills the calling customer has defined
+
+    Args:
+        config_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -99,14 +119,19 @@ def sync(
 
     return sync_detailed(
         client=client,
+        config_id=config_id,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
+    config_id: str | Unset = UNSET,
 ) -> Response[Error | list[Skill]]:
     """The skills the calling customer has defined
+
+    Args:
+        config_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -116,7 +141,9 @@ async def asyncio_detailed(
         Response[Error | list[Skill]]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        config_id=config_id,
+    )
 
     response = await client.get_async_httpx_client().request(**kwargs)
 
@@ -126,8 +153,12 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
+    config_id: str | Unset = UNSET,
 ) -> Error | list[Skill] | None:
     """The skills the calling customer has defined
+
+    Args:
+        config_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,5 +171,6 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
+            config_id=config_id,
         )
     ).parsed

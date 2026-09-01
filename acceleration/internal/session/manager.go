@@ -147,7 +147,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// A text session joins nothing, so no edge is opened for it. Everything downstream
 	// treats a missing edge as the conversation having no call rather than as a failure.
 	var edge agent.Edge
-	if !spec.Text {
+	switch {
+	case spec.Text:
+	case spec.Edge != nil:
+		edge = spec.Edge
+	default:
 		edge, err = m.options.Edge(spec, m.logger)
 		if err != nil {
 			return nil, err
@@ -185,6 +189,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		tools = append(tools, builtin.Tools...)
 	}
 
+	mcp, pluginTools := attachPlugins(ctx, spec, m.options.Store, m.logger)
+	tools = append(tools, pluginTools...)
+	runner := agent.ToolRunner(created.tools)
+	if mcp != nil {
+		runner = &pluginRunner{mcp: mcp, next: created.tools}
+		created.closers = append(created.closers, mcp.Close)
+	}
+
 	created.voiceAgent, err = agent.New(agent.Options{
 		Edge:               edge,
 		Text:               spec.Text,
@@ -202,7 +214,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		SubagentTarget:     spec.SubagentTarget,
 		Skills:             skills,
 		Telephony:          line,
-		ToolRunner:         created.tools,
+		ToolRunner:         runner,
 		Tools:              harness.Tools{Tools: tools},
 		Sandbox:            box,
 		Tasks:              spec.Tasks,
@@ -278,7 +290,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			m.calls.Ended(created.id, time.Now().UTC())
 			// The review runs on a model rather than in this closer, so it is started
 			// here and lands on the row whenever it comes back.
-			m.reviews.Review(row(created), spec.SubagentTarget, created.conversation())
+			if !spec.NoReview {
+				m.reviews.Review(row(created), spec.SubagentTarget, created.conversation())
+			}
 		})
 		m.calls.Started(row(created))
 	}

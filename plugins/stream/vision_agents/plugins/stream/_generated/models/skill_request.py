@@ -16,12 +16,15 @@ T = TypeVar("T", bound="SkillRequest")
 class SkillRequest:
     """
     Attributes:
-        name (str): How a config names it, which is unique among the customer's own.
+        config_id (str): The agent config this skill belongs to. A skill is not shared: two agents that both need one
+            have one each, so editing either leaves the other alone.
+        name (str): How the config names it, which is unique among that config's own skills.
         description (str): The one line the fast model sees.
         instructions (str): The full prompt, which only the subagent sees.
         deadline_ms (int | Unset): How long the work may run before it is abandoned. Zero is the default.
     """
 
+    config_id: str
     name: str
     description: str
     instructions: str
@@ -29,6 +32,8 @@ class SkillRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        config_id = self.config_id
+
         name = self.name
 
         description = self.description
@@ -41,6 +46,7 @@ class SkillRequest:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "config_id": config_id,
                 "name": name,
                 "description": description,
                 "instructions": instructions,
@@ -54,6 +60,8 @@ class SkillRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
+        config_id = d.pop("config_id")
+
         name = d.pop("name")
 
         description = d.pop("description")
@@ -63,6 +71,7 @@ class SkillRequest:
         deadline_ms = d.pop("deadline_ms", UNSET)
 
         skill_request = cls(
+            config_id=config_id,
             name=name,
             description=description,
             instructions=instructions,

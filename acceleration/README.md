@@ -185,6 +185,7 @@ events to separate out.
 | `deepgram/flux-general-multi`                            | 12        | $0.276         |
 | `gemini/gemini-3.5-transcribe-live`                      | 85+       | ~$0.54         |
 | `grok/grok-stt`                                          | 25        | $0.20          |
+| `muse/muse-voice-transcribe-1.0`                         | 25        | $0.18          |
 | `parakeet/parakeet-tdt-0.6b-v3`                          | 25        | $0.079         |
 | `together-parakeet/nvidia/parakeet-tdt-0.6b-v3-realtime` | 25        | $0.21          |
 
@@ -193,7 +194,13 @@ deployment and `together-parakeet` is Together's serverless endpoint. They are s
 providers because the bill and the pager are not shared, so routing can pick between them
 and fail over from one to the other.
 
-Deepgram, Grok and Parakeet are speech recognisers. Gemini 3.5 Transcribe is a Gemini model that
+Muse Voice Transcribe is configured by its opening frame rather than by a header or a
+query string, credentials included, so a rejected key arrives as an error event on the
+socket rather than as a failed dial. It finds turn boundaries itself, which is what
+`ENDPOINTING`, the mode the provider defaults to, asks for; `DIARIZATION` adds speaker
+labels the router has no use for, since it already knows whose track the audio came in on.
+
+Deepgram, Grok, Muse and Parakeet are speech recognisers. Gemini 3.5 Transcribe is a Gemini model that
 happens to be listening, reached over the Live API's `BidiGenerateContent` socket with the
 talking half turned off, and that difference shows in three places.
 

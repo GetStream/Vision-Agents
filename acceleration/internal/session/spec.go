@@ -25,6 +25,14 @@ type Spec struct {
 	// and nothing is spoken. Everything between hearing and answering is unchanged, so a
 	// text session has the same skills, knowledge and tools a call would have had.
 	Text bool
+	// Edge is a call the caller has already opened, used instead of the manager's own.
+	// It is how a conversation is held against something other than a real transport: the
+	// manager's factory is handed a spec and cannot be given a particular one back.
+	Edge agent.Edge
+	// NoReview leaves the conversation unreviewed when it ends. A call is summarised on a
+	// model afterwards, which is worth paying for once per caller and not worth paying for
+	// once per conversation in a batch that is already being judged.
+	NoReview bool
 	// CallType defaults to "default".
 	CallType string
 	// UserID is who the agent joins the call as.
@@ -74,6 +82,8 @@ type Spec struct {
 	// SkillNames are skills to look up rather than spell out: the customer's own, or one
 	// of the built-in think, recall and explain.
 	SkillNames []string
+	// Plugins are hosted MCP servers this session may reach, named from the catalog.
+	Plugins []string
 	// KnowledgeNamespace is what the agent may look things up in. Empty means it knows
 	// only what it was told.
 	KnowledgeNamespace string
@@ -135,8 +145,11 @@ type PhoneSpec struct {
 // starting with which call to join.
 func FromConfig(config store.AgentConfig) Spec {
 	return Spec{
-		CustomerID:         config.CustomerID,
-		ConfigID:           config.ID,
+		CustomerID: config.CustomerID,
+		ConfigID:   config.ID,
+		// A text agent holds its conversation in writing, so a session created from one
+		// joins no call unless the request asks for a voice session explicitly.
+		Text:               config.Mode == store.AgentModeText,
 		STTTarget:          config.STT,
 		TTSTarget:          config.TTS,
 		Voice:              config.Voice,
@@ -146,6 +159,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Instructions:       config.Instructions,
 		Greeting:           config.Greeting,
 		SkillNames:         config.Skills,
+		Plugins:            config.Plugins,
 		Keyterms:           config.Keyterms,
 		KnowledgeNamespace: config.KnowledgeNamespace,
 		Tags:               routing.Tags(config.Tags),

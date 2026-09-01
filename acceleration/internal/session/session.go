@@ -202,6 +202,10 @@ func (s *Session) Respond(ctx context.Context, text string) error {
 // Interrupt abandons the reply being spoken.
 func (s *Session) Interrupt() { s.voiceAgent.Interrupt() }
 
+// Busy reports whether the agent still has something to finish, which is how anything
+// driving a conversation knows a turn is over rather than merely answered once.
+func (s *Session) Busy() bool { return s.voiceAgent.Busy() }
+
 // SetInstructions changes what the agent is told to be from the next turn on.
 func (s *Session) SetInstructions(text string) {
 	s.spec.Instructions = text
@@ -277,6 +281,15 @@ func (s *Session) remember(event Event) {
 	switch typed := event.(type) {
 	case agent.Heard:
 		line = spoken{text: typed.Text}
+	case agent.Responding:
+		// A conversation in writing is never Heard: nothing transcribed it, so the only
+		// record of what was said to the agent is the prompt it was handed. Without this
+		// a text call is reviewed on the agent's half of it. A call with a voice reports
+		// both, and taking them both would record everything the caller said twice.
+		if !s.spec.Text {
+			return
+		}
+		line = spoken{text: typed.Prompt}
 	case agent.Responded:
 		line = spoken{agent: true, text: typed.Text}
 	default:
@@ -358,16 +371,16 @@ func (m *Manager) skills(ctx context.Context, spec Spec) (harness.Skills, error)
 	if len(spec.SkillNames) == 0 {
 		return harness.DefaultSkills()
 	}
-	return m.namedSkills(ctx, spec.CustomerID, spec.SkillNames)
+	return m.namedSkills(ctx, spec.CustomerID, spec.ConfigID, spec.SkillNames)
 }
 
-// namedSkills looks up skills by name, against the customer's own and the built-in set.
+// namedSkills looks up skills by name, against the config's own and the built-in set.
 //
-// A customer's own wins over a built-in of the same name: redefining what "think" means is
+// The config's own wins over a built-in of the same name: redefining what "think" means is
 // how an agent is given a different one, not a collision. A name nothing defines is an
 // error rather than a skill quietly missing from the prompt, because the model would
 // otherwise be told to hand work to a colleague who does not exist.
-func (m *Manager) namedSkills(ctx context.Context, customerID string, names []string) (harness.Skills, error) {
+func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, names []string) (harness.Skills, error) {
 	builtin, err := harness.DefaultSkills()
 	if err != nil {
 		return harness.Skills{}, err
@@ -375,7 +388,7 @@ func (m *Manager) namedSkills(ctx context.Context, customerID string, names []st
 
 	defined := map[string]harness.Skill{}
 	if m.options.Store != nil {
-		stored, err := m.options.Store.SkillsNamed(ctx, customerID, names)
+		stored, err := m.options.Store.SkillsNamed(ctx, customerID, configID, names)
 		if err != nil {
 			return harness.Skills{}, err
 		}

@@ -191,6 +191,46 @@ stt:
       price:
         per_audio_hour: 0.20
 
+    # Meta's Muse Voice Transcribe. The languages are named in full on the wire; the
+    # provider translates these codes on the way out. Diarisation and endpointing are
+    # the same model rather than a stage after it, and it is fed 80ms at a time because
+    # that is the rate it turns audio into tokens at. Billed at $3 per 1,000 audio
+    # minutes, which is the rate below.
+    - provider: muse
+      model: muse-voice-transcribe-1.0
+      languages:
+        [
+          ar,
+          bn,
+          de,
+          en,
+          es,
+          fr,
+          he,
+          hi,
+          id,
+          it,
+          ja,
+          kn,
+          ko,
+          mr,
+          ms,
+          nl,
+          pl,
+          pt,
+          ta,
+          te,
+          th,
+          tl,
+          tr,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      price:
+        per_audio_hour: 0.18
+
   aliases:
     en-low-latency:
       languages: [en]
