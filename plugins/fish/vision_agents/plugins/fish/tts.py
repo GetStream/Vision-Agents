@@ -3,8 +3,9 @@ import os
 from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator, Optional
 
 from fish_audio_sdk import Session, TTSRequest
+from fish_audio_sdk.schemas import Backends
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core import tts
-from getstream.video.rtc.track_util import PcmData, AudioFormat
 
 if TYPE_CHECKING:
     from fish_audio_sdk.schemas import Backends
@@ -34,7 +35,7 @@ class TTS(tts.TTS):
         reference_id: Optional[str] = "03397b4c4be74759b72533b663fbd001",
         base_url: Optional[str] = None,
         client: Optional[Session] = None,
-        model: "Backends" = "s2-pro",
+        model: Backends = "s2-pro",
     ):
         """
         Initialize the Fish Audio TTS service.
@@ -68,7 +69,7 @@ class TTS(tts.TTS):
             self.client = Session(api_key)
 
         self.reference_id = reference_id
-        self.model = model
+        self.model: Backends = model
 
     async def stream_audio(
         self, text: str, *_, **kwargs: Any

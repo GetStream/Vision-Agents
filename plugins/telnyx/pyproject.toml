@@ -5,15 +5,18 @@ build-backend = "hatchling.build"
 [project]
 name = "vision-agents-plugins-telnyx"
 dynamic = ["version"]
-description = "Telnyx plugin for Vision Agents - Voice call integration with media streaming"
+description = "Telnyx plugin for Vision Agents - phone calls with media streaming, plus LLM, STT and TTS"
 readme = "README.md"
+keywords = ["telnyx", "telephony", "phone", "LLM", "STT", "TTS", "speech-to-text", "text-to-speech", "AI", "voice agents", "agents"]
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
     "vision-agents",
+    "vision-agents-plugins-openai",
     "numpy>=1.24.0", # capped at <2.0 via workspace override in root pyproject.toml
     "cryptography>=44.0.0",
     "fastapi>=0.135.1",
+    "aiohttp>=3.13.3",
 ]
 
 [project.urls]
@@ -33,6 +36,7 @@ include = ["/vision_agents"]
 
 [tool.uv.sources]
 vision-agents = { workspace = true }
+vision-agents-plugins-openai = { workspace = true }
 
 [dependency-groups]
 dev = [

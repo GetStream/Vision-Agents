@@ -34,9 +34,9 @@ class TestSarvamTTS:
         assert tts.language == "en-IN"
         assert tts.speaker == "ritu"
 
-    async def test_v3_beta_model_accepted(self):
-        tts = TTS(api_key="sk_test", model="bulbul:v3-beta", speaker="shubh")
-        assert tts.model == "bulbul:v3-beta"
+    async def test_v3_beta_model_rejected(self):
+        with pytest.raises(ValueError, match="Unsupported Sarvam TTS model"):
+            TTS(api_key="sk_test", model="bulbul:v3-beta", speaker="shubh")
 
     async def test_incompatible_speaker_rejected(self):
         with pytest.raises(ValueError, match="not compatible"):

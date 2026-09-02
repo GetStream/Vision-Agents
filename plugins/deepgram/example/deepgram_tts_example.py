@@ -34,7 +34,7 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),
         agent_user=User(name="Deepgram Agent", id="agent"),
         instructions="You're a helpful voice AI assistant. Keep replies short and conversational.",
-        tts=deepgram.TTS(),  # Uses Deepgram Aura for text-to-speech
+        tts=deepgram.TTS(),  # Uses Deepgram Flux TTS for text-to-speech
         stt=deepgram.STT(),  # Uses Deepgram Flux for speech-to-text
         llm=gemini.LLM(),
     )

@@ -17,10 +17,10 @@ dependencies = [
 
 [project.optional-dependencies]
 transformers = [
-    "transformers>=5.5.0,<6",
+    "transformers>=5.10.0,<6",
     "torch>=2.0.0,<3",
     "accelerate>=0.25.0,<2",
-    "supervision>=0.21.0,<0.28",
+    "supervision>=0.29.0,<0.31",
     "opencv-python>=4.8.0,<5",
 ]
 transformers-quantized = [

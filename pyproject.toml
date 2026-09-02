@@ -47,14 +47,27 @@ vision-agents-plugins-twelvelabs = { workspace = true }
 vision-agents-plugins-speechify = { workspace = true }
 
 [tool.uv]
-# Workspace-level override to resolve numpy version conflicts
-# vogent-turn requires numpy<2.0, so we override to use 1.26.x
+# Workspace-level overrides for upstream pins that cannot currently be satisfied.
+# vogent-turn requires numpy<2.0, so we override to use 1.26.x. It also pins the
+# vulnerable onnx==1.18.0 despite using APIs compatible with patched ONNX releases.
+# Keep this exception until vogent-turn publishes a release with a relaxed ONNX pin.
 override-dependencies = [
     "numpy>=1.26.0,<2.0",
-    "onnx>=1.21.0",
-    "pillow>=12.3.0,<13",
-    "transformers>=5.5.0,<6",
+    "onnx>=1.22.0,<2",
 ]
+
+# Security floors must remain compatible with every consumer. Constraints keep the
+# resolver's compatibility checks intact, unlike overrides which discard upstream
+# requirements and can produce an environment that imports but fails at runtime.
+constraint-dependencies = [
+    "pillow>=12.2.0,<13",
+    "transformers>=5.10.0,<6",
+]
+
+# curated-tokenizers 0.0.9 (kokoro -> misaki[en] -> spacy-curated-transformers)
+# ships no cp313 wheels, so it is built from source. Its build requirement is an
+# unpinned `cython>=0.25` and Cython 3.3 crashes cythonizing `_bbpe.pyx`.
+build-constraint-dependencies = ["cython<3.3"]
 
 # Store uv cache in project directory for better sandboxing
 cache-dir = ".uv-cache"
@@ -134,6 +147,8 @@ dev = [
     "hatch>=1.14.2",
     "blockbuster>=1.5.5,<1.6",
     "aiofiles>=25.1.0",
+    "types-aiofiles>=25.1.0",
+    "types-PyYAML>=6.0.12",
     "pyinstrument>=5.1.1",
     "toml>=0.10.2",
     "asgi-lifespan>=2.1.0",

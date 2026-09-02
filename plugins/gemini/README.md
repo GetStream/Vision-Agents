@@ -1,6 +1,6 @@
-## Gemini Live Speech-to-Speech Plugin
+## Gemini Plugin
 
-Google Gemini Live Speech-to-Speech (STS) plugin for GetStream. It connects a realtime Gemini Live session to a Stream video call so your assistant can speak and listen in the same call.
+Google Gemini integrations for Vision Agents, including Live speech-to-speech, streaming speech-to-text, LLM, and VLM support.
 
 ## Installation
 
@@ -13,7 +13,7 @@ uv add vision-agents-plugins-gemini
 ### Requirements
 
 - **Python**: 3.10+
-- **Dependencies**: `getstream[webrtc"]`, `getstream-plugins-common`, `google-genai>=1.51.0`
+- **Dependencies**: `vision-agents`, `google-genai>=2.15.0`
 - **API key**: `GOOGLE_API_KEY` or `GEMINI_API_KEY` set in your environment
 
 ### Quick Start
@@ -62,6 +62,43 @@ llm=gemini.Realtime(fps=3)  # forward video at 3 frames per second
 
 The `Agent` subscribes to track events internally, so no manual wiring is needed.
 For a full runnable example, see `examples/02_golf_coach_example/golf_coach_example.py`.
+
+### Gemini Speech-to-Text
+
+Use Gemini's Live transcription model in a standard STT, LLM, and TTS agent:
+
+```python
+from vision_agents.core import Agent, User
+from vision_agents.plugins import elevenlabs, gemini, getstream
+
+
+async def create_agent(**kwargs) -> Agent:
+    return Agent(
+        edge=getstream.Edge(),
+        agent_user=User(name="Assistant", id="gemini-stt-agent"),
+        instructions="Be helpful and concise.",
+        stt=gemini.STT(),
+        llm=gemini.LLM(),
+        tts=elevenlabs.TTS(),
+    )
+```
+
+Gemini automatically detects the spoken language by default. You can provide
+BCP-47 language codes and vocabulary that should be recognized accurately:
+
+```python
+stt = gemini.STT(
+    language_codes=["en-US"],
+    custom_vocabulary=["Vision Agents", "GetStream"],
+)
+```
+
+`gemini.STT` defaults to the Live model `gemini-3.5-transcribe-live`. It
+streams 16 kHz PCM audio to Gemini and emits standard partial, final, and turn
+events for the Vision Agents pipeline. Google also publishes
+`gemini-3.5-transcribe` for unary/file transcription; this plugin uses the
+Live model. For a full runnable example, see
+`plugins/gemini/example/gemini_stt_example.py`.
 
 ### Gemini Vision (VLM)
 

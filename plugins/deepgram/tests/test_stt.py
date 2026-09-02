@@ -1,4 +1,5 @@
 import pytest
+from deepgram.listen.v2.types import ListenV2TurnInfo, ListenV2TurnInfoWordsItem
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.stt import Transcript
 from vision_agents.core.turn_detection import TurnEnded
@@ -48,7 +49,6 @@ class TestDeepgramSTT:
         assert httpx_client.is_closed is True
 
     async def test_on_message_handles_dict_turn_info(self, participant):
-        # The v2 listen socket delivers messages as plain dicts, not typed objects.
         stt = deepgram.STT(api_key="fake")
         stt._current_participant = participant
 
@@ -74,3 +74,44 @@ class TestDeepgramSTT:
         assert transcripts[0].final
         assert transcripts[0].participant == participant
         assert any(isinstance(i, TurnEnded) for i in items)
+
+    async def test_on_message_handles_typed_turn_info(self, participant):
+        stt = deepgram.STT(api_key="fake")
+        stt._current_participant = participant
+
+        stt._on_message(
+            ListenV2TurnInfo(
+                request_id="req-1",
+                sequence_id=1,
+                event="EndOfTurn",
+                turn_index=0,
+                audio_window_start=0.0,
+                audio_window_end=1.23,
+                transcript="hello world",
+                words=[
+                    ListenV2TurnInfoWordsItem(word="hello", confidence=0.9),
+                    ListenV2TurnInfoWordsItem(word="world", confidence=0.8),
+                ],
+                end_of_turn_confidence=0.9,
+            )
+        )
+
+        items = await stt.output.collect(timeout=0)
+        await stt.close()
+
+        transcripts = [i for i in items if isinstance(i, Transcript)]
+        assert [t.text for t in transcripts] == ["hello world"]
+        assert transcripts[0].final
+        assert transcripts[0].participant == participant
+        assert any(isinstance(i, TurnEnded) for i in items)
+
+    async def test_on_message_ignores_non_turn_info(self, participant):
+        stt = deepgram.STT(api_key="fake")
+        stt._current_participant = participant
+
+        stt._on_message(object())
+
+        items = await stt.output.collect(timeout=0)
+        await stt.close()
+
+        assert items == []
