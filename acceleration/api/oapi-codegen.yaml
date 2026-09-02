@@ -8,10 +8,12 @@ generate:
   embedded-spec: true
 output-options:
   skip-prune: true
-  # The two sockets are in the spec so a client generator and a reader know they exist,
+  # The three sockets are in the spec so a client generator and a reader know they exist,
   # but a strict server cannot express an upgrade. Their handlers are hand-written in
-  # sessionws.go and streamws.go and registered on the mux before the generated routes.
+  # sessionws.go, streamws.go and dispatchws.go and registered on the mux before the
+  # generated routes, which is also what puts them behind the server-side-only check.
   exclude-operation-ids:
     - watchSession
     - streamModality
+    - dispatchCalls
     - pluginOAuthCallback

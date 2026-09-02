@@ -762,3 +762,45 @@ func (g Granularity) truncateUnit() string {
 func (g Granularity) Valid() bool {
 	return g == Hourly || g == Daily
 }
+
+// Organization owns apps. It exists so a bill and a rate limit have something to name that
+// outlives any one app.
+type Organization struct {
+	bun.BaseModel `bun:"table:organizations,alias:o"`
+
+	ID        string    `bun:"id,pk"`
+	Name      string    `bun:"name,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+}
+
+// App is the tenant. Its id is what every other table's customer_id holds.
+type App struct {
+	bun.BaseModel `bun:"table:apps,alias:ap"`
+
+	ID             string    `bun:"id,pk"`
+	OrganizationID string    `bun:"organization_id,notnull"`
+	Name           string    `bun:"name,notnull"`
+	CreatedAt      time.Time `bun:"created_at,notnull"`
+}
+
+// APIKey is one credential belonging to an app. Several may be live at once, because
+// rotation without downtime is: create the new key, deploy it, watch the old one go quiet,
+// revoke it. One key per app makes every rotation an outage, so rotation stops happening.
+type APIKey struct {
+	bun.BaseModel `bun:"table:api_keys,alias:k"`
+
+	ID     string `bun:"id,pk"`
+	AppID  string `bun:"app_id,notnull"`
+	Name   string `bun:"name,notnull"`
+	Env    string `bun:"environment,notnull"`
+	Sealed []byte `bun:"secret_sealed,notnull"`
+	// KEKVersion names which key encryption key sealed this row.
+	KEKVersion int        `bun:"kek_version,notnull"`
+	Last4      string     `bun:"last4,notnull"`
+	CreatedAt  time.Time  `bun:"created_at,notnull"`
+	CreatedBy  string     `bun:"created_by,notnull"`
+	ExpiresAt  *time.Time `bun:"expires_at"`
+	LastUsedAt *time.Time `bun:"last_used_at"`
+	RevokedAt  *time.Time `bun:"revoked_at"`
+	RevokedBy  string     `bun:"revoked_by,notnull"`
+}

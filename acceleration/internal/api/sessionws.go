@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -25,10 +26,29 @@ const pingEvery = 30 * time.Second
 // than the ping interval so one lost ping is not a disconnection.
 const pongWait = 90 * time.Second
 
-// upgrader accepts any origin, because this is a server-to-server API reached with a
-// customer header rather than a browser session cookie.
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(*http.Request) bool { return true },
+// newUpgrader accepts the origins the deployment named, and any request that names none.
+//
+// A request without an Origin header did not come from a browser, so there is no session
+// for another site to ride on and nothing for this check to protect. One that does carry
+// an origin is held to the same list as an ordinary cross-origin request: a socket that
+// accepted every origin would be the way around the check the rest of the API makes.
+func newUpgrader(allowed []string) websocket.Upgrader {
+	permitted := make(map[string]struct{}, len(allowed))
+	for _, origin := range allowed {
+		permitted[strings.TrimSpace(origin)] = struct{}{}
+	}
+	_, anywhere := permitted["*"]
+
+	return websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" || anywhere {
+				return true
+			}
+			_, named := permitted[origin]
+			return named
+		},
+	}
 }
 
 // frame is one message in either direction. The type names the event and the rest of the
@@ -61,7 +81,7 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	events, detach := found.Watch()
 	defer detach()
 
-	connection, err := upgrader.Upgrade(w, r, nil)
+	connection, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		// Upgrade has already written its own response, so there is nothing to say here
 		// that the caller would see.

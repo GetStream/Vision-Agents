@@ -46,6 +46,8 @@ and billing as a direct API call.
 | `cmd/agent`          | Joins a Stream call and holds a conversation                        |
 | `cmd/phone`          | Buys numbers, points them at an agent, calls out and transfers live calls |
 | `cmd/knowledge`      | Reads documents into a knowledge base an agent can look things up in |
+| `cmd/fetchbinary`    | Installs a released router from S3, as the initContainer beside it   |
+| `cmd/gateway`        | The authenticating proxy that runs in front of the router in production |
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
 | `deploy/breeze-tts-2` | The streaming Breeze TTS 2 Truss, written but not yet pushed       |
@@ -91,7 +93,9 @@ to play audio, or `-out` to write a file instead.
 | `ROUTER_BLOB_URL`       | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
-| `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless the dashboard is running |
+| `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless the dashboard is running. The same list decides which origins may open a socket |
+| `ROUTER_AUTH_MODE`      | `noauth` (default) or `api_key`. See [Authentication](#authentication) |
+| `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
 | `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
 | `MEM0_API_KEY`          | mem0 credentials. Without it the agent remembers nothing   |
@@ -128,6 +132,61 @@ to play audio, or `-out` to write a file instead.
 | `STREAM_API_SECRET`     | Stream credentials; the agent mints its own token from them, and the router mints a browser's |
 | `STREAM_USER_TOKEN`     | Optional; used in preference to the secret                 |
 | `EXAMPLE_BASE_URL`      | Optional; points `cmd/agent`'s demo link at another deployment |
+
+## Authentication
+
+`ROUTER_AUTH_MODE` picks between the two deployments this serves.
+
+`noauth`, the default, believes what it is told. The caller is named by `X-Stream-App-Id`
+and `X-Stream-Organization-Id`, or by `X-Customer-Id` alone, and a socket may say the same
+thing as a `customer_id` query parameter because a browser WebSocket carries no headers.
+Nothing is verified, so it is only safe where a proxy in front has already authenticated
+the caller and nothing else can reach the router. That proxy owns rate limiting, and it has
+to overwrite both headers rather than pass a caller's own through.
+
+`api_key` verifies the caller itself, and needs Postgres to look keys up in. A request
+carries the key in `X-Api-Key` and a token in `Authorization: Bearer`, signed HS256 with the
+secret belonging to that key; a socket takes the same two as `api_key` and `token`. The
+proxy headers are ignored entirely in this mode, since reading them would be a way around
+the key. Keys belong to apps and apps belong to organizations, and it is the app id that
+every other table's `customer_id` holds.
+
+A key is two values with different jobs. The id is public — `vak_live_…`, ending in a
+checksum so a truncated paste is rejected before the database is asked, and it is what a
+log line names so an operator can revoke the right one. The secret is `vas_live_…`, shown
+once and then held only sealed: verifying a token means recomputing its signature, which
+means the secret cannot be hashed, so it is encrypted with AES-256-GCM under
+`ROUTER_AUTH_KEK` and a leaked backup yields ciphertext. `kek_version` is there so that key
+can be rotated by re-wrapping rows rather than by reissuing every secret.
+
+Every failure is one 401 with one body, because a caller that could tell an unknown key
+from a bad signature could use the difference to find out which keys exist. Revoking a key
+keeps the row: a year of request rows pointing at a deleted key is unattributable noise.
+
+Not built yet, in the order [.factory/features/auth.md](../.factory/features/auth.md) puts
+them: scopes, and the single-use ticket that would get the credential out of a socket's
+query string.
+
+### The gateway
+
+`cmd/gateway` is what runs in front of the router in production. The router there is in
+`noauth`, reachable only from this process, and everything it does not do lives here: it
+verifies the key and the token, rate limits per app, and names the caller to the router in
+headers it overwrites rather than forwards. It runs the same `api_key` authenticator the
+router would, so there is no second implementation of the check to disagree with the first.
+
+| Variable                  | Purpose                                                 |
+| ------------------------- | ------------------------------------------------------- |
+| `GATEWAY_ADDR`            | Listen address, defaults to `:8081`                     |
+| `GATEWAY_UPSTREAM`        | Where the router is, defaults to `http://127.0.0.1:8080` |
+| `GATEWAY_POSTGRES_DSN`    | Where the keys are. Required                            |
+| `GATEWAY_AUTH_KEK`        | Unseals their secrets. Required                         |
+| `GATEWAY_RATE_PER_SECOND` | Per app, not per organization. Defaults to 50           |
+| `GATEWAY_BURST`           | Defaults to 100                                         |
+| `GATEWAY_LOG_LEVEL`       | `debug`, `info` (default), `warn` or `error`            |
+
+It is per app rather than per organization on purpose: one runaway integration should
+throttle itself rather than the account's production traffic.
 
 Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.

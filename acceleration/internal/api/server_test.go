@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,7 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -423,4 +428,194 @@ func (s *ServerSuite) TestAnUnknownPluginIsRefused() {
 	s.handler.ServeHTTP(recorder, request)
 
 	s.Equal(http.StatusBadRequest, recorder.Code)
+}
+
+// keyed builds a handler in api_key mode where one key resolves to one app.
+func (s *ServerSuite) keyed(key, secret string) http.Handler {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	speech, err := sttrouter.New(sttrouter.Options{
+		Config:   config[routing.STT],
+		Registry: sttrouter.DefaultRegistry(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(speech.Close)
+
+	authenticator, err := auth.New(auth.APIKey, func(_ context.Context, presented string) (auth.App, error) {
+		if presented != key {
+			return auth.App{}, auth.ErrUnauthenticated
+		}
+		return auth.App{OrganizationID: "org-1", AppID: "app-1", Secret: secret}, nil
+	})
+	s.Require().NoError(err)
+
+	server, err := NewServer(Options{
+		Routers: map[routing.Modality]routing.Inspector{routing.STT: speech},
+		Auth:    authenticator,
+	})
+	s.Require().NoError(err)
+	return server.Handler()
+}
+
+// token signs a caller's token with an app secret.
+func (s *ServerSuite) token(secret string) string {
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(secret))
+	s.Require().NoError(err)
+	return signed
+}
+
+func (s *ServerSuite) TestAProxyNamesTheCustomerAndItsOrganization() {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/stt/providers", nil)
+	request.Header.Set(auth.AppHeader, "app-1")
+	request.Header.Set(auth.OrganizationHeader, "org-1")
+	s.handler.ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusOK, recorder.Code)
+}
+
+func (s *ServerSuite) TestAKeyedDeploymentIgnoresTheHeadersAProxyWouldSet() {
+	// Without this the mode is theatre: anyone could skip the key by naming themselves the
+	// way the trusted proxy would.
+	handler := s.keyed("vak_live_0123456789abcdef00000000", "vas_live_s3cret")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/stt/providers", nil)
+	request.Header.Set(auth.AppHeader, "app-1")
+	request.Header.Set(CustomerHeader, "app-1")
+	request.Header.Set(auth.OrganizationHeader, "org-1")
+	handler.ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusUnauthorized, recorder.Code)
+}
+
+func (s *ServerSuite) TestAKeyedDeploymentAcceptsAKeyAndItsToken() {
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.keyed(key, secret)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/stt/providers", nil)
+	request.Header.Set(auth.APIKeyHeader, key)
+	request.Header.Set("Authorization", "Bearer "+s.token(secret))
+	handler.ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusOK, recorder.Code)
+}
+
+func (s *ServerSuite) TestEveryAuthenticationFailureLooksTheSame() {
+	// Telling a caller that the key was real but the token was not is a free way to find
+	// out which keys exist, so all four answers have to be one answer.
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.keyed(key, secret)
+
+	attempts := map[string]func(*http.Request){
+		"nothing at all": func(*http.Request) {},
+		"an unknown key": func(r *http.Request) {
+			r.Header.Set(auth.APIKeyHeader, "vak_live_ffffffffffffffff00000000")
+			r.Header.Set("Authorization", "Bearer "+s.token(secret))
+		},
+		"a malformed key": func(r *http.Request) {
+			r.Header.Set(auth.APIKeyHeader, "nonsense")
+			r.Header.Set("Authorization", "Bearer "+s.token(secret))
+		},
+		"a token signed with the wrong secret": func(r *http.Request) {
+			r.Header.Set(auth.APIKeyHeader, key)
+			r.Header.Set("Authorization", "Bearer "+s.token("vas_live_wrong"))
+		},
+	}
+
+	var bodies []string
+	for name, attempt := range attempts {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/v1/stt/providers", nil)
+		attempt(request)
+		handler.ServeHTTP(recorder, request)
+
+		s.Equal(http.StatusUnauthorized, recorder.Code, name)
+		bodies = append(bodies, recorder.Body.String())
+	}
+	for _, body := range bodies {
+		s.Equal(bodies[0], body)
+	}
+}
+
+func (s *ServerSuite) TestHealthStaysReachableWithoutACredential() {
+	// A liveness probe holds no API key, and neither does the vendor fetching a call plan.
+	handler := s.keyed("vak_live_0123456789abcdef00000000", "vas_live_s3cret")
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/health", nil))
+
+	s.Equal(http.StatusOK, recorder.Code)
+}
+
+func (s *ServerSuite) TestASocketRefusesAnOriginThatWasNotNamed() {
+	// The upgrade is the way around CORS if it accepts every origin, since the browser
+	// sends the cookies either way.
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	speech, err := sttrouter.New(sttrouter.Options{
+		Config:   config[routing.STT],
+		Registry: sttrouter.DefaultRegistry(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(speech.Close)
+
+	server, err := NewServer(Options{
+		Routers:     map[routing.Modality]routing.Inspector{routing.STT: speech},
+		Dispatch:    dispatch.NewPool(),
+		CORSOrigins: []string{"https://dash.example"},
+	})
+	s.Require().NoError(err)
+	handler := server.Handler()
+
+	handshake := func(origin string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/v1/dispatch?customer_id=acme", nil)
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Connection", "Upgrade")
+		request.Header.Set("Upgrade", "websocket")
+		request.Header.Set("Sec-WebSocket-Version", "13")
+		request.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	s.Equal(http.StatusForbidden, handshake("https://evil.example").Code)
+
+	// A named origin gets past the check and fails further in, because a recorder cannot
+	// be hijacked into a socket. What matters is that it was not turned away here.
+	s.NotEqual(http.StatusForbidden, handshake("https://dash.example").Code)
+}
+
+func (s *ServerSuite) TestASocketAcceptsACallerThatNamesNoOrigin() {
+	// A server-to-server client sends no Origin, and there is no browser session for
+	// another site to ride on, so there is nothing for the check to protect against.
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	speech, err := sttrouter.New(sttrouter.Options{
+		Config:   config[routing.STT],
+		Registry: sttrouter.DefaultRegistry(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(speech.Close)
+
+	server, err := NewServer(Options{
+		Routers:     map[routing.Modality]routing.Inspector{routing.STT: speech},
+		Dispatch:    dispatch.NewPool(),
+		CORSOrigins: []string{"https://dash.example"},
+	})
+	s.Require().NoError(err)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/dispatch?customer_id=acme", nil)
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	request.Header.Set("Sec-WebSocket-Version", "13")
+	request.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	server.Handler().ServeHTTP(recorder, request)
+
+	s.NotEqual(http.StatusForbidden, recorder.Code)
 }

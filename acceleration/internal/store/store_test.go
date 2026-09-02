@@ -58,7 +58,8 @@ func (s *StoreSuite) SetupTest() {
 	_, err := s.store.DB().ExecContext(
 		s.ctx,
 		"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
-			" turns, turn_stats_hourly, turn_stats_daily, call_events, phone_numbers, voices CASCADE",
+			" turns, turn_stats_hourly, turn_stats_daily, call_events, phone_numbers, voices,"+
+			" organizations CASCADE",
 	)
 	s.Require().NoError(err)
 }

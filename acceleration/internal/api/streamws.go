@@ -72,7 +72,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	connection, err := upgrader.Upgrade(w, r, nil)
+	connection, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		s.logger.Debug("could not upgrade the stream socket", "error", err)
 		return

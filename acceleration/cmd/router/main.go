@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
@@ -64,6 +66,13 @@ const (
 	// comma separated. It exists for the dashboard, which talks to the router rather than
 	// through a server of its own. Unset means no browser may.
 	corsOriginsEnvVar = "ROUTER_CORS_ORIGINS"
+	// authModeEnvVar decides who the router believes a caller is. "noauth" trusts the
+	// headers a proxy in front of it sets, and is only safe when nothing else can reach
+	// it; "api_key" verifies a key and the token signed with its secret.
+	authModeEnvVar = "ROUTER_AUTH_MODE"
+	// authKEKEnvVar unseals the stored key secrets. It lives outside the database on
+	// purpose: it is what makes a leaked backup ciphertext rather than credentials.
+	authKEKEnvVar     = "ROUTER_AUTH_KEK"
 	logLevelEnvVar    = "ROUTER_LOG_LEVEL"
 	defaultAddress    = ":8080"
 	shutdownGrace     = 10 * time.Second
@@ -73,6 +82,10 @@ const (
 	// crawled live rather than served from an index takes seconds, and giving up on it
 	// leaves a subscription that never works.
 	crawlTimeout = 60 * time.Second
+	// lastUsedInterval throttles how often a key's use is recorded. Writing on every
+	// request would double the writes of a busy key, and recording nothing means nobody
+	// can answer whether a key is still in use, so nobody ever revokes one.
+	lastUsedInterval = time.Minute
 )
 
 func main() {
@@ -104,6 +117,58 @@ func dashboardBaseURL() string {
 		return value
 	}
 	return "http://localhost:3000"
+}
+
+// newAuthenticator builds the authenticator the deployment's mode asks for.
+//
+// api_key needs both a store to look keys up in and the key that unseals their secrets, and
+// says which is missing rather than starting and refusing every request for a reason only
+// visible in a 401.
+func newAuthenticator(pgStore *store.Store, logger *slog.Logger) (auth.Authenticator, error) {
+	mode, err := auth.ParseMode(os.Getenv(authModeEnvVar))
+	if err != nil {
+		return nil, err
+	}
+
+	if mode == auth.NoAuth {
+		logger.Warn("running without authentication: anyone who can reach this router can "+
+			"read and spend any customer's account, so only a trusted proxy should be able to",
+			"mode", auth.NoAuth, "set", authModeEnvVar)
+		return auth.New(mode, nil)
+	}
+
+	if pgStore == nil {
+		return nil, fmt.Errorf("%s=%s needs %s, because that is where the keys are",
+			authModeEnvVar, auth.APIKey, postgresEnvVar)
+	}
+	sealer, err := auth.NewSealer(os.Getenv(authKEKEnvVar))
+	if err != nil {
+		return nil, fmt.Errorf("%s=%s needs %s: %w", authModeEnvVar, auth.APIKey, authKEKEnvVar, err)
+	}
+
+	return auth.New(mode, func(ctx context.Context, key string) (auth.App, error) {
+		// The shape of the key is checked before the database is, so a truncated paste
+		// costs nothing to reject.
+		if !auth.ValidKey(key) {
+			return auth.App{}, auth.ErrUnauthenticated
+		}
+		owner, err := pgStore.LiveAPIKey(ctx, key)
+		if err != nil {
+			return auth.App{}, auth.ErrUnauthenticated
+		}
+		secret, err := sealer.Open(owner.Sealed)
+		if err != nil {
+			return auth.App{}, fmt.Errorf("unseal key %s: %w", key, err)
+		}
+		if err := pgStore.TouchAPIKey(ctx, key, lastUsedInterval); err != nil {
+			logger.Debug("could not record key use", "key", key, "error", err)
+		}
+		return auth.App{
+			OrganizationID: owner.OrganizationID,
+			AppID:          owner.AppID,
+			Secret:         secret,
+		}, nil
+	})
 }
 
 func run(logger *slog.Logger) error {
@@ -330,6 +395,11 @@ func run(logger *slog.Logger) error {
 	// is a different thing from a deployment that does not dispatch at all.
 	workers := dispatch.NewPool()
 
+	authenticator, err := newAuthenticator(pgStore, logger)
+	if err != nil {
+		return err
+	}
+
 	options := api.Options{
 		Routers:       routers,
 		Voices:        voiceService,
@@ -348,6 +418,7 @@ func run(logger *slog.Logger) error {
 		CORSOrigins:   splitList(os.Getenv(corsOriginsEnvVar)),
 		PublicURL:     os.Getenv(publicURLEnvVar),
 		DashboardURL:  dashboardBaseURL(),
+		Auth:          authenticator,
 		Logger:        logger,
 	}
 	if options.StreamSecret == "" {

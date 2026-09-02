@@ -6,13 +6,29 @@ info:
     Routes speech-to-text and text-to-speech traffic across providers and reports
     what it cost. Every path is scoped by modality, so the same provider serving
     two modalities is reported on separately. The caller is identified by a
-    trusted X-Customer-Id header; real authentication is not part of this version.
+    trusted X-Customer-Id header, or by an API key and a token signed with its
+    secret, depending on ROUTER_AUTH_MODE.
+
+    Operations marked `x-server-side-only` are refused with a 403 unless the
+    caller is a process the customer runs. Configuring an agent, replacing what
+    it knows and waiting for calls to answer are all of that kind: an end user's
+    device holding a token its own backend minted may hold a conversation, and
+    may not rewrite the agent holding it. A server-side caller sends
+    `Stream-Auth-Type: server` and a token carrying `server: true` and no
+    `user_id` claim. Both are required, and the token is what proves it, since
+    nothing signs the header.
 
 servers:
   - url: http://localhost:8080
 
+# Either the customer header, or an API key and the token signed with its secret. Which of
+# the two a deployment accepts is ROUTER_AUTH_MODE, not a per-request choice: noauth reads
+# the header and ignores keys, api_key verifies the pair and ignores the header.
 security:
   - CustomerId: []
+  - ApiKey: []
+    AppToken: []
+    AuthType: []
 
 paths:
   /health:
@@ -560,6 +576,7 @@ paths:
   /v1/agents/sync:
     post:
       operationId: syncAgent
+      x-server-side-only: true
       summary: Store an agent directory's instructions, skills and knowledge
       description: >
         Reads as "this is what the agent is", from a directory of instructions.md,
@@ -586,6 +603,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/agents/configs:
     get:
@@ -606,6 +625,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
     post:
       operationId: createAgentConfig
+      x-server-side-only: true
       summary: Store a named configuration a session can be created from
       description: >
         A config holds what a caller would otherwise repeat on every call: the models, the
@@ -629,6 +649,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/agents/configs/{id}:
     get:
@@ -651,6 +673,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     put:
       operationId: updateAgentConfig
+      x-server-side-only: true
       summary: Replace an agent config
       description: >
         Every field is written, so the body is what the config now is rather than what
@@ -675,10 +698,13 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteAgentConfig
+      x-server-side-only: true
       summary: Delete an agent config
       description: >
         Calls that already ran under it keep naming it, so the config stops being usable
@@ -692,6 +718,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -774,6 +802,7 @@ paths:
   /v1/agents/configs/{id}/plugins/{plugin_id}/authorize:
     post:
       operationId: authorizePlugin
+      x-server-side-only: true
       summary: Start a plugin login
       description: >
         Discovers the MCP server's OAuth endpoints and returns the URL the browser should
@@ -799,12 +828,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
   /v1/agents/configs/{id}/plugins/{plugin_id}:
     delete:
       operationId: disconnectPlugin
+      x-server-side-only: true
       summary: Drop a plugin login
       parameters:
         - $ref: "#/components/parameters/ResourceID"
@@ -816,6 +848,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -838,6 +872,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
     post:
       operationId: createVoice
+      x-server-side-only: true
       summary: Name a voice of the customer's own
       description: >
         A voice starts empty. Recordings are added to it one at a time, and then it is
@@ -861,6 +896,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/agents/voices/{id}:
     get:
@@ -883,6 +920,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     put:
       operationId: updateVoice
+      x-server-side-only: true
       summary: Rename a voice
       description: >
         Only what the voice is called changes. The recordings and the provider bindings are
@@ -906,10 +944,13 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteVoice
+      x-server-side-only: true
       summary: Delete a voice
       description: >
         The voice is taken off every provider it was prepared with, so a deleted voice
@@ -924,12 +965,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
   /v1/agents/voices/{id}/samples:
     post:
       operationId: addVoiceSample
+      x-server-side-only: true
       summary: Add a recording to a voice
       description: >
         The audio is stored in the deployment's object bucket and the voice keeps a
@@ -955,12 +999,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
   /v1/agents/voices/{id}/prepare:
     post:
       operationId: prepareVoice
+      x-server-side-only: true
       summary: Teach the text-to-speech providers this voice
       description: >
         Each provider is sent the recordings and hands back an id of its own, which is
@@ -986,6 +1033,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1017,6 +1066,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
     post:
       operationId: createSkill
+      x-server-side-only: true
       summary: Define a kind of work worth handing to the slower model
       description: >
         A skill belongs to one agent config. Two agents that both need the same kind of
@@ -1040,6 +1090,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/agents/skills/{id}:
     get:
@@ -1062,6 +1114,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     put:
       operationId: updateSkill
+      x-server-side-only: true
       summary: Replace a skill
       parameters:
         - $ref: "#/components/parameters/ResourceID"
@@ -1082,10 +1135,13 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteSkill
+      x-server-side-only: true
       summary: Delete a skill
       parameters:
         - $ref: "#/components/parameters/ResourceID"
@@ -1096,12 +1152,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
   /v1/agents/knowledge:
     post:
       operationId: ingestKnowledge
+      x-server-side-only: true
       summary: Fill a knowledge base with what the business wrote down
       description: >
         The writing half of the lookup a config's knowledge_namespace gives an agent. Each
@@ -1130,6 +1189,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/agents/knowledge/urls:
     get:
@@ -1157,6 +1218,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
     post:
       operationId: addKnowledgeUrl
+      x-server-side-only: true
       summary: Keep a knowledge base filled from a page
       description: >
         Posting a document is a thing that happens once; a url is a subscription, because
@@ -1184,6 +1246,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/agents/knowledge/urls/{id}:
     get:
@@ -1206,6 +1270,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteKnowledgeUrl
+      x-server-side-only: true
       summary: Stop filling a knowledge base from a page
       description: >
         The passages the page wrote are removed too. Leaving them would have the agent go
@@ -1220,12 +1285,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
   /v1/agents/knowledge/urls/{id}/index:
     post:
       operationId: indexKnowledgeUrl
+      x-server-side-only: true
       summary: Read a page again
       description: >
         Nothing re-reads a page on its own, so this is what a caller with its own schedule
@@ -1244,6 +1312,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1266,6 +1336,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
     post:
       operationId: createCampaign
+      x-server-side-only: true
       summary: Define a list of people to ring
       description: >
         A campaign is created stopped. Add the people to ring, then start it: concurrency
@@ -1288,6 +1359,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/agents/campaigns/{id}:
     get:
@@ -1332,6 +1405,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     post:
       operationId: addCampaignContacts
+      x-server-side-only: true
       summary: Add people to ring
       description: >
         Contacts are added rather than replaced, so a campaign can be topped up while it
@@ -1358,12 +1432,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
   /v1/agents/campaigns/{id}/start:
     post:
       operationId: startCampaign
+      x-server-side-only: true
       summary: Start ringing
       description: >
         Returns once the campaign is running rather than once it is over. A campaign that
@@ -1381,12 +1458,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
   /v1/agents/campaigns/{id}/pause:
     post:
       operationId: pauseCampaign
+      x-server-side-only: true
       summary: Stop ringing anybody new
       description: >
         The calls already happening are left alone: a campaign is paused to stop ringing
@@ -1404,6 +1484,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1426,6 +1508,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
     post:
       operationId: createSimulation
+      x-server-side-only: true
       summary: Write down a conversation to have with an agent
       description: >
         A simulation is a scenario to put an agent through and something that has to be
@@ -1450,6 +1533,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/agents/simulations/{id}:
     get:
@@ -1472,6 +1557,7 @@ paths:
           $ref: "#/components/responses/NotFound"
     put:
       operationId: updateSimulation
+      x-server-side-only: true
       summary: Replace a simulation
       description: >
         Every field is written, so the body is what the simulation now asks rather than
@@ -1496,10 +1582,13 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteSimulation
+      x-server-side-only: true
       summary: Delete a simulation
       description: >
         The runs that named it are kept, so the simulation stops being runnable rather
@@ -1513,12 +1602,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
   /v1/agents/simulations/{id}/run:
     post:
       operationId: runSimulation
+      x-server-side-only: true
       summary: Have the conversations
       description: >
         Returns once the run is written rather than once it is over: the conversations
@@ -1537,6 +1629,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1599,6 +1693,7 @@ paths:
   /v1/agents/simulation-runs/{id}/cancel:
     post:
       operationId: cancelSimulationRun
+      x-server-side-only: true
       summary: Stop a run
       description: >
         Unlike a paused campaign the conversations in flight are ended too: there is
@@ -1616,6 +1711,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
   /v1/agents/calls:
@@ -2094,6 +2191,44 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/dispatch:
+    get:
+      operationId: dispatchCalls
+      x-server-side-only: true
+      summary: Wait for inbound calls to answer, as a worker
+      description: >
+        A WebSocket, which OpenAPI cannot describe past the upgrade. The worker connects
+        here and waits, rather than being called, because the agent runs in the customer's
+        own process and this service cannot reach into it.
+
+        The socket opens with a `ready` frame naming the worker, and a `call` frame arrives
+        for each call handed to it. The worker sends `load` so the pool can rank it,
+        `accepted` or `rejected` per call, and `ping` to time the round trip itself.
+
+        Server-side only, and it is the clearest case of why: a worker is offered other
+        people's callers, so anything that can open this socket can answer for the whole
+        app. There is no query parameter for the auth type, so a browser cannot open one.
+      parameters:
+        - name: capacity
+          in: query
+          required: false
+          description: How many calls this worker takes at once.
+          schema:
+            type: integer
+            minimum: 1
+            default: 4
+      responses:
+        "101":
+          description: The socket is open
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/stats/rollup:
     post:
       operationId: runRollup
@@ -2126,7 +2261,37 @@ components:
       type: apiKey
       in: header
       name: X-Customer-Id
-      description: Trusted customer identifier. Every statistic is keyed by it.
+      description: >-
+        The customer, taken at face value. Read only in noauth mode, where a proxy in front
+        has already decided who the caller is. X-Stream-App-Id and X-Stream-Organization-Id
+        say the same thing with the organization around it.
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: >-
+        The public half of a credential, which names the app and the secret to verify with.
+        A socket sends it as the api_key query parameter, because a browser WebSocket
+        cannot set a header.
+    AppToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        A token signed HS256 with the secret belonging to the API key. A socket sends it as
+        the token query parameter. A token minted for an end user to hold names them in a
+        user_id claim; one a backend mints for itself carries server: true instead, and is
+        what the operations marked x-server-side-only require.
+    AuthType:
+      type: apiKey
+      in: header
+      name: Stream-Auth-Type
+      description: >-
+        Which kind of credential is presented: server for a process the customer runs, jwt
+        for a request made on an end user's behalf, which is what a caller that names
+        neither is taken to be. It has no query parameter counterpart, so a browser socket
+        cannot claim to be a backend. The header is the caller's declaration and AppToken
+        is the proof, so both have to say the same thing.
 
   parameters:
     Modality:
@@ -2167,6 +2332,15 @@ components:
             $ref: "#/components/schemas/Error"
     Unauthorized:
       description: The customer header is missing
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: >-
+        The caller is known and this operation is server-side only. It needs
+        Stream-Auth-Type: server and a token carrying server: true, which means it cannot
+        be reached from an end user's device.
       content:
         application/json:
           schema:

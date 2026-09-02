@@ -15,6 +15,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gorilla/websocket"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
@@ -30,16 +33,21 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 )
 
-// CustomerHeader carries the trusted customer identifier. Real authentication is not part
-// of this version, so the header is taken at face value.
-const CustomerHeader = "X-Customer-Id"
+// CustomerHeader names the tenant directly. It is only read in noauth mode, where a proxy
+// in front of the router has already decided who the caller is, and it is what a local
+// deployment with no proxy and no keys uses.
+const CustomerHeader = auth.CustomerHeader
 
 // CustomerParam carries the same identifier on the sockets, because the browser WebSocket
 // API cannot set a header.
-const CustomerParam = "customer_id"
+const CustomerParam = auth.CustomerParam
 
 // customerContextKey holds the customer identifier extracted from the request.
 type customerContextKey struct{}
+
+// organizationContextKey holds the organization the customer belongs to, which is what a
+// rate limit and a bill are counted against.
+type organizationContextKey struct{}
 
 // Options configures a Server. The store and live client are optional; endpoints that
 // need them report the dependency as unavailable rather than panicking.
@@ -98,31 +106,37 @@ type Options struct {
 	PublicURL string
 	// DashboardURL is where a finished plugin login sends the browser.
 	DashboardURL string
-	Logger       *slog.Logger
+	// Auth decides who a request is from. Absent means noauth, which trusts the customer
+	// header and is right for a local deployment and for one behind a proxy that has
+	// already authenticated the caller.
+	Auth   auth.Authenticator
+	Logger *slog.Logger
 }
 
 // Server implements the generated StrictServerInterface.
 type Server struct {
-	routers      map[routing.Modality]routing.Inspector
-	store        *store.Store
-	live         *live.Client
-	phone        *phone.Service
-	sessions     *session.Manager
-	streams      *Streams
-	transcripts  *chatlog.Reader
-	campaigns    *campaign.Runner
-	simulations  *simulation.Runner
-	knowledge    knowledge.Writer
-	pages        *urls.Service
-	voices       *voices.Service
-	dispatch     *dispatch.Pool
-	streamSecret string
-	streamKey    string
-	corsOrigins  []string
-	publicURL    string
-	dashboardURL string
-	oauth        *plugins.Auth
-	logger       *slog.Logger
+	routers       map[routing.Modality]routing.Inspector
+	store         *store.Store
+	live          *live.Client
+	phone         *phone.Service
+	sessions      *session.Manager
+	streams       *Streams
+	transcripts   *chatlog.Reader
+	campaigns     *campaign.Runner
+	simulations   *simulation.Runner
+	knowledge     knowledge.Writer
+	pages         *urls.Service
+	voices        *voices.Service
+	dispatch      *dispatch.Pool
+	streamSecret  string
+	streamKey     string
+	corsOrigins   []string
+	publicURL     string
+	dashboardURL  string
+	oauth         *plugins.Auth
+	authenticator auth.Authenticator
+	upgrader      websocket.Upgrader
+	logger        *slog.Logger
 }
 
 // NewServer wires the handlers.
@@ -136,29 +150,41 @@ func NewServer(options Options) (*Server, error) {
 		}
 	}
 
+	authenticator := options.Auth
+	if authenticator == nil {
+		// A deployment that names no mode is a local one, where the customer header is
+		// the whole of the story.
+		var err error
+		if authenticator, err = auth.New(auth.NoAuth, nil); err != nil {
+			return nil, err
+		}
+	}
+
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Server{
-		routers:      options.Routers,
-		store:        options.Store,
-		live:         options.Live,
-		phone:        options.Phone,
-		sessions:     options.Sessions,
-		streams:      options.Streams,
-		transcripts:  options.Transcripts,
-		campaigns:    options.Campaigns,
-		simulations:  options.Simulations,
-		knowledge:    options.Knowledge,
-		pages:        options.KnowledgeURLs,
-		voices:       options.Voices,
-		dispatch:     options.Dispatch,
-		streamSecret: options.StreamSecret,
-		streamKey:    options.StreamKey,
-		corsOrigins:  options.CORSOrigins,
-		publicURL:    options.PublicURL,
-		dashboardURL: options.DashboardURL,
+		routers:       options.Routers,
+		store:         options.Store,
+		live:          options.Live,
+		phone:         options.Phone,
+		sessions:      options.Sessions,
+		streams:       options.Streams,
+		transcripts:   options.Transcripts,
+		campaigns:     options.Campaigns,
+		simulations:   options.Simulations,
+		knowledge:     options.Knowledge,
+		pages:         options.KnowledgeURLs,
+		voices:        options.Voices,
+		dispatch:      options.Dispatch,
+		streamSecret:  options.StreamSecret,
+		streamKey:     options.StreamKey,
+		corsOrigins:   options.CORSOrigins,
+		publicURL:     options.PublicURL,
+		dashboardURL:  options.DashboardURL,
+		authenticator: authenticator,
+		upgrader:      newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{
 			PublicURL:    options.PublicURL,
 			DashboardURL: options.DashboardURL,
@@ -184,23 +210,27 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
-	return withCORS(s.corsOrigins, withCustomer(HandlerFromMux(NewStrictHandler(s, nil), mux)))
+	return withCORS(s.corsOrigins, s.withCustomer(HandlerFromMux(NewStrictHandler(s, nil), mux)))
 }
 
-// withCustomer lifts the trusted customer header into the request context so handlers can
+// withCustomer lifts the authenticated principal into the request context so handlers can
 // read it without each one reaching into the raw request.
 //
-// A WebSocket is the exception: a browser cannot put a header on one, so the socket paths
-// take the customer as a query parameter instead. It is no less trusted than the header,
-// which is to say not at all: real authentication is not part of this version.
-func withCustomer(next http.Handler) http.Handler {
+// A request that does not authenticate is passed along without one rather than refused
+// here. Every handler that needs a customer already reports a 401 when there is none, and
+// the paths that legitimately have no customer — the health check, a vendor fetching a call
+// plan, the hook Stream signs — are reached by somebody who has no key to present. Failing
+// here instead would mean keeping a list of the exceptions in two places.
+//
+// It also means one 401 for every reason authentication failed. A caller that could tell an
+// unknown key from a bad token could use the difference to find out which keys exist.
+func (s *Server) withCustomer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		customerID := strings.TrimSpace(r.Header.Get(CustomerHeader))
-		if customerID == "" {
-			customerID = strings.TrimSpace(r.URL.Query().Get(CustomerParam))
-		}
-		if customerID != "" {
-			r = r.WithContext(context.WithValue(r.Context(), customerContextKey{}, customerID))
+		principal, err := s.authenticator.Authenticate(r.Context(), r)
+		if err == nil && principal.AppID != "" {
+			ctx := context.WithValue(r.Context(), customerContextKey{}, principal.AppID)
+			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
+			r = r.WithContext(ctx)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -246,6 +276,13 @@ func withCORS(allowed []string, next http.Handler) http.Handler {
 func CustomerFrom(ctx context.Context) (string, bool) {
 	customerID, ok := ctx.Value(customerContextKey{}).(string)
 	return customerID, ok && customerID != ""
+}
+
+// OrganizationFrom returns the organization the request's customer belongs to. It is empty
+// in a deployment that names a customer without naming an organization.
+func OrganizationFrom(ctx context.Context) string {
+	organizationID, _ := ctx.Value(organizationContextKey{}).(string)
+	return organizationID
 }
 
 // routerFor returns the router serving a modality, or false when this deployment does not

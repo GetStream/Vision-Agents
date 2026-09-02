@@ -43,7 +43,7 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 
 	// Registering before the upgrade would put a worker in the rotation that cannot be
 	// written to yet, so a call arriving in between would be dropped rather than queued.
-	connection, err := upgrader.Upgrade(w, r, nil)
+	connection, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		s.logger.Debug("could not upgrade the dispatch socket", "error", err)
 		return
