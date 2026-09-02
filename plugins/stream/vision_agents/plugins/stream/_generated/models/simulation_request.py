@@ -28,11 +28,9 @@ class SimulationRequest:
         assertion (str): What has to be true at the end for the run to have passed.
         mode (SimulationRequestMode | Unset): Text hands the agent the words, which tests everything between hearing and
             answering. Audio generates speech and runs the whole pipeline, so what is judged is what a caller would actually
-            have heard.
-             Default: SimulationRequestMode.TEXT.
+            have heard. Text when left out.
         variations (int | Unset): How many ways of asking the same thing one run tries, up to ten. The scenario as
-            written is always the first of them.
-             Default: 1.
+            written is always the first of them, and one is what left out means.
         judge_target (str | Unset): The model that rules on the conversations, named the way any other routing target
             is. Empty takes a quality tier, since nobody is waiting for it.
         caller_target (str | Unset): The model that plays the caller. Empty takes a fast tier.
@@ -40,8 +38,7 @@ class SimulationRequest:
         caller_stt (str | Unset): How the caller hears the agent. Audio simulations only.
         caller_voice (str | Unset): The voice the caller speaks in. Audio simulations only.
         max_turns (int | Unset): How many times the caller may speak, up to thirty. It is what stops a caller that never
-            decides it is finished.
-             Default: 12.
+            decides it is finished. Twelve when left out.
         tags (SimulationRequestTags | Unset):
     """
 
@@ -49,14 +46,14 @@ class SimulationRequest:
     config_id: str
     scenario: str
     assertion: str
-    mode: SimulationRequestMode | Unset = SimulationRequestMode.TEXT
-    variations: int | Unset = 1
+    mode: SimulationRequestMode | Unset = UNSET
+    variations: int | Unset = UNSET
     judge_target: str | Unset = UNSET
     caller_target: str | Unset = UNSET
     caller_tts: str | Unset = UNSET
     caller_stt: str | Unset = UNSET
     caller_voice: str | Unset = UNSET
-    max_turns: int | Unset = 12
+    max_turns: int | Unset = UNSET
     tags: SimulationRequestTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

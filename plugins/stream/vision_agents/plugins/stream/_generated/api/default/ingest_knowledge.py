@@ -48,6 +48,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -78,6 +83,7 @@ def sync_detailed(
     Passages are keyed by the source and the position they came from, so posting a document again after
     editing it replaces that document's passages rather than leaving two versions of them to be found. A
     namespace is never shared between agents, and the caller names it.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (IngestKnowledgeRequest):
@@ -114,6 +120,7 @@ def sync(
     Passages are keyed by the source and the position they came from, so posting a document again after
     editing it replaces that document's passages rather than leaving two versions of them to be found. A
     namespace is never shared between agents, and the caller names it.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (IngestKnowledgeRequest):
@@ -145,6 +152,7 @@ async def asyncio_detailed(
     Passages are keyed by the source and the position they came from, so posting a document again after
     editing it replaces that document's passages rather than leaving two versions of them to be found. A
     namespace is never shared between agents, and the caller names it.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (IngestKnowledgeRequest):
@@ -179,6 +187,7 @@ async def asyncio(
     Passages are keyed by the source and the position they came from, so posting a document again after
     editing it replaces that document's passages rather than leaving two versions of them to be found. A
     namespace is never shared between agents, and the caller names it.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (IngestKnowledgeRequest):

@@ -46,7 +46,6 @@ and billing as a direct API call.
 | `cmd/agent`          | Joins a Stream call and holds a conversation                        |
 | `cmd/phone`          | Buys numbers, points them at an agent, calls out and transfers live calls |
 | `cmd/knowledge`      | Reads documents into a knowledge base an agent can look things up in |
-| `cmd/fetchbinary`    | Installs a released router from S3, as the initContainer beside it   |
 | `cmd/gateway`        | The authenticating proxy that runs in front of the router in production |
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
@@ -162,6 +161,34 @@ can be rotated by re-wrapping rows rather than by reissuing every secret.
 Every failure is one 401 with one body, because a caller that could tell an unknown key
 from a bad signature could use the difference to find out which keys exist. Revoking a key
 keeps the row: a year of request rows pointing at a deleted key is unattributable noise.
+
+### Server-side only
+
+Some paths configure the agent rather than talk to it, and a device holding a token its own
+backend minted has no business on them. Rewriting a config, replacing what an agent knows
+or waiting on the dispatch socket are all of that kind, and each is marked
+`x-server-side-only` in the spec, which is where the generated SDKs and the check in front
+of the handlers both read it from.
+
+A server-side caller says so twice. `Stream-Auth-Type: server` is the declaration, and a
+token carrying `server: true` and no `user_id` claim is the proof; `jwt` and a `user_id` are
+what a token minted for an end user carries, and are what a caller that names neither is
+taken to be. Both are required because each fails closed in a different direction: nothing
+signs the header, so it cannot promote a request on its own, and a server token pasted into
+a browser that sends the client header is used by a browser and treated as one. Stream's own
+convention is the same one, so a token minted by a Stream server SDK already fits.
+
+The auth type has no query parameter, unlike the key and the token. A browser WebSocket
+cannot set a header, so there is nothing for one to say, which is what stops a browser
+opening a dispatch socket and answering somebody else's callers.
+
+The refusal is a 403 rather than a 401: the caller has already proved who it is, so a
+specific answer gives nothing away, and one told "unauthenticated" would go looking for a
+credential problem it does not have. In `noauth` the auth type is believed the same way the
+app id is, and a caller that names none is taken to be a backend — a deployment with no
+proxy in front is a local one where every caller is, and a local router that refused to
+accept an agent config would be no use. The gateway overwrites the header from the
+credential it verified, so in production a caller cannot name its own.
 
 Not built yet, in the order [.factory/features/auth.md](../.factory/features/auth.md) puts
 them: scopes, and the single-use ticket that would get the credential out of a socket's
@@ -775,6 +802,22 @@ them.
 per number, so the provider and route paths do not serve those modalities while the
 statistics paths do.
 
+### The request log
+
+Everything above is what a request *did*. That it arrived at all is a log line, one per
+request served, at info:
+
+```
+level=INFO msg="served a request" method=POST path=/v1/agents/sessions status=201 duration=425ms customer=examples bytes=877
+level=INFO msg="served a request" method=GET path=/v1/agents/sessions/d84a…/events status=101 duration=94ms customer=examples
+```
+
+A socket is logged once, when it closes, so its `duration` is how long the connection lived
+rather than a time to respond and its status is the `101` of the upgrade. A `5xx` is logged
+at error instead, because an access log at a busy deployment is the one stream nobody reads
+all of. A preflight is not logged, and the query string is never logged: a socket names its
+customer there and a telephony vendor names a token.
+
 ## Transcripts, memory and phone
 
 **Transcripts.** With `STREAM_API_KEY` and `STREAM_API_SECRET` set, `cmd/agent` writes every
@@ -924,13 +967,20 @@ docker run -d --name va-redis -p 56379:6379 redis:7-alpine
 ```bash
 go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
 uv run ../plugins/stream/generate.py
+uv run ../sdks/swift/generate.py
 (cd ../dashboard && npm run types)
 ```
 
-The two sockets are declared in the spec with a `101` response so a reader and a client
+The Swift client is generated from a filter rather than from the whole spec, and
+`generate.py --check` fails if anything in that filter is marked `x-server-side-only`. Marking
+an operation server-side only is therefore the whole of removing it from the iOS SDK.
+
+The three sockets are declared in the spec with a `101` response so a reader and a client
 generator know they exist, and excluded from generation: a strict server cannot express an
-upgrade. Their handlers are hand-written in `internal/api/sessionws.go` and `streamws.go`,
-and the Python side of them in `plugins/stream/.../_socket.py`.
+upgrade. Their handlers are hand-written in `internal/api/sessionws.go`, `streamws.go` and
+`dispatchws.go`, and the Python side of them in `plugins/stream/.../_socket.py`. Excluding
+an operation also drops it from the embedded spec, which is why a socket that is
+server-side only makes that check in its own handler rather than in the middleware.
 
 ## Design notes
 

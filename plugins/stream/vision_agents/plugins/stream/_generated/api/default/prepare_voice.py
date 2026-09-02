@@ -52,6 +52,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 404:
         response_404 = Error.from_dict(response.json())
 
@@ -85,6 +90,7 @@ def sync_detailed(
      Each provider is sent the recordings and hands back an id of its own, which is remembered so a
     session can ask for this voice by name. Providers are prepared independently: one refusing the
     recordings leaves the others usable, and the binding says why it refused.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -121,6 +127,7 @@ def sync(
      Each provider is sent the recordings and hands back an id of its own, which is remembered so a
     session can ask for this voice by name. Providers are prepared independently: one refusing the
     recordings leaves the others usable, and the binding says why it refused.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -152,6 +159,7 @@ async def asyncio_detailed(
      Each provider is sent the recordings and hands back an id of its own, which is remembered so a
     session can ask for this voice by name. Providers are prepared independently: one refusing the
     recordings leaves the others usable, and the binding says why it refused.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -186,6 +194,7 @@ async def asyncio(
      Each provider is sent the recordings and hands back an id of its own, which is remembered so a
     session can ask for this voice by name. Providers are prepared independently: one refusing the
     recordings leaves the others usable, and the binding says why it refused.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):

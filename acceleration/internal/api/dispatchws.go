@@ -20,10 +20,18 @@ const defaultCapacity = 4
 // The direction is the point: the worker connects here and waits, because the agent runs in
 // the customer's own process which this service cannot reach. It is a socket rather than
 // long polling because a call that is ringing has seconds, not a poll interval.
+//
+// Server-side only, as the spec marks it, and this is the clearest case of why: a worker is
+// offered other people's callers, so anything that can open this socket can answer for the
+// whole app. The check is here rather than in withServerSide because a socket is left out
+// of generation, which leaves it out of the embedded spec the middleware reads.
 func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	customerID, ok := CustomerFrom(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "the "+CustomerHeader+" header is required")
+		return
+	}
+	if s.refuseClientSide(w, r) {
 		return
 	}
 	if s.dispatch == nil {

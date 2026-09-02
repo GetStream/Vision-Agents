@@ -43,6 +43,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 404:
         response_404 = Error.from_dict(response.json())
 
@@ -75,6 +80,7 @@ def sync_detailed(
      Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages
     past the end of the new version are removed, so a page that got shorter does not leave its old tail
     behind.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -108,6 +114,7 @@ def sync(
      Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages
     past the end of the new version are removed, so a page that got shorter does not leave its old tail
     behind.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -136,6 +143,7 @@ async def asyncio_detailed(
      Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages
     past the end of the new version are removed, so a page that got shorter does not leave its old tail
     behind.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -167,6 +175,7 @@ async def asyncio(
      Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages
     past the end of the new version are removed, so a page that got shorter does not leave its old tail
     behind.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):

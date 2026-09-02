@@ -70,6 +70,17 @@ func token(t *testing.T, secret string) string {
 	return signed
 }
 
+// serverSideToken is what a backend mints for itself: no user, and the flag set.
+func serverSideToken(t *testing.T, secret string) string {
+	t.Helper()
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"server": true,
+		"exp":    time.Now().Add(time.Hour).Unix(),
+	}).SignedString([]byte(secret))
+	require.NoError(t, err)
+	return signed
+}
+
 // authed is a request carrying a valid credential.
 func authed(t *testing.T, target string) *http.Request {
 	t.Helper()
@@ -88,6 +99,35 @@ func TestTheRouterIsToldWhoTheCallerIs(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, "app-1", router.got.Header.Get(auth.AppHeader))
 	require.Equal(t, "org-1", router.got.Header.Get(auth.OrganizationHeader))
+}
+
+func TestTheRouterIsToldWhichKindOfCallerItIs(t *testing.T) {
+	// The router is in noauth and cannot tell for itself, so a caller whose auth
+	// type went missing here would be free to rewrite the agent it is talking to.
+	handler, router := gateway(t, 100, 100)
+
+	handler.ServeHTTP(httptest.NewRecorder(), authed(t, "/v1/calls"))
+	require.Equal(t, auth.AuthTypeJWT, router.got.Header.Get(auth.AuthTypeHeader))
+
+	request := authed(t, "/v1/calls")
+	request.Header.Set(auth.AuthTypeHeader, auth.AuthTypeServer)
+	request.Header.Set("Authorization", "Bearer "+serverSideToken(t, testSecret))
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	require.Equal(t, auth.AuthTypeServer, router.got.Header.Get(auth.AuthTypeHeader))
+}
+
+func TestACallerCannotPromoteItselfToABackend(t *testing.T) {
+	// Saying so is not proving it. The token names no server, so what reaches the
+	// router has to be the client the caller actually is.
+	handler, router := gateway(t, 100, 100)
+
+	request := authed(t, "/v1/calls")
+	request.Header.Set(auth.AuthTypeHeader, auth.AuthTypeServer)
+
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	require.Equal(t, auth.AuthTypeJWT, router.got.Header.Get(auth.AuthTypeHeader))
 }
 
 func TestACallerCannotNameItself(t *testing.T) {

@@ -48,6 +48,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -75,6 +80,7 @@ def sync_detailed(
      A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the
     text-to-speech providers that should be able to speak in it. An agent config names this voice rather
     than any provider's id for it, so the router can still fail over between providers mid-call.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (VoiceRequest):
@@ -108,6 +114,7 @@ def sync(
      A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the
     text-to-speech providers that should be able to speak in it. An agent config names this voice rather
     than any provider's id for it, so the router can still fail over between providers mid-call.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (VoiceRequest):
@@ -136,6 +143,7 @@ async def asyncio_detailed(
      A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the
     text-to-speech providers that should be able to speak in it. An agent config names this voice rather
     than any provider's id for it, so the router can still fail over between providers mid-call.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (VoiceRequest):
@@ -167,6 +175,7 @@ async def asyncio(
      A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the
     text-to-speech providers that should be able to speak in it. An agent config names this voice rather
     than any provider's id for it, so the router can still fail over between providers mid-call.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (VoiceRequest):

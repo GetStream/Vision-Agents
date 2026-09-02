@@ -65,8 +65,12 @@ const (
 
 const (
 	// AuthTypeServer is a request an integration makes for itself, from a process the
-	// customer runs. AuthTypeJWT is one it makes on an end user's behalf, and is what a
-	// caller that names neither is taken to be: the weaker of the two is the safe default.
+	// customer runs. AuthTypeJWT is one it makes on an end user's behalf.
+	//
+	// What a caller naming neither is taken to be depends on the mode, and each way round
+	// is right for its own: APIKey verifies, so it assumes the weaker of the two, while
+	// NoAuth believes what it is told and a deployment with no proxy in front of it is a
+	// local one where every caller is a backend.
 	AuthTypeServer = "server"
 	AuthTypeJWT    = "jwt"
 )

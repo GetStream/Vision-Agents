@@ -55,6 +55,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 404:
         response_404 = Error.from_dict(response.json())
 
@@ -88,6 +93,7 @@ def sync_detailed(
 
      Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
     Salesforce need an instance url, because they have no single global host.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -126,6 +132,7 @@ def sync(
 
      Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
     Salesforce need an instance url, because they have no single global host.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -159,6 +166,7 @@ async def asyncio_detailed(
 
      Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
     Salesforce need an instance url, because they have no single global host.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -195,6 +203,7 @@ async def asyncio(
 
      Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and
     Salesforce need an instance url, because they have no single global host.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):

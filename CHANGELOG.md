@@ -2,6 +2,36 @@
 
 ## New Features
 
+### Swift SDKs: chat and voice from an iOS app
+
+Three iOS packages under `sdks/swift`, generated from `acceleration/api/openapi.yaml`:
+`VisionAgentsCore` (the client, the session socket and the conversation state),
+`VisionAgentsUI` (SwiftUI views over that state) and `VisionAgentsRTC` (joining the call over
+Stream Video). They are separate packages so an app that only holds a text conversation does
+not resolve the WebRTC binary.
+
+```swift
+let agents = VisionAgents(url: url, customerID: "examples")
+let chat = try await agents.chat(agent: "swift_demo")
+```
+
+Configuring an agent is not in them: those operations are marked `x-server-side-only`, and
+the generator refuses to emit a method for one. `examples/agents/swift_demo` shows both halves
+— a Go program that syncs the agent directory, and an iOS app that talks to what it left
+behind.
+
+### Server-side-only operations are refused from a device
+
+Writing an agent config, replacing what an agent knows and waiting on the dispatch socket are
+marked `x-server-side-only` in the spec, and the router now answers 403 to a caller that
+authenticated as an end user's device rather than as a backend.
+
+### The router logs every request it serves
+
+One info line per request with the method, path, status, duration and customer; a socket is
+logged once it closes, with the life of the connection as its duration. A `5xx` is logged at
+error.
+
 ### `sync_agent`: push an agent directory to the acceleration server
 
 `stream.sync_agent("customer_support")` reads `examples/agents/customer_support/`

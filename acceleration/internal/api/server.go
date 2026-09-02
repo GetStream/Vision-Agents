@@ -8,12 +8,15 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -227,7 +230,158 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
-	return withCORS(s.corsOrigins, s.withCustomer(HandlerFromMux(NewStrictHandler(s, nil), mux)))
+	handler := HandlerFromMux(NewStrictHandler(s, nil), mux)
+	return withCORS(s.corsOrigins, s.withCustomer(s.withRequestLog(s.withServerSide(handler))))
+}
+
+// withRequestLog records one line per request served.
+//
+// It sits inside withCustomer so it can name the caller, and outside withServerSide so a
+// refusal is a logged 403 rather than a request that appears not to have arrived. It is
+// inside withCORS, which means a preflight goes unlogged: it carries nothing worth routing
+// and doubling the volume to record that a browser asked permission is a poor trade.
+//
+// The path is logged without the query, because a socket names its customer there and a
+// vendor names a token, and an access log is the last place either should end up.
+//
+// A 5xx is logged at error level. An access log at a busy deployment is the one stream
+// nobody reads all of, and a server error that only appears in it is a server error nobody
+// notices.
+func (s *Server) withRequestLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		recorder := &loggedResponse{ResponseWriter: w}
+		next.ServeHTTP(recorder, r)
+
+		customer, _ := CustomerFrom(r.Context())
+		// A socket reports the life of the connection rather than a time to respond,
+		// since it is logged once it has closed.
+		fields := []any{
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", recorder.status(),
+			"duration", time.Since(started).Round(time.Millisecond),
+			"customer", customer,
+		}
+		if recorder.written > 0 {
+			fields = append(fields, "bytes", recorder.written)
+		}
+		if recorder.status() >= http.StatusInternalServerError {
+			s.logger.Error("served a request", fields...)
+			return
+		}
+		s.logger.Info("served a request", fields...)
+	})
+}
+
+// loggedResponse remembers what was answered so it can be logged once the handler is done.
+type loggedResponse struct {
+	http.ResponseWriter
+	code     int
+	written  int64
+	hijacked bool
+}
+
+// status reports what the caller was told, filling in the two codes a handler can answer
+// with without ever naming: writing a body implies a 200, and writing nothing at all is the
+// 200 net/http sends when the handler returns.
+func (l *loggedResponse) status() int {
+	switch {
+	case l.code != 0:
+		return l.code
+	case l.hijacked:
+		return http.StatusSwitchingProtocols
+	default:
+		return http.StatusOK
+	}
+}
+
+func (l *loggedResponse) WriteHeader(code int) {
+	if l.code == 0 {
+		l.code = code
+	}
+	l.ResponseWriter.WriteHeader(code)
+}
+
+func (l *loggedResponse) Write(body []byte) (int, error) {
+	written, err := l.ResponseWriter.Write(body)
+	l.written += int64(written)
+	return written, err
+}
+
+// Hijack hands the connection over for a socket upgrade, and is declared here rather than
+// left to Unwrap so that the upgrade is what gets logged instead of an empty 200.
+func (l *loggedResponse) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, buffered, err := http.NewResponseController(l.ResponseWriter).Hijack()
+	if err == nil {
+		l.hijacked = true
+	}
+	return conn, buffered, err
+}
+
+// Unwrap lets a handler reach the flushing and deadline setting of the writer underneath
+// through http.ResponseController, which a streamed response needs.
+func (l *loggedResponse) Unwrap() http.ResponseWriter {
+	return l.ResponseWriter
+}
+
+// serverSideRoutes builds the matcher for the operations the spec marks server-side only.
+//
+// The spec's own path templates are the patterns, because OpenAPI writes a parameter as
+// {id} and so does ServeMux: a route is registered rather than translated. Matching is
+// then the same routing the generated handlers get, so a marked operation cannot be
+// reached by a path that spells it differently.
+func serverSideRoutes() (*http.ServeMux, error) {
+	spec, err := GetSpec()
+	if err != nil {
+		return nil, fmt.Errorf("api: could not read the embedded spec: %w", err)
+	}
+
+	routes := http.NewServeMux()
+	nothing := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	for path, item := range spec.Paths.Map() {
+		for method, operation := range item.Operations() {
+			if marked, ok := operation.Extensions[serverSideExtension].(bool); ok && marked {
+				routes.Handle(method+" "+path, nothing)
+			}
+		}
+	}
+	return routes, nil
+}
+
+// withServerSide refuses the generated operations only a backend may reach.
+//
+// It sits after withCustomer, because refusing a caller for what it is means having worked
+// out what it is first. It covers the generated routes only: an operation left out of
+// generation is left out of the embedded spec with it, so the three sockets ask the same
+// question for themselves through refuseClientSide.
+//
+// A caller that authenticated and asked for one of these gets a 403 rather than a 401: it
+// has already proved who it is, so there is nothing to be learned from a specific answer
+// and a caller told "unauthenticated" would go looking for a credential problem it does
+// not have. One that never authenticated is left to the handler's own 401.
+func (s *Server) withServerSide(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, matched := s.serverSide.Handler(r); matched != "" {
+			if s.refuseClientSide(w, r) {
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// refuseClientSide answers a caller that has authenticated as an end user's device and
+// asked for something only a backend may have, and reports whether it did.
+func (s *Server) refuseClientSide(w http.ResponseWriter, r *http.Request) bool {
+	if _, known := CustomerFrom(r.Context()); !known || ServerSideFrom(r.Context()) {
+		return false
+	}
+	s.logger.Debug("refused a client-side caller a server-side operation",
+		"method", r.Method, "path", r.URL.Path)
+	writeError(w, http.StatusForbidden, "this operation is server-side only: it needs "+
+		auth.AuthTypeHeader+": "+auth.AuthTypeServer+" and a token carrying server: true")
+	return true
 }
 
 // withCustomer lifts the authenticated principal into the request context so handlers can
@@ -247,6 +401,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 		if err == nil && principal.AppID != "" {
 			ctx := context.WithValue(r.Context(), customerContextKey{}, principal.AppID)
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
+			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			r = r.WithContext(ctx)
 		}
 		next.ServeHTTP(w, r)
@@ -300,6 +455,13 @@ func CustomerFrom(ctx context.Context) (string, bool) {
 func OrganizationFrom(ctx context.Context) string {
 	organizationID, _ := ctx.Value(organizationContextKey{}).(string)
 	return organizationID
+}
+
+// ServerSideFrom reports whether the request came from a process the customer runs rather
+// than from an end user's device.
+func ServerSideFrom(ctx context.Context) bool {
+	serverSide, _ := ctx.Value(serverSideContextKey{}).(bool)
+	return serverSide
 }
 
 // routerFor returns the router serving a modality, or false when this deployment does not

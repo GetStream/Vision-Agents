@@ -48,6 +48,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -75,6 +80,7 @@ def sync_detailed(
      A skill belongs to one agent config. Two agents that both need the same kind of work have one each,
     so editing what "explain" means for one leaves the other alone. The built-in think, recall and
     explain need no row: a config may name them without defining them.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SkillRequest):
@@ -108,6 +114,7 @@ def sync(
      A skill belongs to one agent config. Two agents that both need the same kind of work have one each,
     so editing what "explain" means for one leaves the other alone. The built-in think, recall and
     explain need no row: a config may name them without defining them.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SkillRequest):
@@ -136,6 +143,7 @@ async def asyncio_detailed(
      A skill belongs to one agent config. Two agents that both need the same kind of work have one each,
     so editing what "explain" means for one leaves the other alone. The built-in think, recall and
     explain need no row: a config may name them without defining them.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SkillRequest):
@@ -167,6 +175,7 @@ async def asyncio(
      A skill belongs to one agent config. Two agents that both need the same kind of work have one each,
     so editing what "explain" means for one leaves the other alone. The built-in think, recall and
     explain need no row: a config may name them without defining them.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SkillRequest):

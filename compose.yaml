@@ -27,10 +27,6 @@ services:
   router:
     build:
       context: ./acceleration
-      # The default target is the runtime shell that fetches its binary from S3 at pod
-      # start, which there is nothing to do locally. dev is the same image with the router
-      # built into it.
-      target: dev
       # Fetching the private getstream-go-webrtc module needs the host's SSH agent.
       ssh:
         - default

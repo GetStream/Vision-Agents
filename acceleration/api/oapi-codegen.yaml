@@ -11,7 +11,8 @@ output-options:
   # The three sockets are in the spec so a client generator and a reader know they exist,
   # but a strict server cannot express an upgrade. Their handlers are hand-written in
   # sessionws.go, streamws.go and dispatchws.go and registered on the mux before the
-  # generated routes, which is also what puts them behind the server-side-only check.
+  # generated routes. Excluding an operation also drops it from the embedded spec, so a
+  # socket that is server-side only makes that check itself rather than in withServerSide.
   exclude-operation-ids:
     - watchSession
     - streamModality

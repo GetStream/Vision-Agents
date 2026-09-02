@@ -118,3 +118,16 @@ profile.html
 .report.json
 .agents/
 .cursor/
+
+# Code generators fetched on demand, not vendored. See sdks/swift/README.md.
+/.codegen/
+
+# Swift and Xcode
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserdatad/
+xcuserdata/
+# A library's resolved versions are not used by anybody who depends on it, so they are
+# churn. The app's, under xcshareddata, is committed.
+/sdks/swift/*/Package.resolved

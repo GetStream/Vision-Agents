@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -143,6 +146,79 @@ func (s *ServerSuite) origins(allowed ...string) http.Handler {
 	})
 	s.Require().NoError(err)
 	return server.Handler()
+}
+
+// logging builds a handler that writes its log to the buffer it returns.
+func (s *ServerSuite) logging() (http.Handler, *bytes.Buffer) {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	speech, err := sttrouter.New(sttrouter.Options{
+		Config:   config[routing.STT],
+		Registry: sttrouter.DefaultRegistry(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(speech.Close)
+
+	written := &bytes.Buffer{}
+	server, err := NewServer(Options{
+		Routers:     map[routing.Modality]routing.Inspector{routing.STT: speech},
+		CORSOrigins: []string{"https://dash.example"},
+		Logger: slog.New(slog.NewTextHandler(written, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})),
+	})
+	s.Require().NoError(err)
+	return server.Handler(), written
+}
+
+func (s *ServerSuite) TestARequestIsLoggedWithWhatItAskedForAndWhatItGot() {
+	handler, written := s.logging()
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/tts/providers", nil)
+	request.Header.Set(CustomerHeader, "acme")
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	logged := written.String()
+	s.Contains(logged, "method=GET")
+	s.Contains(logged, "path=/v1/tts/providers")
+	s.Contains(logged, "status=404", "the status the caller was told, not the one it hoped for")
+	s.Contains(logged, "customer=acme")
+	s.Regexp(`duration=[0-9]`, logged)
+}
+
+func (s *ServerSuite) TestALoggedRequestDoesNotRepeatTheQuery() {
+	handler, written := s.logging()
+
+	// A socket names its customer in the query and a vendor names a token, so the log
+	// records the path alone.
+	request := httptest.NewRequest(http.MethodGet, "/v1/stt/providers?customer_id=acme", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	logged := written.String()
+	s.Contains(logged, "path=/v1/stt/providers")
+	s.NotContains(logged, "customer_id=acme")
+}
+
+func (s *ServerSuite) TestARefusedServerSideOperationIsLoggedAsForbidden() {
+	handler, written := s.logging()
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/agents/configs", strings.NewReader(`{}`))
+	request.Header.Set(CustomerHeader, "acme")
+	request.Header.Set(auth.AuthTypeHeader, auth.AuthTypeJWT)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	s.Contains(written.String(), "status=403",
+		"a refusal is a logged answer, not a request that never arrived")
+}
+
+func (s *ServerSuite) TestAPreflightIsNotLogged() {
+	handler, written := s.logging()
+
+	request := httptest.NewRequest(http.MethodOptions, "/v1/agents/calls", nil)
+	request.Header.Set("Origin", "https://dash.example")
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	s.Empty(written.String(), "asking permission is not a request worth a line")
 }
 
 func (s *ServerSuite) TestHealthNeedsNoCustomerHeader() {
@@ -466,6 +542,31 @@ func (s *ServerSuite) token(secret string) string {
 	return signed
 }
 
+// serverToken signs a token a backend mints for itself, which names no user.
+func (s *ServerSuite) serverToken(secret string) string {
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"server": true,
+		"exp":    time.Now().Add(time.Hour).Unix(),
+	}).SignedString([]byte(secret))
+	s.Require().NoError(err)
+	return signed
+}
+
+// asUser and asBackend credential a request the two ways a caller can be credentialed.
+func (s *ServerSuite) asUser(r *http.Request, key, secret string) *http.Request {
+	r.Header.Set(auth.APIKeyHeader, key)
+	r.Header.Set("Authorization", "Bearer "+s.token(secret))
+	r.Header.Set(auth.AuthTypeHeader, auth.AuthTypeJWT)
+	return r
+}
+
+func (s *ServerSuite) asBackend(r *http.Request, key, secret string) *http.Request {
+	r.Header.Set(auth.APIKeyHeader, key)
+	r.Header.Set("Authorization", "Bearer "+s.serverToken(secret))
+	r.Header.Set(auth.AuthTypeHeader, auth.AuthTypeServer)
+	return r
+}
+
 func (s *ServerSuite) TestAProxyNamesTheCustomerAndItsOrganization() {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/v1/stt/providers", nil)
@@ -618,4 +719,109 @@ func (s *ServerSuite) TestASocketAcceptsACallerThatNamesNoOrigin() {
 	server.Handler().ServeHTTP(recorder, request)
 
 	s.NotEqual(http.StatusForbidden, recorder.Code)
+}
+
+func (s *ServerSuite) TestAUsersDeviceMayNotConfigureAnAgent() {
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.keyed(key, secret)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/agents/configs", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, s.asUser(request, key, secret))
+
+	s.Equal(http.StatusForbidden, recorder.Code)
+
+	var failure Error
+	s.decode(recorder, &failure)
+	s.Contains(failure.Error, "server-side only")
+}
+
+func (s *ServerSuite) TestABackendMayConfigureAnAgent() {
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.keyed(key, secret)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/agents/configs", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, s.asBackend(request, key, secret))
+
+	// It reaches the handler, which refuses it for a reason of its own: this deployment
+	// has no database to keep a config in. What matters is that it got that far.
+	s.Equal(http.StatusBadRequest, recorder.Code)
+}
+
+func (s *ServerSuite) TestAUsersDeviceMayStillReadTheAgentsItTalksTo() {
+	// Only the writes are server-side only. A device that could not read a config could
+	// not show the user which agent answered them.
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.keyed(key, secret)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/agents/configs", nil)
+	handler.ServeHTTP(recorder, s.asUser(request, key, secret))
+
+	s.NotEqual(http.StatusForbidden, recorder.Code)
+}
+
+func (s *ServerSuite) TestAUsersDeviceMayNotWaitForOtherPeoplesCalls() {
+	// The dispatch socket is offered other people's callers, so anything that can open
+	// one can answer for the whole app.
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.keyed(key, secret)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/dispatch", nil)
+	handler.ServeHTTP(recorder, s.asUser(request, key, secret))
+
+	s.Equal(http.StatusForbidden, recorder.Code)
+
+	var failure Error
+	s.decode(recorder, &failure)
+	s.Contains(failure.Error, "server-side only")
+}
+
+func (s *ServerSuite) TestACallerWithNoCredentialIsToldToAuthenticateFirst() {
+	// A 403 on a request that never said who it was would send the caller looking for a
+	// permission problem instead of the missing credential.
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.keyed(key, secret)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/agents/configs", strings.NewReader(`{}`))
+	request.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(recorder, request)
+
+	s.Equal(http.StatusUnauthorized, recorder.Code)
+}
+
+func (s *ServerSuite) TestEveryServerSideOperationTheSpecMarksIsRefusedToAUsersDevice() {
+	// The middleware reads the spec, so this is what proves the marking reaches all of
+	// them rather than only the one path a test happened to name.
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.keyed(key, secret)
+
+	spec, err := GetSpec()
+	s.Require().NoError(err)
+
+	marked := 0
+	for path, item := range spec.Paths.Map() {
+		for method, operation := range item.Operations() {
+			if flagged, ok := operation.Extensions[serverSideExtension].(bool); !ok || !flagged {
+				continue
+			}
+			marked++
+
+			// A path parameter is filled with anything: the refusal comes before the
+			// handler that would look the resource up.
+			target := regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(path, "x")
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(method, target, strings.NewReader(`{}`))
+			request.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(recorder, s.asUser(request, key, secret))
+
+			s.Equal(http.StatusForbidden, recorder.Code, method+" "+path)
+		}
+	}
+	s.NotZero(marked, "the spec marks nothing server-side only")
 }

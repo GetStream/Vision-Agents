@@ -48,6 +48,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -75,6 +80,7 @@ def sync_detailed(
      A config holds what a caller would otherwise repeat on every call: the models, the voice, the
     instructions and which skills the subagent may be handed. What is about one conversation rather than
     the agent behind it, the call id above all, stays in the create-session request.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (AgentConfigRequest):
@@ -108,6 +114,7 @@ def sync(
      A config holds what a caller would otherwise repeat on every call: the models, the voice, the
     instructions and which skills the subagent may be handed. What is about one conversation rather than
     the agent behind it, the call id above all, stays in the create-session request.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (AgentConfigRequest):
@@ -136,6 +143,7 @@ async def asyncio_detailed(
      A config holds what a caller would otherwise repeat on every call: the models, the voice, the
     instructions and which skills the subagent may be handed. What is about one conversation rather than
     the agent behind it, the call id above all, stays in the create-session request.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (AgentConfigRequest):
@@ -167,6 +175,7 @@ async def asyncio(
      A config holds what a caller would otherwise repeat on every call: the models, the voice, the
     instructions and which skills the subagent may be handed. What is about one conversation rather than
     the agent behind it, the call id above all, stays in the create-session request.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (AgentConfigRequest):

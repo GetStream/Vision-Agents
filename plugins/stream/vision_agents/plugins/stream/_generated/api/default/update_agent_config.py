@@ -52,6 +52,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 404:
         response_404 = Error.from_dict(response.json())
 
@@ -84,6 +89,7 @@ def sync_detailed(
 
      Every field is written, so the body is what the config now is rather than what changed about it.
     Sessions already running keep the configuration they started with.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -119,6 +125,7 @@ def sync(
 
      Every field is written, so the body is what the config now is rather than what changed about it.
     Sessions already running keep the configuration they started with.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -149,6 +156,7 @@ async def asyncio_detailed(
 
      Every field is written, so the body is what the config now is rather than what changed about it.
     Sessions already running keep the configuration they started with.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -182,6 +190,7 @@ async def asyncio(
 
      Every field is written, so the body is what the config now is rather than what changed about it.
     Sessions already running keep the configuration they started with.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):

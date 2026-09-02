@@ -52,6 +52,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 404:
         response_404 = Error.from_dict(response.json())
 
@@ -85,6 +90,7 @@ def sync_detailed(
      The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so
     recordings can be re-sent to a provider that is added later without asking the customer for them
     again. Adding a recording does not re-prepare the voice.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -121,6 +127,7 @@ def sync(
      The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so
     recordings can be re-sent to a provider that is added later without asking the customer for them
     again. Adding a recording does not re-prepare the voice.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -152,6 +159,7 @@ async def asyncio_detailed(
      The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so
     recordings can be re-sent to a provider that is added later without asking the customer for them
     again. Adding a recording does not re-prepare the voice.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):
@@ -186,6 +194,7 @@ async def asyncio(
      The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so
     recordings can be re-sent to a provider that is added later without asking the customer for them
     again. Adding a recording does not re-prepare the voice.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str):

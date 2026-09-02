@@ -48,6 +48,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -77,6 +82,7 @@ def sync_detailed(
     process that syncs on startup is cheap when nothing has changed.
     Models, voice and the rest of a config are left alone. This path only writes what a directory can
     hold.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SyncAgentRequest):
@@ -112,6 +118,7 @@ def sync(
     process that syncs on startup is cheap when nothing has changed.
     Models, voice and the rest of a config are left alone. This path only writes what a directory can
     hold.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SyncAgentRequest):
@@ -142,6 +149,7 @@ async def asyncio_detailed(
     process that syncs on startup is cheap when nothing has changed.
     Models, voice and the rest of a config are left alone. This path only writes what a directory can
     hold.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SyncAgentRequest):
@@ -175,6 +183,7 @@ async def asyncio(
     process that syncs on startup is cheap when nothing has changed.
     Models, voice and the rest of a config are left alone. This path only writes what a directory can
     hold.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (SyncAgentRequest):

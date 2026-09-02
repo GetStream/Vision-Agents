@@ -48,6 +48,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Error.from_dict(response.json())
+
+        return response_403
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -79,6 +84,7 @@ def sync_detailed(
     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
     endpoints around it. A page that could not be read is still stored, in the failed state with the
     reason on it, rather than refused and forgotten.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (KnowledgeUrlRequest):
@@ -116,6 +122,7 @@ def sync(
     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
     endpoints around it. A page that could not be read is still stored, in the failed state with the
     reason on it, rather than refused and forgotten.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (KnowledgeUrlRequest):
@@ -148,6 +155,7 @@ async def asyncio_detailed(
     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
     endpoints around it. A page that could not be read is still stored, in the failed state with the
     reason on it, rather than refused and forgotten.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (KnowledgeUrlRequest):
@@ -183,6 +191,7 @@ async def asyncio(
     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
     endpoints around it. A page that could not be read is still stored, in the failed state with the
     reason on it, rather than refused and forgotten.
+    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         body (KnowledgeUrlRequest):

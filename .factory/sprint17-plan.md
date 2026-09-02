@@ -199,11 +199,17 @@ In `Vision-Agents/`:
 
 ---
 
-## Workstream 3 — `cmd/fetchbinary`
+## Workstream 3 — the fetcher, in `chat`
 
-The chat branch fetches with `chat-manager fetch-binary`, which lives in the chat monolith
-and is not available here. Add the equivalent, baked into the runtime image and run as an
-initContainer. `chat`'s `monolith/commands/manager/fetch_binary.go` is the reference.
+Lives in `chat/projects/accelerate-fetch`, not here. The split is by ownership: Vision-Agents
+produces the binaries, and everything about getting them onto our clusters — the fetcher, the
+runtime image, the chart — belongs to the repository that owns the infrastructure. The service
+should not have to know what a version registry is.
+
+Its own small module rather than a command on `chat-manager`, which pulls in the whole
+monolith: a ~130MB binary whose only job is to copy a file would be a strange initContainer.
+`chat`'s `monolith/commands/manager/fetch_binary.go`, on the unmerged S3 branch, is the
+reference for behaviour.
 
 Resolve the version from
 `s3://stream-services-version-registry/MultiRegion/us-east4/Accelerate/current` — the
@@ -221,7 +227,10 @@ the pod spec. That single property is what stops a `rocky` deploy for an unrelat
 a replica floor, a config value — from silently rolling the binary back to a stale release
 while presenting as a healthy rollout.
 
-Build it `CGO_ENABLED=0` so it stays small; it needs none of the codec libraries.
+Build it `CGO_ENABLED=0` so it stays small; it needs none of the codec libraries. The runtime
+image carrying it is `chat/infra/docker/accelerate.Dockerfile`, which takes the cross-compiled
+fetcher through a `bins` named build context exactly as `api.Dockerfile` takes the chat
+binaries.
 
 ### Tests
 
@@ -231,8 +240,14 @@ Build it `CGO_ENABLED=0` so it stays small; it needs none of the codec libraries
 
 ### Files
 
-- `acceleration/cmd/fetchbinary/main.go` — new
-- `acceleration/Dockerfile` — install it alongside the codec libraries
+In `chat/`:
+
+- `projects/accelerate-fetch/` — new module: the fetcher, its Makefile and its tests
+- `infra/docker/accelerate.Dockerfile` — the runtime image carrying it and the codec libraries
+
+In `Vision-Agents/`:
+
+- `acceleration/Dockerfile` — stays a local-development image only, building the router and the gateway for `compose.yaml`. Production never uses it
 
 ---
 
@@ -381,8 +396,8 @@ Not code, and they gate the first deploy:
 - **No new identity for `GetStream/Vision-Agents`.** It is granted nothing: no GCP binding, no Artifact Registry writer, no AWS role, no cloud credential in its repository secrets. The build runs in `chat` on credentials that already exist
 - **An `accelerate` repository in Artifact Registry**, writable by chat's existing release credentials. Add it to `githubActionsArtifactRepos()` in `chat/infra/cli/cmd/gcp.go`
 - **One AWS IAM user for the pod**, with a policy scoped to read `s3://stream-puppet/releases/r/GetStream/Vision-Agents/*` and the `Accelerate` key under `s3://stream-services-version-registry/MultiRegion/us-east4/`, and nothing else. Its access key goes into Secret Manager via `rocky secrets set`. Because it is a static credential it needs a named owner and a rotation schedule — record both at creation, since an unrotated key with no owner is the failure mode this choice trades for
-- **Cloud SQL Postgres 18.** No extensions needed — the migrations are plain SQL, no pgvector, no custom types. Bump `compose.yaml` from `postgres:16-alpine` to 18 for dev/prod parity
-- **Memorystore for Valkey**, with the auth/TLS caveat above
+- **Cloud SQL Postgres 18 and Memorystore for Valkey**, both in `chat/infra/shards/us-east4/accelerate.tf`, through the shared modules the shard leaves use. Sized for a canary: Postgres is ZONAL rather than REGIONAL, and Valkey runs with no replica — the file says what to raise first and why. Two GSM secrets (`shard-us-east4-accelerate-POSTGRES_PASSWORD` and `-POSTGRES_MIGRATOR`) must be seeded by `rocky secrets bootstrap` before Terraform runs, or the plan fails on a missing data source. No extensions are needed: the migrations are plain SQL, no pgvector, no custom types
+- Bump `compose.yaml` from `postgres:16-alpine` to 18 for dev/prod parity
 - A GCS or S3 bucket for `ROUTER_BLOB_URL`
 
 ---
@@ -475,7 +490,12 @@ EC2 target for such a service — the mirror of the check the GKE path already m
 field is only ever compared against `asg_replacement` in code, so the new value is inert
 everywhere else.
 
-**The gateway ships in the same image and the same chart.** It is pure Go and reaches no
+**The fetcher moved to `chat`, and the runtime image with it.** Vision-Agents produces the
+`router` and `gateway` binaries and publishes them to S3; chat owns the fetcher, the image and
+the chart. A consequence worth stating: the gateway is fetched from S3 too, by its own
+initContainer resolving the same release pointer, so the two can never be a version apart.
+
+**The gateway ships in the same chart.** It is pure Go and reaches no
 private module, so it cross-compiles alongside `cmd/fetchbinary` in the runtime shell. It
 is a separate Deployment rather than a sidecar: it is stateless and rolls normally, and
 tying it to the router would inherit the one-pod limit for no reason.

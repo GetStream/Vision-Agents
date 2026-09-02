@@ -280,6 +280,7 @@ export interface paths {
          * Store an agent directory's instructions, skills and knowledge
          * @description Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
          *     Models, voice and the rest of a config are left alone. This path only writes what a directory can hold.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["syncAgent"];
         delete?: never;
@@ -301,6 +302,7 @@ export interface paths {
         /**
          * Store a named configuration a session can be created from
          * @description A config holds what a caller would otherwise repeat on every call: the models, the voice, the instructions and which skills the subagent may be handed. What is about one conversation rather than the agent behind it, the call id above all, stays in the create-session request.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["createAgentConfig"];
         delete?: never;
@@ -321,12 +323,14 @@ export interface paths {
         /**
          * Replace an agent config
          * @description Every field is written, so the body is what the config now is rather than what changed about it. Sessions already running keep the configuration they started with.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         put: operations["updateAgentConfig"];
         post?: never;
         /**
          * Delete an agent config
          * @description Calls that already ran under it keep naming it, so the config stops being usable rather than stops having existed.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         delete: operations["deleteAgentConfig"];
         options?: never;
@@ -403,6 +407,7 @@ export interface paths {
         /**
          * Start a plugin login
          * @description Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify and Salesforce need an instance url, because they have no single global host.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["authorizePlugin"];
         delete?: never;
@@ -421,7 +426,10 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Drop a plugin login */
+        /**
+         * Drop a plugin login
+         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
         delete: operations["disconnectPlugin"];
         options?: never;
         head?: never;
@@ -441,6 +449,7 @@ export interface paths {
         /**
          * Name a voice of the customer's own
          * @description A voice starts empty. Recordings are added to it one at a time, and then it is prepared with the text-to-speech providers that should be able to speak in it. An agent config names this voice rather than any provider's id for it, so the router can still fail over between providers mid-call.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["createVoice"];
         delete?: never;
@@ -461,12 +470,14 @@ export interface paths {
         /**
          * Rename a voice
          * @description Only what the voice is called changes. The recordings and the provider bindings are what it sounds like, and renaming it does not make it sound different.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         put: operations["updateVoice"];
         post?: never;
         /**
          * Delete a voice
          * @description The voice is taken off every provider it was prepared with, so a deleted voice stops being billed for as well as stops being usable. Calls that spoke in it keep naming it.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         delete: operations["deleteVoice"];
         options?: never;
@@ -486,6 +497,7 @@ export interface paths {
         /**
          * Add a recording to a voice
          * @description The audio is stored in the deployment's object bucket and the voice keeps a reference to it, so recordings can be re-sent to a provider that is added later without asking the customer for them again. Adding a recording does not re-prepare the voice.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["addVoiceSample"];
         delete?: never;
@@ -506,6 +518,7 @@ export interface paths {
         /**
          * Teach the text-to-speech providers this voice
          * @description Each provider is sent the recordings and hands back an id of its own, which is remembered so a session can ask for this voice by name. Providers are prepared independently: one refusing the recordings leaves the others usable, and the binding says why it refused.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["prepareVoice"];
         delete?: never;
@@ -527,6 +540,7 @@ export interface paths {
         /**
          * Define a kind of work worth handing to the slower model
          * @description A skill belongs to one agent config. Two agents that both need the same kind of work have one each, so editing what "explain" means for one leaves the other alone. The built-in think, recall and explain need no row: a config may name them without defining them.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["createSkill"];
         delete?: never;
@@ -544,10 +558,16 @@ export interface paths {
         };
         /** One skill */
         get: operations["getSkill"];
-        /** Replace a skill */
+        /**
+         * Replace a skill
+         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
         put: operations["updateSkill"];
         post?: never;
-        /** Delete a skill */
+        /**
+         * Delete a skill
+         * @description Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
         delete: operations["deleteSkill"];
         options?: never;
         head?: never;
@@ -567,6 +587,7 @@ export interface paths {
          * Fill a knowledge base with what the business wrote down
          * @description The writing half of the lookup a config's knowledge_namespace gives an agent. Each document is cut into passages here rather than by the caller, so a file read off disk by the command and one posted by an SDK are cut the same way and can replace each other.
          *     Passages are keyed by the source and the position they came from, so posting a document again after editing it replaces that document's passages rather than leaving two versions of them to be found. A namespace is never shared between agents, and the caller names it.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["ingestKnowledge"];
         delete?: never;
@@ -589,6 +610,7 @@ export interface paths {
          * Keep a knowledge base filled from a page
          * @description Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
          *     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["addKnowledgeUrl"];
         delete?: never;
@@ -611,6 +633,7 @@ export interface paths {
         /**
          * Stop filling a knowledge base from a page
          * @description The passages the page wrote are removed too. Leaving them would have the agent go on answering out of a page nobody subscribes to any more, which is worse than it saying it does not know.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         delete: operations["deleteKnowledgeUrl"];
         options?: never;
@@ -630,6 +653,7 @@ export interface paths {
         /**
          * Read a page again
          * @description Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["indexKnowledgeUrl"];
         delete?: never;
@@ -651,6 +675,7 @@ export interface paths {
         /**
          * Define a list of people to ring
          * @description A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of these calls may be happening at once, and every call is a conversation this service is running.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["createCampaign"];
         delete?: never;
@@ -689,6 +714,7 @@ export interface paths {
         /**
          * Add people to ring
          * @description Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each may carry instructions of their own, which the agent is told along with whatever its config already says.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["addCampaignContacts"];
         delete?: never;
@@ -709,6 +735,7 @@ export interface paths {
         /**
          * Start ringing
          * @description Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["startCampaign"];
         delete?: never;
@@ -729,6 +756,7 @@ export interface paths {
         /**
          * Stop ringing anybody new
          * @description The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["pauseCampaign"];
         delete?: never;
@@ -750,6 +778,7 @@ export interface paths {
         /**
          * Write down a conversation to have with an agent
          * @description A simulation is a scenario to put an agent through and something that has to be true at the end of it. The scenario is a brief rather than a script: it is given to a model that plays the caller, reads what the agent says back and decides what to say next, so a scenario can say to change your mind once the order is handled. Nothing is run until it is.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["createSimulation"];
         delete?: never;
@@ -770,12 +799,14 @@ export interface paths {
         /**
          * Replace a simulation
          * @description Every field is written, so the body is what the simulation now asks rather than what changed about it. The runs it already has keep their own copy of what they tested, so an old result still says what it was a result of.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         put: operations["updateSimulation"];
         post?: never;
         /**
          * Delete a simulation
          * @description The runs that named it are kept, so the simulation stops being runnable rather than stops having existed.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         delete: operations["deleteSimulation"];
         options?: never;
@@ -795,6 +826,7 @@ export interface paths {
         /**
          * Have the conversations
          * @description Returns once the run is written rather than once it is over: the conversations happen after the answer, and the run says how far along they are. A simulation asking several ways has them all at once.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["runSimulation"];
         delete?: never;
@@ -852,6 +884,7 @@ export interface paths {
         /**
          * Stop a run
          * @description Unlike a paused campaign the conversations in flight are ended too: there is nobody on the other end of them to be hung up on.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["cancelSimulationRun"];
         delete?: never;
@@ -1153,6 +1186,28 @@ export interface paths {
          *     Memory and phone are recorded rather than routed, so they are not served here.
          */
         get: operations["streamModality"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Wait for inbound calls to answer, as a worker
+         * @description A WebSocket, which OpenAPI cannot describe past the upgrade. The worker connects here and waits, rather than being called, because the agent runs in the customer's own process and this service cannot reach into it.
+         *     The socket opens with a `ready` frame naming the worker, and a `call` frame arrives for each call handed to it. The worker sends `load` so the pool can rank it, `accepted` or `rejected` per call, and `ping` to time the round trip itself.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device. This is the clearest case of why: a worker is offered other people's callers, so anything that can open this socket can answer for the whole app. The auth type has no query parameter, so a browser cannot open one at all.
+         */
+        get: operations["dispatchCalls"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2260,6 +2315,15 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description The caller is known and this operation is server-side only. It needs Stream-Auth-Type: server and a token carrying server: true, which means it cannot be reached from an end user's device. */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description No such modality, provider or shortcut */
         NotFound: {
             headers: {
@@ -2776,6 +2840,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     listAgentConfigs: {
@@ -2824,6 +2889,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getAgentConfig: {
@@ -2879,6 +2945,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -2903,6 +2970,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3007,6 +3075,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3033,6 +3102,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3082,6 +3152,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getVoice: {
@@ -3137,6 +3208,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3161,6 +3233,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3191,6 +3264,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3221,6 +3295,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3273,6 +3348,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getSkill: {
@@ -3328,6 +3404,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3352,6 +3429,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3379,6 +3457,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     listKnowledgeUrls: {
@@ -3430,6 +3509,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getKnowledgeUrl: {
@@ -3479,6 +3559,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3505,6 +3586,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3554,6 +3636,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getCampaign: {
@@ -3635,6 +3718,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3661,6 +3745,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3687,6 +3772,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3736,6 +3822,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getSimulation: {
@@ -3791,6 +3878,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3815,6 +3903,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3841,6 +3930,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -3919,6 +4009,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -4370,6 +4461,31 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    dispatchCalls: {
+        parameters: {
+            query?: {
+                /** @description How many calls this worker takes at once. */
+                capacity?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The socket is open */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };

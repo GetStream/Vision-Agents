@@ -21,6 +21,16 @@ func signed(t *testing.T, secret string, ttl time.Duration) string {
 	return token
 }
 
+// signedClaims returns a token carrying claims of its own, which is how a caller says
+// whether it is a backend or an end user.
+func signedClaims(t *testing.T, secret string, claims jwt.MapClaims) string {
+	t.Helper()
+	claims["exp"] = time.Now().Add(time.Hour).Unix()
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
+	require.NoError(t, err)
+	return token
+}
+
 // lookupOf resolves one key to one app and rejects everything else.
 func lookupOf(key string, app App) Lookup {
 	return func(_ context.Context, presented string) (App, error) {
@@ -57,7 +67,29 @@ func TestNoAuth(t *testing.T) {
 
 		principal, err := authenticator.Authenticate(context.Background(), r)
 		require.NoError(t, err)
-		require.Equal(t, Principal{OrganizationID: "org-1", AppID: "app-1"}, principal)
+		require.Equal(t,
+			Principal{OrganizationID: "org-1", AppID: "app-1", ServerSide: true}, principal)
+	})
+
+	t.Run("believes the auth type the proxy named", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		r.Header.Set(AppHeader, "app-1")
+		r.Header.Set(AuthTypeHeader, AuthTypeJWT)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.False(t, principal.ServerSide)
+	})
+
+	t.Run("treats a caller that names no auth type as a backend", func(t *testing.T) {
+		// A deployment in this mode with no proxy in front is a local one, where a
+		// router that refused to accept an agent config would be useless.
+		r := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		r.Header.Set(CustomerHeader, "examples")
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.True(t, principal.ServerSide)
 	})
 
 	t.Run("falls back to the customer header", func(t *testing.T) {
@@ -100,11 +132,68 @@ func TestAPIKey(t *testing.T) {
 		return r
 	}
 
+	// serverSide is a request that claims to be a backend in both of the two places a
+	// caller can say so.
+	serverSide := func(claims jwt.MapClaims) *http.Request {
+		r := request(key, signedClaims(t, secret, claims))
+		r.Header.Set(AuthTypeHeader, AuthTypeServer)
+		return r
+	}
+
 	t.Run("resolves the app the key belongs to", func(t *testing.T) {
 		principal, err := authenticator.Authenticate(context.Background(),
 			request(key, signed(t, secret, time.Hour)))
 		require.NoError(t, err)
 		require.Equal(t, Principal{OrganizationID: "org-1", AppID: "app-1"}, principal)
+	})
+
+	t.Run("names a backend when the header and the token agree", func(t *testing.T) {
+		principal, err := authenticator.Authenticate(context.Background(),
+			serverSide(jwt.MapClaims{"server": true}))
+		require.NoError(t, err)
+		require.True(t, principal.ServerSide)
+	})
+
+	t.Run("reads the flag written as a string, which is what Stream mints", func(t *testing.T) {
+		principal, err := authenticator.Authenticate(context.Background(),
+			serverSide(jwt.MapClaims{"server": "true"}))
+		require.NoError(t, err)
+		require.True(t, principal.ServerSide)
+	})
+
+	t.Run("keeps a token naming a user client-side, whatever the header says", func(t *testing.T) {
+		principal, err := authenticator.Authenticate(context.Background(),
+			serverSide(jwt.MapClaims{"server": true, "user_id": "user-1"}))
+		require.NoError(t, err)
+		require.False(t, principal.ServerSide)
+	})
+
+	t.Run("will not promote a caller on the header alone", func(t *testing.T) {
+		// Nothing signs the header, so a client that sets it is still a client.
+		principal, err := authenticator.Authenticate(context.Background(),
+			serverSide(jwt.MapClaims{"user_id": "user-1"}))
+		require.NoError(t, err)
+		require.False(t, principal.ServerSide)
+	})
+
+	t.Run("will not promote a caller on the token alone", func(t *testing.T) {
+		// A server token pasted into a browser is used by a browser, and says so.
+		principal, err := authenticator.Authenticate(context.Background(),
+			request(key, signedClaims(t, secret, jwt.MapClaims{"server": true})))
+		require.NoError(t, err)
+		require.False(t, principal.ServerSide)
+	})
+
+	t.Run("gives a socket no way to claim to be a backend", func(t *testing.T) {
+		// The auth type has no query parameter, and a browser WebSocket sets no headers.
+		token := signedClaims(t, secret, jwt.MapClaims{"server": true})
+		target := "/v1/dispatch?api_key=" + key + "&token=" + token +
+			"&stream_auth_type=server&" + AuthTypeHeader + "=server"
+
+		principal, err := authenticator.Authenticate(context.Background(),
+			httptest.NewRequest(http.MethodGet, target, nil))
+		require.NoError(t, err)
+		require.False(t, principal.ServerSide)
 	})
 
 	t.Run("takes the key and token off a socket's query string", func(t *testing.T) {
