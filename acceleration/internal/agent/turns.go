@@ -42,6 +42,9 @@ type openTurn struct {
 	ttsTTFBMs    float64
 	roundtripMs  float64
 	audioOutMs   float64
+	// audioDroppedMs is speech that was synthesised and paid for but never published,
+	// because the turn had been abandoned by the time it arrived.
+	audioDroppedMs float64
 	// modelDone means the reply is fully generated, so how many syntheses the turn will
 	// produce is known.
 	modelDone bool
@@ -80,6 +83,21 @@ func (t *turnTracker) firstAudio(turnID string, at time.Time) {
 		return
 	}
 	current.roundtripMs = msBetween(current.heardAt, at)
+}
+
+// dropped records speech that was synthesised but never reached the participant. A turn
+// closed by an interruption is already measured, so nothing is recorded against it: what
+// this is for is the abandoned audio nobody asked for, which is a fault rather than a
+// caller changing their mind.
+func (t *turnTracker) dropped(turnID string, audioDurationMs float64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	current, ok := t.open[turnID]
+	if !ok {
+		return
+	}
+	current.audioDroppedMs += audioDurationMs
 }
 
 // spoke records a completed synthesis. A turn spoken sentence by sentence has several,
@@ -167,6 +185,7 @@ func measure(turnID string, current *openTurn) Turn {
 		// transcriber spent deciding the turn was over, since that ran first.
 		SpeechEndToAudioMs: speechEndToAudio(current),
 		AudioOutMs:         current.audioOutMs,
+		AudioDroppedMs:     current.audioDroppedMs,
 		Interrupted:        current.interrupted,
 	}
 }
@@ -224,6 +243,7 @@ func (r *turnRecorder) Record(turn Turn) {
 		RoundtripMs:        measured(turn.RoundtripMs),
 		SpeechEndToAudioMs: measured(turn.SpeechEndToAudioMs),
 		AudioOutMs:         measured(turn.AudioOutMs),
+		AudioDroppedMs:     measured(turn.AudioDroppedMs),
 		Interrupted:        turn.Interrupted,
 	}
 

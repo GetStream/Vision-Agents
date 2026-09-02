@@ -1700,6 +1700,43 @@ func (s *AgentSuite) TestAudioFromAnAbandonedTurnIsNotPublished() {
 	s.Equal(before, len(s.edge.heard()), "audio from the abandoned turn stays unheard")
 }
 
+func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
+	// Only a caller talking over the agent abandons a turn. The agent starting one for
+	// itself, to say what a tool came back with, does not: the reply that promised to go
+	// and check is still coming out of the voice, and dropping the rest of it is the
+	// agent cutting itself off mid-sentence.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	// Being asked a second time is the tool turn taking the floor from the first.
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the tool result was never answered")
+
+	// The tail of the first reply, arriving late the way a provider sends it. It is a
+	// size nothing else in the test produces, so it can be picked out of what was heard.
+	promised := s.model.requests()[0].ID
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: promised,
+		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
+	})
+
+	s.eventually(func() bool {
+		for _, chunk := range s.edge.heard() {
+			if len(chunk.Samples) == 200 {
+				return true
+			}
+		}
+		return false
+	}, "the end of the sentence the agent was already speaking was thrown away")
+}
+
 func (s *AgentSuite) TestBargeInWithNothingToSayIsIgnored() {
 	s.join(true)
 

@@ -205,10 +205,16 @@ type Agent struct {
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
-	// speakingTurn is the reply currently allowed to produce audio. Audio belonging to any
-	// other turn is dropped rather than published, which is what makes barge-in immediate
-	// even while a provider is still sending.
+	// speakingTurn is the turn the agent is currently on. It says which reply an
+	// interruption would abandon and which one the floor belongs to; it does not decide
+	// what may be heard, because the agent starts a turn for itself while the turn before
+	// it is still being spoken.
 	speakingTurn string
+	// abandoned is every turn an interruption gave up on. Audio belonging to one of them
+	// is dropped rather than published, which is what makes barge-in immediate even while
+	// a provider is still sending. It holds one entry per interruption and lives only as
+	// long as the call.
+	abandoned map[string]struct{}
 	// utterances counts syntheses that have not settled, so Finish knows when the agent
 	// has stopped talking.
 	utterances int
@@ -307,6 +313,7 @@ func New(options Options) (*Agent, error) {
 		emitter:   emitter,
 		prompt:    options.Instructions,
 		listeners: map[string]*sttrouter.Session{},
+		abandoned: map[string]struct{}{},
 		cadence:   settling,
 		duplex:    listening,
 	}
@@ -1360,7 +1367,13 @@ func (a *Agent) consumeTTS() {
 		case tts.AudioChunk:
 			// Audio from an abandoned turn is dropped here rather than published, so
 			// barge-in silences the agent even while the provider is still sending.
-			if !a.speaking(turnOf(typed.SynthesisID)) {
+			//
+			// Only an interruption abandons a turn. A turn the agent started for itself,
+			// to say what a tool returned or what delegated work came back with, does not:
+			// treating it as one would throw away the tail of the sentence being spoken
+			// and cut the agent off mid-word.
+			if a.abandonedTurn(turnOf(typed.SynthesisID)) {
+				a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
 				if dropping != typed.SynthesisID {
 					dropping = typed.SynthesisID
 					a.logger.Debug("dropping audio for a turn the agent has left behind",
@@ -1675,6 +1688,7 @@ func (a *Agent) interrupt(participant stt.Participant) {
 		a.mu.Unlock()
 		return
 	}
+	a.abandoned[turnID] = struct{}{}
 	a.speakingTurn = ""
 	a.generating = false
 	model, voice := a.llm, a.tts
@@ -1731,11 +1745,20 @@ func (a *Agent) speechPending() bool {
 	return ok && playout.SpeechPending()
 }
 
-// speaking reports whether a turn is still the one allowed to produce audio.
+// speaking reports whether a turn is still the one the agent is on.
 func (a *Agent) speaking(turnID string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.speakingTurn != "" && a.speakingTurn == turnID
+}
+
+// abandonedTurn reports whether an interruption gave up on a turn, which is what stops
+// its audio being heard.
+func (a *Agent) abandonedTurn(turnID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, gone := a.abandoned[turnID]
+	return gone
 }
 
 // voice returns the voice session, or nil when the agent has not joined.

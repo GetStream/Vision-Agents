@@ -87,8 +87,11 @@ type Turn struct {
 	// SpeechEndToAudioMs is voice in to voice out.
 	SpeechEndToAudioMs *float64 `bun:"speech_end_to_audio_ms"`
 	// AudioOutMs is how much speech the agent published for this turn.
-	AudioOutMs  *float64 `bun:"audio_out_ms"`
-	Interrupted bool     `bun:"interrupted,notnull"`
+	AudioOutMs *float64 `bun:"audio_out_ms"`
+	// AudioDroppedMs is speech that was synthesised for this turn but never published.
+	// Set on a turn that was not interrupted, it means the agent cut itself off.
+	AudioDroppedMs *float64 `bun:"audio_dropped_ms"`
+	Interrupted    bool     `bun:"interrupted,notnull"`
 }
 
 // CallEvent is one judgement the conversation made about how to handle a call.
