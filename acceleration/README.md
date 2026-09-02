@@ -46,7 +46,6 @@ and billing as a direct API call.
 | `cmd/agent`          | Joins a Stream call and holds a conversation                        |
 | `cmd/phone`          | Buys numbers, points them at an agent, calls out and transfers live calls |
 | `cmd/knowledge`      | Reads documents into a knowledge base an agent can look things up in |
-| `cmd/gateway`        | The authenticating proxy that runs in front of the router in production |
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
 | `deploy/breeze-tts-2` | The streaming Breeze TTS 2 Truss, written but not yet pushed       |
@@ -194,26 +193,18 @@ Not built yet, in the order [.factory/features/auth.md](../.factory/features/aut
 them: scopes, and the single-use ticket that would get the credential out of a socket's
 query string.
 
-### The gateway
+### Running behind a proxy
 
-`cmd/gateway` is what runs in front of the router in production. The router there is in
-`noauth`, reachable only from this process, and everything it does not do lives here: it
-verifies the key and the token, rate limits per app, and names the caller to the router in
-headers it overwrites rather than forwards. It runs the same `api_key` authenticator the
-router would, so there is no second implementation of the check to disagree with the first.
+`noauth` exists for one deployment in particular. On Stream's own infrastructure
+the router runs with authentication off, reachable only from `stream-accelerate`,
+a proxy in the chat repository that verifies a Stream API key and the token
+signed with that app's secret, rate limits the caller, and sets the two headers
+above. It authenticates against Stream's own app records, so a customer holds
+one credential rather than a second one issued by this service.
 
-| Variable                  | Purpose                                                 |
-| ------------------------- | ------------------------------------------------------- |
-| `GATEWAY_ADDR`            | Listen address, defaults to `:8081`                     |
-| `GATEWAY_UPSTREAM`        | Where the router is, defaults to `http://127.0.0.1:8080` |
-| `GATEWAY_POSTGRES_DSN`    | Where the keys are. Required                            |
-| `GATEWAY_AUTH_KEK`        | Unseals their secrets. Required                         |
-| `GATEWAY_RATE_PER_SECOND` | Per app, not per organization. Defaults to 50           |
-| `GATEWAY_BURST`           | Defaults to 100                                         |
-| `GATEWAY_LOG_LEVEL`       | `debug`, `info` (default), `warn` or `error`            |
-
-It is per app rather than per organization on purpose: one runaway integration should
-throttle itself rather than the account's production traffic.
+That proxy is not part of this repository, and does not need to be: authenticating
+a Stream key means reading Stream's tables. Running this service on your own
+means `api_key` mode instead, where the router authenticates callers itself.
 
 Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.
