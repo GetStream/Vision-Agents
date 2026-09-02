@@ -49,6 +49,14 @@ type customerContextKey struct{}
 // rate limit and a bill are counted against.
 type organizationContextKey struct{}
 
+// serverSideContextKey holds whether the caller is a process the customer runs.
+type serverSideContextKey struct{}
+
+// serverSideExtension is what the spec marks an operation only a backend may reach with.
+// The check reads it from the embedded spec rather than from a list kept here, so what a
+// generated SDK documents and what the server refuses cannot drift apart.
+const serverSideExtension = "x-server-side-only"
+
 // Options configures a Server. The store and live client are optional; endpoints that
 // need them report the dependency as unavailable rather than panicking.
 type Options struct {
@@ -135,8 +143,11 @@ type Server struct {
 	dashboardURL  string
 	oauth         *plugins.Auth
 	authenticator auth.Authenticator
-	upgrader      websocket.Upgrader
-	logger        *slog.Logger
+	// serverSide matches the requests the spec marks server-side only. It holds no
+	// handlers: what is registered on it is the patterns, and matching one is the answer.
+	serverSide *http.ServeMux
+	upgrader   websocket.Upgrader
+	logger     *slog.Logger
 }
 
 // NewServer wires the handlers.
@@ -158,6 +169,11 @@ func NewServer(options Options) (*Server, error) {
 		if authenticator, err = auth.New(auth.NoAuth, nil); err != nil {
 			return nil, err
 		}
+	}
+
+	serverSide, err := serverSideRoutes()
+	if err != nil {
+		return nil, err
 	}
 
 	logger := options.Logger
@@ -184,6 +200,7 @@ func NewServer(options Options) (*Server, error) {
 		publicURL:     options.PublicURL,
 		dashboardURL:  options.DashboardURL,
 		authenticator: authenticator,
+		serverSide:    serverSide,
 		upgrader:      newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{
 			PublicURL:    options.PublicURL,

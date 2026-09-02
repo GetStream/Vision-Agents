@@ -6,9 +6,10 @@ generate:
   client: true
 output-options:
   skip-prune: true
-  # The two sockets are in the spec so a reader knows they exist, but a generated client
+  # The three sockets are in the spec so a reader knows they exist, but a generated client
   # cannot express an upgrade. They are hand-written in stream/socket.go, the same way the
   # server side of them is hand-written in acceleration/internal/api.
   exclude-operation-ids:
     - watchSession
     - streamModality
+    - dispatchCalls
