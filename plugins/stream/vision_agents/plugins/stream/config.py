@@ -59,6 +59,7 @@ async def sync_agent(
 
     skills = [
         SkillRequest(
+            config_id="",
             name=skill.name,
             description=skill.description,
             instructions=skill.instructions,
