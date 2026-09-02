@@ -1330,6 +1330,101 @@ func (s *AgentSuite) TestAnAnswerComesBackAsATurnNobodyAskedFor() {
 		"the answer reaches the caller as a turn of its own")
 }
 
+func (s *AgentSuite) TestAnAnswerComingBackDoesNotCutOffTheReplyBeingSpoken() {
+	// The voice model is still writing when the subagent lands. Taking the floor would
+	// drop the rest of the live reply, which is the cut-off the caller hears.
+	s.delegates()
+	s.join(true)
+	s.model.reply = nil
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	turnA := s.model.requests()[0].ID
+
+	s.model.emitter.Send(llm.CompletionStarted{CompletionID: turnA, At: time.Now()})
+	s.model.emitter.Send(llm.TextDelta{
+		CompletionID: turnA, Index: 0, Text: `<ask skill="think">15% of 84.20</ask>`,
+	})
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "nothing was handed over")
+
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.emitter.Send(llm.CompletionStarted{CompletionID: taskID, At: time.Now()})
+	s.subagent.emitter.Send(llm.TextDelta{CompletionID: taskID, Index: 0, Text: "It is 12.63."})
+	s.subagent.emitter.Send(llm.CompletionComplete{CompletionID: taskID, Text: "It is 12.63."})
+	s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
+	s.Equal(1, len(s.model.requests()),
+		"an answer coming back must not take the floor from a reply still being written")
+
+	s.model.emitter.Send(llm.TextDelta{
+		CompletionID: turnA, Index: 1, Text: "Let me check. Won't be a moment.",
+	})
+	s.model.emitter.Send(llm.CompletionComplete{CompletionID: turnA, Text: "Let me check. Won't be a moment."})
+	s.eventually(func() bool { return countOf[Responded](s.reported()) >= 1 }, "the live reply was cut off")
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal("Let me check. Won't be a moment.", responded.Text)
+	history := s.agent.History()
+	s.Require().GreaterOrEqual(len(history), 2)
+	s.Equal("Let me check. Won't be a moment.", history[1].Content)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer coming back should have started a turn of its own after the reply finished")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never spoken")
+}
+
+func (s *AgentSuite) TestAnAnswerComingBackWaitsForSpeechToGoOut() {
+	// An utterance the voice has finished sending is still on its way out of the edge.
+	// Starting the follow-up on that word talks over the tail of the reply.
+	s.delegates()
+	s.join(true)
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = []string{"It is 12.63."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
+			countOf[Spoke](s.reported()) >= 1
+	}, "the first reply never finished")
+	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+		presenceTick+100*time.Millisecond, 10*time.Millisecond,
+		"a follow-up must not start while speech is still going out")
+
+	s.edge.holdSpeech(false)
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer coming back should have started a turn once the reply was heard")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.")
+}
+
+func (s *AgentSuite) TestFinishingWaitsForAnAnswerThatHasNotBeenSpokenYet() {
+	// The subagent's answer has started a turn, but nothing has been synthesised yet.
+	// Leaving on that word hangs up before the caller hears what they were promised.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{}
+	s.subagent.reply = []string{"It is 12.63."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer coming back should have started a turn of its own")
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) >= 1 },
+		"the first reply was never spoken")
+
+	ctx, cancel := context.WithTimeout(s.ctx, 50*time.Millisecond)
+	defer cancel()
+	s.Error(s.agent.Finish(ctx), "the answer has not been spoken yet, so finishing waits")
+}
+
 func (s *AgentSuite) TestTheHistoryKeepsWhatWasSaidRatherThanWhatWasAskedFor() {
 	// A request for help was addressed to the harness, not the caller. Remembering it
 	// would have the model reading its own instructions back on the next turn.

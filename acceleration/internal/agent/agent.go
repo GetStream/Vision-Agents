@@ -593,10 +593,7 @@ func (a *Agent) Finish(ctx context.Context) error {
 	defer ticker.Stop()
 
 	for {
-		a.mu.Lock()
-		quiet := a.utterances == 0
-		a.mu.Unlock()
-		if quiet && !a.delegating() && !a.speechPending() {
+		if !a.Busy() && !a.speechPending() {
 			return nil
 		}
 
@@ -876,6 +873,9 @@ func (a *Agent) consumePresence() {
 		select {
 		case <-ticker.C:
 			a.act(a.converse.Tick(a.floor()))
+			// Speech still draining out of the edge has no event when it finishes, so a
+			// note that waited for it is retried here rather than never spoken.
+			a.followUp()
 		case <-a.ctx.Done():
 			return
 		}
@@ -1328,6 +1328,8 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 		currentHarness.Requested(typed.CompletionID, typed.ToolCalls)
 	}
 	a.respondQueued()
+	// A note that landed while this reply was being written waited for it to finish.
+	a.followUp()
 }
 
 // fillsPause reports whether a turn that said nothing should say something before the
@@ -1513,9 +1515,11 @@ func sameMessages(first, second []llm.Message) bool {
 // follow starts a turn nobody asked for, because work the caller was told was coming has
 // come back and they are owed the answer.
 //
-// An agent still speaking is left alone: taking the turn from itself would cut its own
-// sentence off. What came back stays pending in the harness, and the last synthesis to
-// settle tries again.
+// An agent still writing or speaking is left alone: taking the turn from itself would
+// cut its own sentence off. Speech that has been published but not yet heard is the
+// same: starting now would talk over the tail. What came back stays pending in the
+// harness, and a later chance — a synthesis settling, the reply finishing, a presence
+// tick — tries again.
 //
 // The lock is held across the whole turn because deciding to speak and taking what there
 // is to say must not be separable: two answers landing together would otherwise give one
@@ -1524,8 +1528,12 @@ func (a *Agent) follow() error {
 	a.following.Lock()
 	defer a.following.Unlock()
 
+	if a.speechPending() {
+		return nil
+	}
+
 	a.mu.Lock()
-	if a.harness == nil || a.utterances > 0 || !a.harness.Pending() {
+	if a.harness == nil || a.generating || a.utterances > 0 || !a.harness.Pending() {
 		a.mu.Unlock()
 		return nil
 	}
