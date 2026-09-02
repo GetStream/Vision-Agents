@@ -213,12 +213,6 @@ func NewServer(options Options) (*Server, error) {
 	}, nil
 }
 
-// serverSideRoutes builds a mux whose patterns are the operations the spec marks
-// server-side only. Matching a request against it is the answer; the handlers are unused.
-func serverSideRoutes() (*http.ServeMux, error) {
-	return http.NewServeMux(), nil
-}
-
 // Handler returns the HTTP handler for the whole API.
 //
 // The three sockets, the answer host and the call hook are registered first, on a mux the
