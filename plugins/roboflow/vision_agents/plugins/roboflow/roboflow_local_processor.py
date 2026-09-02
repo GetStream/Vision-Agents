@@ -51,6 +51,25 @@ _RFDETR_MODELS: dict[str, Type[RFDETR]] = {
 }
 
 
+def _class_names_by_id(
+    detections: Detections, fallback_names: list[str]
+) -> dict[int, str]:
+    """Return RF-DETR's authoritative class-ID mapping for predictions.
+
+    Pretrained COCO checkpoints use sparse category IDs, so a class ID is not
+    necessarily a zero-based index into ``model.class_names``. RF-DETR 1.9+
+    attaches the resolved names to each prediction for callers to consume.
+    """
+    class_ids = detections.class_id
+    resolved_names = detections.data.get("class_name")
+    if class_ids is not None and resolved_names is not None:
+        return {
+            int(class_id): str(class_name)
+            for class_id, class_name in zip(class_ids, resolved_names)
+        }
+    return dict(enumerate(fallback_names))
+
+
 class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR]):
     """
     A VideoProcessor for real-time object detection with Roboflow's RF-DETR models.
@@ -121,7 +140,7 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR])
         self.conf_threshold = conf_threshold
 
         self._model: Optional[RFDETR] = None
-        self._model_id: Optional[RFDETRModelID] = None
+        self._model_id: Optional[str] = None
 
         if model is not None:
             self._model = model
@@ -278,12 +297,13 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR])
             await self._video_track.add_frame(frame)
             return None
 
+        class_names = _class_names_by_id(detections, self._model.class_names)
         if self.annotate:
             # Annotate frame with detections
             annotated_image = annotate_image(
                 image,
                 detections,
-                classes=self._model.class_names,
+                classes=class_names,
                 dim_factor=self.dim_background_factor,
                 text_scale=self._annotate_text_scale,
                 text_position=self._annotate_text_position,
@@ -304,7 +324,11 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR])
 
         detected_objects = [
             DetectedObject(
-                label=self._model.class_names[class_id], x1=x1, y1=y1, x2=x2, y2=y2
+                label=class_names.get(int(class_id), str(int(class_id))),
+                x1=x1,
+                y1=y1,
+                x2=x2,
+                y2=y2,
             )
             for class_id, (x1, y1, x2, y2) in zip(
                 detections.class_id, detections.xyxy.astype(float)
@@ -337,19 +361,22 @@ class RoboflowLocalDetectionProcessor(VideoProcessorPublisher, Warmable[RFDETR])
 
         # Run inference in thread pool (Roboflow SDK is synchronous)
         def detect(img: np.ndarray) -> Detections:
-            detected = model.predict(img, confidence=self.conf_threshold)
-            detected_obj = detected[0] if isinstance(detected, list) else detected
+            detected = model.predict(img, threshold=self.conf_threshold)
+            detected_obj = cast(
+                Detections, detected[0] if isinstance(detected, list) else detected
+            )
             if detected_obj.class_id is None:
                 return sv.Detections.empty()
 
             # Filter only classes we want to detect
             if self._classes:
+                classes_by_id = _class_names_by_id(detected_obj, model.class_names)
                 classes_ids = [
-                    k for k, v in model.class_names.items() if v in self._classes
+                    class_id
+                    for class_id, class_name in classes_by_id.items()
+                    if class_name in self._classes
                 ]
-                detected_class_ids = (
-                    detected_obj.class_id if detected_obj.class_id is not None else []
-                )
+                detected_class_ids = detected_obj.class_id
                 detected_obj = cast(
                     Detections,
                     detected_obj[np.isin(detected_class_ids, classes_ids)],
