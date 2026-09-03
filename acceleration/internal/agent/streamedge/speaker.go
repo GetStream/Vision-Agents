@@ -249,7 +249,7 @@ func (s *speaker) encoderFor(inputRate int) (media.PCM16Writer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("streamedge: build opus encoder: %w", err)
 	}
-	resampled := media.ResampleWriter(media.FullFrames(encoder, opusFrameSamples), inputRate)
+	resampled := media.ResampleWriter(media.FullFrames(wholeFrames{encoder}, opusFrameSamples), inputRate)
 	// A rate too low to fill a frame is not speech, but it must not be a pipeline that
 	// cannot make progress either.
 	return frameChunks{PCM16Writer: resampled, frame: max(inputRate/50, 1)}, nil
@@ -281,6 +281,21 @@ func (f frameChunks) WriteSample(in media.PCM16Sample) error {
 		in = in[size:]
 	}
 	return nil
+}
+
+// wholeFrames drops what is not a whole frame, which is only ever the residue the framing in
+// front of the encoder force-flushes when it is closed. That residue is not audio anybody is
+// going to hear, since closing throws the queue away, and an Opus encoder rejects a part
+// frame -- so passing it on would end most calls reporting a failure that did not happen.
+type wholeFrames struct {
+	media.PCM16Writer
+}
+
+func (w wholeFrames) WriteSample(in media.PCM16Sample) error {
+	if len(in) != opusFrameSamples {
+		return nil
+	}
+	return w.PCM16Writer.WriteSample(in)
 }
 
 // frameSink is the end of the pipeline: it queues each encoded frame for the track.

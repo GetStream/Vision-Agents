@@ -302,6 +302,18 @@ func (s *StreamEdgeSuite) TestEmptySpeechIsIgnored() {
 	s.Empty(s.drain(talker))
 }
 
+func (s *StreamEdgeSuite) TestLeavingPartWayThroughAFrameIsNotAFailure() {
+	// The queue is thrown away on leaving, so the part-frame the pipeline is still holding
+	// was never going to be heard. The encoder only takes whole frames and says so, and
+	// reporting that as a failure makes every call look like it ended badly.
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+
+	// 33 ms is not a whole number of 20 ms frames, at either rate.
+	s.Require().NoError(talker.Write(speech(24_000, 33)))
+
+	s.NoError(talker.Close())
+}
+
 func (s *StreamEdgeSuite) TestPublishingAfterLeavingFails() {
 	talker := newSpeaker(slog.New(slog.DiscardHandler))
 
