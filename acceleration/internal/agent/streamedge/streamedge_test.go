@@ -138,10 +138,10 @@ func (s *StreamEdgeSuite) TestSpeechIsEncodedToOpusFrames() {
 
 	s.Require().NoError(talker.Write(speech(opusSampleRate, 100)))
 
-	// Six rather than five: an utterance ends with a flush, which is what carries the tail
-	// of one out of the pipeline. Here there is no tail to carry, so the sixth is quiet.
+	// More than five: an utterance ends with a flush, which is what carries the tail of one
+	// out of the pipeline. Here there is no tail to carry, so the last of them are quiet.
 	frames := s.drain(talker)
-	s.Require().Len(frames, 6, "100 ms of speech is five frames, and a flush ends it")
+	s.Require().Len(frames, 5+flushFrames, "100 ms of speech is five frames, and a flush ends it")
 	for _, frame := range frames[:5] {
 		s.NotEmpty(frame)
 		s.NotEqual(silenceFrame, frame, "the tone is not silence")
@@ -174,30 +174,35 @@ func (s *StreamEdgeSuite) TestTheAudioLevelSaysWhoIsTalking() {
 		"the other participants' clients show the agent as the speaker")
 }
 
+// replyChunks is one utterance as a voice provider streams it: a long chunk while the
+// provider is ahead of the speaking, then shorter ones as it catches up. The sizes vary
+// because that is what makes the end of a reply go missing -- a pipeline that sizes what it
+// holds back off the largest chunk it has seen keeps hold of every smaller one after it.
+// They add up to less than the playout bound so that writing them does not wait on the track.
+var replyChunks = []int{200, 60, 40, 40}
+
 func (s *StreamEdgeSuite) TestTheEndOfAnUtteranceReachesTheCall() {
-	// The voice sends 24 kHz and the track carries 48 kHz Opus in whole 20 ms frames, so
-	// the end of an utterance that does not land on a frame boundary has nowhere to go
-	// until more audio arrives. What is held back is the last thing the caller was meant
-	// to hear, and an utterance is the last one before a silence, so it is not made good
-	// by the next reply.
-	talker := newSpeaker(slog.New(slog.DiscardHandler))
-	s.T().Cleanup(func() { _ = talker.Close() })
+	// The track carries 48 kHz Opus in whole 20 ms frames, so the end of an utterance that
+	// does not land on a frame boundary has nowhere to go until more audio arrives. What is
+	// held back is the last thing the caller was meant to hear, and an utterance is the last
+	// one before a silence, so it is not made good by the next reply.
+	//
+	// Which rate the voice speaks at is its own business, and a failover mid-call can change
+	// it, so no rate may be the one that loses the end of a reply.
+	for _, rate := range []int{16_000, 22_050, 24_000, 44_100, 48_000} {
+		talker := newSpeaker(slog.New(slog.DiscardHandler))
 
-	// An utterance arrives as a run of chunks, so it is written as one here. It stays
-	// under the playout bound so that writing it does not wait on the track.
-	const chunkMs = 60
-	const chunks = 5
-	const spokenMs = chunkMs * chunks
+		spokenMs := 0
+		for _, chunkMs := range replyChunks {
+			s.Require().NoError(talker.Write(speech(rate, chunkMs)))
+			spokenMs += chunkMs
+		}
 
-	for range chunks {
-		s.Require().NoError(talker.Write(speech(24_000, chunkMs)))
+		heardMs := len(s.drain(talker)) * 20
+		s.GreaterOrEqualf(heardMs, spokenMs,
+			"at %d Hz only %dms of %dms reached the call", rate, heardMs, spokenMs)
+		s.Require().NoError(talker.Close())
 	}
-
-	heardMs := len(s.drain(talker)) * 20
-	s.T().Logf("wrote %dms of speech, %dms reached the track", spokenMs, heardMs)
-
-	s.GreaterOrEqual(heardMs, spokenMs,
-		"the end of the utterance never reached the call")
 }
 
 func (s *StreamEdgeSuite) TestSpeechNotHeardYetIsReportedAsWaiting() {

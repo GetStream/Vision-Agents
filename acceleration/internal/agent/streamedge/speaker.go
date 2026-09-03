@@ -35,6 +35,10 @@ const (
 	// moment and barge-in would arrive too late to stop it. 400 ms is deep enough to
 	// absorb a provider's jitter and short enough that stopping still sounds immediate.
 	playoutFrames = 20
+	// flushFrames is how much silence ends an utterance, in frames. Two stages hold on to
+	// what they cannot fill a frame with -- the resampler, and the framing in front of the
+	// encoder -- so it takes a frame each to displace what they are holding.
+	flushFrames = 2
 	// audioLevelSilent and audioLevelSpeaking are the WebRTC audio-level scale, where 0 is
 	// loudest and 127 is silence.
 	audioLevelSilent   = 127
@@ -119,16 +123,19 @@ func (s *speaker) Write(pcm audio.PcmData) error {
 	if len(s.frames) <= playoutFrames || s.closed {
 		return nil
 	}
-	// Waiting here is normal: it is what paces the agent to the speed of speech. Waiting
-	// a long time is not, and means the track is not taking frames, in which case this
-	// speech is sitting in the queue rather than going out.
+	// Waiting here is normal: it is what paces the agent to the speed of speech, so a chunk
+	// that is seconds long is seconds spent here. Waiting much longer than the queue was deep
+	// is not, and means the track has stopped taking frames, in which case this speech is
+	// sitting in the queue rather than going out.
 	waited := time.Now()
+	queued := len(s.frames)
 	for len(s.frames) > playoutFrames && !s.closed {
 		s.drained.Wait()
 	}
-	if elapsed := time.Since(waited); elapsed > time.Second {
+	elapsed := time.Since(waited)
+	if elapsed > time.Duration(queued)*opusFrameDuration+time.Second {
 		s.logger.Warn("speech waited to go out, the call was not taking audio",
-			"waited", elapsed, "pulled", s.pulled)
+			"waited", elapsed, "queued", queued, "pulled", s.pulled)
 	}
 	return nil
 }
@@ -164,22 +171,25 @@ func (s *speaker) NextSample(ctx context.Context) (webrtcmedia.Sample, error) {
 
 // flush pushes the end of an utterance out of the pipeline. The caller must hold the lock.
 //
-// The resampler runs a chunk behind: what was written last is held until more audio comes
-// along to take its place. That is fine mid-sentence, but at the end of a reply nothing
-// more is coming, and without this the last chunk of every utterance stays in the pipeline
-// and the caller hears the agent stop short of its final word.
+// Each stage of the pipeline holds on to what it cannot fill a frame with, waiting for more
+// audio to take its place. That is fine mid-sentence, but at the end of a reply nothing more
+// is coming, and without this the tail of every utterance stays in the pipeline and the
+// caller hears the agent stop short of its final word.
 //
-// Silence is what displaces it, which costs nothing: it is what the track sends anyway
-// once the queue is empty.
+// Silence is what displaces it, which costs nothing: it is what the track sends anyway once
+// the queue is empty.
 func (s *speaker) flush() {
 	if s.pipeline == nil || !s.unflushed {
 		return
 	}
 	s.unflushed = false
 
-	quiet := make([]int16, s.inputRate/50)
-	if err := s.pipeline.WriteSample(media.PCM16Sample(quiet)); err != nil {
-		s.logger.Debug("could not flush the end of an utterance", "error", err)
+	quiet := media.PCM16Sample(make([]int16, s.inputRate/50))
+	for range flushFrames {
+		if err := s.pipeline.WriteSample(quiet); err != nil {
+			s.logger.Debug("could not flush the end of an utterance", "error", err)
+			return
+		}
 	}
 }
 
@@ -232,14 +242,45 @@ func (s *speaker) Close() error {
 	return pipeline.Close()
 }
 
-// encoderFor builds the pipeline for one input rate: resample to 48 kHz, cut into whole
-// frames because an Opus encoder only accepts those, then encode.
+// encoderFor builds the pipeline for one input rate: cut the input into frames, resample to
+// 48 kHz, cut into whole frames because an Opus encoder only accepts those, then encode.
 func (s *speaker) encoderFor(inputRate int) (media.PCM16Writer, error) {
 	encoder, err := opus.Encode(&frameSink{speaker: s}, 1, protoLogger.GetLogger())
 	if err != nil {
 		return nil, fmt.Errorf("streamedge: build opus encoder: %w", err)
 	}
-	return media.ResampleWriter(media.FullFrames(encoder, opusFrameSamples), inputRate), nil
+	resampled := media.ResampleWriter(media.FullFrames(encoder, opusFrameSamples), inputRate)
+	// A rate too low to fill a frame is not speech, but it must not be a pipeline that
+	// cannot make progress either.
+	return frameChunks{PCM16Writer: resampled, frame: max(inputRate/50, 1)}, nil
+}
+
+// frameChunks cuts every write down to one frame.
+//
+// The resampler behind it keeps back whatever is left over once it has emitted every whole
+// frame it can, and it sizes that frame off the largest write it has ever been given. Handed
+// a voice provider's chunks whole, it keeps back as much as the biggest of them -- a few
+// hundred milliseconds -- and the end of a reply stays inside it until the next reply arrives
+// to push it out, which the caller hears as the agent stopping a few words short and then
+// saying the missing words at the start of its next sentence. A frame at a time bounds what
+// it can hold to what flush is able to displace.
+//
+// It wraps the pipeline rather than being done at each call site because it is a property of
+// how the pipeline was built, not a rule every writer has to remember.
+type frameChunks struct {
+	media.PCM16Writer
+	frame int
+}
+
+func (f frameChunks) WriteSample(in media.PCM16Sample) error {
+	for len(in) > 0 {
+		size := min(f.frame, len(in))
+		if err := f.PCM16Writer.WriteSample(in[:size]); err != nil {
+			return err
+		}
+		in = in[size:]
+	}
+	return nil
 }
 
 // frameSink is the end of the pipeline: it queues each encoded frame for the track.
