@@ -12,9 +12,11 @@
 package harness
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 
@@ -58,6 +60,15 @@ type Options struct {
 	Logger    *slog.Logger
 }
 
+// noted is something for the fast model to be told, and the skill it came from. The skill
+// is empty for a note about the harness itself rather than about work that ran. asking
+// marks a note that is a question for the caller rather than something to pass on.
+type noted struct {
+	skill  string
+	text   string
+	asking bool
+}
+
 // Turn is what the harness is asked to answer.
 type Turn struct {
 	// ID correlates the reply with the turn the agent is measuring.
@@ -85,7 +96,19 @@ type Harness struct {
 	mu sync.Mutex
 	// notes are what has come back from the subagent since the fast model last spoke.
 	// They are folded into the next prompt and then forgotten.
-	notes []string
+	notes []noted
+	// reporting is the skills whose answers the reply being written was handed, so it can
+	// be stopped from handing the same work back.
+	reporting []string
+	// asking is whether the reply being written carries a colleague's question for the
+	// caller, which is the one turn that has nothing to look up.
+	asking bool
+	// asked is tool calls the model wrote as skill tags. They wait until the reply
+	// finishes, because running one mid-sentence would start a second turn while the
+	// first is still being spoken.
+	asked []llm.ToolCall
+	// askN numbers those calls so each has an id the provider can match a result to.
+	askN int
 	// history is the conversation as of the last turn, so a request for help carries the
 	// context it was asked in rather than only the sentence that prompted it.
 	history []llm.Message
@@ -142,6 +165,13 @@ func (h *Harness) Respond(turn Turn) error {
 	h.mu.Lock()
 	h.history = append([]llm.Message(nil), turn.History...)
 	instructions := h.instructions(turn.Instructions, turn.Note)
+	// A colleague asks only for what the caller alone can say, so a reply carrying its
+	// question has nothing to look up. Left holding a tool the model reaches for one and
+	// narrates the reaching instead, and the question never reaches the caller.
+	tools := h.options.Tools.Requests()
+	if h.asking {
+		tools = nil
+	}
 	h.mu.Unlock()
 
 	return h.options.Model.Respond(llm.Request{
@@ -149,7 +179,7 @@ func (h *Harness) Respond(turn Turn) error {
 		Instructions: instructions,
 		Messages:     answerable(turn.History),
 		MaxTokens:    h.options.MaxTokens,
-		Tools:        h.options.Tools.Requests(),
+		Tools:        tools,
 	})
 }
 
@@ -231,7 +261,23 @@ func (h *Harness) Filter(turnID, delta string) string {
 func (h *Harness) Flush() string { return h.scan.Flush() }
 
 // Reset forgets a reply that was abandoned part-way through.
-func (h *Harness) Reset() { h.scan.Reset() }
+func (h *Harness) Reset() {
+	h.scan.Reset()
+	h.mu.Lock()
+	h.asked = nil
+	h.mu.Unlock()
+}
+
+// TakeAsked returns the tool calls the model wrote as skill tags in the reply that just
+// finished, and forgets them. The agent records them on the turn before running them, so a
+// provider that matches results to calls is not handed an answer to nothing.
+func (h *Harness) TakeAsked() []llm.ToolCall {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	asked := h.asked
+	h.asked = nil
+	return asked
+}
 
 // Delegating reports whether the subagent is still working on something, which is what
 // tells the agent the conversation is not finished even though nobody is talking.
@@ -277,25 +323,33 @@ func (h *Harness) Close() error {
 
 // act carries out one request the model made of the harness.
 func (h *Harness) act(turnID string, found directive) {
-	if h.tasks == nil {
-		return
-	}
-
 	if found.kind == kindDrop {
-		h.tasks.CancelSkill(found.skill, ReasonDropped)
+		if h.tasks != nil {
+			h.tasks.CancelSkill(found.skill, ReasonDropped)
+		}
 		return
 	}
 
 	skill, known := h.options.Skills.Lookup(found.skill)
 	if !known {
-		h.logger.Debug("the model asked for a skill that does not exist", "skill", found.skill)
+		h.actUnknown(found)
 		return
 	}
-	if strings.TrimSpace(found.body) == "" {
+	if h.tasks == nil || strings.TrimSpace(found.body) == "" {
 		return
 	}
 
 	h.mu.Lock()
+	// This reply was written to tell the caller what the colleague said, and handing the
+	// same work straight back is how the two of them talk to each other: the colleague
+	// asks its question again, the answer earns another turn, and round it goes without
+	// the caller ever being asked anything. Models do it with the question verbatim.
+	if slices.Contains(h.reporting, skill.Name) {
+		h.mu.Unlock()
+		h.logger.Debug("the model handed back the work it was just told about",
+			"skill", skill.Name, "prompt", found.body)
+		return
+	}
 	history := append([]llm.Message(nil), h.history...)
 	h.mu.Unlock()
 
@@ -312,6 +366,76 @@ func (h *Harness) act(turnID string, found directive) {
 	})
 }
 
+// actUnknown handles a request for a skill that was never declared. Voice models mix up
+// the two ways of asking for help: they write a skill tag for a tool they were offered,
+// then go quiet waiting for a colleague who is not coming. A name that is a tool is run
+// as one. Anything else is a note, so the next turn can tell the caller rather than hang.
+func (h *Harness) actUnknown(found directive) {
+	if tool, offered := h.options.Tools.Lookup(found.skill); offered {
+		if strings.TrimSpace(found.body) == "" {
+			return
+		}
+		h.logger.Debug("the model asked for a tool as if it were a skill", "tool", tool.Name)
+		h.mu.Lock()
+		h.askN++
+		h.asked = append(h.asked, llm.ToolCall{
+			ID:        fmt.Sprintf("ask-%d", h.askN),
+			Name:      tool.Name,
+			Arguments: argumentsFor(tool, found.body),
+		})
+		h.mu.Unlock()
+		return
+	}
+
+	h.logger.Debug("the model asked for a skill that does not exist", "skill", found.skill)
+	h.mu.Lock()
+	h.notes = append(h.notes, noted{text: fmt.Sprintf(
+		"There is no skill named %s. Carry on with the caller.", found.skill)})
+	h.mu.Unlock()
+}
+
+// argumentsFor turns the body of a skill tag into the JSON object the tool expects. The
+// tag is prose, so it is filed under query when the tool has one, otherwise under the
+// first required argument. A body that is already an object is left alone.
+func argumentsFor(tool Tool, body string) string {
+	body = strings.TrimSpace(body)
+	if json.Valid([]byte(body)) && strings.HasPrefix(body, "{") {
+		return body
+	}
+
+	name := "query"
+	if props, ok := tool.Parameters["properties"].(map[string]any); ok {
+		if _, exists := props["query"]; !exists {
+			name = firstRequired(tool.Parameters["required"])
+			if name == "" {
+				name = "query"
+			}
+		}
+	}
+
+	raw, err := json.Marshal(map[string]string{name: body})
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
+}
+
+func firstRequired(required any) string {
+	switch names := required.(type) {
+	case []any:
+		if len(names) > 0 {
+			if name, ok := names[0].(string); ok {
+				return name
+			}
+		}
+	case []string:
+		if len(names) > 0 {
+			return names[0]
+		}
+	}
+	return ""
+}
+
 // consumeTasks folds finished work into the next prompt and reports it.
 func (h *Harness) consumeTasks() {
 	defer h.running.Done()
@@ -323,7 +447,11 @@ func (h *Harness) consumeTasks() {
 		}
 		if written := note(result); written != "" {
 			h.mu.Lock()
-			h.notes = append(h.notes, written)
+			h.notes = append(h.notes, noted{
+				skill:  result.Skill,
+				text:   written,
+				asking: result.Question != "",
+			})
 			h.mu.Unlock()
 		}
 		h.emitter.Send(Settled{Result: result})
@@ -343,8 +471,20 @@ func (h *Harness) instructions(agent, note string) string {
 			parts = append(parts, index)
 		}
 	}
+	// Taking the notes is also what settles which skills this turn is reporting on, so a
+	// reply written to deliver an answer cannot ask for that answer again.
+	h.reporting = nil
+	h.asking = false
 	if len(h.notes) > 0 {
-		parts = append(parts, strings.Join(h.notes, "\n"))
+		lines := make([]string, 0, len(h.notes))
+		for _, written := range h.notes {
+			lines = append(lines, written.text)
+			if written.skill != "" {
+				h.reporting = append(h.reporting, written.skill)
+			}
+			h.asking = h.asking || written.asking
+		}
+		parts = append(parts, strings.Join(lines, "\n"))
 		h.notes = nil
 	}
 	if note != "" {

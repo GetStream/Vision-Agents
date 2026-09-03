@@ -39,7 +39,9 @@ type loopbackEdge struct {
 	inbound   chan InboundAudio
 	attending chan Attendance
 
-	mu        sync.Mutex
+	mu sync.Mutex
+	// published is what the agent has handed over and the caller has not heard yet, so it
+	// is both the log of what was said and the queue DropSpeech throws away.
 	published []audio.PcmData
 	joined    bool
 	left      bool
@@ -77,6 +79,15 @@ func (e *loopbackEdge) SpeechPending() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.unheard
+}
+
+// DropSpeech throws away speech that has been published but not heard, the way a real edge
+// empties its playout queue when the caller takes the floor.
+func (e *loopbackEdge) DropSpeech() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.published = nil
+	e.unheard = false
 }
 
 // holdSpeech makes the edge report published speech as still on its way out, the way a real
@@ -668,6 +679,15 @@ func (s *AgentSuite) speak(participant stt.Participant) {
 }
 
 // says makes the transcriber report a settled turn.
+// synthesises has the voice send one chunk of audio for a turn, the way a provider does
+// while a reply is being spoken.
+func (s *AgentSuite) synthesises(turnID string) {
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: turnID,
+		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+	})
+}
+
 func (s *AgentSuite) says(participant stt.Participant, text string) {
 	s.saysAfter(participant, text, 0)
 }
@@ -1330,6 +1350,128 @@ func (s *AgentSuite) TestAnAnswerComesBackAsATurnNobodyAskedFor() {
 		"the answer reaches the caller as a turn of its own")
 }
 
+func (s *AgentSuite) TestAnAnswerComingBackDoesNotCutOffTheReplyBeingSpoken() {
+	// The voice model is still writing when the subagent lands. Taking the floor would
+	// drop the rest of the live reply, which is the cut-off the caller hears.
+	s.delegates()
+	s.join(true)
+	s.model.reply = nil
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	turnA := s.model.requests()[0].ID
+
+	s.model.emitter.Send(llm.CompletionStarted{CompletionID: turnA, At: time.Now()})
+	s.model.emitter.Send(llm.TextDelta{
+		CompletionID: turnA, Index: 0, Text: `<ask skill="think">15% of 84.20</ask>`,
+	})
+	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "nothing was handed over")
+
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.emitter.Send(llm.CompletionStarted{CompletionID: taskID, At: time.Now()})
+	s.subagent.emitter.Send(llm.TextDelta{CompletionID: taskID, Index: 0, Text: "It is 12.63."})
+	s.subagent.emitter.Send(llm.CompletionComplete{CompletionID: taskID, Text: "It is 12.63."})
+	s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
+	s.Equal(1, len(s.model.requests()),
+		"an answer coming back must not take the floor from a reply still being written")
+
+	s.model.emitter.Send(llm.TextDelta{
+		CompletionID: turnA, Index: 1, Text: "Let me check. Won't be a moment.",
+	})
+	s.model.emitter.Send(llm.CompletionComplete{CompletionID: turnA, Text: "Let me check. Won't be a moment."})
+	s.eventually(func() bool { return countOf[Responded](s.reported()) >= 1 }, "the live reply was cut off")
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal("Let me check. Won't be a moment.", responded.Text)
+	history := s.agent.History()
+	s.Require().GreaterOrEqual(len(history), 2)
+	s.Equal("Let me check. Won't be a moment.", history[1].Content)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer coming back should have started a turn of its own after the reply finished")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the answer was never spoken")
+}
+
+func (s *AgentSuite) TestAnAnswerComingBackWaitsForSpeechToGoOut() {
+	// An utterance the voice has finished sending is still on its way out of the edge.
+	// Starting the follow-up on that word talks over the tail of the reply.
+	s.delegates()
+	s.join(true)
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = []string{"It is 12.63."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
+			countOf[Spoke](s.reported()) >= 1
+	}, "the first reply never finished")
+	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+		presenceTick+100*time.Millisecond, 10*time.Millisecond,
+		"a follow-up must not start while speech is still going out")
+
+	s.edge.holdSpeech(false)
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer coming back should have started a turn once the reply was heard")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.")
+}
+
+func (s *AgentSuite) TestAStuckPlayoutSignalDoesNotStrandAFollowUp() {
+	// The edge may keep reporting buffered speech even after the last chunk that was ever
+	// published. Leaving a subagent's answer behind that forever turns "let me check" into
+	// the last thing the caller hears.
+	s.delegates()
+	s.join(true)
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = []string{"It is 12.63."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
+			countOf[Spoke](s.reported()) >= 1
+	}, "the first reply never finished")
+	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+		presenceTick+100*time.Millisecond, 10*time.Millisecond,
+		"a fresh tail still gets time to drain")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer coming back should not wait forever on a stuck playout signal")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.")
+}
+
+func (s *AgentSuite) TestFinishingWaitsForAnAnswerThatHasNotBeenSpokenYet() {
+	// The subagent's answer has started a turn, but nothing has been synthesised yet.
+	// Leaving on that word hangs up before the caller hears what they were promised.
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{}
+	s.subagent.reply = []string{"It is 12.63."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer coming back should have started a turn of its own")
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) >= 1 },
+		"the first reply was never spoken")
+
+	ctx, cancel := context.WithTimeout(s.ctx, 50*time.Millisecond)
+	defer cancel()
+	s.Error(s.agent.Finish(ctx), "the answer has not been spoken yet, so finishing waits")
+}
+
 func (s *AgentSuite) TestTheHistoryKeepsWhatWasSaidRatherThanWhatWasAskedFor() {
 	// A request for help was addressed to the harness, not the caller. Remembering it
 	// would have the model reading its own instructions back on the next turn.
@@ -1581,6 +1723,46 @@ func (s *AgentSuite) TestBargeInStopsTheModelAndTheVoice() {
 		"the interruption was never reported")
 }
 
+func (s *AgentSuite) TestBargeInThrowsAwaySpeechNotHeardYet() {
+	// Cancelling the voice only stops what it has not synthesised yet. A reply is streamed
+	// far faster than it is spoken, so most of it is still queued at the edge, and leaving
+	// it there is the caller being talked over after they took the floor.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.voice.silent = true
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	s.synthesises(s.model.requests()[0].ID)
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was never published")
+
+	s.says(participant, "actually, stop")
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "no interruption")
+	s.eventually(func() bool { return len(s.edge.heard()) == 0 },
+		"the rest of the abandoned reply is still on its way to the caller")
+}
+
+func (s *AgentSuite) TestShorteningLeavesSpeechAlreadyOnItsWayOut() {
+	// Shortening is the softer answer to an overlap: the model stops adding to the reply,
+	// but what has already been said is still worth hearing, so nothing that has been
+	// published is thrown away.
+	s.join(true)
+	s.model.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.synthesises(s.model.requests()[0].ID)
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was never published")
+	s.flow.then = []string{`{"disposition":"respond","floor":"shorten"}`}
+
+	s.says(participant, "only the vegetarian options")
+
+	s.eventually(func() bool { return s.model.interrupted() == 1 }, "the long answer kept generating")
+	s.NotEmpty(s.edge.heard(), "shortening threw away speech already on its way to the caller")
+}
+
 func (s *AgentSuite) TestAudioFromAnAbandonedTurnIsNotPublished() {
 	// A provider keeps sending for a moment after being interrupted. Dropping that audio
 	// here is what makes barge-in sound immediate.
@@ -1595,14 +1777,47 @@ func (s *AgentSuite) TestAudioFromAnAbandonedTurnIsNotPublished() {
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "no interruption")
 
 	before := len(s.edge.heard())
-	turnID := s.model.requests()[0].ID
-	s.voice.emitter.Send(tts.AudioChunk{
-		SynthesisID: turnID,
-		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
-	})
+	s.synthesises(s.model.requests()[0].ID)
 
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "no interruption")
 	s.Equal(before, len(s.edge.heard()), "audio from the abandoned turn stays unheard")
+}
+
+func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
+	// Only a caller talking over the agent abandons a turn. The agent starting one for
+	// itself, to say what a tool came back with, does not: the reply that promised to go
+	// and check is still coming out of the voice, and dropping the rest of it is the
+	// agent cutting itself off mid-sentence.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	// Being asked a second time is the tool turn taking the floor from the first.
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the tool result was never answered")
+
+	// The tail of the first reply, arriving late the way a provider sends it. It is a
+	// size nothing else in the test produces, so it can be picked out of what was heard.
+	promised := s.model.requests()[0].ID
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: promised,
+		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
+	})
+
+	s.eventually(func() bool {
+		for _, chunk := range s.edge.heard() {
+			if len(chunk.Samples) == 200 {
+				return true
+			}
+		}
+		return false
+	}, "the end of the sentence the agent was already speaking was thrown away")
 }
 
 func (s *AgentSuite) TestBargeInWithNothingToSayIsIgnored() {

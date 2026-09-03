@@ -156,8 +156,11 @@ type Turn struct {
 	// transcriber spent deciding the participant had stopped.
 	SpeechEndToAudioMs float64
 	// AudioOutMs is how much speech the agent published for the turn.
-	AudioOutMs  float64
-	Interrupted bool
+	AudioOutMs float64
+	// AudioDroppedMs is speech that was synthesised for the turn but never published,
+	// because it arrived after the turn had been abandoned.
+	AudioDroppedMs float64
+	Interrupted    bool
 }
 
 func (Turn) isAgentEvent() {}

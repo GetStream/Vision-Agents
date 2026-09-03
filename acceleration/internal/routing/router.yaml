@@ -325,6 +325,62 @@ tts:
       price:
         per_million_chars: 50.0
 
+    # Realtime TTS-2 Flash, Inworld's low-latency model. Around 25ms TTFB server-side,
+    # billed at the published $5 per million characters.
+    - provider: inworld
+      model: inworld-tts-2-flash
+      languages:
+        [
+          ar,
+          bg,
+          bn,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fi,
+          fr,
+          gu,
+          he,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ka,
+          kn,
+          ko,
+          ml,
+          mr,
+          ms,
+          nl,
+          no,
+          or,
+          pa,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          ta,
+          te,
+          th,
+          tl,
+          tr,
+          uk,
+          ur,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_chars: 5.0
+
     # Flash is the low-latency model; the WebSocket streams audio as it is generated.
     - provider: elevenlabs
       model: eleven_flash_v2_5
@@ -605,6 +661,17 @@ llm:
       price:
         per_million_input_tokens: 0.032
         per_million_output_tokens: 0.16
+
+    # Gemma 4 31B on Cerebras' public inference API, around 1500 tokens a second. Reasoning
+    # stays off: the live path wants the first word, not a think-then-speak turn.
+    - provider: cerebras
+      model: gemma-4-31b
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      price:
+        per_million_input_tokens: 2.15
+        per_million_output_tokens: 2.70
 
     # Pro is a 1.6T-parameter frontier model: better answers, and slow enough that it wants
     # to be off the live path unless the caller asked for quality.

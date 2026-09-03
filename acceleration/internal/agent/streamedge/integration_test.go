@@ -95,6 +95,16 @@ func (s *StreamEdgeIntegrationSuite) hear(edge *Edge) agent.InboundAudio {
 	}
 }
 
+// hearMany waits for several stretches of speech, so a test can say who was heard over a
+// while rather than who happened to arrive first.
+func (s *StreamEdgeIntegrationSuite) hearMany(edge *Edge, count int) []agent.InboundAudio {
+	heard := make([]agent.InboundAudio, 0, count)
+	for range count {
+		heard = append(heard, s.hear(edge))
+	}
+	return heard
+}
+
 func loudest(pcm audio.PcmData) int {
 	var peak int
 	for _, sample := range pcm.Samples {
@@ -144,6 +154,28 @@ func (s *StreamEdgeIntegrationSuite) TestSomeoneJoiningLaterIsHeard() {
 
 	heard := s.hear(listener)
 	s.Equal("go-edge-latecomer", heard.Participant.UserID)
+}
+
+func (s *StreamEdgeIntegrationSuite) TestAnotherInstanceOfTheAgentIsNotHeard() {
+	// An agent that was restarted without leaving is still in the call, publishing under
+	// the same user id. Heard as a caller, the two answer each other until nobody else can
+	// get a word in.
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+
+	agentEdge := s.join("go-edge-twin")
+	twin := s.join("go-edge-twin")
+	caller := s.join("go-edge-outsider")
+
+	s.speak(ctx, twin, 24_000)
+	s.speak(ctx, caller, 48_000)
+
+	// Hearing the outsider at all proves the edge is subscribed and decoding, so the twin
+	// being absent from what arrived is the guard rather than a call carrying nothing.
+	for _, heard := range s.hearMany(agentEdge, 5) {
+		s.Equal("go-edge-outsider", heard.Participant.UserID,
+			"the agent heard itself, which is the two of them talking in a loop")
+	}
 }
 
 func (s *StreamEdgeIntegrationSuite) TestLeavingClosesTheAudio() {

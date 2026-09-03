@@ -2,6 +2,7 @@ package llmrouter
 
 import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/cerebras"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/deepseek"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/gemini"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/gemma"
@@ -30,6 +31,10 @@ func DefaultRegistry() *Registry {
 
 	registry.Register(gemma.ProviderName, func(spec routing.Spec) (llm.LLM, error) {
 		return gemma.New(gemma.Options{Model: spec.Model, Logger: spec.Logger})
+	})
+
+	registry.Register(cerebras.ProviderName, func(spec routing.Spec) (llm.LLM, error) {
+		return cerebras.New(cerebras.Options{Model: spec.Model, Logger: spec.Logger})
 	})
 
 	return registry

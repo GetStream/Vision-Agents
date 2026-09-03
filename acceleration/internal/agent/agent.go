@@ -37,7 +37,10 @@ import (
 // eventBuffer is how many events may queue before a slow consumer applies backpressure.
 const eventBuffer = 64
 
-const presenceTick = 500 * time.Millisecond
+const (
+	presenceTick       = 500 * time.Millisecond
+	playoutWaitCeiling = 2 * time.Second
+)
 
 // sentenceSuffix separates a turn id from the sequence number of a sentence within it, for
 // providers that need one synthesis per sentence.
@@ -205,10 +208,16 @@ type Agent struct {
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
-	// speakingTurn is the reply currently allowed to produce audio. Audio belonging to any
-	// other turn is dropped rather than published, which is what makes barge-in immediate
-	// even while a provider is still sending.
+	// speakingTurn is the turn the agent is currently on. It says which reply an
+	// interruption would abandon and which one the floor belongs to; it does not decide
+	// what may be heard, because the agent starts a turn for itself while the turn before
+	// it is still being spoken.
 	speakingTurn string
+	// abandoned is every turn an interruption gave up on. Audio belonging to one of them
+	// is dropped rather than published, which is what makes barge-in immediate even while
+	// a provider is still sending. It holds one entry per interruption and lives only as
+	// long as the call.
+	abandoned map[string]struct{}
 	// utterances counts syntheses that have not settled, so Finish knows when the agent
 	// has stopped talking.
 	utterances int
@@ -307,6 +316,7 @@ func New(options Options) (*Agent, error) {
 		emitter:   emitter,
 		prompt:    options.Instructions,
 		listeners: map[string]*sttrouter.Session{},
+		abandoned: map[string]struct{}{},
 		cadence:   settling,
 		duplex:    listening,
 	}
@@ -593,10 +603,7 @@ func (a *Agent) Finish(ctx context.Context) error {
 	defer ticker.Stop()
 
 	for {
-		a.mu.Lock()
-		quiet := a.utterances == 0
-		a.mu.Unlock()
-		if quiet && !a.delegating() && !a.speechPending() {
+		if !a.Busy() && !a.speechPending() {
 			return nil
 		}
 
@@ -876,6 +883,9 @@ func (a *Agent) consumePresence() {
 		select {
 		case <-ticker.C:
 			a.act(a.converse.Tick(a.floor()))
+			// Speech still draining out of the edge has no event when it finishes, so a
+			// note that waited for it is retried here rather than never spoken.
+			a.followUp()
 		case <-a.ctx.Done():
 			return
 		}
@@ -1251,6 +1261,10 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 	if !a.performs {
 		tail = plain
 	}
+	// Taken before resetTurn forgets them: a skill tag that named a tool is a call this
+	// turn made, and has to be on the history the result answers.
+	asked := a.harness.TakeAsked()
+	calls := append(append([]llm.ToolCall(nil), typed.ToolCalls...), asked...)
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
 		// of the reply. Without this a reader would be missing whatever the harness was
@@ -1274,7 +1288,7 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 		// nothing until it comes back, which on a phone is indistinguishable from having
 		// been cut off. Prompting for it is not enough: the models that do it reliably
 		// are not the ones fast enough to hold a conversation.
-		if fillsPause(typed) && strings.TrimSpace(a.spoken.String()) == "" {
+		if fillsPause(typed.CompletionID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
 			filler := a.duplex.Working()
 			a.spoken.WriteString(filler)
 			if err := a.speakSentence(typed.CompletionID, filler); err != nil {
@@ -1296,11 +1310,11 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 	// A reply that only called a tool is still a turn the model took, and it has to be
 	// recorded with the calls on it: the result sent back answers one of them, and a
 	// provider refuses a conversation where it answers nothing.
-	if said != "" || len(typed.ToolCalls) > 0 {
+	if said != "" || len(calls) > 0 {
 		a.history = append(a.history, llm.Message{
 			Role:      llm.Assistant,
 			Content:   said,
-			ToolCalls: typed.ToolCalls,
+			ToolCalls: calls,
 		})
 	}
 	exchange := lastExchange(a.history)
@@ -1324,23 +1338,25 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 	})
 	// Tools are handed over rather than run here, because this is the goroutine that
 	// speaks and a transfer is several seconds of network the caller would hear as silence.
-	if currentHarness != nil && len(typed.ToolCalls) > 0 {
-		currentHarness.Requested(typed.CompletionID, typed.ToolCalls)
+	if currentHarness != nil && len(calls) > 0 {
+		currentHarness.Requested(typed.CompletionID, calls)
 	}
 	a.respondQueued()
+	// A note that landed while this reply was being written waited for it to finish.
+	a.followUp()
 }
 
 // fillsPause reports whether a turn that said nothing should say something before the
 // tools it asked for are run.
-func fillsPause(typed llm.CompletionComplete) bool {
+func fillsPause(completionID string, calls []llm.ToolCall) bool {
 	// A turn that is itself a tool's answer gets no follow-up, so filling the pause on
 	// one would leave the caller with a promise to check as the last thing they heard.
-	if len(typed.ToolCalls) == 0 || strings.HasPrefix(typed.CompletionID, toolPrefix) {
+	if len(calls) == 0 || strings.HasPrefix(completionID, toolPrefix) {
 		return false
 	}
 	// Pressing a menu option is meant to be silent. The menu answers next, and talking
 	// over it is talking to nobody.
-	return slices.ContainsFunc(typed.ToolCalls, func(call llm.ToolCall) bool {
+	return slices.ContainsFunc(calls, func(call llm.ToolCall) bool {
 		return call.Name != toolPress
 	})
 }
@@ -1358,7 +1374,13 @@ func (a *Agent) consumeTTS() {
 		case tts.AudioChunk:
 			// Audio from an abandoned turn is dropped here rather than published, so
 			// barge-in silences the agent even while the provider is still sending.
-			if !a.speaking(turnOf(typed.SynthesisID)) {
+			//
+			// Only an interruption abandons a turn. A turn the agent started for itself,
+			// to say what a tool returned or what delegated work came back with, does not:
+			// treating it as one would throw away the tail of the sentence being spoken
+			// and cut the agent off mid-word.
+			if a.abandonedTurn(turnOf(typed.SynthesisID)) {
+				a.turns.dropped(turnOf(typed.SynthesisID), typed.Audio.DurationMs())
 				if dropping != typed.SynthesisID {
 					dropping = typed.SynthesisID
 					a.logger.Debug("dropping audio for a turn the agent has left behind",
@@ -1513,9 +1535,11 @@ func sameMessages(first, second []llm.Message) bool {
 // follow starts a turn nobody asked for, because work the caller was told was coming has
 // come back and they are owed the answer.
 //
-// An agent still speaking is left alone: taking the turn from itself would cut its own
-// sentence off. What came back stays pending in the harness, and the last synthesis to
-// settle tries again.
+// An agent still writing or speaking is left alone: taking the turn from itself would
+// cut its own sentence off. Speech that has been published but not yet heard is the
+// same: starting now would talk over the tail. What came back stays pending in the
+// harness, and a later chance — a synthesis settling, the reply finishing, a presence
+// tick — tries again.
 //
 // The lock is held across the whole turn because deciding to speak and taking what there
 // is to say must not be separable: two answers landing together would otherwise give one
@@ -1524,8 +1548,12 @@ func (a *Agent) follow() error {
 	a.following.Lock()
 	defer a.following.Unlock()
 
+	if a.waitingForPlayout() {
+		return nil
+	}
+
 	a.mu.Lock()
-	if a.harness == nil || a.utterances > 0 || !a.harness.Pending() {
+	if a.harness == nil || a.generating || a.utterances > 0 || !a.harness.Pending() {
 		a.mu.Unlock()
 		return nil
 	}
@@ -1546,6 +1574,23 @@ func (a *Agent) follow() error {
 		Instructions: instructions,
 		History:      history,
 	})
+}
+
+// waitingForPlayout reports whether already-published speech should still be left to drain
+// before a follow-up turn begins.
+//
+// The edge is the one place that knows whether a tail is still buffered, so its answer is
+// taken first. When that answer sticks long after the last chunk was published, though, the
+// caller is better served by the follow-up starting than by silence that lasts until the
+// next unrelated turn.
+func (a *Agent) waitingForPlayout() bool {
+	if !a.speechPending() {
+		return false
+	}
+	a.mu.Lock()
+	lastSpokeAt := a.lastSpokeAt
+	a.mu.Unlock()
+	return time.Since(lastSpokeAt) < playoutWaitCeiling
 }
 
 // followUp speaks whatever the caller is owed, reporting a failure rather than returning
@@ -1667,6 +1712,7 @@ func (a *Agent) interrupt(participant stt.Participant) {
 		a.mu.Unlock()
 		return
 	}
+	a.abandoned[turnID] = struct{}{}
 	a.speakingTurn = ""
 	a.generating = false
 	model, voice := a.llm, a.tts
@@ -1680,6 +1726,10 @@ func (a *Agent) interrupt(participant stt.Participant) {
 			a.fail(err, "tts")
 		}
 	}
+	// Cancelling the voice only stops what it has not synthesised yet. What it already sent
+	// is queued at the edge, and leaving it there is the caller being talked over for as
+	// long as that queue is deep.
+	a.dropSpeech()
 	if model != nil {
 		if err := model.Interrupt(turnID); err != nil {
 			a.fail(err, "llm")
@@ -1723,11 +1773,27 @@ func (a *Agent) speechPending() bool {
 	return ok && playout.SpeechPending()
 }
 
-// speaking reports whether a turn is still the one allowed to produce audio.
+// dropSpeech throws away speech the agent has published but the caller has not heard yet.
+func (a *Agent) dropSpeech() {
+	if playout, ok := a.options.Edge.(Playout); ok {
+		playout.DropSpeech()
+	}
+}
+
+// speaking reports whether a turn is still the one the agent is on.
 func (a *Agent) speaking(turnID string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.speakingTurn != "" && a.speakingTurn == turnID
+}
+
+// abandonedTurn reports whether an interruption gave up on a turn, which is what stops
+// its audio being heard.
+func (a *Agent) abandonedTurn(turnID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, gone := a.abandoned[turnID]
+	return gone
 }
 
 // voice returns the voice session, or nil when the agent has not joined.

@@ -85,6 +85,42 @@ func (s *CadenceSuite) TestTheFinalCopyOfAnAnsweredUtteranceIsNotAnsweredAgain()
 	s.quiet()
 }
 
+func (s *CadenceSuite) TestAnAnsweredUtteranceRespelledOnTheWayOutIsNotAnsweredAgain() {
+	// Gemini streams an order number as digits and commits it as words. Both are the same
+	// speech, so answering the second one asks the caller for the number they just gave.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "1 2 3",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	superseded, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 2, Text: "one two three",
+	})
+
+	s.Empty(superseded)
+	s.Empty(saying, "the transcriber respelling itself is not the caller saying anything")
+	s.quiet()
+}
+
+func (s *CadenceSuite) TestWordsAddedToAnAnsweredUtteranceAreStillHeard() {
+	// Answering part of what somebody is saying must not cost them the rest of it, so a
+	// run of speech that grows after an answer is new words rather than a respelling.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "order 1 2",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 2, Text: "order 1 2 3 4",
+	})
+
+	s.Equal("order 1 2 3 4", s.ready().Text)
+}
+
 func (s *CadenceSuite) TestSayingTheSameThingAgainLaterIsHeardAgain() {
 	// Repeating yourself is a normal thing to do in a conversation, so only the
 	// transcriber's immediate restatement is discarded.

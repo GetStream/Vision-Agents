@@ -201,6 +201,10 @@ func (e *Edge) PublishAudio(pcm audio.PcmData) error { return e.speaker.Write(pc
 // agent.Playout.
 func (e *Edge) SpeechPending() bool { return e.speaker.pending() }
 
+// DropSpeech throws away published speech that has not been heard yet, satisfying
+// agent.Playout.
+func (e *Edge) DropSpeech() { e.speaker.drop() }
+
 // Leave releases the call. It is safe to call more than once.
 func (e *Edge) Leave() error {
 	var err error
@@ -301,6 +305,14 @@ func (e *Edge) publish() error {
 // that never arrives.
 func (e *Edge) listen(remote videosdk.OnTrackReceived) {
 	if remote.TrackType != sfu_models.TrackType_TRACK_TYPE_AUDIO {
+		return
+	}
+	// Subscribing skips the agent's own user, but the SFU forwards what it forwards. A
+	// second instance of the same agent left behind in the call arrives here and is heard
+	// as a caller, and the two then answer each other until nobody else can get a word in.
+	if string(remote.ParticipantID.UserID) == e.options.User.ID {
+		e.logger.Warn("another instance of this agent is in the call, ignoring it",
+			"user", e.options.User.ID, "session", string(remote.ParticipantID.SessionID))
 		return
 	}
 
