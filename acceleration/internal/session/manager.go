@@ -134,6 +134,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	m.mu.Unlock()
 
+	m.supersede(spec)
+
 	skills, err := m.skills(ctx, spec)
 	if err != nil {
 		return nil, err
@@ -309,6 +311,44 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	m.logger.Info("session joined",
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
 	return created, nil
+}
+
+// supersede ends whatever this agent was already doing in this call, before the new one
+// joins rather than after.
+//
+// A session outlives the connection that asked for it, so an agent that was restarted or
+// killed is still in its call. Two instances of one agent hear each other: each transcribes
+// the other as a caller and they answer each other until nobody else can be heard. There is
+// never a reason to want both, so the newest wins.
+func (m *Manager) supersede(spec Spec) {
+	m.mu.Lock()
+	var left []*Session
+	for id, found := range m.sessions {
+		if sameSeat(found.spec, spec) {
+			left = append(left, found)
+			delete(m.sessions, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, found := range left {
+		m.logger.Info("ending the session this agent left behind in the call",
+			"session", found.id, "call", spec.CallID, "user", spec.UserID)
+		if err := found.Close(); err != nil {
+			m.logger.Warn("the session left behind did not end cleanly",
+				"session", found.id, "error", err)
+		}
+	}
+}
+
+// sameSeat reports whether two specs put the same agent in the same call. A text session
+// joins nothing, so it shares a seat with nobody.
+func sameSeat(existing, wanted Spec) bool {
+	return !existing.Text && !wanted.Text &&
+		existing.CustomerID == wanted.CustomerID &&
+		existing.CallType == wanted.CallType &&
+		existing.CallID == wanted.CallID &&
+		existing.UserID == wanted.UserID
 }
 
 // Get returns a session belonging to a customer. Two customers cannot see each other's,

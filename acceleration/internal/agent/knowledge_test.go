@@ -77,6 +77,26 @@ func (s *AgentSuite) TestALookupAnswersOutOfTheKnowledgeBase() {
 	s.Equal("what does delivery cost", asked[0].Text)
 }
 
+func (s *AgentSuite) TestALookupAskedAsASkillStillRuns() {
+	s.reads(knowledge.Document{Text: "Standard shipping is 3 to 5 business days.", Source: "policy.md"})
+	s.join(false)
+	s.model.reply = []string{"Let me check that. ", `<ask skill="lookup">where is my order</ask>`}
+	s.model.then = []string{"Standard shipping is 3 to 5 business days."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	ran := s.awaitToolRan()
+	s.Equal("lookup", ran.Tool)
+	s.NoError(ran.Err)
+	s.Contains(ran.Result, "3 to 5 business days")
+
+	asked := s.knows.queries()
+	s.Require().Len(asked, 1)
+	s.Equal("where is my order", asked[0].Text)
+}
+
 func (s *AgentSuite) TestAQuestionTheKnowledgeBaseDoesNotCoverIsAnsweredInWords() {
 	// An empty answer would have the model invent one, which on a support line is worse
 	// than admitting the handbook says nothing.

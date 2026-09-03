@@ -37,7 +37,10 @@ import (
 // eventBuffer is how many events may queue before a slow consumer applies backpressure.
 const eventBuffer = 64
 
-const presenceTick = 500 * time.Millisecond
+const (
+	presenceTick       = 500 * time.Millisecond
+	playoutWaitCeiling = 2 * time.Second
+)
 
 // sentenceSuffix separates a turn id from the sequence number of a sentence within it, for
 // providers that need one synthesis per sentence.
@@ -1258,6 +1261,10 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 	if !a.performs {
 		tail = plain
 	}
+	// Taken before resetTurn forgets them: a skill tag that named a tool is a call this
+	// turn made, and has to be on the history the result answers.
+	asked := a.harness.TakeAsked()
+	calls := append(append([]llm.ToolCall(nil), typed.ToolCalls...), asked...)
 	if a.options.Text {
 		// There is no voice to release it to, so the held text is reported as the last
 		// of the reply. Without this a reader would be missing whatever the harness was
@@ -1281,7 +1288,7 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 		// nothing until it comes back, which on a phone is indistinguishable from having
 		// been cut off. Prompting for it is not enough: the models that do it reliably
 		// are not the ones fast enough to hold a conversation.
-		if fillsPause(typed) && strings.TrimSpace(a.spoken.String()) == "" {
+		if fillsPause(typed.CompletionID, calls) && strings.TrimSpace(a.spoken.String()) == "" {
 			filler := a.duplex.Working()
 			a.spoken.WriteString(filler)
 			if err := a.speakSentence(typed.CompletionID, filler); err != nil {
@@ -1303,11 +1310,11 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 	// A reply that only called a tool is still a turn the model took, and it has to be
 	// recorded with the calls on it: the result sent back answers one of them, and a
 	// provider refuses a conversation where it answers nothing.
-	if said != "" || len(typed.ToolCalls) > 0 {
+	if said != "" || len(calls) > 0 {
 		a.history = append(a.history, llm.Message{
 			Role:      llm.Assistant,
 			Content:   said,
-			ToolCalls: typed.ToolCalls,
+			ToolCalls: calls,
 		})
 	}
 	exchange := lastExchange(a.history)
@@ -1331,8 +1338,8 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 	})
 	// Tools are handed over rather than run here, because this is the goroutine that
 	// speaks and a transfer is several seconds of network the caller would hear as silence.
-	if currentHarness != nil && len(typed.ToolCalls) > 0 {
-		currentHarness.Requested(typed.CompletionID, typed.ToolCalls)
+	if currentHarness != nil && len(calls) > 0 {
+		currentHarness.Requested(typed.CompletionID, calls)
 	}
 	a.respondQueued()
 	// A note that landed while this reply was being written waited for it to finish.
@@ -1341,15 +1348,15 @@ func (a *Agent) finish(typed llm.CompletionComplete) {
 
 // fillsPause reports whether a turn that said nothing should say something before the
 // tools it asked for are run.
-func fillsPause(typed llm.CompletionComplete) bool {
+func fillsPause(completionID string, calls []llm.ToolCall) bool {
 	// A turn that is itself a tool's answer gets no follow-up, so filling the pause on
 	// one would leave the caller with a promise to check as the last thing they heard.
-	if len(typed.ToolCalls) == 0 || strings.HasPrefix(typed.CompletionID, toolPrefix) {
+	if len(calls) == 0 || strings.HasPrefix(completionID, toolPrefix) {
 		return false
 	}
 	// Pressing a menu option is meant to be silent. The menu answers next, and talking
 	// over it is talking to nobody.
-	return slices.ContainsFunc(typed.ToolCalls, func(call llm.ToolCall) bool {
+	return slices.ContainsFunc(calls, func(call llm.ToolCall) bool {
 		return call.Name != toolPress
 	})
 }
@@ -1541,7 +1548,7 @@ func (a *Agent) follow() error {
 	a.following.Lock()
 	defer a.following.Unlock()
 
-	if a.speechPending() {
+	if a.waitingForPlayout() {
 		return nil
 	}
 
@@ -1567,6 +1574,23 @@ func (a *Agent) follow() error {
 		Instructions: instructions,
 		History:      history,
 	})
+}
+
+// waitingForPlayout reports whether already-published speech should still be left to drain
+// before a follow-up turn begins.
+//
+// The edge is the one place that knows whether a tail is still buffered, so its answer is
+// taken first. When that answer sticks long after the last chunk was published, though, the
+// caller is better served by the follow-up starting than by silence that lasts until the
+// next unrelated turn.
+func (a *Agent) waitingForPlayout() bool {
+	if !a.speechPending() {
+		return false
+	}
+	a.mu.Lock()
+	lastSpokeAt := a.lastSpokeAt
+	a.mu.Unlock()
+	return time.Since(lastSpokeAt) < playoutWaitCeiling
 }
 
 // followUp speaks whatever the caller is owed, reporting a failure rather than returning

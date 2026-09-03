@@ -372,6 +372,38 @@ func (s *SessionSuite) TestASessionIsListedAndFoundByTheCustomerRunningIt() {
 	s.Len(s.manager.List("acme"), 1)
 }
 
+func (s *SessionSuite) TestRejoiningACallEndsTheSessionTheAgentLeftBehind() {
+	// A session outlives the connection that asked for it, so a restarted agent is still
+	// in its call. Both would hear each other and answer each other for the rest of it.
+	s.manages()
+	left := s.joins(Spec{CallID: "call-1"})
+
+	rejoined := s.joins(Spec{CallID: "call-1"})
+
+	s.Equal(Ended, left.State())
+	s.Equal(Live, rejoined.State())
+	s.Require().Len(s.edges, 2)
+	s.True(s.edges[0].gone(), "the agent left behind is still in the call")
+	s.False(s.edges[1].gone())
+
+	listed := s.manager.List("acme")
+	s.Require().Len(listed, 1)
+	s.Same(rejoined, listed[0])
+}
+
+func (s *SessionSuite) TestASecondAgentCanJoinTheSameCall() {
+	// Only an agent replacing itself supersedes. Two different agents in one call is a
+	// conversation somebody meant to have.
+	s.manages()
+	first := s.joins(Spec{CallID: "call-1", UserID: "support"})
+
+	second := s.joins(Spec{CallID: "call-1", UserID: "supervisor"})
+
+	s.Equal(Live, first.State())
+	s.Equal(Live, second.State())
+	s.Len(s.manager.List("acme"), 2)
+}
+
 func (s *SessionSuite) TestTheRecordedCallSaysWhatItWasRunWith() {
 	// A config decides these until a session overrides one, so neither answers "what
 	// spoke on this call" alone. The row is what a finished call is read back from.

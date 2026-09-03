@@ -121,7 +121,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	}
 	// Nothing new has been said since the agent answered, so these are the words it
 	// answered arriving again as the transcriber settles on them.
-	if current.text == "" && sameWords(current.committed, text) && c.restating(current, transcript) {
+	if current.text == "" && c.restating(current, transcript, text) {
 		c.logger.Debug("ignoring the transcriber restating an answered utterance",
 			"participant", transcript.Participant.ID, "text", text,
 			"utterance", transcript.Utterance, "since", time.Since(current.committedAt))
@@ -279,11 +279,21 @@ func (c *cadence) emit(participantID string, generation int64) {
 // A transcriber that cannot say which run it is on leaves the number zero, and there the
 // clock is all there is: words that come back quickly are it settling, and words that come
 // back later are taken as newly said.
-func (c *cadence) restating(current *cadenceSpeaker, transcript stt.Transcript) bool {
-	if transcript.Utterance != 0 && current.committedUtterance != 0 {
-		return transcript.Utterance == current.committedUtterance
+func (c *cadence) restating(current *cadenceSpeaker, transcript stt.Transcript, text string) bool {
+	if current.committed == "" {
+		return false
 	}
-	return time.Since(current.committedAt) < c.settle
+	if transcript.Utterance != 0 && current.committedUtterance != 0 {
+		if transcript.Utterance != current.committedUtterance {
+			return false
+		}
+		// The words a transcriber settles on need not be the words it streamed: Gemini
+		// writes an order number as "1 2 3" while the caller is talking and "one two
+		// three" when it commits. Asking for the same words back would let one reading of
+		// the number through as a second turn, and the caller is asked for it twice.
+		return transcript.Mode == stt.ModeFinal || sameWords(current.committed, text)
+	}
+	return sameWords(current.committed, text) && time.Since(current.committedAt) < c.settle
 }
 
 func (c *cadence) speakerFor(participant stt.Participant) *cadenceSpeaker {

@@ -601,6 +601,76 @@ func (s *HarnessSuite) TestASubagentThatNeedsMoreAsksThroughTheAgent() {
 	s.Contains(s.fast.requests()[1].Instructions, "Ask them")
 }
 
+func (s *HarnessSuite) TestTheReplyCarryingAnAnswerCannotHandTheWorkBack() {
+	// Handed the colleague's question, the model hands it straight back rather than
+	// asking the caller — often word for word. The colleague asks again, that answer
+	// earns another turn, and the two talk to each other while the caller listens.
+	s.build(true)
+	s.slow.automatic = "NEED: which date did you want?"
+	s.respond("turn-1", "is there a table free")
+	s.reply("turn-1", `Let me look. <ask skill="think">table availability</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	spoken := s.reply("turn-2",
+		`<ask skill="think">which date did you want?</ask>Which date did you want?`)
+
+	s.Equal("Which date did you want?", spoken, "the caller is asked instead")
+	s.Require().Never(func() bool { return len(s.slow.requests()) > 1 },
+		200*time.Millisecond, 10*time.Millisecond,
+		"the colleague was asked its own question")
+}
+
+func (s *HarnessSuite) TestAnswersToOneSkillDoNotBlockHandingOverAnother() {
+	// Only the work the reply was written to report is refused. A colleague coming back
+	// is often exactly when the next piece of work becomes worth doing.
+	s.build(true)
+	s.slow.automatic = "the table is free at eight"
+	s.respond("turn-1", "is there a table free")
+	s.reply("turn-1", `<ask skill="think">table availability</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+	s.reply("turn-2", `Eight works. <ask skill="recall">what name did they book under</ask>`)
+
+	handed := s.awaitDelegated(2)
+	s.Equal("recall", handed[1].Skill)
+}
+
+func (s *HarnessSuite) TestTheReplyCarryingAColleaguesQuestionIsOfferedNoTools() {
+	// A colleague asks for what only the caller can say, so there is nothing to look up.
+	// Left holding a tool the model reaches for one and narrates the reaching, and the
+	// caller hears a second promise to check without ever being asked the question.
+	s.tools = testTools()
+	s.build(true)
+	s.slow.automatic = "NEED: which date did you want?"
+	s.respond("turn-1", "is there a table free")
+	s.reply("turn-1", `Let me look. <ask skill="think">table availability</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+
+	s.Require().Len(s.fast.requests(), 2)
+	s.NotEmpty(s.fast.requests()[0].Tools)
+	s.Empty(s.fast.requests()[1].Tools, "there is nobody to ask but the caller")
+}
+
+func (s *HarnessSuite) TestTheReplyCarryingAColleaguesAnswerKeepsItsTools() {
+	// Only a question leaves nothing to look up. An answer coming back is often exactly
+	// when acting on it becomes possible.
+	s.tools = testTools()
+	s.build(true)
+	s.slow.automatic = "the table is free at eight"
+	s.respond("turn-1", "is there a table free")
+	s.reply("turn-1", `<ask skill="think">table availability</ask>`)
+	s.awaitSettled(1)
+
+	s.respond("turn-2", "")
+
+	s.Require().Len(s.fast.requests(), 2)
+	s.NotEmpty(s.fast.requests()[1].Tools)
+}
+
 func (s *HarnessSuite) TestANewerRequestSupersedesTheOneItReplaces() {
 	// The caller has said something since, so the older question was asked about a
 	// conversation that no longer exists.
@@ -730,6 +800,45 @@ func (s *HarnessSuite) TestASkillTheModelInventedIsIgnored() {
 	s.Equal("Sure. ", spoken, "an invented request is still not spoken")
 	s.Empty(s.slow.requests(), "and is not sent anywhere")
 	s.Empty(delegatedIn(s.events.seen()))
+	s.True(s.harness.Pending(), "the caller was told an answer was coming")
+
+	s.respond("turn-2", "")
+	s.Contains(s.fast.requests()[1].Instructions, "no skill named teleport")
+}
+
+func (s *HarnessSuite) TestASkillThatNamesAToolIsAskedAsOne() {
+	// Voice models write skill tags for tools they were offered, then wait for a
+	// colleague who is not coming. The body of the tag is the argument the tool needs.
+	s.tools = testTools()
+	s.build(true)
+	s.respond("turn-1", "press 1 for sales")
+
+	spoken := s.reply("turn-1", `One moment. <ask skill="press">1</ask>`)
+
+	s.Equal("One moment. ", spoken)
+	s.Empty(s.slow.requests(), "a tool is not a colleague")
+	s.Empty(delegatedIn(s.events.seen()))
+
+	asked := s.harness.TakeAsked()
+	s.Require().Len(asked, 1)
+	s.Equal("press", asked[0].Name)
+	s.JSONEq(`{"digits":"1"}`, asked[0].Arguments)
+	s.NotEmpty(asked[0].ID)
+
+	s.harness.Requested("turn-1", asked)
+	requested := s.awaitToolRequests(1)
+	s.Equal("press", requested[0].Call.Name)
+	s.JSONEq(`{"digits":"1"}`, requested[0].Call.Arguments)
+}
+
+func (s *HarnessSuite) TestAnAbandonedReplyDoesNotKeepTheToolsItAskedFor() {
+	s.tools = testTools()
+	s.build(false)
+
+	s.harness.Filter("turn-1", `<ask skill="press">1</ask>`)
+	s.harness.Reset()
+
+	s.Empty(s.harness.TakeAsked())
 }
 
 func (s *HarnessSuite) TestWorkThatFailsStillTellsTheCallerSomething() {

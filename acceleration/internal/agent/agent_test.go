@@ -1403,6 +1403,33 @@ func (s *AgentSuite) TestAnAnswerComingBackWaitsForSpeechToGoOut() {
 	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.")
 }
 
+func (s *AgentSuite) TestAStuckPlayoutSignalDoesNotStrandAFollowUp() {
+	// The edge may keep reporting buffered speech even after the last chunk that was ever
+	// published. Leaving a subagent's answer behind that forever turns "let me check" into
+	// the last thing the caller hears.
+	s.delegates()
+	s.join(true)
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = []string{"It is 12.63."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		return countOf[Responded](s.reported()) == 1 && countOf[TaskSettled](s.reported()) == 1 &&
+			countOf[Spoke](s.reported()) >= 1
+	}, "the first reply never finished")
+	s.Require().Never(func() bool { return len(s.model.requests()) > 1 },
+		presenceTick+100*time.Millisecond, 10*time.Millisecond,
+		"a fresh tail still gets time to drain")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the answer coming back should not wait forever on a stuck playout signal")
+	s.Contains(s.model.requests()[1].Instructions, "It is 12.63.")
+}
+
 func (s *AgentSuite) TestFinishingWaitsForAnAnswerThatHasNotBeenSpokenYet() {
 	// The subagent's answer has started a turn, but nothing has been synthesised yet.
 	// Leaving on that word hangs up before the caller hears what they were promised.
