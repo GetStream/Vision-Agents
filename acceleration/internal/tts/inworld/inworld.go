@@ -140,6 +140,10 @@ type utterance struct {
 	// closed means close_context has already gone out. A second one provokes an error
 	// frame that derails the next utterance.
 	closed bool
+	// settled means the utterance has been reported complete. It is kept here rather than
+	// forgotten because the server goes on sending this context's own tail afterwards, and
+	// that tail is the end of a sentence the caller is still waiting to hear.
+	settled bool
 }
 
 // TTS is a streaming Inworld text-to-speech session.
@@ -155,7 +159,11 @@ type TTS struct {
 	// done stops a reconnect that is waiting, so a socket is not reopened behind Close.
 	done chan struct{}
 
-	mu       sync.Mutex
+	mu sync.Mutex
+	// active is every utterance the session still has a use for, which is not the same as
+	// every utterance still being spoken: one stays here after it has been reported complete
+	// so the tail the server is still sending is forwarded rather than dropped. lookup wants
+	// both, utteranceFor and complete only the unsettled ones.
 	active   map[string]*utterance
 	started  bool
 	shutdown bool
@@ -421,7 +429,7 @@ func (t *TTS) utteranceFor(request tts.Request) (*utterance, bool, error) {
 	}
 
 	if request.ID != "" {
-		if existing, ok := t.active[request.ID]; ok {
+		if existing, ok := t.active[request.ID]; ok && !existing.settled {
 			if request.Voice != "" && request.Voice != existing.voice {
 				return nil, false, fmt.Errorf(
 					"inworld: utterance %s is being said in voice %s, not %s",
@@ -567,9 +575,9 @@ func (t *TTS) handleMessage(message serverFrame) {
 
 	if result.ContextID != "" {
 		if _, ok := t.lookup(result.ContextID); !ok && result.AudioChunk != nil {
-			// Audio for a context the agent has left behind. The server keeps draining
-			// it onto the shared socket after close_context, and speaking it would cut
-			// into whatever came next.
+			// Audio for a context the agent has left behind: one barge-in abandoned, or
+			// one the server has already closed. It keeps draining onto the shared socket
+			// afterwards, and speaking it would cut into whatever came next.
 			return
 		}
 	}
@@ -584,10 +592,21 @@ func (t *TTS) handleMessage(message serverFrame) {
 		// close_context once: a second one provokes an error frame that derails the
 		// next utterance. The server sending contextClosed is the close already done.
 		if len(result.ContextClosed) > 0 {
+			// Marking it before forgetting it looks redundant, and is not: Interrupt takes
+			// the utterance out of the map and closes it without the lock, so a barge-in
+			// landing here already holds a pointer that outlives the map entry, and the flag
+			// is what stops it sending a second close.
 			t.markClosed(result.ContextID)
-		} else {
-			t.closeByID(result.ContextID)
+			t.complete(result.ContextID)
+			// The server has closed the context, so nothing more of it is coming.
+			t.forget(result.ContextID)
+			return
 		}
+		// A flush says the text is in, not that the audio for it has all been sent. The
+		// utterance is reported finished here so a caller is never left waiting on a
+		// context the server declines to acknowledge, but it is kept so the rest of its
+		// own audio is still spoken rather than dropped as somebody else's.
+		t.closeByID(result.ContextID)
 		t.complete(result.ContextID)
 	}
 }
@@ -633,23 +652,30 @@ func (t *TTS) handleAudio(result *serverResult) {
 	t.emitter.Send(current.tracker.Chunk(audio.FromBytes(raw, t.options.SampleRate, 1)))
 }
 
+// complete reports an utterance finished, once. The utterance is left in the session rather
+// than forgotten: flushing a context only says the text is in, and the audio for it goes on
+// arriving afterwards. forget is what removes it, once the server has closed the context.
 func (t *TTS) complete(id string) {
 	t.mu.Lock()
 	current, ok := t.active[id]
-	delete(t.active, id)
-	t.mu.Unlock()
-
-	if !ok {
+	if !ok || current.settled {
+		t.mu.Unlock()
 		return
 	}
-	t.emitter.Send(current.tracker.Complete(ProviderName, t.options.Model, current.interrupted))
+	current.settled = true
+	interrupted := current.interrupted
+	t.mu.Unlock()
+
+	t.emitter.Send(current.tracker.Complete(ProviderName, t.options.Model, interrupted))
 }
 
 func (t *TTS) settleOutstanding() {
 	t.mu.Lock()
 	outstanding := make([]*utterance, 0, len(t.active))
 	for _, current := range t.active {
-		outstanding = append(outstanding, current)
+		if !current.settled {
+			outstanding = append(outstanding, current)
+		}
 	}
 	clear(t.active)
 	t.mu.Unlock()
@@ -668,6 +694,14 @@ func (t *TTS) lookup(id string) (*utterance, bool) {
 		return nil, false
 	}
 	return current, true
+}
+
+// forget takes an utterance out of the session for good, once the server has acknowledged
+// the close and there is no more of it to come.
+func (t *TTS) forget(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.active, id)
 }
 
 func (t *TTS) markClosed(id string) {

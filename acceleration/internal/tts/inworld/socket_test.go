@@ -91,6 +91,21 @@ func flushed(conn *websocket.Conn, contextID string) error {
 	return conn.WriteMessage(websocket.TextMessage, payload)
 }
 
+// closed is the server acknowledging a close_context, which is the last thing it sends for
+// a context.
+func closed(conn *websocket.Conn, contextID string) error {
+	payload, err := json.Marshal(map[string]any{
+		"result": map[string]any{
+			"contextId":     contextID,
+			"contextClosed": map[string]any{},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return conn.WriteMessage(websocket.TextMessage, payload)
+}
+
 type InworldSocketSuite struct {
 	suite.Suite
 }
@@ -240,6 +255,76 @@ func (s *InworldSocketSuite) TestAudioAndFlushSettleTheSynthesis() {
 	s.InDelta(200.0, complete.AudioDurationMs, 1.0)
 	s.Positive(complete.TimeToFirstByteMs)
 	s.False(complete.Interrupted)
+}
+
+func (s *InworldSocketSuite) TestTheTailAfterAFlushIsStillSpoken() {
+	// A flush says the text is in, not that the audio for it has all been sent. The rest
+	// arrives while the context is being closed, and it is the end of a sentence the caller
+	// is waiting to hear rather than something to drop as somebody else's.
+	fake := newFakeInworld()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer provider.Close()
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "hello there", Final: true}))
+	s.frames(conn, 3)
+	s.Require().NoError(speak(conn, "u1", make([]int16, 2400)))
+	s.Require().NoError(flushed(conn, "u1"))
+	s.Require().NoError(speak(conn, "u1", make([]int16, 2400)))
+	s.Require().NoError(closed(conn, "u1"))
+
+	// The tail arrives after the completion, so the completion cannot be what ends this.
+	events := s.collect(provider, func(event tts.Event) bool {
+		chunk, ok := event.(tts.AudioChunk)
+		return ok && chunk.Index == 1
+	})
+
+	var chunks []tts.AudioChunk
+	var completions int
+	for _, event := range events {
+		switch typed := event.(type) {
+		case tts.AudioChunk:
+			chunks = append(chunks, typed)
+		case tts.SynthesisComplete:
+			completions++
+		}
+	}
+	s.Len(chunks, 2, "the tail of the utterance was dropped rather than spoken")
+	s.Equal(1, completions, "the utterance was settled more than once")
+}
+
+func (s *InworldSocketSuite) TestAudioForAClosedContextIsDropped() {
+	// Once the server says the context is closed, whatever keeps draining onto the shared
+	// socket belongs to nothing, and speaking it would cut into whatever came next.
+	fake := newFakeInworld()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer provider.Close()
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "hello", Final: true}))
+	s.frames(conn, 3)
+	s.Require().NoError(flushed(conn, "u1"))
+	s.Require().NoError(closed(conn, "u1"))
+	s.collect(provider, func(event tts.Event) bool {
+		_, done := event.(tts.SynthesisComplete)
+		return done
+	})
+
+	s.Require().NoError(speak(conn, "u1", make([]int16, 2400)))
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u2", Text: "next", Final: true}))
+	s.frames(conn, 3)
+	s.Require().NoError(speak(conn, "u2", make([]int16, 2400)))
+
+	events := s.collect(provider, func(event tts.Event) bool {
+		chunk, ok := event.(tts.AudioChunk)
+		return ok && chunk.SynthesisID == "u2"
+	})
+	for _, event := range events {
+		if chunk, ok := event.(tts.AudioChunk); ok {
+			s.NotEqual("u1", chunk.SynthesisID,
+				"audio for a closed context was spoken over the next utterance")
+		}
+	}
 }
 
 func (s *InworldSocketSuite) TestFlushClosesTheContextOnce() {
