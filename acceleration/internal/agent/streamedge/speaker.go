@@ -193,6 +193,22 @@ func (s *speaker) flush() {
 	}
 }
 
+// drop throws away speech that has been published but not heard yet, so barge-in stops the
+// agent within a frame rather than at the end of what is already queued.
+//
+// The pipeline is flushed first and what comes out of it discarded along with the rest: a
+// tail left inside belongs to the reply being abandoned, and would otherwise be the first
+// thing heard at the start of the next one.
+func (s *speaker) drop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.flush()
+	s.frames = nil
+	s.speaking = false
+	s.drained.Broadcast()
+}
+
 // pending reports whether any of the speech written here is still waiting to go out,
 // whether queued as frames or held inside the pipeline.
 //

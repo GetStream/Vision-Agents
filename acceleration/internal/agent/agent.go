@@ -1726,6 +1726,10 @@ func (a *Agent) interrupt(participant stt.Participant) {
 			a.fail(err, "tts")
 		}
 	}
+	// Cancelling the voice only stops what it has not synthesised yet. What it already sent
+	// is queued at the edge, and leaving it there is the caller being talked over for as
+	// long as that queue is deep.
+	a.dropSpeech()
 	if model != nil {
 		if err := model.Interrupt(turnID); err != nil {
 			a.fail(err, "llm")
@@ -1767,6 +1771,13 @@ func (a *Agent) respondQueued() {
 func (a *Agent) speechPending() bool {
 	playout, ok := a.options.Edge.(Playout)
 	return ok && playout.SpeechPending()
+}
+
+// dropSpeech throws away speech the agent has published but the caller has not heard yet.
+func (a *Agent) dropSpeech() {
+	if playout, ok := a.options.Edge.(Playout); ok {
+		playout.DropSpeech()
+	}
 }
 
 // speaking reports whether a turn is still the one the agent is on.

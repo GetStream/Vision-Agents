@@ -205,6 +205,44 @@ func (s *StreamEdgeSuite) TestTheEndOfAnUtteranceReachesTheCall() {
 	}
 }
 
+func (s *StreamEdgeSuite) TestSpeechNotHeardYetIsThrownAwayOnBargeIn() {
+	// When the caller takes the floor the agent has to stop being heard, and cancelling the
+	// voice only stops what it has not synthesised yet. What it already sent is queued here,
+	// and the caller is talked over for as long as that queue is deep.
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	s.Require().NoError(talker.Write(speech(24_000, 200)))
+	_, err := talker.NextSample(s.ctx)
+	s.Require().NoError(err)
+
+	talker.drop()
+
+	s.EqualValues(audioLevelSilent, talker.CurrentAudioLevel(),
+		"the other participants' clients still show the agent as talking")
+	sample, err := talker.NextSample(s.ctx)
+	s.Require().NoError(err)
+	s.Equal(silenceFrame, sample.Data, "the abandoned reply is still being heard")
+	s.False(talker.pending(), "nothing of the abandoned reply is still waiting to go out")
+}
+
+func (s *StreamEdgeSuite) TestTheTailOfAnAbandonedReplyIsNotHeardOnTheNextOne() {
+	// Emptying the queue is not enough on its own: what the pipeline is holding belongs to
+	// the reply being abandoned too, and would otherwise be the first thing the caller hears
+	// of the next one.
+	talker := newSpeaker(slog.New(slog.DiscardHandler))
+	s.T().Cleanup(func() { _ = talker.Close() })
+	_, err := talker.NextSample(s.ctx)
+	s.Require().NoError(err)
+	s.Require().NoError(talker.Write(speech(24_000, 170)))
+
+	talker.drop()
+	s.Require().NoError(talker.Write(speech(24_000, 100)))
+
+	heardMs := len(s.drain(talker)) * 20
+	s.LessOrEqual(heardMs, 100+flushFrames*20,
+		"the abandoned reply was heard at the start of the next one")
+}
+
 func (s *StreamEdgeSuite) TestSpeechNotHeardYetIsReportedAsWaiting() {
 	// A voice streams a reply far faster than it is spoken, so when the provider says it
 	// has finished, most of the reply is still queued here. Leaving the call throws that

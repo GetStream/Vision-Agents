@@ -39,7 +39,9 @@ type loopbackEdge struct {
 	inbound   chan InboundAudio
 	attending chan Attendance
 
-	mu        sync.Mutex
+	mu sync.Mutex
+	// published is what the agent has handed over and the caller has not heard yet, so it
+	// is both the log of what was said and the queue DropSpeech throws away.
 	published []audio.PcmData
 	joined    bool
 	left      bool
@@ -77,6 +79,15 @@ func (e *loopbackEdge) SpeechPending() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.unheard
+}
+
+// DropSpeech throws away speech that has been published but not heard, the way a real edge
+// empties its playout queue when the caller takes the floor.
+func (e *loopbackEdge) DropSpeech() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.published = nil
+	e.unheard = false
 }
 
 // holdSpeech makes the edge report published speech as still on its way out, the way a real
@@ -668,6 +679,15 @@ func (s *AgentSuite) speak(participant stt.Participant) {
 }
 
 // says makes the transcriber report a settled turn.
+// synthesises has the voice send one chunk of audio for a turn, the way a provider does
+// while a reply is being spoken.
+func (s *AgentSuite) synthesises(turnID string) {
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: turnID,
+		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+	})
+}
+
 func (s *AgentSuite) says(participant stt.Participant, text string) {
 	s.saysAfter(participant, text, 0)
 }
@@ -1703,6 +1723,46 @@ func (s *AgentSuite) TestBargeInStopsTheModelAndTheVoice() {
 		"the interruption was never reported")
 }
 
+func (s *AgentSuite) TestBargeInThrowsAwaySpeechNotHeardYet() {
+	// Cancelling the voice only stops what it has not synthesised yet. A reply is streamed
+	// far faster than it is spoken, so most of it is still queued at the edge, and leaving
+	// it there is the caller being talked over after they took the floor.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.voice.silent = true
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	s.synthesises(s.model.requests()[0].ID)
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was never published")
+
+	s.says(participant, "actually, stop")
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "no interruption")
+	s.eventually(func() bool { return len(s.edge.heard()) == 0 },
+		"the rest of the abandoned reply is still on its way to the caller")
+}
+
+func (s *AgentSuite) TestShorteningLeavesSpeechAlreadyOnItsWayOut() {
+	// Shortening is the softer answer to an overlap: the model stops adding to the reply,
+	// but what has already been said is still worth hearing, so nothing that has been
+	// published is thrown away.
+	s.join(true)
+	s.model.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.synthesises(s.model.requests()[0].ID)
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the reply was never published")
+	s.flow.then = []string{`{"disposition":"respond","floor":"shorten"}`}
+
+	s.says(participant, "only the vegetarian options")
+
+	s.eventually(func() bool { return s.model.interrupted() == 1 }, "the long answer kept generating")
+	s.NotEmpty(s.edge.heard(), "shortening threw away speech already on its way to the caller")
+}
+
 func (s *AgentSuite) TestAudioFromAnAbandonedTurnIsNotPublished() {
 	// A provider keeps sending for a moment after being interrupted. Dropping that audio
 	// here is what makes barge-in sound immediate.
@@ -1717,11 +1777,7 @@ func (s *AgentSuite) TestAudioFromAnAbandonedTurnIsNotPublished() {
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "no interruption")
 
 	before := len(s.edge.heard())
-	turnID := s.model.requests()[0].ID
-	s.voice.emitter.Send(tts.AudioChunk{
-		SynthesisID: turnID,
-		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
-	})
+	s.synthesises(s.model.requests()[0].ID)
 
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "no interruption")
 	s.Equal(before, len(s.edge.heard()), "audio from the abandoned turn stays unheard")

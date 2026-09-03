@@ -201,6 +201,10 @@ func (e *Edge) PublishAudio(pcm audio.PcmData) error { return e.speaker.Write(pc
 // agent.Playout.
 func (e *Edge) SpeechPending() bool { return e.speaker.pending() }
 
+// DropSpeech throws away published speech that has not been heard yet, satisfying
+// agent.Playout.
+func (e *Edge) DropSpeech() { e.speaker.drop() }
+
 // Leave releases the call. It is safe to call more than once.
 func (e *Edge) Leave() error {
 	var err error

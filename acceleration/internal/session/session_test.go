@@ -59,6 +59,12 @@ func (e *quietEdge) SpeechPending() bool {
 	return e.unheard
 }
 
+func (e *quietEdge) DropSpeech() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.unheard = false
+}
+
 // holdSpeech makes the edge report published speech as still on its way out, the way a real
 // one does while a reply is being spoken.
 func (e *quietEdge) holdSpeech(unheard bool) {

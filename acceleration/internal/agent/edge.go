@@ -39,16 +39,24 @@ type Attendance struct {
 	Joined bool
 }
 
-// Playout is an edge that can say whether the speech handed to it has been heard yet.
+// Playout is an edge that holds a queue of speech on its way to the participants.
 //
 // Separate from Edge rather than a fifth method on it, because only a transport that paces
-// audio out has anything to report. It matters at the end of a reply: a voice provider
-// streams an utterance far faster than it is spoken, so the provider saying it has finished
-// means it sent the last chunk, not that the caller heard it. Leaving on that word cuts the
-// agent off mid-word, and an edge that cannot say leaves nothing to wait for.
+// audio out has a queue at all. It matters at both ends of a reply. At the end of one, a
+// voice provider streams an utterance far faster than it is spoken, so the provider saying it
+// has finished means it sent the last chunk, not that the caller heard it, and leaving on
+// that word cuts the agent off mid-word. When the caller takes the floor mid-reply,
+// cancelling the provider only stops what it has not synthesised yet, and what it already
+// sent goes on being heard until the queue is thrown away.
+//
+// An edge that cannot say leaves nothing to wait for and nothing to drop, which is what an
+// in-process loopback is.
 type Playout interface {
 	// SpeechPending reports whether audio already published is still waiting to go out.
 	SpeechPending() bool
+	// DropSpeech throws away audio published but not heard yet, so an interruption stops the
+	// agent within a frame rather than at the end of what is already queued.
+	DropSpeech()
 }
 
 // Roster is an edge that can say who else is in the call.
