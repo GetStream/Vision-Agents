@@ -7,6 +7,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/fish"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/inworld"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/s2pro"
 )
 
@@ -52,6 +53,14 @@ func DefaultRegistry() *Registry {
 
 	registry.Register(breeze.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
 		return breeze.New(breeze.Options{Model: spec.Model, Voice: spec.Voice, Logger: spec.Logger})
+	})
+
+	registry.Register(inworld.ProviderName, func(spec routing.Spec) (tts.TTS, error) {
+		return inworld.New(inworld.Options{
+			Model:   spec.Model,
+			VoiceID: spec.Voice,
+			Logger:  spec.Logger,
+		})
 	})
 
 	return registry
