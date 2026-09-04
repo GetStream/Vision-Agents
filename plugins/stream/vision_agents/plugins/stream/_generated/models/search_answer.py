@@ -13,11 +13,11 @@ if TYPE_CHECKING:
     from ..models.search_result import SearchResult
 
 
-T = TypeVar("T", bound="SearchResponse")
+T = TypeVar("T", bound="SearchAnswer")
 
 
 @_attrs_define
-class SearchResponse:
+class SearchAnswer:
     """
     Attributes:
         provider (str):
@@ -77,15 +77,15 @@ class SearchResponse:
 
         answer = d.pop("answer", UNSET)
 
-        search_response = cls(
+        search_answer = cls(
             provider=provider,
             model=model,
             results=results,
             answer=answer,
         )
 
-        search_response.additional_properties = d
-        return search_response
+        search_answer.additional_properties = d
+        return search_answer
 
     @property
     def additional_keys(self) -> list[str]:

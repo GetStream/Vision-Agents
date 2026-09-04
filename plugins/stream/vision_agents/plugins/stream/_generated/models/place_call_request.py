@@ -26,7 +26,7 @@ class PlaceCallRequest:
         to (str):
         call_id (str | Unset): The Stream call the answered leg joins, and so the one the agent has to be in. Omit to
             have one named after this call, since two calls from the same number are two conversations.
-        call_type (str | Unset): The Stream call type. Omit for "default".
+        call_type (str | Unset): The Stream call type. Omit for "agent".
         ring_timeout_seconds (int | Unset): How long to ring before giving up. Omit to leave the vendor's default, which
             is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than
             ringing for its own default.

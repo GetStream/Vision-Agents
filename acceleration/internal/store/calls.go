@@ -188,6 +188,41 @@ func (s *Store) CallTurns(ctx context.Context, customerID, agentID string, from 
 	return turns, nil
 }
 
+// UsedModel is a provider/model that successfully served a call.
+type UsedModel struct {
+	Modality string `bun:"modality"`
+	Provider string `bun:"provider"`
+	Model    string `bun:"model"`
+}
+
+// CallUsedModels returns the distinct provider/models that did work on a call, most
+// recently used first. They are keyed by agent and window the way turns are, because a
+// request row carries the Stream call rather than the session that recorded it.
+func (s *Store) CallUsedModels(ctx context.Context, customerID, agentID string, from time.Time, to *time.Time) ([]UsedModel, error) {
+	if customerID == "" || agentID == "" {
+		return nil, errors.New("store: a customer and an agent id are required")
+	}
+
+	query := s.db.NewSelect().
+		TableExpr("requests").
+		ColumnExpr("modality, provider, model").
+		Where("customer_id = ?", customerID).
+		Where("agent_id = ?", agentID).
+		Where("success").
+		Where("started_at >= ?", from).
+		Group("modality", "provider", "model").
+		OrderExpr("MAX(started_at) DESC")
+	if to != nil {
+		query = query.Where("started_at <= ?", *to)
+	}
+
+	var used []UsedModel
+	if err := query.Scan(ctx, &used); err != nil {
+		return nil, fmt.Errorf("store: call used models: %w", err)
+	}
+	return used, nil
+}
+
 // RecordCallEvents writes a batch of judgements. They are written together because they
 // arrive together: a call makes several decisions a second, and one round trip each would
 // have the writer permanently behind.

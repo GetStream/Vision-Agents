@@ -19,7 +19,7 @@ class ChatToken:
         token (str):
         user_id (str):
         user_name (str):
-        channel_type (str): Always messaging, which is the type a conversation is written to.
+        channel_type (str): Always agent, which is the type a conversation is written to.
         channel_id (str): The channel holding the conversation, which is the agent id.
         expires_at (datetime.datetime):
     """

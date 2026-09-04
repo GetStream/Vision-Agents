@@ -7,11 +7,11 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-T = TypeVar("T", bound="AuthorizePluginResponse")
+T = TypeVar("T", bound="PluginAuthorization")
 
 
 @_attrs_define
-class AuthorizePluginResponse:
+class PluginAuthorization:
     """
     Attributes:
         authorize_url (str): The URL the browser should open to finish the login.
@@ -38,12 +38,12 @@ class AuthorizePluginResponse:
         d = dict(src_dict)
         authorize_url = d.pop("authorize_url")
 
-        authorize_plugin_response = cls(
+        plugin_authorization = cls(
             authorize_url=authorize_url,
         )
 
-        authorize_plugin_response.additional_properties = d
-        return authorize_plugin_response
+        plugin_authorization.additional_properties = d
+        return plugin_authorization
 
     @property
     def additional_keys(self) -> list[str]:

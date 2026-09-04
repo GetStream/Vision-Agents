@@ -72,9 +72,9 @@ def sync_detailed(
 ) -> Response[ChatToken | Error]:
     """What a browser needs to read an agent's conversation
 
-     An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that
-    can read that channel needs no transcript API. This mints the token to read it with, and adds the
-    reader to the channel, since a conversation they are not a member of is one they cannot watch.
+     An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can
+    read that channel needs no transcript API. This mints the token to read it with, and adds the reader
+    to the channel, since a conversation they are not a member of is one they cannot watch.
     The secret stays here, the same as for a call token: the browser is handed something that expires.
 
     Args:
@@ -106,9 +106,9 @@ def sync(
 ) -> ChatToken | Error | None:
     """What a browser needs to read an agent's conversation
 
-     An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that
-    can read that channel needs no transcript API. This mints the token to read it with, and adds the
-    reader to the channel, since a conversation they are not a member of is one they cannot watch.
+     An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can
+    read that channel needs no transcript API. This mints the token to read it with, and adds the reader
+    to the channel, since a conversation they are not a member of is one they cannot watch.
     The secret stays here, the same as for a call token: the browser is handed something that expires.
 
     Args:
@@ -135,9 +135,9 @@ async def asyncio_detailed(
 ) -> Response[ChatToken | Error]:
     """What a browser needs to read an agent's conversation
 
-     An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that
-    can read that channel needs no transcript API. This mints the token to read it with, and adds the
-    reader to the channel, since a conversation they are not a member of is one they cannot watch.
+     An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can
+    read that channel needs no transcript API. This mints the token to read it with, and adds the reader
+    to the channel, since a conversation they are not a member of is one they cannot watch.
     The secret stays here, the same as for a call token: the browser is handed something that expires.
 
     Args:
@@ -167,9 +167,9 @@ async def asyncio(
 ) -> ChatToken | Error | None:
     """What a browser needs to read an agent's conversation
 
-     An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that
-    can read that channel needs no transcript API. This mints the token to read it with, and adds the
-    reader to the channel, since a conversation they are not a member of is one they cannot watch.
+     An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can
+    read that channel needs no transcript API. This mints the token to read it with, and adds the reader
+    to the channel, since a conversation they are not a member of is one they cannot watch.
     The secret stays here, the same as for a call token: the browser is handed something that expires.
 
     Args:

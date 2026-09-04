@@ -31,7 +31,7 @@ const watcherBuffer = 256
 // Defaults a caller can leave out. They are the same ones cmd/agent's flags carry, so a
 // session started with an almost empty spec behaves like the demo.
 const (
-	defaultCallType     = "default"
+	defaultCallType     = "agent"
 	defaultUserID       = "vision-agent"
 	defaultUserName     = "Vision Agent"
 	defaultLLMTarget    = "llm-fast"
@@ -133,13 +133,29 @@ func (s *Session) State() State {
 // Provider names the model answering and the voice speaking, which are only known once the
 // routers have picked them.
 func (s *Session) Provider() (llm string, tts string) {
+	_, llm, tts, _ = s.Resolved()
+	return llm, tts
+}
+
+// Resolved names the providers routing picked for this call. Transcription is empty until
+// somebody has been heard, because a listener is opened per speaker rather than up front.
+func (s *Session) Resolved() (stt, llm, tts, subagent string) {
+	if s.voiceAgent == nil {
+		return
+	}
+	if ears := s.voiceAgent.STT(); ears != nil {
+		stt = ears.Provider() + "/" + ears.Model()
+	}
 	if model := s.voiceAgent.LLM(); model != nil {
 		llm = model.Provider() + "/" + model.Model()
 	}
 	if voice := s.voiceAgent.TTS(); voice != nil {
 		tts = voice.Provider() + "/" + voice.Model()
 	}
-	return llm, tts
+	if think := s.voiceAgent.Subagent(); think != nil {
+		subagent = think.Provider() + "/" + think.Model()
+	}
+	return stt, llm, tts, subagent
 }
 
 // watcher is one attached consumer.

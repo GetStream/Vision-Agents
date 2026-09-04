@@ -608,6 +608,24 @@ func (a *Agent) LLM() *llmrouter.Session { return a.llm }
 // TTS exposes the voice session.
 func (a *Agent) TTS() *ttsrouter.Session { return a.tts }
 
+// STT is one of the live transcriptions, if anybody has been heard yet.
+func (a *Agent) STT() *sttrouter.Session {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, session := range a.listeners {
+		return session
+	}
+	return nil
+}
+
+// Subagent is the slower model delegated work runs on.
+func (a *Agent) Subagent() *llmrouter.Session {
+	if a.harness == nil {
+		return nil
+	}
+	return a.harness.Subagent()
+}
+
 // History returns the conversation so far.
 func (a *Agent) History() []llm.Message {
 	a.mu.Lock()

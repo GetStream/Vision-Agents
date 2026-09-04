@@ -23,7 +23,7 @@ class TransferCallRequest:
         from_ (str): The customer's number the human is dialled from, which is what they see.
         to (str): The human being brought onto the call.
         call_id (str): The Stream call the caller and the agent are already on.
-        call_type (str | Unset): The Stream call type. Omit for "default".
+        call_type (str | Unset): The Stream call type. Omit for "agent".
         tags (TransferCallRequestTags | Unset):
     """
 

@@ -13,41 +13,61 @@ const modalities = [
   {
     label: "Transcribe",
     of: (call: Call) => call.stt,
+    used: (call: Call) => call.stt_used,
     hint: "Speech to text",
   },
   {
     label: "Answer",
     of: (call: Call) => call.llm,
+    used: (call: Call) => call.llm_used,
     hint: "Holds the conversation",
   },
   {
     label: "Speak",
     of: (call: Call) => call.tts,
+    used: (call: Call) => call.tts_used,
     hint: "Text to speech",
   },
   {
     label: "Think",
     of: (call: Call) => call.subagent,
+    used: (call: Call) => call.subagent_used,
     hint: "Runs delegated work",
   },
 ] as const;
 
 /**
  * Target splits a `provider/model` name so the model is what stands out. A capability
- * shortcut such as `llm-fast` has no slash and is shown as it was asked for, because that
- * is what it is: a request that several models can answer.
+ * shortcut such as `llm-fast` has no slash and is shown as it was asked for, with the
+ * provider routing picked underneath once that is known.
  */
-function Target({ value }: { value?: string }) {
+function Target({ value, used }: { value?: string; used?: string }) {
   if (!value) {
     return <span className="text-sm text-muted">—</span>;
   }
 
+  const selected = used && used !== value ? used : undefined;
+
+  return (
+    <div>
+      <Name value={value} />
+      {selected ? (
+        <div className="mt-0.5" title="Selected by routing">
+          <Name value={selected} quiet />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Name({ value, quiet = false }: { value: string; quiet?: boolean }) {
   const slash = value.indexOf("/");
+  const weight = quiet ? "text-xs" : "text-sm font-medium";
   if (slash < 0) {
-    return <span className="text-sm font-medium">{value}</span>;
+    return <span className={weight}>{value}</span>;
   }
   return (
-    <span className="text-sm font-medium break-all">
+    <span className={`${weight} break-all`}>
       <span className="text-muted">{value.slice(0, slash + 1)}</span>
       {value.slice(slash + 1)}
     </span>
@@ -72,7 +92,7 @@ export function Pipeline({
       className={className}
       aside={
         <span className="text-xs text-muted">
-          What was asked for, not what each turn resolved to
+          What was asked for, and what routing picked
         </span>
       }
     >
@@ -83,7 +103,7 @@ export function Pipeline({
               {modality.label}
             </div>
             <div className="mt-1">
-              <Target value={modality.of(call)} />
+              <Target value={modality.of(call)} used={modality.used(call)} />
             </div>
             <div className="mt-0.5 text-xs text-muted">{modality.hint}</div>
           </div>

@@ -916,7 +916,10 @@ type Call struct {
 	Instructions *string `json:"instructions,omitempty"`
 
 	// Llm The target that held the conversation.
-	Llm         *string `json:"llm,omitempty"`
+	Llm *string `json:"llm,omitempty"`
+
+	// LlmUsed The provider/model that held the conversation.
+	LlmUsed     *string `json:"llm_used,omitempty"`
 	ReviewNotes *string `json:"review_notes,omitempty"`
 
 	// ReviewScore How well the agent handled it, from 1 to 5.
@@ -929,8 +932,14 @@ type Call struct {
 	// Stt The transcription target the call ran with, after a session's overrides were folded into whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is several models and routing fails over between them, so per-turn providers are in the request rows.
 	Stt *string `json:"stt,omitempty"`
 
+	// SttUsed The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over.
+	SttUsed *string `json:"stt_used,omitempty"`
+
 	// Subagent The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered.
 	Subagent *string `json:"subagent,omitempty"`
+
+	// SubagentUsed The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
+	SubagentUsed *string `json:"subagent_used,omitempty"`
 
 	// Summary What a model made of the call, written once it was over.
 	Summary  *string            `json:"summary,omitempty"`
@@ -939,6 +948,9 @@ type Call struct {
 
 	// Tts The voice target, on the same terms as stt.
 	Tts *string `json:"tts,omitempty"`
+
+	// TtsUsed The provider/model that spoke, on the same terms as stt_used.
+	TtsUsed *string `json:"tts_used,omitempty"`
 }
 
 // CallDirection defines model for Call.Direction.
@@ -1657,6 +1669,12 @@ type Session struct {
 
 	// State Whether the agent is still in the call.
 	State SessionState `json:"state"`
+
+	// Stt The provider and model transcribing, once somebody has been heard.
+	Stt *string `json:"stt,omitempty"`
+
+	// Subagent The provider and model delegated work runs on.
+	Subagent *string `json:"subagent,omitempty"`
 
 	// Text The conversation is held in writing rather than on a call.
 	Text *bool `json:"text,omitempty"`

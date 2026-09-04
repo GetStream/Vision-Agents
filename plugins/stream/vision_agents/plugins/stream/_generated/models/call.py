@@ -40,6 +40,12 @@ class Call:
         llm (str | Unset): The target that held the conversation.
         subagent (str | Unset): The slower target delegated work ran on. Empty means nothing was delegated, which also
             means the skills below were never offered.
+        stt_used (str | Unset): The provider/model that transcribed, once routing picked one. Empty until somebody has
+            been heard, and the last one that served if routing failed over.
+        tts_used (str | Unset): The provider/model that spoke, on the same terms as stt_used.
+        llm_used (str | Unset): The provider/model that held the conversation.
+        subagent_used (str | Unset): The provider/model delegated work ran on. Empty when nothing was handed over, or
+            when the thinking target was never reached.
         instructions (str | Unset): What the agent was told to be on this call.
         skills (list[str] | Unset): What the fast model could hand to the subagent. The instructions behind each name
             are in the skill registry.
@@ -64,6 +70,10 @@ class Call:
     tts: str | Unset = UNSET
     llm: str | Unset = UNSET
     subagent: str | Unset = UNSET
+    stt_used: str | Unset = UNSET
+    tts_used: str | Unset = UNSET
+    llm_used: str | Unset = UNSET
+    subagent_used: str | Unset = UNSET
     instructions: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
     summary: str | Unset = UNSET
@@ -104,6 +114,14 @@ class Call:
         llm = self.llm
 
         subagent = self.subagent
+
+        stt_used = self.stt_used
+
+        tts_used = self.tts_used
+
+        llm_used = self.llm_used
+
+        subagent_used = self.subagent_used
 
         instructions = self.instructions
 
@@ -152,6 +170,14 @@ class Call:
             field_dict["llm"] = llm
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
+        if stt_used is not UNSET:
+            field_dict["stt_used"] = stt_used
+        if tts_used is not UNSET:
+            field_dict["tts_used"] = tts_used
+        if llm_used is not UNSET:
+            field_dict["llm_used"] = llm_used
+        if subagent_used is not UNSET:
+            field_dict["subagent_used"] = subagent_used
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
         if skills is not UNSET:
@@ -207,6 +233,14 @@ class Call:
 
         subagent = d.pop("subagent", UNSET)
 
+        stt_used = d.pop("stt_used", UNSET)
+
+        tts_used = d.pop("tts_used", UNSET)
+
+        llm_used = d.pop("llm_used", UNSET)
+
+        subagent_used = d.pop("subagent_used", UNSET)
+
         instructions = d.pop("instructions", UNSET)
 
         skills = cast(list[str], d.pop("skills", UNSET))
@@ -240,6 +274,10 @@ class Call:
             tts=tts,
             llm=llm,
             subagent=subagent,
+            stt_used=stt_used,
+            tts_used=tts_used,
+            llm_used=llm_used,
+            subagent_used=subagent_used,
             instructions=instructions,
             skills=skills,
             summary=summary,

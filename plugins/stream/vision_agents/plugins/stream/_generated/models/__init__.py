@@ -8,7 +8,6 @@ from .agent_mode import AgentMode
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
 from .authorize_plugin_request import AuthorizePluginRequest
-from .authorize_plugin_response import AuthorizePluginResponse
 from .available_number import AvailableNumber
 from .buy_number_request import BuyNumberRequest
 from .buy_number_request_tags import BuyNumberRequestTags
@@ -67,6 +66,7 @@ from .place_call_request_headers import PlaceCallRequestHeaders
 from .place_call_request_tags import PlaceCallRequestTags
 from .placed_call import PlacedCall
 from .plugin import Plugin
+from .plugin_authorization import PluginAuthorization
 from .plugin_connection import PluginConnection
 from .plugin_connection_status import PluginConnectionStatus
 from .prepare_voice_request import PrepareVoiceRequest
@@ -82,13 +82,13 @@ from .router_config_request import RouterConfigRequest
 from .router_config_request_tags import RouterConfigRequestTags
 from .router_config_tags import RouterConfigTags
 from .say_request import SayRequest
+from .search_answer import SearchAnswer
 from .search_depth import SearchDepth
 from .search_options import SearchOptions
 from .search_options_contents_item import SearchOptionsContentsItem
 from .search_options_output_schema import SearchOptionsOutputSchema
 from .search_request import SearchRequest
 from .search_request_tags import SearchRequestTags
-from .search_response import SearchResponse
 from .search_result import SearchResult
 from .session import Session
 from .session_memory import SessionMemory
@@ -152,7 +152,6 @@ __all__ = (
     "AttachNumberRequest",
     "AttachedNumber",
     "AuthorizePluginRequest",
-    "AuthorizePluginResponse",
     "AvailableNumber",
     "BuyNumberRequest",
     "BuyNumberRequestTags",
@@ -211,6 +210,7 @@ __all__ = (
     "PlaceCallRequestTags",
     "PlacedCall",
     "Plugin",
+    "PluginAuthorization",
     "PluginConnection",
     "PluginConnectionStatus",
     "PrepareVoiceRequest",
@@ -226,13 +226,13 @@ __all__ = (
     "RouterConfigRequestTags",
     "RouterConfigTags",
     "SayRequest",
+    "SearchAnswer",
     "SearchDepth",
     "SearchOptions",
     "SearchOptionsContentsItem",
     "SearchOptionsOutputSchema",
     "SearchRequest",
     "SearchRequestTags",
-    "SearchResponse",
     "SearchResult",
     "Session",
     "SessionMemory",

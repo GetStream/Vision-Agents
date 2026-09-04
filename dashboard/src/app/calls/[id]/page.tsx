@@ -11,7 +11,14 @@ import { Pipeline } from "@/components/Pipeline";
 import { SpeakingTimeline } from "@/components/SpeakingTimeline";
 import { Transcript } from "@/components/Transcript";
 import { VoicePanel } from "@/components/VoicePanel";
-import { duration, Failure, PageHeading, Panel, Tile } from "@/components/ui";
+import {
+  duration,
+  Failure,
+  PageHeading,
+  Panel,
+  Stale,
+  Tile,
+} from "@/components/ui";
 import { router } from "@/lib/router";
 import { useSession } from "@/lib/useSession";
 
@@ -54,12 +61,17 @@ export default function CallPage({
     retry: false,
   });
 
-  if (call.isError) {
-    return <Failure error={call.error} />;
-  }
+  // Only a call that never arrived is worth a bare failure. Once it has, a lost router is a
+  // note on a page that keeps working, because everything on it is already here.
   if (!call.data) {
-    return <p className="text-sm text-muted">Loading the call…</p>;
+    return call.isError ? (
+      <Failure error={call.error} />
+    ) : (
+      <p className="text-sm text-muted">Loading the call…</p>
+    );
   }
+
+  const unreachable = call.error ?? events.error ?? timeline.error;
 
   const who =
     call.data.direction === "inbound"
@@ -68,6 +80,7 @@ export default function CallPage({
 
   return (
     <>
+      {unreachable ? <Stale className="mb-4" error={unreachable} /> : null}
       <PageHeading
         title={who}
         description={`${call.data.direction} · started ${new Date(

@@ -41,7 +41,7 @@ export type SimulationLine = Schemas["SimulationLine"];
 export type Plugin = Schemas["Plugin"];
 export type PluginConnection = Schemas["PluginConnection"];
 export type AuthorizePluginRequest = Schemas["AuthorizePluginRequest"];
-export type AuthorizePluginResponse = Schemas["AuthorizePluginResponse"];
+export type PluginAuthorization = Schemas["PluginAuthorization"];
 
 /**
  * Where the router is and who we are talking to it as.
@@ -193,7 +193,7 @@ export const router = {
   pluginConnections: (configID: string) =>
     send<PluginConnection[]>("GET", `/v1/agents/configs/${configID}/plugins`),
   authorizePlugin: (configID: string, pluginID: string, instanceURL?: string) =>
-    send<AuthorizePluginResponse>(
+    send<PluginAuthorization>(
       "POST",
       `/v1/agents/configs/${configID}/plugins/${pluginID}/authorize`,
       { body: instanceURL ? { instance_url: instanceURL } : {} },

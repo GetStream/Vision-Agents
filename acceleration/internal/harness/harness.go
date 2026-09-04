@@ -400,6 +400,10 @@ func (h *Harness) Pending() bool {
 // Events carries what the harness decided. It is closed by Close.
 func (h *Harness) Events() <-chan Event { return h.emitter.Events() }
 
+// Subagent is the slower model delegated work runs on. Nil when the agent answers
+// everything itself.
+func (h *Harness) Subagent() *llmrouter.Session { return h.options.Subagent }
+
 // Close abandons every task in flight and releases the subagent.
 func (h *Harness) Close() error {
 	var err error
