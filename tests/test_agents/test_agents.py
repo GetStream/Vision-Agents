@@ -723,6 +723,7 @@ class TestAgent:
             call_id="support-line",
             ring_timeout=20.0,
             initial_digits="ww1234#",
+            wait_for_end=False,
         ) as placed:
             assert agent.call is not None
             assert agent.call.id == "support-line"
@@ -766,7 +767,7 @@ class TestAgent:
             caller_number="+15550001111",
         )
 
-        async with agent.answer(arriving):
+        async with agent.answer(arriving, wait_for_end=False):
             assert agent.call is not None
             assert agent.call.id == "phone-+15125551234"
 
@@ -782,7 +783,8 @@ class TestAgent:
         )
 
         async with agent.answer(
-            InboundCall(call_id="the-support-line", call_type="support")
+            InboundCall(call_id="the-support-line", call_type="support"),
+            wait_for_end=False,
         ):
             assert agent._call_type == "support"
 
@@ -812,7 +814,7 @@ class TestAgent:
             called_number="+15125551234",
         )
 
-        async with agent.join(arriving):
+        async with agent.join(arriving, wait_for_end=False):
             assert agent.call is not None
             assert agent.call.id == "phone-+15125551234"
             await arriving.wait_for_phone_participant()
@@ -872,7 +874,7 @@ class TestAgent:
             edge=edge,
             agent_user=User(name="test"),
         )
-        async with agent.join(call):
+        async with agent.join(call, wait_for_end=False):
             assert edge.authenticate_call_count == 1
 
     async def test_join_does_not_double_authenticate(self, call: Call):
@@ -884,7 +886,7 @@ class TestAgent:
             agent_user=User(name="test"),
         )
         await agent.authenticate()
-        async with agent.join(call):
+        async with agent.join(call, wait_for_end=False):
             assert edge.authenticate_call_count == 1
 
     async def test_avatar_wiring(self):
@@ -964,7 +966,7 @@ class TestAgent:
             memory_filter={"user_id": "222"},
         )
 
-        async with agent.join(call):
+        async with agent.join(call, wait_for_end=False):
             pass
 
         assert llm.joined is not None
@@ -990,7 +992,7 @@ class TestAgent:
             heard.append(event)
             arrived.set()
 
-        async with agent.join(call):
+        async with agent.join(call, wait_for_end=False):
             await llm.report(
                 RemoteEvent(
                     type="user_speech",
@@ -1011,8 +1013,37 @@ class TestAgent:
         llm = DummyRemotePipeline()
         agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
 
-        async with agent.join(call):
+        async with agent.join(call, wait_for_end=False):
             await agent.say("one moment")
             await agent.simple_response("greet them")
 
         assert llm.said == ["one moment", "greet them"]
+
+    async def test_leaving_the_block_waits_for_the_call_to_end(self, call: Call):
+        # Leaving the block is not hanging up: an agent that has said its greeting stays
+        # until the call is over, so nothing has to be waited on by hand.
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+        ended = False
+
+        async def end_the_call():
+            nonlocal ended
+            await asyncio.sleep(0.05)
+            ended = True
+            await llm.report(RemoteEvent(type="ended"))
+
+        ending = asyncio.create_task(end_the_call())
+        async with agent.join(call, participant_wait_timeout=0):
+            assert not ended
+
+        assert ended
+        await ending
+
+    async def test_a_call_can_be_left_without_waiting_for_it_to_end(self, call: Call):
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.join(call, wait_for_end=False):
+            pass
+
+        assert llm.left

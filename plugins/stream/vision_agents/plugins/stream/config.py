@@ -134,9 +134,6 @@ async def define_agent(
     client = Backend(url=url, customer_id=customer_id).client()
 
     named = skills or []
-    if named:
-        await define_skills(named, client)
-
     wanted = AgentConfigRequest(name=name)
     if instructions:
         wanted.instructions = instructions
@@ -157,22 +154,32 @@ async def define_agent(
     if knowledge:
         wanted.knowledge_namespace = knowledge
 
+    config: Optional[AgentConfig] = None
     for stored in _answer(await list_agent_configs.asyncio(client=client)):
         if stored.name == name:
             logger.info("updating agent config %s", stored.id)
-            return _answer(
+            config = _answer(
                 await update_agent_config.asyncio(stored.id, client=client, body=wanted)
             )
-    return _answer(await create_agent_config.asyncio(client=client, body=wanted))
+            break
+    if config is None:
+        config = _answer(await create_agent_config.asyncio(client=client, body=wanted))
+
+    # The skills belong to the config, so they are written after it: a new agent has no id
+    # to hang them off until it has been stored.
+    if named:
+        await define_skills(named, config.id, client)
+    return config
 
 
 async def define_skills(
-    skills: list[Skill], client: AuthenticatedClient
+    skills: list[Skill], config_id: str, client: AuthenticatedClient
 ) -> list[Skill]:
-    """Store skills, editing whichever is already under each name.
+    """Store one config's skills, editing whichever is already under each name.
 
     Args:
         skills: What to store.
+        config_id: The config they belong to, which is what a name is unique within.
         client: The router to store them in, from `Backend.client`.
 
     Returns:
@@ -180,11 +187,14 @@ async def define_skills(
     """
     known = {
         stored.name: stored.id
-        for stored in _answer(await list_skills.asyncio(client=client))
+        for stored in _answer(
+            await list_skills.asyncio(client=client, config_id=config_id)
+        )
     }
 
     for skill in skills:
         body = SkillRequest(
+            config_id=config_id,
             name=skill.name,
             description=skill.description,
             instructions=skill.instructions,

@@ -25,23 +25,29 @@ class LLM(llm.LLM):
 
     def __init__(
         self,
-        target: str,
+        target: str = "",
         language: Optional[str] = None,
         max_tokens: int = 0,
         tags: Optional[dict[str, str]] = None,
         url: Optional[str] = None,
         customer_id: Optional[str] = None,
+        config_id: str = "",
+        options: Optional[dict[str, Any]] = None,
     ):
         """Route completions to `target`.
 
         Args:
             target: A `provider/model` name or a capability shortcut such as `llm-fast`.
+                It may instead be held in the named config.
             language: A language hint, which narrows the candidates.
             max_tokens: A ceiling on a reply. Zero leaves the backend's default.
             tags: Cost labels carried onto every request.
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
             customer_id: Who the work is billed to. Defaults to
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
+            config_id: A stored router config to take the options from, by name or by id.
+            options: Per-call overrides of that config's llm block. Usually built by
+                `Router.llm.realtime`.
         """
         super().__init__()
         self.provider_name = "stream"
@@ -49,6 +55,8 @@ class LLM(llm.LLM):
         self.language = language
         self.max_tokens = max_tokens
         self.tags = tags or {}
+        self.config_id = config_id
+        self.options = options or {}
         self.backend = Backend(url=url, customer_id=customer_id)
 
         self._socket: Optional[Socket] = None
@@ -65,12 +73,22 @@ class LLM(llm.LLM):
         await self._socket.send(
             {
                 "type": "start",
+                "config_id": self.config_id,
                 "target": self.model,
                 "languages": [self.language] if self.language else [],
                 "tags": self.tags,
+                "llm": self.options,
             }
         )
         self._reader = asyncio.create_task(self._read())
+
+    async def __aenter__(self) -> "LLM":
+        """Start answering, for a caller holding the session itself."""
+        await self.start()
+        return self
+
+    async def __aexit__(self, *exception) -> None:
+        await self.close()
 
     async def simple_response(
         self,
@@ -95,7 +113,7 @@ class LLM(llm.LLM):
                     "type": "respond",
                     "id": completion,
                     "instructions": self._instructions,
-                    "messages": self._messages(),
+                    "messages": self._messages(text),
                     "max_tokens": self.max_tokens,
                 }
             )
@@ -147,10 +165,15 @@ class LLM(llm.LLM):
             await self._socket.close()
             self._socket = None
 
-    def _messages(self) -> list[dict[str, str]]:
-        """The conversation so far, as the router wants it."""
+    def _messages(self, text: str) -> list[dict[str, str]]:
+        """The conversation so far, as the router wants it.
+
+        A session without a conversation keeps nothing, so what was just asked is all
+        there is to send: the router refuses a response with no input rather than
+        answering out of nothing.
+        """
         if self._conversation is None:
-            return []
+            return [{"role": "user", "content": text}]
         return [
             {"role": message.role or "user", "content": message.content or ""}
             for message in self._conversation.messages

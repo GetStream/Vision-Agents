@@ -45,16 +45,25 @@ class Router:
 
     async def _create_config(self, request: web.Request) -> web.Response:
         return web.json_response(
-            status=201, data=self._store(self.configs, await request.json())
+            status=201, data=self._store(self.configs, await self._config(request))
         )
 
     async def _update_config(self, request: web.Request) -> web.Response:
         return web.json_response(
-            self._store(self.configs, await request.json(), request.match_info["id"])
+            self._store(
+                self.configs, await self._config(request), request.match_info["id"]
+            )
         )
 
     async def _list_skills(self, request: web.Request) -> web.Response:
-        return web.json_response(list(self.skills.values()))
+        held = request.query.get("config_id", "")
+        return web.json_response(
+            [
+                stored
+                for stored in self.skills.values()
+                if not held or stored["config_id"] == held
+            ]
+        )
 
     async def _create_skill(self, request: web.Request) -> web.Response:
         return web.json_response(
@@ -87,6 +96,7 @@ class Router:
             self.configs,
             {
                 "name": body["name"],
+                "mode": "voice",
                 "instructions": body.get("instructions", ""),
                 "skills": [skill["name"] for skill in skills],
                 "knowledge_namespace": body["name"] if body.get("knowledge") else "",
@@ -95,6 +105,15 @@ class Router:
             existing_id,
         )
         return web.json_response({"unchanged": False, "config": stored})
+
+    async def _config(self, request: web.Request) -> dict[str, Any]:
+        """What was asked for, as a config the router would answer with.
+
+        A stored config always says which mode it runs in, whether or not the request
+        mentioned one.
+        """
+        body: dict[str, Any] = await request.json()
+        return dict(body, mode=body.get("mode") or "voice")
 
     def _store(
         self, kept: dict[str, dict[str, Any]], body: dict[str, Any], id: str = ""

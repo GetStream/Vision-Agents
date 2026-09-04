@@ -27,27 +27,34 @@ class STT(stt.STT):
 
     def __init__(
         self,
-        target: str,
+        target: str = "",
         language: Optional[str] = None,
         tags: Optional[dict[str, str]] = None,
         url: Optional[str] = None,
         customer_id: Optional[str] = None,
+        config_id: str = "",
+        options: Optional[dict[str, Any]] = None,
     ):
         """Route transcription to `target`.
 
         Args:
             target: A `provider/model` name or a capability shortcut such as
-                `en-low-latency`.
+                `en-low-latency`. It may instead be held in the named config.
             language: A language hint, which narrows the candidates.
             tags: Cost labels carried onto every request.
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
             customer_id: Who the work is billed to. Defaults to
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
+            config_id: A stored router config to take the options from, by name or by id.
+            options: Per-call overrides of that config's stt block. Usually built by
+                `Router.stt.realtime`.
         """
         super().__init__(provider_name="stream")
         self.model = target
         self.language = language
         self.tags = tags or {}
+        self.config_id = config_id
+        self.options = options or {}
         self.backend = Backend(url=url, customer_id=customer_id)
 
         self._socket: Optional[Socket] = None
@@ -64,14 +71,24 @@ class STT(stt.STT):
         await self._socket.send(
             {
                 "type": "start",
+                "config_id": self.config_id,
                 "target": self.model,
                 "languages": [self.language] if self.language else [],
                 "tags": self.tags,
                 "sample_rate": SAMPLE_RATE,
+                "stt": self.options,
             }
         )
         self._reader = asyncio.create_task(self._read())
         self._on_connected()
+
+    async def __aenter__(self) -> "STT":
+        """Start transcribing, for a caller holding the session itself."""
+        await self.start()
+        return self
+
+    async def __aexit__(self, *exception) -> None:
+        await self.close()
 
     async def process_audio(
         self,

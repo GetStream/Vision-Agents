@@ -128,7 +128,7 @@ class Agent:
 
     Commonly used methods
 
-    * agent.join(call) // join a call
+    * agent.join(call) // join a call; leaving the block waits for it to end
     * agent.simple_response("greet the user")
     * await agent.finish() // (wait for the call session to finish)
     * agent.close() // cleanup
@@ -563,6 +563,7 @@ class Agent:
         self,
         call: Call | InboundCall,
         participant_wait_timeout: Optional[float] = 10.0,
+        wait_for_end: bool = True,
     ) -> AsyncIterator[None]:
         """
         Join the given call.
@@ -578,6 +579,9 @@ class Agent:
             participant_wait_timeout: timeout in seconds to wait for other participants to join before proceeding.
                  If `0`, do not wait at all. If `None`, wait forever.
                  Default - `10.0`, or `0` for an inbound call.
+            wait_for_end: Whether leaving the block waits for the call to end, the way
+                 ending it with `finish()` does. `False` hangs up as soon as the body
+                 is done.
 
         Returns:
 
@@ -608,7 +612,8 @@ class Agent:
                 if participant_wait_timeout != 0:
                     await self.wait_for_participant(timeout=participant_wait_timeout)
                 yield
-                await self.finish()
+                if wait_for_end:
+                    await self.finish()
                 return
 
             await self._start_components()
@@ -670,7 +675,8 @@ class Agent:
             self._call_ended_event = asyncio.Event()
             self._joined_at = time.time()
             yield
-            await self.finish()
+            if wait_for_end:
+                await self.finish()
         except Exception as exc:
             if self._closing or self._closed:
                 # Only log exceptions if the agent is already closing
@@ -698,6 +704,7 @@ class Agent:
         initial_digits: str = "",
         headers: Optional[dict[str, str]] = None,
         custom: Optional[dict[str, str]] = None,
+        wait_for_end: bool = True,
     ) -> AsyncIterator[PlacedCall]:
         """Ring somebody and join the call their answer lands in.
 
@@ -708,7 +715,6 @@ class Agent:
             ```python
             async with agent.outbound_call(from_=held, to=person):
                 await agent.simple_response("greet the user")
-                await agent.finish()
             ```
 
         Args:
@@ -721,6 +727,7 @@ class Agent:
             initial_digits: Pressed once the person answers, e.g. "ww1234#".
             headers: Custom SIP headers carried to the person's leg.
             custom: Fields put on the call, where the agent in it can read them.
+            wait_for_end: Whether leaving the block waits for the call to end.
 
         Yields:
             What was placed, whose `vendor_call_id` names the ringing leg.
@@ -751,7 +758,9 @@ class Agent:
 
         # Nobody is on the call until the phone is answered, so waiting for a participant
         # before starting would be waiting for the ringing to finish.
-        async with self.join(call, participant_wait_timeout=0):
+        async with self.join(
+            call, participant_wait_timeout=0, wait_for_end=wait_for_end
+        ):
             yield placed
 
     @asynccontextmanager
@@ -759,6 +768,7 @@ class Agent:
         self,
         call: InboundCall,
         participant_wait_timeout: Optional[float] = 30.0,
+        wait_for_end: bool = True,
     ) -> AsyncIterator[None]:
         """Join a call somebody has rung in to.
 
@@ -772,7 +782,6 @@ class Agent:
             async def answer(call: InboundCall):
                 async with agent.answer(call):
                     await agent.simple_response("greet the caller")
-                    await agent.finish()
             ```
 
         Args:
@@ -781,6 +790,7 @@ class Agent:
                 before going on, in seconds. `0` does not wait, `None` waits forever.
                 Unlike an outbound call this waits by default, because there is somebody
                 there: greeting a caller before they have joined talks to nobody.
+            wait_for_end: Whether leaving the block waits for the call to end.
 
         Raises:
             ValueError: If the call names no call to join.
@@ -797,7 +807,11 @@ class Agent:
             call.called_number or "an unknown number",
             call.call_id,
         )
-        async with self.join(joined, participant_wait_timeout=participant_wait_timeout):
+        async with self.join(
+            joined,
+            participant_wait_timeout=participant_wait_timeout,
+            wait_for_end=wait_for_end,
+        ):
             yield
 
     async def wait_for_participant(self, timeout: Optional[float] = None) -> None:

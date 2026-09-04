@@ -34,6 +34,7 @@ from .create_session_request import CreateSessionRequest
 from .create_session_request_sandbox import CreateSessionRequestSandbox
 from .create_session_request_tags import CreateSessionRequestTags
 from .decision_kind import DecisionKind
+from .endpointing import Endpointing
 from .error import Error
 from .granularity import Granularity
 from .health_status import HealthStatus
@@ -47,6 +48,11 @@ from .knowledge_url import KnowledgeUrl
 from .knowledge_url_request import KnowledgeUrlRequest
 from .knowledge_url_state import KnowledgeUrlState
 from .list_simulation_runs_state import ListSimulationRunsState
+from .llm_options import LlmOptions
+from .llm_options_format import LlmOptionsFormat
+from .llm_options_metadata import LlmOptionsMetadata
+from .llm_options_reasoning_effort import LlmOptionsReasoningEffort
+from .llm_options_verbosity import LlmOptionsVerbosity
 from .modality import Modality
 from .number_search_result import NumberSearchResult
 from .phone_capability import PhoneCapability
@@ -67,9 +73,23 @@ from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
 from .provider import Provider
 from .provider_health import ProviderHealth
+from .recording_source import RecordingSource
+from .recording_status import RecordingStatus
 from .rollup_request import RollupRequest
 from .rollup_result import RollupResult
+from .router_config import RouterConfig
+from .router_config_request import RouterConfigRequest
+from .router_config_request_tags import RouterConfigRequestTags
+from .router_config_tags import RouterConfigTags
 from .say_request import SayRequest
+from .search_depth import SearchDepth
+from .search_options import SearchOptions
+from .search_options_contents_item import SearchOptionsContentsItem
+from .search_options_output_schema import SearchOptionsOutputSchema
+from .search_request import SearchRequest
+from .search_request_tags import SearchRequestTags
+from .search_response import SearchResponse
+from .search_result import SearchResult
 from .session import Session
 from .session_memory import SessionMemory
 from .session_memory_filter import SessionMemoryFilter
@@ -94,15 +114,27 @@ from .simulation_tags import SimulationTags
 from .skill import Skill
 from .skill_request import SkillRequest
 from .skipped_vendor import SkippedVendor
+from .speech import Speech
+from .speech_request import SpeechRequest
+from .speech_request_tags import SpeechRequestTags
 from .stats_bucket import StatsBucket
+from .stt_options import SttOptions
 from .sync_agent_request import SyncAgentRequest
 from .sync_agent_result import SyncAgentResult
 from .tag_stats_bucket import TagStatsBucket
 from .tier import Tier
 from .timeline_entry import TimelineEntry
+from .transcript_entity import TranscriptEntity
+from .transcript_format import TranscriptFormat
 from .transcript_message import TranscriptMessage
+from .transcript_word import TranscriptWord
+from .transcription import Transcription
+from .transcription_request import TranscriptionRequest
+from .transcription_request_tags import TranscriptionRequestTags
 from .transfer_call_request import TransferCallRequest
 from .transfer_call_request_tags import TransferCallRequestTags
+from .tts_options import TtsOptions
+from .tts_options_pronunciations import TtsOptionsPronunciations
 from .turn_stats_bucket import TurnStatsBucket
 from .voice import Voice
 from .voice_binding import VoiceBinding
@@ -146,6 +178,7 @@ __all__ = (
     "CreateSessionRequestSandbox",
     "CreateSessionRequestTags",
     "DecisionKind",
+    "Endpointing",
     "Error",
     "Granularity",
     "HealthStatus",
@@ -159,6 +192,11 @@ __all__ = (
     "KnowledgeUrlRequest",
     "KnowledgeUrlState",
     "ListSimulationRunsState",
+    "LlmOptions",
+    "LlmOptionsFormat",
+    "LlmOptionsMetadata",
+    "LlmOptionsReasoningEffort",
+    "LlmOptionsVerbosity",
     "Modality",
     "NumberSearchResult",
     "PhoneCapability",
@@ -179,9 +217,23 @@ __all__ = (
     "PressDigitsRequest",
     "Provider",
     "ProviderHealth",
+    "RecordingSource",
+    "RecordingStatus",
     "RollupRequest",
     "RollupResult",
+    "RouterConfig",
+    "RouterConfigRequest",
+    "RouterConfigRequestTags",
+    "RouterConfigTags",
     "SayRequest",
+    "SearchDepth",
+    "SearchOptions",
+    "SearchOptionsContentsItem",
+    "SearchOptionsOutputSchema",
+    "SearchRequest",
+    "SearchRequestTags",
+    "SearchResponse",
+    "SearchResult",
     "Session",
     "SessionMemory",
     "SessionMemoryFilter",
@@ -206,15 +258,27 @@ __all__ = (
     "Skill",
     "SkillRequest",
     "SkippedVendor",
+    "Speech",
+    "SpeechRequest",
+    "SpeechRequestTags",
     "StatsBucket",
+    "SttOptions",
     "SyncAgentRequest",
     "SyncAgentResult",
     "TagStatsBucket",
     "Tier",
     "TimelineEntry",
+    "TranscriptEntity",
+    "TranscriptFormat",
     "TranscriptMessage",
+    "TranscriptWord",
+    "Transcription",
+    "TranscriptionRequest",
+    "TranscriptionRequestTags",
     "TransferCallRequest",
     "TransferCallRequestTags",
+    "TtsOptions",
+    "TtsOptionsPronunciations",
     "TurnStatsBucket",
     "Voice",
     "VoiceBinding",
