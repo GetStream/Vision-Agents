@@ -224,6 +224,49 @@ func (s Scenario) HasBargeIn() bool {
 	return false
 }
 
+// FrozenPath is the immutable scenario list for the trend line.
+func FrozenPath(root string) string {
+	return filepath.Join(root, "scenarios", "frozen.txt")
+}
+
+// LoadIDList reads one scenario id per line, ignoring comments and blanks.
+func LoadIDList(path string) ([]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		ids = append(ids, line)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("scenario: no ids in %s", path)
+	}
+	return ids, nil
+}
+
+// Filter keeps scenarios whose ids are listed. Unknown ids are an error.
+func Filter(scenarios []Scenario, ids []string) ([]Scenario, error) {
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	var out []Scenario
+	for _, sc := range scenarios {
+		if want[sc.ID] {
+			out = append(out, sc)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("scenario: filter matched nothing")
+	}
+	return out, nil
+}
+
 // Packs is the known vertical set.
 func Packs() []string {
 	return []string{"restaurant", "healthcare", "telecom"}

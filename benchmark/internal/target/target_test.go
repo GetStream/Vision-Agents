@@ -7,19 +7,23 @@ import (
 )
 
 func TestNames(t *testing.T) {
-	want := []string{AccelerationName, LiveKitName, PythonName}
+	want := []string{AcceleratedName, AccelerationName, LiveKitName, PythonName}
 	if got := Names(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 }
 
-func TestBuildPython(t *testing.T) {
-	built, err := Build(PythonName, Config{URL: "http://127.0.0.1:8000"})
+func TestBuildAccelerated(t *testing.T) {
+	built, err := Build(AcceleratedName, Config{URL: "http://127.0.0.1:8000"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := built.(*Python); !ok {
+	got, ok := built.(*Accelerated)
+	if !ok {
 		t.Fatalf("got %T", built)
+	}
+	if got.Pipeline != "accelerated" {
+		t.Fatalf("pipeline %q", got.Pipeline)
 	}
 }
 

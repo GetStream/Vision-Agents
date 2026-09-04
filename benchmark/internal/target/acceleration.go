@@ -88,21 +88,39 @@ func (a *Acceleration) Prepare(ctx context.Context) (func(), error) {
 	if a.Bin == "" {
 		return nil, fmt.Errorf("run: --bin or ACCEL_ROUTER is required with --target acceleration --spawn")
 	}
+	stop, err := StartRouter(ctx, a.Bin, a.URL)
+	if err != nil {
+		return nil, err
+	}
+	a.logger().Info("spawned accel router", "url", a.URL)
+	return stop, nil
+}
+
+// StartRouter launches the acceleration router and waits until /health succeeds.
+func StartRouter(ctx context.Context, bin, baseURL string) (func(), error) {
+	if bin == "" {
+		bin = os.Getenv("ACCEL_ROUTER")
+	}
+	if bin == "" {
+		return nil, fmt.Errorf("run: --bin or ACCEL_ROUTER is required to spawn the router")
+	}
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:8080"
+	}
 	addr := "127.0.0.1:8080"
-	if parsed, err := url.Parse(a.URL); err == nil && parsed.Host != "" {
+	if parsed, err := url.Parse(baseURL); err == nil && parsed.Host != "" {
 		addr = parsed.Host
 	}
 	stop, err := StartProcess(ctx, Process{
-		Command:      a.Bin,
+		Command:      bin,
 		Env:          []string{"ROUTER_ADDR=" + addr},
 		DropEnv:      []string{"ROUTER_ADDR="},
-		ReadyURL:     strings.TrimRight(a.URL, "/") + "/health",
+		ReadyURL:     strings.TrimRight(baseURL, "/") + "/health",
 		ReadyTimeout: 120 * time.Second,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run: spawn accel router: %w", err)
 	}
-	a.logger().Info("spawned accel router", "url", a.URL)
 	return stop, nil
 }
 

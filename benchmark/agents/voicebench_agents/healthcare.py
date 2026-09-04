@@ -1,15 +1,16 @@
 """Healthcare tools and agent factory."""
 
 from vision_agents.core import Agent, User
-from vision_agents.plugins import getstream, openai
+from vision_agents.plugins import getstream
 
 from voicebench_agents import pack_prompt
+from voicebench_agents.pipeline import build_llm
 from voicebench_agents.world_client import WorldClient
 
 
 async def create_agent(**kwargs) -> Agent:
     world = WorldClient()
-    llm = openai.Realtime()
+    llm = kwargs.get("llm") or build_llm()
     agent = Agent(
         edge=getstream.Edge(),
         agent_user=User(id="clinic-agent", name="Clinic After Hours"),

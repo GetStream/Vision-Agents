@@ -22,6 +22,8 @@ type Python struct {
 	Spawn    bool
 	Port     int
 	WorldURL string
+	Pipeline string
+	Env      []string
 	Logger   *slog.Logger
 }
 
@@ -44,13 +46,26 @@ func (p *Python) Prepare(ctx context.Context) (func(), error) {
 		return nil, fmt.Errorf("run: spawned python target port: %w", err)
 	}
 	p.Port = port
+	pipeline := p.Pipeline
+	if pipeline == "" {
+		pipeline = "realtime"
+	}
+	env := []string{"VOICEBENCH_WORLD_URL=" + p.WorldURL, "VOICEBENCH_PIPELINE=" + pipeline}
+	env = append(env, p.Env...)
+	drop := []string{"VOICEBENCH_WORLD_URL=", "WORLD_URL=", "VOICEBENCH_PIPELINE="}
+	for _, extra := range p.Env {
+		if key, _, ok := strings.Cut(extra, "="); ok {
+			drop = append(drop, key+"=")
+		}
+	}
 	stop, err := StartProcess(ctx, Process{
 		Command: "uv",
 		Args: []string{"run", "python", "-m", "voicebench_agents", p.Pack,
-			"--host", "127.0.0.1", "--port", strconv.Itoa(p.Port)},
+			"--host", "127.0.0.1", "--port", strconv.Itoa(p.Port),
+			"--pipeline", pipeline},
 		Dir:          filepath.Join(p.Root, "agents"),
-		Env:          []string{"VOICEBENCH_WORLD_URL=" + p.WorldURL},
-		DropEnv:      []string{"VOICEBENCH_WORLD_URL=", "WORLD_URL="},
+		Env:          env,
+		DropEnv:      drop,
 		ReadyURL:     strings.TrimRight(p.URL, "/") + "/ready",
 		ReadyTimeout: 120 * time.Second,
 	})

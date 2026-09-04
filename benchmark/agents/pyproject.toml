@@ -7,6 +7,7 @@ dependencies = [
   "vision-agents",
   "vision-agents-plugins-getstream",
   "vision-agents-plugins-openai",
+  "vision-agents-plugins-stream",
   "fastapi",
   "uvicorn",
 ]
@@ -22,3 +23,4 @@ packages = ["voicebench_agents"]
 "vision-agents" = {path = "../../agents-core", editable=true}
 "vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
 "vision-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}
+"vision-agents-plugins-stream" = {path = "../../plugins/stream", editable=true}

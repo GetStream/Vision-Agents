@@ -2,7 +2,7 @@
 
 Voicebench evaluates real-time voice agents on restaurant, healthcare, and telecom calls. It plays a scripted caller over Stream WebRTC, records both sides at 16 kHz, and checks speech, tools, and the final state of a seeded world.
 
-The same scenarios evaluate the Python [Vision Agents](https://visionagents.ai) reference agents, the Go agent in [`acceleration/`](../acceleration/), a LiveKit agent dispatch, or another agent that joins the call.
+The same scenarios evaluate the Python [Vision Agents](https://visionagents.ai) reference agents, the Go router in [`acceleration/`](../acceleration/) (raw session API or the SDK `stream.Accelerated` bundle), a LiveKit agent dispatch, or another agent that joins the call. Design notes for STT, TTS, and tracking acceleration over time live in [RESEARCH.md](RESEARCH.md).
 
 ## Setup
 
@@ -29,6 +29,7 @@ GOOGLE_API_KEY=...
 ELEVENLABS_API_KEY=...
 DEEPGRAM_API_KEY=...
 OPENAI_API_KEY=...
+STREAM_ACCELERATION_URL=...   # for --target accelerated
 ```
 
 ElevenLabs creates caller audio with no tone fallback. Deepgram Nova-3 transcribes both recordings, and the pinned `gpt-4.1-mini-2025-04-14` grades policy and say-do consistency. Missing caller TTS, agent STT, or judge output makes the trial invalid and fails the run; `--skip-stt` and `--skip-judge` intentionally produce invalid trials. Caller-leg STT is diagnostic only.
@@ -41,6 +42,13 @@ From `benchmark/`, evaluate Vision Agents:
 cd agents && uv sync && cd ..
 CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
   --pack restaurant --target python --spawn --k 3
+```
+
+Evaluate the shipped acceleration bundle (`stream.Accelerated` in Python, function calling still in Python). The router must already be running, or pass `--bin` to spawn it:
+
+```bash
+CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
+  --pack restaurant --target accelerated --spawn --k 3
 ```
 
 Evaluate acceleration through its public session API. The router is unmodified: Voicebench creates a session per trial, answers `tool_call` frames against the world server, and closes the session.
@@ -63,9 +71,22 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
 
 `--spawn` runs the worker locally; it dials out to LiveKit, so the loopback world server stays reachable. `--livekit-agent your-agent` dispatches your own worker instead. That worker must read `world_url`, the vertical `pack`, contract `instructions`, and tool schemas from the dispatch metadata and call the world server itself, and it needs a `--world-url` it can reach — Voicebench refuses to run a remote worker against a loopback world server. A worker that ignores the metadata will call no tools, so Voicebench flags the trial in the report's Warnings section.
 
-`--target acceleration --target-url http://127.0.0.1:8080` targets a router that is already running. `--target python --target-url http://127.0.0.1:8000` targets a Python Vision Agents server that is already running. `--target livekit --target-url wss://... --livekit-agent my-agent` runs the caller in a LiveKit room and creates a LiveKit agent dispatch with benchmark metadata. For targets Voicebench did not spawn, pass `--target-model` and `--target-voice` so the manifest identifies their runtime configuration. Set `--network-profile` (or `VOICEBENCH_NETWORK_PROFILE`) to a stable runner-region and connection label shared by comparable runs. For a quick smoke test, add `--scenario restaurant.golden --k 1`.
+`--target acceleration --target-url http://127.0.0.1:8080` targets a router that is already running. `--target python --target-url http://127.0.0.1:8000` targets a Python Vision Agents server that is already running. `--target accelerated --target-url http://127.0.0.1:8000` targets a Python server whose LLM is `stream.Accelerated`. `--target livekit --target-url wss://... --livekit-agent my-agent` runs the caller in a LiveKit room and creates a LiveKit agent dispatch with benchmark metadata. For targets Voicebench did not spawn, pass `--target-model` and `--target-voice` so the manifest identifies their runtime configuration. Set `--network-profile` (or `VOICEBENCH_NETWORK_PROFILE`) to a stable runner-region and connection label shared by comparable runs. For a quick smoke test, add `--scenario restaurant.golden --k 1`. `--frozen` runs only the scenario ids in [`scenarios/frozen.txt`](scenarios/frozen.txt).
 
-Results go to `out/<run_id>/`: `report.md`, schema-v2 `summary.json` with a reproducibility manifest, recordings, timestamped transcripts, judge verdicts, tool logs, world state, and per-call metrics. Regenerate a report with:
+Results go to `out/<run_id>/`: `report.md`, schema-v3 `summary.json` with a `kind` of `agent`, `stt`, or `tts`, a reproducibility manifest, recordings, timestamped transcripts, judge verdicts, tool logs, world state, and per-call metrics. Compare two runs with:
+
+```bash
+go run ./cmd/voicebench compare --baseline out/old out/new --mde-v2v-ms 50
+```
+
+Score transcripts (raw and normalized WER) or clip health without a live call:
+
+```bash
+go run ./cmd/voicebench stt --manifest clips.jsonl
+go run ./cmd/voicebench tts --wav out/run/agent.wav
+```
+
+Regenerate a report with:
 
 ```bash
 go run ./cmd/voicebench report --dir out/<run_id>

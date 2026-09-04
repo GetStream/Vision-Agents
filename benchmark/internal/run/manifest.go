@@ -28,6 +28,8 @@ func buildManifest(cfg Config, scenarios []scenario.Scenario) report.RunManifest
 		switch {
 		case target == "python" && cfg.SpawnTarget:
 			model = "gpt-realtime-2"
+		case target == "accelerated" && cfg.SpawnTarget:
+			model = envOr("VOICEBENCH_MODEL", "")
 		case target == "livekit" && cfg.SpawnTarget:
 			model = envOr("VOICEBENCH_LIVEKIT_MODEL", "gpt-realtime-2")
 		}
@@ -51,6 +53,9 @@ func buildManifest(cfg Config, scenarios []scenario.Scenario) report.RunManifest
 		Target:                   target,
 		TargetModel:              model,
 		TargetVoice:              voice,
+		TargetSTT:                envOr("VOICEBENCH_STT", ""),
+		TargetLLM:                envOr("VOICEBENCH_MODEL", model),
+		TargetTTS:                envOr("VOICEBENCH_TTS", ""),
 		CallerModel:              synth.CallerModel,
 		CallerVoice:              synth.VoiceID(""),
 		GoVersion:                runtime.Version(),

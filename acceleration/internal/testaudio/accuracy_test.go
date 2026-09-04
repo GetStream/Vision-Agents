@@ -55,3 +55,14 @@ func (s *AccuracySuite) TestATranscriptOfNothingScoresNothing() {
 func (s *AccuracySuite) TestATranscriptWithNothingInCommonScoresNothing() {
 	s.Zero(Accuracy("in a quiet village", "entirely different words spoken here"))
 }
+
+func (s *AccuracySuite) TestAlignSplitsSubstitutionsFromInsertions() {
+	got := Align(
+		"one two three four five",
+		"one two three four five six",
+	)
+	s.Equal(0, got.Substitutions)
+	s.Equal(1, got.Insertions)
+	s.Equal(0, got.Deletions)
+	s.InDelta(0.2, got.WER(), 0.001)
+}
