@@ -161,3 +161,20 @@ func findRepoRoot(t *testing.T) string {
 		dir = parent
 	}
 }
+
+func TestFrozenListLoads(t *testing.T) {
+	ids, err := LoadIDList(FrozenPath(findRepoRoot(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 24 {
+		t.Fatalf("got %d frozen ids", len(ids))
+	}
+	filtered, err := Filter([]Scenario{{ID: "restaurant.golden"}, {ID: "other"}}, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered) != 1 || filtered[0].ID != "restaurant.golden" {
+		t.Fatalf("%v", filtered)
+	}
+}

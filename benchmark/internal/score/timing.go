@@ -49,43 +49,49 @@ const (
 
 // Metrics is the per-call scorecard.
 type Metrics struct {
-	V2V                []Timing       `json:"v2v"`
-	Dropped            []DroppedTurn  `json:"dropped_turns,omitempty"`
-	CallDurationMS     int            `json:"call_duration_ms"`
-	ToolCount          int            `json:"tool_count"`
-	ToolErrorCount     int            `json:"tool_error_count"`
-	WorldContact       bool           `json:"world_contact"`
-	ToolWaitMS         int            `json:"tool_wait_ms"`
-	MaxToolWaitMS      int            `json:"max_tool_wait_ms"`
-	V2VP50             int            `json:"v2v_p50_ms"`
-	V2VP95             int            `json:"v2v_p95_ms"`
-	V2VMax             int            `json:"v2v_max_ms"`
-	NonToolP50         int            `json:"non_tool_p50_ms"`
-	SpikeCount         int            `json:"spike_count"`
-	InHumanBandPct     float64        `json:"in_human_band_pct"`
-	FalseCutoff        int            `json:"false_cutoff"`
-	ClockDriftMS       int            `json:"clock_drift_ms"`
-	InboundDropped     int            `json:"inbound_dropped"`
-	RequestedSNRDB     float64        `json:"requested_snr_db,omitempty"`
-	MeasuredSNRDB      float64        `json:"measured_snr_db,omitempty"`
-	BargeInStopMS      int            `json:"barge_in_stop_ms"`
-	OverlapChecks      []OverlapCheck `json:"overlap_checks,omitempty"`
-	SelectivityHold    bool           `json:"selectivity_hold"`
-	HoldThroughOverlap bool           `json:"hold_through_overlap"`
-	FillerBeforeMS     int            `json:"filler_before_tool_ms"`
-	FillerHeard        bool           `json:"filler_heard"`
-	FillerNonBlocking  bool           `json:"filler_non_blocking"`
-	FillerFail         []string       `json:"filler_fail"`
-	ScoringFail        []string       `json:"scoring_fail"`
-	EndStateFail       []string       `json:"end_state_fail"`
-	ExpectedToolFail   []string       `json:"expected_tool_fail"`
-	ToolOrderFail      []string       `json:"tool_order_fail"`
-	EntityToolFail     []string       `json:"entity_tool_fail"`
-	EntitySpeechFail   []string       `json:"entity_speech_fail"`
-	PolicyFail         []string       `json:"policy_fail"`
-	SayDoFail          []string       `json:"say_do_fail"`
-	Passed             bool           `json:"passed"`
-	GateNotes          []string       `json:"gate_notes"`
+	V2V                 []Timing       `json:"v2v"`
+	Dropped             []DroppedTurn  `json:"dropped_turns,omitempty"`
+	CallDurationMS      int            `json:"call_duration_ms"`
+	ToolCount           int            `json:"tool_count"`
+	ToolErrorCount      int            `json:"tool_error_count"`
+	WorldContact        bool           `json:"world_contact"`
+	ToolWaitMS          int            `json:"tool_wait_ms"`
+	MaxToolWaitMS       int            `json:"max_tool_wait_ms"`
+	V2VP50              int            `json:"v2v_p50_ms"`
+	V2VP95              int            `json:"v2v_p95_ms"`
+	V2VMax              int            `json:"v2v_max_ms"`
+	NonToolP50          int            `json:"non_tool_p50_ms"`
+	SpikeCount          int            `json:"spike_count"`
+	InHumanBandPct      float64        `json:"in_human_band_pct"`
+	FalseCutoff         int            `json:"false_cutoff"`
+	ClockDriftMS        int            `json:"clock_drift_ms"`
+	InboundDropped      int            `json:"inbound_dropped"`
+	RequestedSNRDB      float64        `json:"requested_snr_db,omitempty"`
+	MeasuredSNRDB       float64        `json:"measured_snr_db,omitempty"`
+	BargeInStopMS       int            `json:"barge_in_stop_ms"`
+	OverlapChecks       []OverlapCheck `json:"overlap_checks,omitempty"`
+	SelectivityHold     bool           `json:"selectivity_hold"`
+	HoldThroughOverlap  bool           `json:"hold_through_overlap"`
+	FillerBeforeMS      int            `json:"filler_before_tool_ms"`
+	FillerHeard         bool           `json:"filler_heard"`
+	FillerNonBlocking   bool           `json:"filler_non_blocking"`
+	FillerFail          []string       `json:"filler_fail"`
+	ScoringFail         []string       `json:"scoring_fail"`
+	EndStateFail        []string       `json:"end_state_fail"`
+	ExpectedToolFail    []string       `json:"expected_tool_fail"`
+	ToolOrderFail       []string       `json:"tool_order_fail"`
+	EntityToolFail      []string       `json:"entity_tool_fail"`
+	EntitySpeechFail    []string       `json:"entity_speech_fail"`
+	PolicyFail          []string       `json:"policy_fail"`
+	SayDoFail           []string       `json:"say_do_fail"`
+	Passed              bool           `json:"passed"`
+	GateNotes           []string       `json:"gate_notes"`
+	CallerTurns         int            `json:"caller_turns"`
+	AgentTurns          int            `json:"agent_turns"`
+	AgentWords          int            `json:"agent_words"`
+	CallerWER           float64        `json:"caller_wer,omitempty"`
+	CallerWERNormalized float64        `json:"caller_wer_normalized,omitempty"`
+	ExtraTools          []string       `json:"extra_tools,omitempty"`
 }
 
 // TimingFromRecording measures V2V from caller-turn end to the next agent onset, and reports
@@ -215,6 +221,17 @@ func SummarizeTiming(m *Metrics) {
 		}
 	}
 	m.InHumanBandPct = 100 * float64(inBand) / float64(len(bandSrc))
+}
+
+// CountConversation fills turn and word counts from the recording and agent transcript.
+func CountConversation(m *Metrics, rec caller.Result, agentText string) {
+	for _, ev := range rec.Events {
+		if ev.Text {
+			m.CallerTurns++
+		}
+	}
+	m.AgentTurns = len(audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs))
+	m.AgentWords = len(strings.Fields(agentText))
 }
 
 // Percentile is the nearest-rank percentile of an already sorted slice. It is the only
@@ -534,4 +551,27 @@ func WorldGates(m *Metrics, sc scenario.Scenario, sess *world.Session, agentText
 	m.ToolOrderFail = world.CheckToolOrder(sess.Tools, sc.ToolOrder)
 	m.EntityToolFail = world.EntityInTools(sess.Tools, sc.Entities)
 	m.EntitySpeechFail = EntityInSpeech(agentText, sc.Entities)
+	m.ExtraTools = ExtraToolNames(sess.Tools, sc.ExpectedTools)
+}
+
+// ExtraToolNames are distinct tools the agent called that the scenario did not expect.
+func ExtraToolNames(tools []world.ToolCall, expected []scenario.ExpectedTool) []string {
+	if len(expected) == 0 {
+		return nil
+	}
+	want := map[string]bool{}
+	for _, tool := range expected {
+		want[tool.Name] = true
+	}
+	var extra []string
+	seen := map[string]bool{}
+	for _, tool := range tools {
+		if want[tool.Name] || seen[tool.Name] || tool.Name == "" {
+			continue
+		}
+		seen[tool.Name] = true
+		extra = append(extra, tool.Name)
+	}
+	sort.Strings(extra)
+	return extra
 }

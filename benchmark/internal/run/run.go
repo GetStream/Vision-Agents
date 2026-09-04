@@ -51,6 +51,7 @@ type Config struct {
 	LiveKitDeployment string
 	WorldURL          string
 	NetworkProfile    string
+	Frozen            bool
 	Target            benchtarget.Target
 	SkipSTT           bool
 	SkipJudge         bool
@@ -101,6 +102,16 @@ func Run(ctx context.Context, cfg Config) (report.Summary, error) {
 			return report.Summary{}, fmt.Errorf("run: unknown scenario %s", cfg.ScenarioID)
 		}
 		scenarios = filtered
+	}
+	if cfg.Frozen {
+		ids, err := scenario.LoadIDList(scenario.FrozenPath(cfg.Root))
+		if err != nil {
+			return report.Summary{}, err
+		}
+		scenarios, err = scenario.Filter(scenarios, ids)
+		if err != nil {
+			return report.Summary{}, err
+		}
 	}
 
 	worldSrv := world.New(cfg.Logger)
@@ -282,6 +293,13 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 		result.InvalidReason = append(result.InvalidReason, fmt.Sprintf("inbound audio dropped %d frame(s)", rec.InboundDropped))
 	}
 	score.WorldGates(&metrics, sc, sess, agentTranscript.Text)
+	score.CountConversation(&metrics, rec, agentTranscript.Text)
+	if callerTranscript.Text != "" {
+		raw := score.ScoreWER(sc.CallerTranscript(), callerTranscript.Text, false)
+		norm := score.ScoreWER(sc.CallerTranscript(), callerTranscript.Text, true)
+		metrics.CallerWER = raw.WER
+		metrics.CallerWERNormalized = norm.WER
+	}
 
 	var judgeVerdict *score.JudgeVerdict
 	if cfg.SkipJudge {

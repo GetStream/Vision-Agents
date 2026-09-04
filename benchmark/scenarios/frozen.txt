@@ -1,0 +1,26 @@
+# Frozen Voicebench scenario set. New scenarios land outside this list
+# until MethodologyVersion bumps. One id per line.
+restaurant.golden
+restaurant.interrupt
+restaurant.entity_dense
+restaurant.adversarial
+restaurant.coherence
+restaurant.noise_kitchen
+restaurant.selectivity
+restaurant.tool_filler
+healthcare.golden
+healthcare.interrupt
+healthcare.entity_dense
+healthcare.adversarial
+healthcare.coherence
+healthcare.noise
+healthcare.selectivity
+healthcare.tool_filler
+telecom.golden
+telecom.interrupt
+telecom.entity_dense
+telecom.adversarial
+telecom.coherence
+telecom.noise
+telecom.selectivity
+telecom.tool_filler

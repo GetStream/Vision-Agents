@@ -76,26 +76,30 @@ func (l *LiveKit) Prepare(ctx context.Context) (func(), error) {
 		return nil, err
 	}
 	l.URL, l.APIKey, l.APISecret = options.URL, options.APIKey, options.APISecret
+	l.logger().Info("livekit cloud", "url", l.URL, "region", options.Region)
 	if !l.Spawn {
 		return func() {}, nil
 	}
 	if l.WorkerPort <= 0 {
 		l.WorkerPort = 8081
 	}
+	pipelineEnv := liveKitPipelineEnv()
 	stop, err := StartProcess(ctx, Process{
 		Command: "uv",
 		Args:    []string{"run", "python", "worker.py", "start"},
 		Dir:     filepath.Join(l.Root, "agents-livekit"),
-		Env: []string{
+		Env: append([]string{
 			"VOICEBENCH_WORLD_URL=" + l.WorldURL,
 			"VOICEBENCH_WORKER_PORT=" + strconv.Itoa(l.WorkerPort),
 			"LIVEKIT_AGENT_NAME=" + l.AgentName,
 			"LIVEKIT_URL=" + l.URL,
 			"LIVEKIT_API_KEY=" + l.APIKey,
 			"LIVEKIT_API_SECRET=" + l.APISecret,
-		},
+		}, pipelineEnv...),
 		DropEnv: []string{"VOICEBENCH_WORLD_URL=", "VOICEBENCH_WORKER_PORT=", "LIVEKIT_AGENT_NAME=",
-			"LIVEKIT_URL=", "LIVEKIT_API_KEY=", "LIVEKIT_API_SECRET="},
+			"LIVEKIT_URL=", "LIVEKIT_API_KEY=", "LIVEKIT_API_SECRET=",
+			"VOICEBENCH_LIVEKIT_PIPELINE=", "VOICEBENCH_LIVEKIT_MODEL=", "VOICEBENCH_LIVEKIT_STT=",
+			"VOICEBENCH_LIVEKIT_TTS=", "VOICEBENCH_LIVEKIT_VOICE="},
 		ReadyURL:     fmt.Sprintf("http://127.0.0.1:%d/", l.WorkerPort),
 		ReadyTimeout: 120 * time.Second,
 	})
@@ -166,4 +170,32 @@ func (l *LiveKit) logger() *slog.Logger {
 		return slog.Default()
 	}
 	return l.Logger
+}
+
+const (
+	DefaultLiveKitPipeline      = "inference"
+	DefaultLiveKitSTT           = "google/gemini-3.5-transcribe-live"
+	DefaultLiveKitModel         = "google/gemini-3.5-flash-lite"
+	DefaultLiveKitTTS           = "inworld/inworld-tts-2-flash"
+	DefaultLiveKitVoice         = "Ashley"
+	DefaultLiveKitRealtimeModel = "gpt-realtime-2"
+	DefaultLiveKitRealtimeVoice = "marin"
+)
+
+func liveKitPipelineEnv() []string {
+	pipeline := envOr("VOICEBENCH_LIVEKIT_PIPELINE", DefaultLiveKitPipeline)
+	if pipeline == "realtime" {
+		return []string{
+			"VOICEBENCH_LIVEKIT_PIPELINE=realtime",
+			"VOICEBENCH_LIVEKIT_MODEL=" + envOr("VOICEBENCH_LIVEKIT_MODEL", DefaultLiveKitRealtimeModel),
+			"VOICEBENCH_LIVEKIT_VOICE=" + envOr("VOICEBENCH_LIVEKIT_VOICE", DefaultLiveKitRealtimeVoice),
+		}
+	}
+	return []string{
+		"VOICEBENCH_LIVEKIT_PIPELINE=" + pipeline,
+		"VOICEBENCH_LIVEKIT_MODEL=" + envOr("VOICEBENCH_LIVEKIT_MODEL", DefaultLiveKitModel),
+		"VOICEBENCH_LIVEKIT_STT=" + envOr("VOICEBENCH_LIVEKIT_STT", DefaultLiveKitSTT),
+		"VOICEBENCH_LIVEKIT_TTS=" + envOr("VOICEBENCH_LIVEKIT_TTS", DefaultLiveKitTTS),
+		"VOICEBENCH_LIVEKIT_VOICE=" + envOr("VOICEBENCH_LIVEKIT_VOICE", DefaultLiveKitVoice),
+	}
 }

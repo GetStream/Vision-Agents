@@ -10,6 +10,7 @@ import (
 const (
 	PythonName       = "python"
 	AccelerationName = "acceleration"
+	AcceleratedName  = "accelerated"
 	LiveKitName      = "livekit"
 )
 
@@ -66,6 +67,24 @@ var definitions = map[string]Definition{
 				Bin:      cfg.Bin,
 				WorldURL: cfg.WorldURL,
 				Logger:   cfg.Logger,
+			}
+		},
+	},
+	AcceleratedName: {
+		Transport: "stream",
+		System:    "accelerated",
+		build: func(cfg Config) Target {
+			return &Accelerated{
+				Python: Python{
+					Root:     cfg.Root,
+					Pack:     cfg.Pack,
+					URL:      cfg.URL,
+					Spawn:    cfg.Spawn,
+					WorldURL: cfg.WorldURL,
+					Pipeline: "accelerated",
+					Logger:   cfg.Logger,
+				},
+				Bin: cfg.Bin,
 			}
 		},
 	},

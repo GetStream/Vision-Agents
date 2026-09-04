@@ -13,9 +13,13 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 )
 
-const SchemaVersion = 2
-const BenchmarkVersion = "0.3.0"
+const SchemaVersion = 3
+const BenchmarkVersion = "0.4.0"
 const MethodologyVersion = "voicebench-live-v3"
+
+const KindAgent = "agent"
+const KindSTT = "stt"
+const KindTTS = "tts"
 
 const (
 	OutcomePass    = "pass"
@@ -48,6 +52,10 @@ type RunManifest struct {
 	Target                   string            `json:"target"`
 	TargetModel              string            `json:"target_model,omitempty"`
 	TargetVoice              string            `json:"target_voice,omitempty"`
+	TargetSTT                string            `json:"target_stt,omitempty"`
+	TargetLLM                string            `json:"target_llm,omitempty"`
+	TargetTTS                string            `json:"target_tts,omitempty"`
+	TargetSubagent           string            `json:"target_subagent,omitempty"`
 	CallerModel              string            `json:"caller_model"`
 	CallerVoice              string            `json:"caller_voice"`
 	GoVersion                string            `json:"go_version"`
@@ -63,6 +71,7 @@ type Summary struct {
 	SchemaVersion      int               `json:"schema_version"`
 	BenchmarkVersion   string            `json:"benchmark_version"`
 	MethodologyVersion string            `json:"methodology_version"`
+	Kind               string            `json:"kind"`
 	Providers          map[string]string `json:"providers"`
 	Manifest           RunManifest       `json:"manifest"`
 	System             string            `json:"system"`
@@ -90,6 +99,8 @@ type PackSummary struct {
 	ToolCountPerCall float64           `json:"tool_count_per_call"`
 	ToolErrors       int               `json:"tool_errors"`
 	ToolWaitP50      int               `json:"tool_wait_p50_ms"`
+	CallerTurnsP50   int               `json:"caller_turns_p50"`
+	AgentTurnsP50    int               `json:"agent_turns_p50"`
 }
 
 // CategoryCell is pass@k / pass^k for one call type.
@@ -125,6 +136,7 @@ func BuildSummary(system, runID string, k int, calls []CallResult) Summary {
 		SchemaVersion:      SchemaVersion,
 		BenchmarkVersion:   BenchmarkVersion,
 		MethodologyVersion: MethodologyVersion,
+		Kind:               KindAgent,
 		Providers:          defaultProviders(),
 		System:             system,
 		RunID:              runID,
@@ -161,6 +173,8 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 	var nonTool []int
 	var durations []int
 	var toolWait []int
+	var callerTurns []int
+	var agentTurns []int
 	spikes := 0
 	cutoffs := 0
 	toolCount := 0
@@ -189,6 +203,12 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 		}
 		if call.Metrics.ToolWaitMS > 0 {
 			toolWait = append(toolWait, call.Metrics.ToolWaitMS)
+		}
+		if call.Metrics.CallerTurns > 0 {
+			callerTurns = append(callerTurns, call.Metrics.CallerTurns)
+		}
+		if call.Metrics.AgentTurns > 0 {
+			agentTurns = append(agentTurns, call.Metrics.AgentTurns)
 		}
 		spikes += call.Metrics.SpikeCount
 		cutoffs += call.Metrics.FalseCutoff
@@ -266,6 +286,14 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 		sort.Ints(toolWait)
 		out.ToolWaitP50 = score.Percentile(toolWait, 50)
 	}
+	if len(callerTurns) > 0 {
+		sort.Ints(callerTurns)
+		out.CallerTurnsP50 = score.Percentile(callerTurns, 50)
+	}
+	if len(agentTurns) > 0 {
+		sort.Ints(agentTurns)
+		out.AgentTurnsP50 = score.Percentile(agentTurns, 50)
+	}
 	out.V2VSamples = len(v2v)
 	out.NonToolSamples = len(nonTool)
 	out.DroppedTurns = dropped
@@ -330,7 +358,7 @@ func Write(dir string, summary Summary) error {
 func Markdown(s Summary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Voicebench %s\n\n", s.RunID)
-	fmt.Fprintf(&b, "System: `%s`  \nK: %d  \nSchema: %d  \nBenchmark: `%s`  \nMethodology: `%s`\n\n", s.System, s.K, s.SchemaVersion, s.BenchmarkVersion, s.MethodologyVersion)
+	fmt.Fprintf(&b, "System: `%s`  \nKind: `%s`  \nK: %d  \nSchema: %d  \nBenchmark: `%s`  \nMethodology: `%s`\n\n", s.System, s.kind(), s.K, s.SchemaVersion, s.BenchmarkVersion, s.MethodologyVersion)
 	b.WriteString("## Methodology\n\n")
 	b.WriteString("Voicebench evaluates live voice agents through scripted calls against a seeded scenario backend. Trials are pass, fail, or invalid; evaluator failures are invalid and never count as agent failures. Reliability is computed per scenario. pass@k means at least one of the requested valid trials passed, pass^k means every requested trial passed, and neither is awarded when the requested trial set is incomplete. Latency is reported separately unless it affects interruption/selectivity gates. Targets are Voicebench acceptance thresholds, not universal industry standards or state-of-the-art claims.\n\n")
 	b.WriteString("## Scorecard\n\n")
@@ -362,9 +390,9 @@ func Markdown(s Summary) string {
 		fmt.Fprintf(&b, "| %s | %d ms (n=%d) | %d ms | %d ms (n=%d) | %d | %d | %.2f |\n", p.Pack, p.V2VP50, p.V2VSamples, p.V2VP95, p.NonToolP50, p.NonToolSamples, p.Spikes, p.DroppedTurns, p.Cutoff)
 	}
 	b.WriteString("\n## Operations\n\n")
-	b.WriteString("| Pack | Call duration P50 | Tool count / call | Tool errors | Tool wait P50 |\n| --- | ---: | ---: | ---: | ---: |\n")
+	b.WriteString("| Pack | Call duration P50 | Tool count / call | Tool errors | Tool wait P50 | Caller turns P50 | Agent turns P50 |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 	for _, p := range s.Packs {
-		fmt.Fprintf(&b, "| %s | %d ms | %.2f | %d | %d ms |\n", p.Pack, p.CallDurationP50, p.ToolCountPerCall, p.ToolErrors, p.ToolWaitP50)
+		fmt.Fprintf(&b, "| %s | %d ms | %.2f | %d | %d ms | %d | %d |\n", p.Pack, p.CallDurationP50, p.ToolCountPerCall, p.ToolErrors, p.ToolWaitP50, p.CallerTurnsP50, p.AgentTurnsP50)
 	}
 	b.WriteString("\n## Pass@k / pass^k\n\n")
 	b.WriteString("| Pack | Scenario | Category | complete | pass@k | pass^k | passed/valid | pass rate (95% CI) | invalid |\n| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |\n")
@@ -381,6 +409,13 @@ func Markdown(s Summary) string {
 	b.WriteString("\nP50s are pooled over every measured turn in the pack, not a median of per-call medians; n is that sample count. Turns dropped are scripted turns with no usable reply gap, listed per call in `metrics.json` under `dropped_turns`.\n")
 	b.WriteString("\nHard gates are end-state AND successful expected tools/arguments AND policy AND entity fidelity AND tool order AND say-do AND filler AND barge-in stop AND hold/selectivity. Required evaluator failures make a trial invalid rather than failed. V2V latency and spikes are reported, not gated. Human-band % uses non-tool turns only.\n")
 	return b.String()
+}
+
+func (s Summary) kind() string {
+	if s.Kind != "" {
+		return s.Kind
+	}
+	return KindAgent
 }
 
 // InvalidTrials counts trials that produced no verdict.
