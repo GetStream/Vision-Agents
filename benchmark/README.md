@@ -2,7 +2,7 @@
 
 Voicebench evaluates real-time voice agents on restaurant, healthcare, and telecom calls. It plays a scripted caller over Stream WebRTC, records both sides at 16 kHz, and checks speech, tools, and the final state of a seeded world.
 
-The same scenarios evaluate the Python [Vision Agents](https://visionagents.ai) reference agents, the Go agent in [`acceleration/`](../acceleration/), a LiveKit agent dispatch, or another agent that joins the call.
+The same scenarios evaluate the Python [Vision Agents](https://visionagents.ai) reference agents, the Go router in [`acceleration/`](../acceleration/) (raw session API or the SDK `stream.Accelerated` bundle), a LiveKit agent dispatch, or another agent that joins the call. Design notes for STT, TTS, and tracking acceleration over time live in [RESEARCH.md](RESEARCH.md).
 
 ## Setup
 
@@ -22,6 +22,7 @@ Put credentials in `benchmark/.env` or the repository root:
 STREAM_API_KEY=...
 STREAM_API_SECRET=...
 LIVEKIT_URL=...
+LIVEKIT_REGION=us                 # pin LiveKit Cloud SFU; us-east maps to the us group. auto keeps geo-DNS
 LIVEKIT_API_KEY=...
 LIVEKIT_API_SECRET=...
 LIVEKIT_AGENT_NAME=...
@@ -29,6 +30,9 @@ GOOGLE_API_KEY=...
 ELEVENLABS_API_KEY=...
 DEEPGRAM_API_KEY=...
 OPENAI_API_KEY=...
+INWORLD_API_KEY=...
+STREAM_ACCELERATION_URL=...              # for --target accelerated when the router is already running
+STREAM_ACCELERATION_CUSTOMER_ID=voicebench
 ```
 
 ElevenLabs creates caller audio with no tone fallback. Deepgram Nova-3 transcribes both recordings, and the pinned `gpt-4.1-mini-2025-04-14` grades policy and say-do consistency. Missing caller TTS, agent STT, or judge output makes the trial invalid and fails the run; `--skip-stt` and `--skip-judge` intentionally produce invalid trials. Caller-leg STT is diagnostic only.
@@ -43,6 +47,21 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
   --pack restaurant --target python --spawn --k 3
 ```
 
+Evaluate the shipped acceleration bundle (`stream.Accelerated` in Python, function calling still in Python). On spawn it `sync_agent`s [`agents/accelerated/{pack}/`](agents/accelerated/) — the skills that pack's subagent may run — and names that stored config, so Sol actually runs them. Those skills are the only thing acceleration is handed on top: the prompt is the same contract file every other target gets, and world tools stay registered in Python. The as-shipped pipeline is the `customer_support` triple: Gemini transcribe-live, Gemini flash-lite, Inworld TTS-2 Flash, Sol as subagent. Override with `VOICEBENCH_STT` / `_TTS` / `_MODEL` / `_SUBAGENT`. The router must already be running at `STREAM_ACCELERATION_URL` (default `http://localhost:8080`), or pass `--bin` to spawn it:
+
+```bash
+CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
+  --pack restaurant --target accelerated --spawn --k 3
+```
+
+Smoke test one golden trial:
+
+```bash
+CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
+  --pack restaurant --target accelerated --spawn \
+  --scenario restaurant.golden --k 1
+```
+
 Evaluate acceleration through its public session API. The router is unmodified: Voicebench creates a session per trial, answers `tool_call` frames against the world server, and closes the session.
 
 ```bash
@@ -53,7 +72,7 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
   --pack restaurant --target acceleration --spawn --bin /tmp/accel-router --k 3
 ```
 
-Evaluate LiveKit with the reference worker in [`agents-livekit/`](agents-livekit/). It registers as `voicebench`, builds its tools from the dispatch metadata, and answers with the same OpenAI Realtime model (`gpt-realtime-2`) and voice (`marin`) as the Vision Agents reference agents, so a Stream-vs-LiveKit gap reflects the framework and transport rather than the model. `agents-livekit/uv.lock` records the stack that ran.
+Evaluate LiveKit with the reference worker in [`agents-livekit/`](agents-livekit/). It registers as `voicebench`, builds its tools from the dispatch metadata, and answers on LiveKit Inference with the closest match to the as-shipped acceleration triple: Gemini transcribe-live, Gemini flash-lite, Inworld TTS-2 Flash (`google/` / `inworld/` model IDs on LiveKit Cloud). That is a framework-and-transport comparison on the same modality split, not OpenAI Realtime. LiveKit has no Sol subagent; tools run on the conversation LLM. `VOICEBENCH_LIVEKIT_PIPELINE=realtime` restores `gpt-realtime-2` / `marin`. `agents-livekit/uv.lock` records the stack that ran.
 
 ```bash
 cd agents-livekit && uv sync && cd ..
@@ -61,11 +80,24 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
   --pack restaurant --target livekit --spawn --k 3
 ```
 
-`--spawn` runs the worker locally; it dials out to LiveKit, so the loopback world server stays reachable. `--livekit-agent your-agent` dispatches your own worker instead. That worker must read `world_url`, the vertical `pack`, contract `instructions`, and tool schemas from the dispatch metadata and call the world server itself, and it needs a `--world-url` it can reach — Voicebench refuses to run a remote worker against a loopback world server. A worker that ignores the metadata will call no tools, so Voicebench flags the trial in the report's Warnings section.
+`--spawn` runs the worker locally; it dials out to LiveKit, so the loopback world server stays reachable. Voicebench pins LiveKit Cloud to the `us` region group (`wss://<project>.us.rtc.livekit.cloud`) so a laptop in the US does not hairpin media through Brazil or similar. `us-east` is accepted and maps to that group — LiveKit has no Ashburn-only realtime hostname. Set `LIVEKIT_REGION=auto` to keep geo-DNS. `--livekit-agent your-agent` dispatches your own worker instead. That worker must read `world_url`, the vertical `pack`, contract `instructions`, and tool schemas from the dispatch metadata and call the world server itself, and it needs a `--world-url` it can reach — Voicebench refuses to run a remote worker against a loopback world server. A worker that ignores the metadata will call no tools, so Voicebench flags the trial in the report's Warnings section.
 
-`--target acceleration --target-url http://127.0.0.1:8080` targets a router that is already running. `--target python --target-url http://127.0.0.1:8000` targets a Python Vision Agents server that is already running. `--target livekit --target-url wss://... --livekit-agent my-agent` runs the caller in a LiveKit room and creates a LiveKit agent dispatch with benchmark metadata. For targets Voicebench did not spawn, pass `--target-model` and `--target-voice` so the manifest identifies their runtime configuration. Set `--network-profile` (or `VOICEBENCH_NETWORK_PROFILE`) to a stable runner-region and connection label shared by comparable runs. For a quick smoke test, add `--scenario restaurant.golden --k 1`.
+`--target acceleration --target-url http://127.0.0.1:8080` targets a router that is already running. `--target python --target-url http://127.0.0.1:8000` targets a Python Vision Agents server that is already running. `--target accelerated --target-url http://127.0.0.1:8000` targets a Python server whose LLM is `stream.Accelerated`. `--target livekit --target-url wss://... --livekit-agent my-agent` runs the caller in a LiveKit room and creates a LiveKit agent dispatch with benchmark metadata. For targets Voicebench did not spawn, pass `--target-model` and `--target-voice` so the manifest identifies their runtime configuration. Set `--network-profile` (or `VOICEBENCH_NETWORK_PROFILE`) to a stable runner-region and connection label shared by comparable runs. For a quick smoke test, add `--scenario restaurant.golden --k 1`. `--frozen` runs only the scenario ids in [`scenarios/frozen.txt`](scenarios/frozen.txt).
 
-Results go to `out/<run_id>/`: `report.md`, schema-v2 `summary.json` with a reproducibility manifest, recordings, timestamped transcripts, judge verdicts, tool logs, world state, and per-call metrics. Regenerate a report with:
+Results go to `out/<run_id>/`: `report.md`, schema-v3 `summary.json` with a `kind` of `agent`, `stt`, or `tts`, a reproducibility manifest, recordings, timestamped transcripts, judge verdicts, tool logs, world state, and per-call metrics. Compare two runs with:
+
+```bash
+go run ./cmd/voicebench compare --baseline out/old out/new --mde-v2v-ms 50
+```
+
+Score transcripts (raw and normalized WER) or clip health without a live call:
+
+```bash
+go run ./cmd/voicebench stt --manifest clips.jsonl
+go run ./cmd/voicebench tts --wav out/run/agent.wav
+```
+
+Regenerate a report with:
 
 ```bash
 go run ./cmd/voicebench report --dir out/<run_id>
