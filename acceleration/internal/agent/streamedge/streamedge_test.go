@@ -83,7 +83,7 @@ func (s *StreamEdgeSuite) TestCredentialsComeFromTheEnvironment() {
 	edge, err := New(Options{CallID: "demo", User: User{ID: "agent"}})
 
 	s.Require().NoError(err)
-	s.Equal("default", edge.options.CallType, "a Stream app has this call type out of the box")
+	s.Equal("agent", edge.options.CallType, "the call type an agent joins unless one is named")
 }
 
 func (s *StreamEdgeSuite) TestTheDemoLinkJoinsTheAgentsCall() {

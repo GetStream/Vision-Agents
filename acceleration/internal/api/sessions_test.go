@@ -320,11 +320,14 @@ func (s *SessionAPISuite) TestCreatingASessionJoinsTheCallAndDescribesIt() {
 
 	s.NotEmpty(created.Id)
 	s.Equal("call-7", created.CallId)
-	s.Equal("default", created.CallType, "a call type defaults rather than being required")
+	s.Equal("agent", created.CallType, "a call type defaults rather than being required")
 	s.Equal("call-7", created.AgentId)
 	s.Equal(SessionState("live"), created.State)
 	s.Require().NotNil(created.Llm)
 	s.Equal("stub/stub-model", *created.Llm)
+	s.Require().NotNil(created.Tts)
+	s.Equal("stub/stub-model", *created.Tts)
+	s.Nil(created.Stt, "transcription starts when somebody is heard, not on joining")
 }
 
 func (s *SessionAPISuite) TestASessionNeedsACallToJoin() {

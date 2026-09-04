@@ -35,7 +35,7 @@ const (
 )
 
 // ChannelType is the Stream Chat channel type transcripts are written to.
-const ChannelType = "messaging"
+const ChannelType = "agent"
 
 // queueSize bounds how far the writer may fall behind before messages are dropped.
 const queueSize = 256
@@ -67,7 +67,7 @@ const (
 // Options configures a Log. The credentials fall back to the environment, the same way
 // the Stream edge reads them.
 type Options struct {
-	// AgentID names the channel: one agent's transcript lives in messaging:{agentID}.
+	// AgentID names the channel: one agent's transcript lives in agent:{agentID}.
 	AgentID string
 	// Agent is the user the agent's own replies are written as.
 	Agent User

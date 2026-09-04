@@ -29,7 +29,7 @@ const (
 	// examples open when they join a call.
 	DefaultMonitorBaseURL = "https://getstream.io/video/demos"
 	// DefaultCallType is the Stream call type used when none is named.
-	DefaultCallType = "default"
+	DefaultCallType = "agent"
 )
 
 // monitorTokenValidity is how long the browser's token lasts. A call outliving it is a call

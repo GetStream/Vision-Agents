@@ -38,8 +38,12 @@ A running acceleration router: see [acceleration/README.md](../../../acceleratio
 ```bash
 cd examples/agents/simple_voice_ai
 uv sync
-uv run simple_voice_ai.py
+uv run simple_voice_ai.py run
 ```
+
+`run` joins one call and opens the demo UI on it, which is what to talk into. `--call-id`
+joins a call by name rather than a new one, `--no-demo` leaves the browser alone, and
+`serve` instead starts the HTTP server that sends an agent to whichever call asks for one.
 
 Needs a `.env` with:
 

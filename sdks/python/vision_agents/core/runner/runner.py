@@ -50,21 +50,31 @@ _JOIN_WAIT_SECONDS = 20.0
 _JOIN_POLL_SECONDS = 0.2
 
 
-async def _open_ui(agent: Agent, call_type: str, call_id: str) -> None:
+async def _open_ui(
+    agent: Agent,
+    call_type: str,
+    call_id: str,
+    join_task: Optional[asyncio.Task] = None,
+) -> None:
     """Open whichever UI can show this call.
 
     A call running on the router has a dashboard page, keyed by the router's session
     rather than by the call id. A pipeline running in this process has no such page, so
     that falls back to the transport's own demo.
     """
-    session_id = await _router_session_id(agent)
+    session_id = await _router_session_id(agent, join_task)
     if session_id:
         base = os.getenv(_DASHBOARD_BASE_URL_ENV, _DEFAULT_DASHBOARD_BASE_URL)
         url = f"{base.rstrip('/')}/calls/{session_id}"
         # Logged before opening, so the URL is still usable where there is no browser to
         # open it with, as in a container or over ssh.
         logger.info(f"🌐 Opening the dashboard: {url}")
-        await asyncio.to_thread(webbrowser.open, url)
+        # A new tab, not the current window: a dashboard already open on an earlier call
+        # would otherwise be raised without navigating, which looks like this call never
+        # got a page.
+        opened = await asyncio.to_thread(webbrowser.open, url, 2)
+        if not opened:
+            logger.warning("Could not open a browser; the call is at %s", url)
         return
 
     if hasattr(agent.edge, "open_demo_for_agent"):
@@ -72,7 +82,9 @@ async def _open_ui(agent: Agent, call_type: str, call_id: str) -> None:
         await agent.edge.open_demo_for_agent(agent, call_type, call_id)
 
 
-async def _router_session_id(agent: Agent) -> Optional[str]:
+async def _router_session_id(
+    agent: Agent, join_task: Optional[asyncio.Task] = None
+) -> Optional[str]:
     """Wait for the router to name the session it is running the call in.
 
     A remote pipeline joins in the background, so the session is not there the instant
@@ -90,6 +102,11 @@ async def _router_session_id(agent: Agent) -> Optional[str]:
         session_id = llm.router_session_id
         if session_id:
             return session_id
+        if join_task is not None and join_task.done():
+            logger.warning(
+                "The pipeline did not join, so there is no dashboard page to open"
+            )
+            return None
         if loop.time() >= deadline:
             logger.warning(
                 "The pipeline has not joined after %ss, so there is no dashboard page "
@@ -165,7 +182,7 @@ class Runner:
 
     def run(
         self,
-        call_type: str = "default",
+        call_type: str = "agent",
         call_id: Optional[str] = None,
         debug: bool = False,
         log_level: str = "INFO",
@@ -217,7 +234,7 @@ class Runner:
                 # Open demo UI by default
                 agent = session.agent
                 if not no_demo:
-                    await _open_ui(agent, call_type, call_id)
+                    await _open_ui(agent, call_type, call_id, join_task=session.task)
 
                 await session.wait()
             except asyncio.CancelledError:
@@ -331,7 +348,7 @@ class Runner:
         @click.option(
             "--call-type",
             type=str,
-            default="default",
+            default="agent",
             help="Call type for the video call",
         )
         @click.option(

@@ -38,8 +38,8 @@ const (
 	userTokenEnvVar = "STREAM_USER_TOKEN"
 )
 
-// defaultCallType is the call type a Stream app has out of the box.
-const defaultCallType = "default"
+// defaultCallType is the call type an agent joins under.
+const defaultCallType = "agent"
 
 // audioBuffer is how many chunks of inbound speech may queue before the decoder is made to
 // wait. A chunk is 20 ms, so this is a fifth of a second of slack.
@@ -55,7 +55,7 @@ const attendanceBuffer = 32
 type Options struct {
 	// CallID is the call to join.
 	CallID string
-	// CallType defaults to "default".
+	// CallType defaults to "agent".
 	CallType string
 	// User is the identity the agent joins as.
 	User User

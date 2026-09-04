@@ -16,7 +16,7 @@ const (
 )
 
 // defaultCallType is the Stream call type a phone call joins.
-const defaultCallType = "default"
+const defaultCallType = "agent"
 
 // callerTemplate names the participant a SIP caller becomes, so per-participant
 // transcription has something stable to key on. Stream renders handlebars templates

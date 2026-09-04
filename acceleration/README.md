@@ -813,7 +813,7 @@ customer there and a telephony vendor names a token.
 
 **Transcripts.** With `STREAM_API_KEY` and `STREAM_API_SECRET` set, `cmd/agent` writes every
 relevant transcript committed by the flow controller and every reply into the Stream Chat
-channel `messaging:{agentID}`, off
+channel `agent:{agentID}`, off
 the event stream rather than from inside the conversation loop. A voice call otherwise leaves
 nothing behind, and any Stream Chat client can already read a channel.
 

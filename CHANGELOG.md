@@ -2,6 +2,20 @@
 
 ## Breaking Changes
 
+### Calls and transcripts default to the `agent` type
+
+A call type or channel type that is not named is now `agent` rather than `default` and
+`messaging`, across the Python SDK, the CLI, the Go SDK, the backend and the transcript
+channel an agent writes to. A Stream app needs both types before an agent can join:
+
+```bash
+getstream api CreateCallType --request '{"name":"agent"}'
+getstream api CreateChannelType --request '{"name":"agent","automod":"disabled","automod_behavior":"flag","max_message_length":5000}'
+```
+
+Passing `call_type="default"` or `channel_type="messaging"` keeps the old behaviour, and a
+transcript written before this change stays in `messaging:{agent_id}`.
+
 ### `Agent.join`: leaving the block waits for the call to end
 
 `join`, `answer` and `outbound_call` now wait for the call to end on the way out, so an agent
@@ -48,6 +62,12 @@ refused now, rather than falling back to a default nobody asked for.
 
 ## New Features
 
+### Call pipeline shows the model routing picked
+
+A call that asked for a capability shortcut such as `en-low-latency` now also reports the
+`provider/model` that served it (`stt_used`, `tts_used`, `llm_used`, `subagent_used`), so the
+dashboard pipeline is not only the request.
+
 ### A router config, four modalities, live and recorded
 
 `RouterConfig` says the routing options once, for speech-to-text, text-to-speech, completions
@@ -86,6 +106,19 @@ terms it can serve, and a request naming one only routes to a model that declare
 transcript that was quietly not diarized is worse than being told. The `router-stt`,
 `router-tts`, `router-llm` and `router-search` skills record what each vendor calls the same
 option and what the router will not fake.
+
+### `Agent.join` can create the call it joins
+
+A call type and an id are enough, so an agent that makes its own call no longer says it
+twice:
+
+```python
+async with agent.join(call_type, call_id):
+    await agent.simple_response("greet the user in one short sentence")
+```
+
+`join(call)` with a call of your own is unchanged, and `create_call` is still there for
+anything that needs the call before joining it.
 
 ### A session is given a thinking model it did not ask for
 
