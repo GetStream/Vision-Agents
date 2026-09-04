@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/acceleration"
-	"github.com/GetStream/Vision-Agents/agents-core-go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
 // backend is a stand-in for the acceleration router's configuration paths: enough of them

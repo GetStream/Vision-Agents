@@ -70,7 +70,7 @@ func TestEveryRequestCarriesWhoIsBeingBilled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ListSkillsWithResponse(t.Context()); err != nil {
+	if _, err := client.ListSkillsWithResponse(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 

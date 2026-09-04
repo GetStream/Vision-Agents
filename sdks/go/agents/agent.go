@@ -11,10 +11,10 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/acceleration"
-	"github.com/GetStream/Vision-Agents/agents-core-go/edge"
-	"github.com/GetStream/Vision-Agents/agents-core-go/stream"
-	"github.com/GetStream/Vision-Agents/agents-core-go/tools"
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/edge"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
 // UserKey is the memory filter key naming who the memories are about. Everything else in

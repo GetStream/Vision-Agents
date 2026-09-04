@@ -19,8 +19,8 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/agents"
-	"github.com/GetStream/Vision-Agents/agents-core-go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/agents"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
 func main() {

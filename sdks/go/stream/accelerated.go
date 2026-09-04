@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/acceleration"
-	"github.com/GetStream/Vision-Agents/agents-core-go/tools"
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
 // events is how many frames may be waiting to be read before the reader is holding up the

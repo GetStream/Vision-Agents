@@ -11,6 +11,19 @@ import struct Foundation.Date
 #endif
 /// A type that performs HTTP operations defined by the OpenAPI document.
 internal protocol APIProtocol: Sendable {
+    /// The router configs the calling customer holds
+    ///
+    /// A router config is what an agent config is for a session, for a caller that routes one modality at a time: the target, the language and every per-modality option, decided once and named. It is separate from an agent config because it configures transcribing, speaking, answering and searching on their own, with no conversation behind them.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/router/configs`.
+    /// - Remark: Generated from `#/paths//v1/router/configs/get(listRouterConfigs)`.
+    func listRouterConfigs(_ input: Operations.ListRouterConfigs.Input) async throws -> Operations.ListRouterConfigs.Output
+    /// One router config
+    ///
+    /// - Remark: HTTP `GET /v1/router/configs/{id}`.
+    /// - Remark: Generated from `#/paths//v1/router/configs/{id}/get(getRouterConfig)`.
+    func getRouterConfig(_ input: Operations.GetRouterConfig.Input) async throws -> Operations.GetRouterConfig.Output
     /// The agent configs the calling customer holds
     ///
     /// - Remark: HTTP `GET /v1/agents/configs`.
@@ -112,10 +125,68 @@ internal protocol APIProtocol: Sendable {
     /// - Remark: HTTP `PUT /v1/agents/sessions/{id}/instructions`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/instructions/put(setSessionInstructions)`.
     func setSessionInstructions(_ input: Operations.SetSessionInstructions.Input) async throws -> Operations.SetSessionInstructions.Output
+    /// Answer a question out of what is true now
+    ///
+    /// The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for. One question, one answer: routed, failed over and billed like the rest, and with no socket because nothing arrives in pieces.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/search`.
+    /// - Remark: Generated from `#/paths//v1/search/post(search)`.
+    func search(_ input: Operations.Search.Input) async throws -> Operations.Search.Output
+    /// Transcribe a recording, off the live path
+    ///
+    /// The non-realtime half of speech-to-text: a whole recording in, a whole transcript out. It is a job rather than a response because an hour of audio takes minutes to transcribe, so this returns immediately with an id to poll, or calls a callback when it is done.
+    /// Routing works as it does everywhere else, except that the candidates are the providers registered as not realtime - the batch APIs, which are cheaper and more accurate than the same vendor's streaming model.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/stt/recordings`.
+    /// - Remark: Generated from `#/paths//v1/stt/recordings/post(transcribeRecording)`.
+    func transcribeRecording(_ input: Operations.TranscribeRecording.Input) async throws -> Operations.TranscribeRecording.Output
+    /// One transcription job, and its transcript once it has one
+    ///
+    /// - Remark: HTTP `GET /v1/stt/recordings/{id}`.
+    /// - Remark: Generated from `#/paths//v1/stt/recordings/{id}/get(getTranscription)`.
+    func getTranscription(_ input: Operations.GetTranscription.Input) async throws -> Operations.GetTranscription.Output
+    /// Speak a whole text into one audio file, off the live path
+    ///
+    /// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/tts/recordings`.
+    /// - Remark: Generated from `#/paths//v1/tts/recordings/post(recordSpeech)`.
+    func recordSpeech(_ input: Operations.RecordSpeech.Input) async throws -> Operations.RecordSpeech.Output
+    /// One speech job, and its audio once it has some
+    ///
+    /// - Remark: HTTP `GET /v1/tts/recordings/{id}`.
+    /// - Remark: Generated from `#/paths//v1/tts/recordings/{id}/get(getSpeech)`.
+    func getSpeech(_ input: Operations.GetSpeech.Input) async throws -> Operations.GetSpeech.Output
 }
 
 /// Convenience overloads for operation inputs.
 extension APIProtocol {
+    /// The router configs the calling customer holds
+    ///
+    /// A router config is what an agent config is for a session, for a caller that routes one modality at a time: the target, the language and every per-modality option, decided once and named. It is separate from an agent config because it configures transcribing, speaking, answering and searching on their own, with no conversation behind them.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/router/configs`.
+    /// - Remark: Generated from `#/paths//v1/router/configs/get(listRouterConfigs)`.
+    internal func listRouterConfigs(headers: Operations.ListRouterConfigs.Input.Headers = .init()) async throws -> Operations.ListRouterConfigs.Output {
+        try await listRouterConfigs(Operations.ListRouterConfigs.Input(headers: headers))
+    }
+    /// One router config
+    ///
+    /// - Remark: HTTP `GET /v1/router/configs/{id}`.
+    /// - Remark: Generated from `#/paths//v1/router/configs/{id}/get(getRouterConfig)`.
+    internal func getRouterConfig(
+        path: Operations.GetRouterConfig.Input.Path,
+        headers: Operations.GetRouterConfig.Input.Headers = .init()
+    ) async throws -> Operations.GetRouterConfig.Output {
+        try await getRouterConfig(Operations.GetRouterConfig.Input(
+            path: path,
+            headers: headers
+        ))
+    }
     /// The agent configs the calling customer holds
     ///
     /// - Remark: HTTP `GET /v1/agents/configs`.
@@ -331,6 +402,81 @@ extension APIProtocol {
             path: path,
             headers: headers,
             body: body
+        ))
+    }
+    /// Answer a question out of what is true now
+    ///
+    /// The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for. One question, one answer: routed, failed over and billed like the rest, and with no socket because nothing arrives in pieces.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/search`.
+    /// - Remark: Generated from `#/paths//v1/search/post(search)`.
+    internal func search(
+        headers: Operations.Search.Input.Headers = .init(),
+        body: Operations.Search.Input.Body
+    ) async throws -> Operations.Search.Output {
+        try await search(Operations.Search.Input(
+            headers: headers,
+            body: body
+        ))
+    }
+    /// Transcribe a recording, off the live path
+    ///
+    /// The non-realtime half of speech-to-text: a whole recording in, a whole transcript out. It is a job rather than a response because an hour of audio takes minutes to transcribe, so this returns immediately with an id to poll, or calls a callback when it is done.
+    /// Routing works as it does everywhere else, except that the candidates are the providers registered as not realtime - the batch APIs, which are cheaper and more accurate than the same vendor's streaming model.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/stt/recordings`.
+    /// - Remark: Generated from `#/paths//v1/stt/recordings/post(transcribeRecording)`.
+    internal func transcribeRecording(
+        headers: Operations.TranscribeRecording.Input.Headers = .init(),
+        body: Operations.TranscribeRecording.Input.Body
+    ) async throws -> Operations.TranscribeRecording.Output {
+        try await transcribeRecording(Operations.TranscribeRecording.Input(
+            headers: headers,
+            body: body
+        ))
+    }
+    /// One transcription job, and its transcript once it has one
+    ///
+    /// - Remark: HTTP `GET /v1/stt/recordings/{id}`.
+    /// - Remark: Generated from `#/paths//v1/stt/recordings/{id}/get(getTranscription)`.
+    internal func getTranscription(
+        path: Operations.GetTranscription.Input.Path,
+        headers: Operations.GetTranscription.Input.Headers = .init()
+    ) async throws -> Operations.GetTranscription.Output {
+        try await getTranscription(Operations.GetTranscription.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Speak a whole text into one audio file, off the live path
+    ///
+    /// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/tts/recordings`.
+    /// - Remark: Generated from `#/paths//v1/tts/recordings/post(recordSpeech)`.
+    internal func recordSpeech(
+        headers: Operations.RecordSpeech.Input.Headers = .init(),
+        body: Operations.RecordSpeech.Input.Body
+    ) async throws -> Operations.RecordSpeech.Output {
+        try await recordSpeech(Operations.RecordSpeech.Input(
+            headers: headers,
+            body: body
+        ))
+    }
+    /// One speech job, and its audio once it has some
+    ///
+    /// - Remark: HTTP `GET /v1/tts/recordings/{id}`.
+    /// - Remark: Generated from `#/paths//v1/tts/recordings/{id}/get(getSpeech)`.
+    internal func getSpeech(
+        path: Operations.GetSpeech.Input.Path,
+        headers: Operations.GetSpeech.Input.Headers = .init()
+    ) async throws -> Operations.GetSpeech.Output {
+        try await getSpeech(Operations.GetSpeech.Input(
+            path: path,
+            headers: headers
         ))
     }
 }

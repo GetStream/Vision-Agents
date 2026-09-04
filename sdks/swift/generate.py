@@ -32,7 +32,9 @@ TARGET = SWIFT / "core" / "Sources" / "VisionAgentsCore"
 GENERATED = TARGET / "Generated"
 
 # What a client is allowed to reach. Sessions and the two token endpoints are the whole of
-# holding a conversation; the configs and calls reads are what an app shows about one.
+# holding a conversation; the configs and calls reads are what an app shows about one; the
+# recordings, the search and the router config reads are the routed modalities on their own,
+# which a phone reaches for without holding a conversation at all.
 OPERATIONS = [
     "closeSession",
     "createCallToken",
@@ -41,14 +43,21 @@ OPERATIONS = [
     "getAgentConfig",
     "getCall",
     "getCallTranscript",
+    "getRouterConfig",
     "getSession",
+    "getSpeech",
+    "getTranscription",
     "interruptSession",
     "listAgentConfigs",
     "listCalls",
+    "listRouterConfigs",
     "listSessions",
+    "recordSpeech",
     "respondSession",
     "saySession",
+    "search",
     "setSessionInstructions",
+    "transcribeRecording",
 ]
 
 CONFIG = {

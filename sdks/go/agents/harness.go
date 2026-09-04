@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/acceleration"
-	"github.com/GetStream/Vision-Agents/agents-core-go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
 // Sandbox is where code the agent writes gets run.

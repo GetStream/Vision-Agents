@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 )
 
 // NumberSearch narrows what the vendors are asked to offer.

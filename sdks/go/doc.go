@@ -6,4 +6,4 @@
 // built from. Its output is committed, so installing this module needs no code generation.
 package agentscorego
 
-//go:generate go tool oapi-codegen -config api/oapi-codegen.yaml ../acceleration/api/openapi.yaml
+//go:generate go tool oapi-codegen -config api/oapi-codegen.yaml ../../acceleration/api/openapi.yaml

@@ -3,7 +3,7 @@ package agents
 import (
 	"context"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/tools"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 )
 
 // Registrar is anything holding a function registry. The pipeline is the one that matters:

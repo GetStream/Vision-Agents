@@ -1,14 +1,14 @@
-# agents-core-go
+# sdks/go
 
-The Go SDK for agents that run in the [acceleration backend](../acceleration).
+The Go SDK for agents that run in the [acceleration backend](../../acceleration).
 
-It is the Go counterpart of [plugins/stream](../plugins/stream), not of
-[agents-core](../agents-core). The backend already runs the whole pipeline: it joins the
+It is the Go counterpart of [plugins/stream](../../plugins/stream), not of
+[sdks/python](../python). The backend already runs the whole pipeline: it joins the
 call, transcribes, answers and speaks. What this does is create the session, hold the events
 socket, run your functions and configure everything.
 
 ```bash
-go get github.com/GetStream/Vision-Agents/agents-core-go
+go get github.com/GetStream/Vision-Agents/sdks/go
 ```
 
 ```bash
@@ -107,6 +107,35 @@ backend it is navigating so recordings are let finish and menus are answered.
 `PurchaseAnyNumber` starts a monthly charge. An agent that answers the same number every day
 should buy it once and pass it to `WaitForCall`.
 
+## One modality at a time
+
+`stream.Router` routes a modality on its own, live or from a recording, with the options said
+once in a stored config:
+
+```go
+router := stream.Router{Config: "healthcare"}
+
+yes := true
+transcript, _ := router.STT().Recording(ctx,
+    stream.Recorded{URL: "https://example.com/interview.mp4"},
+    &acceleration.SttOptions{Diarize: &yes})
+fmt.Println(transcript.Text, transcript.Speakers)
+
+voice, _ := router.TTS().Realtime(ctx, &acceleration.TtsOptions{Voice: &id})
+defer voice.Close()
+voice.Speak("hello there")
+for audio := range voice.Audio() {
+    ...
+}
+
+found, _ := router.Search(ctx, "perioperative antibiotic guidance", nil)
+```
+
+`Realtime` opens the socket and yields on a channel; `Recording` is the non-realtime form,
+served by the batch half of a vendor rather than the streaming one, which is cheaper and more
+accurate. Anything named in the options overrides that field of the config, and an option no
+provider behind the target can express is refused rather than dropped.
+
 ## An agent as a directory
 
 ```
@@ -140,7 +169,7 @@ so a directory is a starting point rather than an override.
 ## Regenerating the client
 
 `acceleration/generated.go` comes from
-[acceleration/api/openapi.yaml](../acceleration/api/openapi.yaml), which is the same file
+[acceleration/api/openapi.yaml](../../acceleration/api/openapi.yaml), which is the same file
 the Go server and the Python client come from. It is committed, so installing this module
 needs no code generation.
 
@@ -163,7 +192,7 @@ what they are given.
 
 `e2e_test.go` drives a running router instead of a stand-in for one, so it is behind a tag.
 Start Postgres, Redis and the router as
-[acceleration/README.md](../acceleration/README.md) describes, then:
+[acceleration/README.md](../../acceleration/README.md) describes, then:
 
 ```bash
 STREAM_ACCELERATION_URL=http://localhost:8080 \

@@ -60,6 +60,32 @@ let lookup = AgentTool(
 let chat = try await agents.chat(agent: "swift_demo", tools: [lookup])
 ```
 
+### One modality at a time
+
+`Router` routes transcription, a voice, a model or a search on its own, without a call and
+without WebRTC. It takes a stored router config and every option overrides one field of it:
+
+```swift
+let router = Router(url: url, customerID: "acme", config: "healthcare")
+
+var wanted = TranscriptionOptions()
+wanted.diarize = true
+let transcript = try await router.stt.recording(.url(recording), options: wanted)
+
+let voice = try router.tts.realtime()
+for try await speech in try await voice.audio() {
+    // 16-bit PCM, with the rate and channel count it should be played at
+}
+try await voice.speak("hello there")
+
+let found = try await router.search("perioperative antibiotic guidance")
+```
+
+`realtime()` opens a socket and yields what arrives; `recording()` is the non-realtime form,
+served by the batch half of a vendor rather than the streaming one. Writing a router config is
+server-side only, like the rest of configuration, so `configs()` reads them and the Go or
+Python SDK writes them.
+
 ## What is deliberately not here
 
 **Configuring an agent.** Writing a config, defining skills, ingesting knowledge and waiting

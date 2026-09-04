@@ -387,6 +387,1287 @@ extension Components {
                 case updatedAt = "updated_at"
             }
         }
+        /// - Remark: Generated from `#/components/schemas/RouterConfig`.
+        internal struct RouterConfig: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RouterConfig/id`.
+            internal var id: Swift.String
+            /// - Remark: Generated from `#/components/schemas/RouterConfig/name`.
+            internal var name: Swift.String
+            /// - Remark: Generated from `#/components/schemas/RouterConfig/tags`.
+            internal struct TagsPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: Swift.String]
+                /// Creates a new `TagsPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: Swift.String] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// - Remark: Generated from `#/components/schemas/RouterConfig/tags`.
+            internal var tags: Components.Schemas.RouterConfig.TagsPayload?
+            /// - Remark: Generated from `#/components/schemas/RouterConfig/stt`.
+            internal var stt: Components.Schemas.SttOptions?
+            /// - Remark: Generated from `#/components/schemas/RouterConfig/tts`.
+            internal var tts: Components.Schemas.TtsOptions?
+            /// - Remark: Generated from `#/components/schemas/RouterConfig/llm`.
+            internal var llm: Components.Schemas.LlmOptions?
+            /// - Remark: Generated from `#/components/schemas/RouterConfig/search`.
+            internal var search: Components.Schemas.SearchOptions?
+            /// - Remark: Generated from `#/components/schemas/RouterConfig/created_at`.
+            internal var createdAt: Foundation.Date
+            /// - Remark: Generated from `#/components/schemas/RouterConfig/updated_at`.
+            internal var updatedAt: Foundation.Date
+            /// Creates a new `RouterConfig`.
+            ///
+            /// - Parameters:
+            ///   - id:
+            ///   - name:
+            ///   - tags:
+            ///   - stt:
+            ///   - tts:
+            ///   - llm:
+            ///   - search:
+            ///   - createdAt:
+            ///   - updatedAt:
+            internal init(
+                id: Swift.String,
+                name: Swift.String,
+                tags: Components.Schemas.RouterConfig.TagsPayload? = nil,
+                stt: Components.Schemas.SttOptions? = nil,
+                tts: Components.Schemas.TtsOptions? = nil,
+                llm: Components.Schemas.LlmOptions? = nil,
+                search: Components.Schemas.SearchOptions? = nil,
+                createdAt: Foundation.Date,
+                updatedAt: Foundation.Date
+            ) {
+                self.id = id
+                self.name = name
+                self.tags = tags
+                self.stt = stt
+                self.tts = tts
+                self.llm = llm
+                self.search = search
+                self.createdAt = createdAt
+                self.updatedAt = updatedAt
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case id
+                case name
+                case tags
+                case stt
+                case tts
+                case llm
+                case search
+                case createdAt = "created_at"
+                case updatedAt = "updated_at"
+            }
+        }
+        /// How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/SttOptions`.
+        internal struct SttOptions: Codable, Hashable, Sendable {
+            /// A provider/model or a capability shortcut such as en-low-latency for the live path or en-recorded for a recording.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/target`.
+            internal var target: Swift.String?
+            /// ISO codes candidates must cover. Empty with detect_language lets the provider decide.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/languages`.
+            internal var languages: [Swift.String]?
+            /// Let the provider identify the language instead of being told it.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/detect_language`.
+            internal var detectLanguage: Swift.Bool?
+            /// Rate of the PCM sent on the socket. Zero means 16 kHz. Live only.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/sample_rate`.
+            internal var sampleRate: Swift.Int?
+            /// Emit partial transcripts as they firm up, not only final ones. Live only.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/interim`.
+            internal var interim: Swift.Bool?
+            /// - Remark: Generated from `#/components/schemas/SttOptions/endpointing`.
+            internal var endpointing: Components.Schemas.Endpointing?
+            /// How long a pause ends a turn, for silence endpointing. Live only.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/silence_ms`.
+            internal var silenceMs: Swift.Int?
+            /// How long after the last word an utterance is declared over. Live only.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/utterance_end_ms`.
+            internal var utteranceEndMs: Swift.Int?
+            /// Label each stretch of speech with who said it.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/diarize`.
+            internal var diarize: Swift.Bool?
+            /// A hard cap on the speakers diarization may find, not a hint. Providers differ in what they allow, so one asked for more than it supports refuses.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/max_speakers`.
+            internal var maxSpeakers: Swift.Int?
+            /// Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary refuse them.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/keyterms`.
+            internal var keyterms: [Swift.String]?
+            /// Punctuation, capitalisation and smart formatting of numbers and dates.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/format`.
+            internal var format: Swift.Bool?
+            /// Remove personally identifying information from the transcript.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/redact`.
+            internal var redact: Swift.Bool?
+            /// Tag non-speech audio events such as laughter or music.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/events`.
+            internal var events: Swift.Bool?
+            /// Transcribe a multichannel recording per channel rather than mixed down.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/channels`.
+            internal var channels: Swift.Int?
+            /// Word-level timestamps. Recording only.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/words`.
+            internal var words: Swift.Bool?
+            /// - Remark: Generated from `#/components/schemas/SttOptions/output`.
+            internal var output: Components.Schemas.TranscriptFormat?
+            /// Summarise the recording, where the provider offers audio intelligence. Recording only.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/summary`.
+            internal var summary: Swift.Bool?
+            /// Extract named entities from the recording. Recording only.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/entities`.
+            internal var entities: Swift.Bool?
+            /// Creates a new `SttOptions`.
+            ///
+            /// - Parameters:
+            ///   - target: A provider/model or a capability shortcut such as en-low-latency for the live path or en-recorded for a recording.
+            ///   - languages: ISO codes candidates must cover. Empty with detect_language lets the provider decide.
+            ///   - detectLanguage: Let the provider identify the language instead of being told it.
+            ///   - sampleRate: Rate of the PCM sent on the socket. Zero means 16 kHz. Live only.
+            ///   - interim: Emit partial transcripts as they firm up, not only final ones. Live only.
+            ///   - endpointing:
+            ///   - silenceMs: How long a pause ends a turn, for silence endpointing. Live only.
+            ///   - utteranceEndMs: How long after the last word an utterance is declared over. Live only.
+            ///   - diarize: Label each stretch of speech with who said it.
+            ///   - maxSpeakers: A hard cap on the speakers diarization may find, not a hint. Providers differ in what they allow, so one asked for more than it supports refuses.
+            ///   - keyterms: Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary refuse them.
+            ///   - format: Punctuation, capitalisation and smart formatting of numbers and dates.
+            ///   - redact: Remove personally identifying information from the transcript.
+            ///   - events: Tag non-speech audio events such as laughter or music.
+            ///   - channels: Transcribe a multichannel recording per channel rather than mixed down.
+            ///   - words: Word-level timestamps. Recording only.
+            ///   - output:
+            ///   - summary: Summarise the recording, where the provider offers audio intelligence. Recording only.
+            ///   - entities: Extract named entities from the recording. Recording only.
+            internal init(
+                target: Swift.String? = nil,
+                languages: [Swift.String]? = nil,
+                detectLanguage: Swift.Bool? = nil,
+                sampleRate: Swift.Int? = nil,
+                interim: Swift.Bool? = nil,
+                endpointing: Components.Schemas.Endpointing? = nil,
+                silenceMs: Swift.Int? = nil,
+                utteranceEndMs: Swift.Int? = nil,
+                diarize: Swift.Bool? = nil,
+                maxSpeakers: Swift.Int? = nil,
+                keyterms: [Swift.String]? = nil,
+                format: Swift.Bool? = nil,
+                redact: Swift.Bool? = nil,
+                events: Swift.Bool? = nil,
+                channels: Swift.Int? = nil,
+                words: Swift.Bool? = nil,
+                output: Components.Schemas.TranscriptFormat? = nil,
+                summary: Swift.Bool? = nil,
+                entities: Swift.Bool? = nil
+            ) {
+                self.target = target
+                self.languages = languages
+                self.detectLanguage = detectLanguage
+                self.sampleRate = sampleRate
+                self.interim = interim
+                self.endpointing = endpointing
+                self.silenceMs = silenceMs
+                self.utteranceEndMs = utteranceEndMs
+                self.diarize = diarize
+                self.maxSpeakers = maxSpeakers
+                self.keyterms = keyterms
+                self.format = format
+                self.redact = redact
+                self.events = events
+                self.channels = channels
+                self.words = words
+                self.output = output
+                self.summary = summary
+                self.entities = entities
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case target
+                case languages
+                case detectLanguage = "detect_language"
+                case sampleRate = "sample_rate"
+                case interim
+                case endpointing
+                case silenceMs = "silence_ms"
+                case utteranceEndMs = "utterance_end_ms"
+                case diarize
+                case maxSpeakers = "max_speakers"
+                case keyterms
+                case format
+                case redact
+                case events
+                case channels
+                case words
+                case output
+                case summary
+                case entities
+            }
+        }
+        /// What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/Endpointing`.
+        internal enum Endpointing: String, Codable, Hashable, Sendable, CaseIterable {
+            case silence = "silence"
+            case semantic = "semantic"
+        }
+        /// What a finished transcript is rendered as. json carries the words and speakers; srt and vtt are subtitle files. Recording only.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/TranscriptFormat`.
+        internal enum TranscriptFormat: String, Codable, Hashable, Sendable, CaseIterable {
+            case json = "json"
+            case srt = "srt"
+            case vtt = "vtt"
+        }
+        /// How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/TtsOptions`.
+        internal struct TtsOptions: Codable, Hashable, Sendable {
+            /// A provider/model or a capability shortcut.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/target`.
+            internal var target: Swift.String?
+            /// Provider-specific voice id.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/voice`.
+            internal var voice: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/languages`.
+            internal var languages: [Swift.String]?
+            /// Rate of delivery, 1 being the voice's own. Providers differ in the range they accept, so one asked for a speed outside its own refuses.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/speed`.
+            internal var speed: Swift.Float?
+            /// Loudness, 1 being the voice's own.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/volume`.
+            internal var volume: Swift.Float?
+            /// Affect to speak with, for the providers that take one.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/emotion`.
+            internal var emotion: Swift.String?
+            /// Delivery style, for the providers that name styles rather than emotions.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/style`.
+            internal var style: Swift.String?
+            /// How much the voice may vary between chunks. Higher is flatter and more consistent.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/stability`.
+            internal var stability: Swift.Float?
+            /// How closely a cloned voice tracks its reference.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/similarity`.
+            internal var similarity: Swift.Float?
+            /// Codec, sample rate and bitrate as one name - pcm_16000, mp3_44100_128, ulaw_8000 for telephony.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/format`.
+            internal var format: Swift.String?
+            /// How to say words the voice gets wrong, keyed by the word.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/pronunciations`.
+            internal struct PronunciationsPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: Swift.String]
+                /// Creates a new `PronunciationsPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: Swift.String] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// How to say words the voice gets wrong, keyed by the word.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/pronunciations`.
+            internal var pronunciations: Components.Schemas.TtsOptions.PronunciationsPayload?
+            /// Character counts at which a streaming voice flushes audio. Smaller first values start speaking sooner and cost more requests. Live only.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/chunk_schedule`.
+            internal var chunkSchedule: [Swift.Int]?
+            /// Creates a new `TtsOptions`.
+            ///
+            /// - Parameters:
+            ///   - target: A provider/model or a capability shortcut.
+            ///   - voice: Provider-specific voice id.
+            ///   - languages:
+            ///   - speed: Rate of delivery, 1 being the voice's own. Providers differ in the range they accept, so one asked for a speed outside its own refuses.
+            ///   - volume: Loudness, 1 being the voice's own.
+            ///   - emotion: Affect to speak with, for the providers that take one.
+            ///   - style: Delivery style, for the providers that name styles rather than emotions.
+            ///   - stability: How much the voice may vary between chunks. Higher is flatter and more consistent.
+            ///   - similarity: How closely a cloned voice tracks its reference.
+            ///   - format: Codec, sample rate and bitrate as one name - pcm_16000, mp3_44100_128, ulaw_8000 for telephony.
+            ///   - pronunciations: How to say words the voice gets wrong, keyed by the word.
+            ///   - chunkSchedule: Character counts at which a streaming voice flushes audio. Smaller first values start speaking sooner and cost more requests. Live only.
+            internal init(
+                target: Swift.String? = nil,
+                voice: Swift.String? = nil,
+                languages: [Swift.String]? = nil,
+                speed: Swift.Float? = nil,
+                volume: Swift.Float? = nil,
+                emotion: Swift.String? = nil,
+                style: Swift.String? = nil,
+                stability: Swift.Float? = nil,
+                similarity: Swift.Float? = nil,
+                format: Swift.String? = nil,
+                pronunciations: Components.Schemas.TtsOptions.PronunciationsPayload? = nil,
+                chunkSchedule: [Swift.Int]? = nil
+            ) {
+                self.target = target
+                self.voice = voice
+                self.languages = languages
+                self.speed = speed
+                self.volume = volume
+                self.emotion = emotion
+                self.style = style
+                self.stability = stability
+                self.similarity = similarity
+                self.format = format
+                self.pronunciations = pronunciations
+                self.chunkSchedule = chunkSchedule
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case target
+                case voice
+                case languages
+                case speed
+                case volume
+                case emotion
+                case style
+                case stability
+                case similarity
+                case format
+                case pronunciations
+                case chunkSchedule = "chunk_schedule"
+            }
+        }
+        /// How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/LlmOptions`.
+        internal struct LlmOptions: Codable, Hashable, Sendable {
+            /// A provider/model or a capability shortcut.
+            ///
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/target`.
+            internal var target: Swift.String?
+            /// What the model answers under, when a request does not say.
+            ///
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/instructions`.
+            internal var instructions: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/max_output_tokens`.
+            internal var maxOutputTokens: Swift.Int?
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/temperature`.
+            internal var temperature: Swift.Float?
+            /// How long the model may think before answering, on the models that think.
+            ///
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/reasoning_effort`.
+            internal enum ReasoningEffortPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case minimal = "minimal"
+                case low = "low"
+                case medium = "medium"
+                case high = "high"
+            }
+            /// How long the model may think before answering, on the models that think.
+            ///
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/reasoning_effort`.
+            internal var reasoningEffort: Components.Schemas.LlmOptions.ReasoningEffortPayload?
+            /// Whether the answer is prose or a JSON object.
+            ///
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/format`.
+            internal enum FormatPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case text = "text"
+                case jsonObject = "json_object"
+            }
+            /// Whether the answer is prose or a JSON object.
+            ///
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/format`.
+            internal var format: Components.Schemas.LlmOptions.FormatPayload?
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/verbosity`.
+            internal enum VerbosityPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case low = "low"
+                case medium = "medium"
+                case high = "high"
+            }
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/verbosity`.
+            internal var verbosity: Components.Schemas.LlmOptions.VerbosityPayload?
+            /// auto, none, required, or the name of a tool the model must call. Which tools exist is per-request, since they change with the turn.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/tool_choice`.
+            internal var toolChoice: Swift.String?
+            /// Keep the response on the provider so a later one can continue from it.
+            ///
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/store`.
+            internal var store: Swift.Bool?
+            /// What a cached prompt prefix is keyed by. Requests sharing a key and a prefix are read from the cache rather than charged in full.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/prompt_cache_key`.
+            internal var promptCacheKey: Swift.String?
+            /// Passed to the provider untouched, for the providers that store it.
+            ///
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/metadata`.
+            internal struct MetadataPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: Swift.String]
+                /// Creates a new `MetadataPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: Swift.String] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// Passed to the provider untouched, for the providers that store it.
+            ///
+            /// - Remark: Generated from `#/components/schemas/LlmOptions/metadata`.
+            internal var metadata: Components.Schemas.LlmOptions.MetadataPayload?
+            /// Creates a new `LlmOptions`.
+            ///
+            /// - Parameters:
+            ///   - target: A provider/model or a capability shortcut.
+            ///   - instructions: What the model answers under, when a request does not say.
+            ///   - maxOutputTokens:
+            ///   - temperature:
+            ///   - reasoningEffort: How long the model may think before answering, on the models that think.
+            ///   - format: Whether the answer is prose or a JSON object.
+            ///   - verbosity:
+            ///   - toolChoice: auto, none, required, or the name of a tool the model must call. Which tools exist is per-request, since they change with the turn.
+            ///   - store: Keep the response on the provider so a later one can continue from it.
+            ///   - promptCacheKey: What a cached prompt prefix is keyed by. Requests sharing a key and a prefix are read from the cache rather than charged in full.
+            ///   - metadata: Passed to the provider untouched, for the providers that store it.
+            internal init(
+                target: Swift.String? = nil,
+                instructions: Swift.String? = nil,
+                maxOutputTokens: Swift.Int? = nil,
+                temperature: Swift.Float? = nil,
+                reasoningEffort: Components.Schemas.LlmOptions.ReasoningEffortPayload? = nil,
+                format: Components.Schemas.LlmOptions.FormatPayload? = nil,
+                verbosity: Components.Schemas.LlmOptions.VerbosityPayload? = nil,
+                toolChoice: Swift.String? = nil,
+                store: Swift.Bool? = nil,
+                promptCacheKey: Swift.String? = nil,
+                metadata: Components.Schemas.LlmOptions.MetadataPayload? = nil
+            ) {
+                self.target = target
+                self.instructions = instructions
+                self.maxOutputTokens = maxOutputTokens
+                self.temperature = temperature
+                self.reasoningEffort = reasoningEffort
+                self.format = format
+                self.verbosity = verbosity
+                self.toolChoice = toolChoice
+                self.store = store
+                self.promptCacheKey = promptCacheKey
+                self.metadata = metadata
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case target
+                case instructions
+                case maxOutputTokens = "max_output_tokens"
+                case temperature
+                case reasoningEffort = "reasoning_effort"
+                case format
+                case verbosity
+                case toolChoice = "tool_choice"
+                case store
+                case promptCacheKey = "prompt_cache_key"
+                case metadata
+            }
+        }
+        /// How this config finds out today's answers.
+        ///
+        /// - Remark: Generated from `#/components/schemas/SearchOptions`.
+        internal struct SearchOptions: Codable, Hashable, Sendable {
+            /// A provider/model or a capability shortcut.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/target`.
+            internal var target: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/depth`.
+            internal var depth: Components.Schemas.SearchDepth?
+            /// How many hits to return.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/results`.
+            internal var results: Swift.Int?
+            /// Only answer from these domains.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/include_domains`.
+            internal var includeDomains: [Swift.String]?
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/exclude_domains`.
+            internal var excludeDomains: [Swift.String]?
+            /// The kind of source to prefer - news, papers, company, github - for the providers that classify their index.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/category`.
+            internal var category: Swift.String?
+            /// How stale a cached page may be. Zero forces a live crawl, which is slower and costs more.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/max_age_hours`.
+            internal var maxAgeHours: Swift.Int?
+            /// Country or region to answer from, for queries whose answer depends on where.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/location`.
+            internal var location: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/ContentsPayload`.
+            internal enum ContentsPayloadPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case text = "text"
+                case highlights = "highlights"
+                case summary = "summary"
+            }
+            /// What to return alongside each hit.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/contents`.
+            internal typealias ContentsPayload = [Components.Schemas.SearchOptions.ContentsPayloadPayload]
+            /// What to return alongside each hit.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/contents`.
+            internal var contents: Components.Schemas.SearchOptions.ContentsPayload?
+            /// A JSON schema the answer must fit, for the providers that can be asked to structure what they found.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/output_schema`.
+            internal struct OutputSchemaPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                /// Creates a new `OutputSchemaPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// A JSON schema the answer must fit, for the providers that can be asked to structure what they found.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchOptions/output_schema`.
+            internal var outputSchema: Components.Schemas.SearchOptions.OutputSchemaPayload?
+            /// Creates a new `SearchOptions`.
+            ///
+            /// - Parameters:
+            ///   - target: A provider/model or a capability shortcut.
+            ///   - depth:
+            ///   - results: How many hits to return.
+            ///   - includeDomains: Only answer from these domains.
+            ///   - excludeDomains:
+            ///   - category: The kind of source to prefer - news, papers, company, github - for the providers that classify their index.
+            ///   - maxAgeHours: How stale a cached page may be. Zero forces a live crawl, which is slower and costs more.
+            ///   - location: Country or region to answer from, for queries whose answer depends on where.
+            ///   - contents: What to return alongside each hit.
+            ///   - outputSchema: A JSON schema the answer must fit, for the providers that can be asked to structure what they found.
+            internal init(
+                target: Swift.String? = nil,
+                depth: Components.Schemas.SearchDepth? = nil,
+                results: Swift.Int? = nil,
+                includeDomains: [Swift.String]? = nil,
+                excludeDomains: [Swift.String]? = nil,
+                category: Swift.String? = nil,
+                maxAgeHours: Swift.Int? = nil,
+                location: Swift.String? = nil,
+                contents: Components.Schemas.SearchOptions.ContentsPayload? = nil,
+                outputSchema: Components.Schemas.SearchOptions.OutputSchemaPayload? = nil
+            ) {
+                self.target = target
+                self.depth = depth
+                self.results = results
+                self.includeDomains = includeDomains
+                self.excludeDomains = excludeDomains
+                self.category = category
+                self.maxAgeHours = maxAgeHours
+                self.location = location
+                self.contents = contents
+                self.outputSchema = outputSchema
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case target
+                case depth
+                case results
+                case includeDomains = "include_domains"
+                case excludeDomains = "exclude_domains"
+                case category
+                case maxAgeHours = "max_age_hours"
+                case location
+                case contents
+                case outputSchema = "output_schema"
+            }
+        }
+        /// How much work a search is worth. instant answers from the index in a few hundred milliseconds; deep crawls and reasons over what it finds and can take tens of seconds. Providers offer different ladders, so each one maps these four onto its own.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/SearchDepth`.
+        internal enum SearchDepth: String, Codable, Hashable, Sendable, CaseIterable {
+            case instant = "instant"
+            case fast = "fast"
+            case standard = "standard"
+            case deep = "deep"
+        }
+        /// - Remark: Generated from `#/components/schemas/SearchRequest`.
+        internal struct SearchRequest: Codable, Hashable, Sendable {
+            /// A stored router config to take the options from. Anything named here as well overrides that one field of it.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchRequest/config_id`.
+            internal var configId: Swift.String?
+            /// The question, in the caller's own words.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchRequest/query`.
+            internal var query: Swift.String
+            /// - Remark: Generated from `#/components/schemas/SearchRequest/options`.
+            internal var options: Components.Schemas.SearchOptions?
+            /// - Remark: Generated from `#/components/schemas/SearchRequest/tags`.
+            internal struct TagsPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: Swift.String]
+                /// Creates a new `TagsPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: Swift.String] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// - Remark: Generated from `#/components/schemas/SearchRequest/tags`.
+            internal var tags: Components.Schemas.SearchRequest.TagsPayload?
+            /// Creates a new `SearchRequest`.
+            ///
+            /// - Parameters:
+            ///   - configId: A stored router config to take the options from. Anything named here as well overrides that one field of it.
+            ///   - query: The question, in the caller's own words.
+            ///   - options:
+            ///   - tags:
+            internal init(
+                configId: Swift.String? = nil,
+                query: Swift.String,
+                options: Components.Schemas.SearchOptions? = nil,
+                tags: Components.Schemas.SearchRequest.TagsPayload? = nil
+            ) {
+                self.configId = configId
+                self.query = query
+                self.options = options
+                self.tags = tags
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case configId = "config_id"
+                case query
+                case options
+                case tags
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/SearchAnswer`.
+        internal struct SearchAnswer: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/SearchAnswer/provider`.
+            internal var provider: Swift.String
+            /// - Remark: Generated from `#/components/schemas/SearchAnswer/model`.
+            internal var model: Swift.String
+            /// The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchAnswer/answer`.
+            internal var answer: Swift.String?
+            /// The sources behind it, most relevant first.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchAnswer/results`.
+            internal var results: [Components.Schemas.SearchResult]
+            /// Creates a new `SearchAnswer`.
+            ///
+            /// - Parameters:
+            ///   - provider:
+            ///   - model:
+            ///   - answer: The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read.
+            ///   - results: The sources behind it, most relevant first.
+            internal init(
+                provider: Swift.String,
+                model: Swift.String,
+                answer: Swift.String? = nil,
+                results: [Components.Schemas.SearchResult]
+            ) {
+                self.provider = provider
+                self.model = model
+                self.answer = answer
+                self.results = results
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case provider
+                case model
+                case answer
+                case results
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/SearchResult`.
+        internal struct SearchResult: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/SearchResult/title`.
+            internal var title: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/SearchResult/url`.
+            internal var url: Swift.String
+            /// The relevant extract, which is what a model reads.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchResult/text`.
+            internal var text: Swift.String?
+            /// How relevant the provider judged it.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SearchResult/score`.
+            internal var score: Swift.Float?
+            /// Creates a new `SearchResult`.
+            ///
+            /// - Parameters:
+            ///   - title:
+            ///   - url:
+            ///   - text: The relevant extract, which is what a model reads.
+            ///   - score: How relevant the provider judged it.
+            internal init(
+                title: Swift.String? = nil,
+                url: Swift.String,
+                text: Swift.String? = nil,
+                score: Swift.Float? = nil
+            ) {
+                self.title = title
+                self.url = url
+                self.text = text
+                self.score = score
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case title
+                case url
+                case text
+                case score
+            }
+        }
+        /// Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/RecordingSource`.
+        internal struct RecordingSource: Codable, Hashable, Sendable {
+            /// A fetchable audio or video file.
+            ///
+            /// - Remark: Generated from `#/components/schemas/RecordingSource/url`.
+            internal var url: Swift.String?
+            /// The file itself, base64. For clips - a long recording belongs behind a URL.
+            ///
+            /// - Remark: Generated from `#/components/schemas/RecordingSource/audio`.
+            internal var audio: OpenAPIRuntime.Base64EncodedData?
+            /// Creates a new `RecordingSource`.
+            ///
+            /// - Parameters:
+            ///   - url: A fetchable audio or video file.
+            ///   - audio: The file itself, base64. For clips - a long recording belongs behind a URL.
+            internal init(
+                url: Swift.String? = nil,
+                audio: OpenAPIRuntime.Base64EncodedData? = nil
+            ) {
+                self.url = url
+                self.audio = audio
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case url
+                case audio
+            }
+        }
+        /// Where a job has got to. A failed job carries the reason in `error`, and a completed one carries its result.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/RecordingStatus`.
+        internal enum RecordingStatus: String, Codable, Hashable, Sendable, CaseIterable {
+            case queued = "queued"
+            case running = "running"
+            case completed = "completed"
+            case failed = "failed"
+        }
+        /// - Remark: Generated from `#/components/schemas/TranscriptionRequest`.
+        internal struct TranscriptionRequest: Codable, Hashable, Sendable {
+            /// A stored router config to take the options from. Anything named here as well overrides that one field of it.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscriptionRequest/config_id`.
+            internal var configId: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/TranscriptionRequest/source`.
+            internal var source: Components.Schemas.RecordingSource
+            /// - Remark: Generated from `#/components/schemas/TranscriptionRequest/options`.
+            internal var options: Components.Schemas.SttOptions?
+            /// A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscriptionRequest/callback`.
+            internal var callback: Swift.String?
+            /// Cost labels for this job.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscriptionRequest/tags`.
+            internal struct TagsPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: Swift.String]
+                /// Creates a new `TagsPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: Swift.String] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// Cost labels for this job.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscriptionRequest/tags`.
+            internal var tags: Components.Schemas.TranscriptionRequest.TagsPayload?
+            /// Creates a new `TranscriptionRequest`.
+            ///
+            /// - Parameters:
+            ///   - configId: A stored router config to take the options from. Anything named here as well overrides that one field of it.
+            ///   - source:
+            ///   - options:
+            ///   - callback: A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
+            ///   - tags: Cost labels for this job.
+            internal init(
+                configId: Swift.String? = nil,
+                source: Components.Schemas.RecordingSource,
+                options: Components.Schemas.SttOptions? = nil,
+                callback: Swift.String? = nil,
+                tags: Components.Schemas.TranscriptionRequest.TagsPayload? = nil
+            ) {
+                self.configId = configId
+                self.source = source
+                self.options = options
+                self.callback = callback
+                self.tags = tags
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case configId = "config_id"
+                case source
+                case options
+                case callback
+                case tags
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/Transcription`.
+        internal struct Transcription: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/Transcription/id`.
+            internal var id: Swift.String
+            /// - Remark: Generated from `#/components/schemas/Transcription/status`.
+            internal var status: Components.Schemas.RecordingStatus
+            /// - Remark: Generated from `#/components/schemas/Transcription/provider`.
+            internal var provider: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Transcription/model`.
+            internal var model: Swift.String?
+            /// What was spoken, whether it was asked for or detected.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Transcription/language`.
+            internal var language: Swift.String?
+            /// The whole transcript as prose.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Transcription/text`.
+            internal var text: Swift.String?
+            /// Present when word-level timestamps were asked for.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Transcription/words`.
+            internal var words: [Components.Schemas.TranscriptWord]?
+            /// The speakers diarization found, in the order they first spoke.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Transcription/speakers`.
+            internal var speakers: [Swift.String]?
+            /// The transcript as an SRT or VTT file, when one of those was asked for.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Transcription/subtitles`.
+            internal var subtitles: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Transcription/summary`.
+            internal var summary: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Transcription/entities`.
+            internal var entities: [Components.Schemas.TranscriptEntity]?
+            /// How long the recording was, which is what it was billed on.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Transcription/audio_duration_ms`.
+            internal var audioDurationMs: Swift.Int64?
+            /// Why the job failed, if it did.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Transcription/error`.
+            internal var error: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Transcription/created_at`.
+            internal var createdAt: Foundation.Date
+            /// - Remark: Generated from `#/components/schemas/Transcription/updated_at`.
+            internal var updatedAt: Foundation.Date
+            /// - Remark: Generated from `#/components/schemas/Transcription/completed_at`.
+            internal var completedAt: Foundation.Date?
+            /// Creates a new `Transcription`.
+            ///
+            /// - Parameters:
+            ///   - id:
+            ///   - status:
+            ///   - provider:
+            ///   - model:
+            ///   - language: What was spoken, whether it was asked for or detected.
+            ///   - text: The whole transcript as prose.
+            ///   - words: Present when word-level timestamps were asked for.
+            ///   - speakers: The speakers diarization found, in the order they first spoke.
+            ///   - subtitles: The transcript as an SRT or VTT file, when one of those was asked for.
+            ///   - summary:
+            ///   - entities:
+            ///   - audioDurationMs: How long the recording was, which is what it was billed on.
+            ///   - error: Why the job failed, if it did.
+            ///   - createdAt:
+            ///   - updatedAt:
+            ///   - completedAt:
+            internal init(
+                id: Swift.String,
+                status: Components.Schemas.RecordingStatus,
+                provider: Swift.String? = nil,
+                model: Swift.String? = nil,
+                language: Swift.String? = nil,
+                text: Swift.String? = nil,
+                words: [Components.Schemas.TranscriptWord]? = nil,
+                speakers: [Swift.String]? = nil,
+                subtitles: Swift.String? = nil,
+                summary: Swift.String? = nil,
+                entities: [Components.Schemas.TranscriptEntity]? = nil,
+                audioDurationMs: Swift.Int64? = nil,
+                error: Swift.String? = nil,
+                createdAt: Foundation.Date,
+                updatedAt: Foundation.Date,
+                completedAt: Foundation.Date? = nil
+            ) {
+                self.id = id
+                self.status = status
+                self.provider = provider
+                self.model = model
+                self.language = language
+                self.text = text
+                self.words = words
+                self.speakers = speakers
+                self.subtitles = subtitles
+                self.summary = summary
+                self.entities = entities
+                self.audioDurationMs = audioDurationMs
+                self.error = error
+                self.createdAt = createdAt
+                self.updatedAt = updatedAt
+                self.completedAt = completedAt
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case id
+                case status
+                case provider
+                case model
+                case language
+                case text
+                case words
+                case speakers
+                case subtitles
+                case summary
+                case entities
+                case audioDurationMs = "audio_duration_ms"
+                case error
+                case createdAt = "created_at"
+                case updatedAt = "updated_at"
+                case completedAt = "completed_at"
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/TranscriptWord`.
+        internal struct TranscriptWord: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/TranscriptWord/text`.
+            internal var text: Swift.String
+            /// - Remark: Generated from `#/components/schemas/TranscriptWord/start_ms`.
+            internal var startMs: Swift.Int64
+            /// - Remark: Generated from `#/components/schemas/TranscriptWord/end_ms`.
+            internal var endMs: Swift.Int64
+            /// - Remark: Generated from `#/components/schemas/TranscriptWord/confidence`.
+            internal var confidence: Swift.Float?
+            /// Who said it, when diarization was asked for.
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscriptWord/speaker`.
+            internal var speaker: Swift.String?
+            /// Creates a new `TranscriptWord`.
+            ///
+            /// - Parameters:
+            ///   - text:
+            ///   - startMs:
+            ///   - endMs:
+            ///   - confidence:
+            ///   - speaker: Who said it, when diarization was asked for.
+            internal init(
+                text: Swift.String,
+                startMs: Swift.Int64,
+                endMs: Swift.Int64,
+                confidence: Swift.Float? = nil,
+                speaker: Swift.String? = nil
+            ) {
+                self.text = text
+                self.startMs = startMs
+                self.endMs = endMs
+                self.confidence = confidence
+                self.speaker = speaker
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case text
+                case startMs = "start_ms"
+                case endMs = "end_ms"
+                case confidence
+                case speaker
+            }
+        }
+        /// Something the recording named, for the providers that pick them out.
+        ///
+        /// - Remark: Generated from `#/components/schemas/TranscriptEntity`.
+        internal struct TranscriptEntity: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/TranscriptEntity/type`.
+            internal var _type: Swift.String
+            /// - Remark: Generated from `#/components/schemas/TranscriptEntity/text`.
+            internal var text: Swift.String
+            /// - Remark: Generated from `#/components/schemas/TranscriptEntity/start_ms`.
+            internal var startMs: Swift.Int64?
+            /// - Remark: Generated from `#/components/schemas/TranscriptEntity/end_ms`.
+            internal var endMs: Swift.Int64?
+            /// Creates a new `TranscriptEntity`.
+            ///
+            /// - Parameters:
+            ///   - _type:
+            ///   - text:
+            ///   - startMs:
+            ///   - endMs:
+            internal init(
+                _type: Swift.String,
+                text: Swift.String,
+                startMs: Swift.Int64? = nil,
+                endMs: Swift.Int64? = nil
+            ) {
+                self._type = _type
+                self.text = text
+                self.startMs = startMs
+                self.endMs = endMs
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case _type = "type"
+                case text
+                case startMs = "start_ms"
+                case endMs = "end_ms"
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/SpeechRequest`.
+        internal struct SpeechRequest: Codable, Hashable, Sendable {
+            /// A stored router config to take the options from. Anything named here as well overrides that one field of it.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SpeechRequest/config_id`.
+            internal var configId: Swift.String?
+            /// What to say. Whole paragraphs rather than the sentence at a time a socket takes.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SpeechRequest/text`.
+            internal var text: Swift.String
+            /// - Remark: Generated from `#/components/schemas/SpeechRequest/options`.
+            internal var options: Components.Schemas.TtsOptions?
+            /// A URL the finished job is POSTed to, so a caller does not have to poll.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SpeechRequest/callback`.
+            internal var callback: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/SpeechRequest/tags`.
+            internal struct TagsPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: Swift.String]
+                /// Creates a new `TagsPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: Swift.String] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// - Remark: Generated from `#/components/schemas/SpeechRequest/tags`.
+            internal var tags: Components.Schemas.SpeechRequest.TagsPayload?
+            /// Creates a new `SpeechRequest`.
+            ///
+            /// - Parameters:
+            ///   - configId: A stored router config to take the options from. Anything named here as well overrides that one field of it.
+            ///   - text: What to say. Whole paragraphs rather than the sentence at a time a socket takes.
+            ///   - options:
+            ///   - callback: A URL the finished job is POSTed to, so a caller does not have to poll.
+            ///   - tags:
+            internal init(
+                configId: Swift.String? = nil,
+                text: Swift.String,
+                options: Components.Schemas.TtsOptions? = nil,
+                callback: Swift.String? = nil,
+                tags: Components.Schemas.SpeechRequest.TagsPayload? = nil
+            ) {
+                self.configId = configId
+                self.text = text
+                self.options = options
+                self.callback = callback
+                self.tags = tags
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case configId = "config_id"
+                case text
+                case options
+                case callback
+                case tags
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/Speech`.
+        internal struct Speech: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/Speech/id`.
+            internal var id: Swift.String
+            /// - Remark: Generated from `#/components/schemas/Speech/status`.
+            internal var status: Components.Schemas.RecordingStatus
+            /// - Remark: Generated from `#/components/schemas/Speech/provider`.
+            internal var provider: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Speech/model`.
+            internal var model: Swift.String?
+            /// What the audio is encoded as, which is what was asked for.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Speech/format`.
+            internal var format: Swift.String?
+            /// Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/Speech/url`.
+            internal var url: Swift.String?
+            /// The audio itself, base64, when it was not stored behind a URL.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Speech/audio`.
+            internal var audio: OpenAPIRuntime.Base64EncodedData?
+            /// - Remark: Generated from `#/components/schemas/Speech/audio_duration_ms`.
+            internal var audioDurationMs: Swift.Int64?
+            /// How much text was spoken, which is what it was billed on.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Speech/characters`.
+            internal var characters: Swift.Int64?
+            /// - Remark: Generated from `#/components/schemas/Speech/error`.
+            internal var error: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Speech/created_at`.
+            internal var createdAt: Foundation.Date
+            /// - Remark: Generated from `#/components/schemas/Speech/updated_at`.
+            internal var updatedAt: Foundation.Date
+            /// - Remark: Generated from `#/components/schemas/Speech/completed_at`.
+            internal var completedAt: Foundation.Date?
+            /// Creates a new `Speech`.
+            ///
+            /// - Parameters:
+            ///   - id:
+            ///   - status:
+            ///   - provider:
+            ///   - model:
+            ///   - format: What the audio is encoded as, which is what was asked for.
+            ///   - url: Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead.
+            ///   - audio: The audio itself, base64, when it was not stored behind a URL.
+            ///   - audioDurationMs:
+            ///   - characters: How much text was spoken, which is what it was billed on.
+            ///   - error:
+            ///   - createdAt:
+            ///   - updatedAt:
+            ///   - completedAt:
+            internal init(
+                id: Swift.String,
+                status: Components.Schemas.RecordingStatus,
+                provider: Swift.String? = nil,
+                model: Swift.String? = nil,
+                format: Swift.String? = nil,
+                url: Swift.String? = nil,
+                audio: OpenAPIRuntime.Base64EncodedData? = nil,
+                audioDurationMs: Swift.Int64? = nil,
+                characters: Swift.Int64? = nil,
+                error: Swift.String? = nil,
+                createdAt: Foundation.Date,
+                updatedAt: Foundation.Date,
+                completedAt: Foundation.Date? = nil
+            ) {
+                self.id = id
+                self.status = status
+                self.provider = provider
+                self.model = model
+                self.format = format
+                self.url = url
+                self.audio = audio
+                self.audioDurationMs = audioDurationMs
+                self.characters = characters
+                self.error = error
+                self.createdAt = createdAt
+                self.updatedAt = updatedAt
+                self.completedAt = completedAt
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case id
+                case status
+                case provider
+                case model
+                case format
+                case url
+                case audio
+                case audioDurationMs = "audio_duration_ms"
+                case characters
+                case error
+                case createdAt = "created_at"
+                case updatedAt = "updated_at"
+                case completedAt = "completed_at"
+            }
+        }
         /// - Remark: Generated from `#/components/schemas/Call`.
         internal struct Call: Codable, Hashable, Sendable {
             /// The session that ran the call, which is what it is held by.

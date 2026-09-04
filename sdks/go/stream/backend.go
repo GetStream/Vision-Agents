@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 )
 
 const (

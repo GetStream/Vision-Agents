@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/acceleration"
-	"github.com/GetStream/Vision-Agents/agents-core-go/tools"
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
 	"github.com/gorilla/websocket"
 )
 

@@ -855,12 +855,6 @@ type AuthorizePluginRequest struct {
 	InstanceUrl *string `json:"instance_url,omitempty"`
 }
 
-// AuthorizePluginResponse defines model for AuthorizePluginResponse.
-type AuthorizePluginResponse struct {
-	// AuthorizeUrl The URL the browser should open to finish the login.
-	AuthorizeUrl string `json:"authorize_url"`
-}
-
 // AvailableNumber defines model for AvailableNumber.
 type AvailableNumber struct {
 	Capabilities []PhoneCapability `json:"capabilities"`
@@ -1435,6 +1429,12 @@ type Plugin struct {
 	Name             string  `json:"name"`
 }
 
+// PluginAuthorization defines model for PluginAuthorization.
+type PluginAuthorization struct {
+	// AuthorizeUrl The URL the browser should open to finish the login.
+	AuthorizeUrl string `json:"authorize_url"`
+}
+
 // PluginConnection A catalog plugin as this agent has it, including whether it is logged in.
 type PluginConnection struct {
 	Category         *string                `json:"category,omitempty"`
@@ -1565,6 +1565,17 @@ type SayRequest struct {
 	Text string `json:"text"`
 }
 
+// SearchAnswer defines model for SearchAnswer.
+type SearchAnswer struct {
+	// Answer The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read.
+	Answer   *string `json:"answer,omitempty"`
+	Model    string  `json:"model"`
+	Provider string  `json:"provider"`
+
+	// Results The sources behind it, most relevant first.
+	Results []SearchResult `json:"results"`
+}
+
 // SearchDepth How much work a search is worth. instant answers from the index in a few hundred milliseconds; deep crawls and reasons over what it finds and can take tens of seconds. Providers offer different ladders, so each one maps these four onto its own.
 type SearchDepth string
 
@@ -1617,17 +1628,6 @@ type SearchRequest struct {
 	// Example: perioperative antibiotic guidance
 	Query string             `json:"query"`
 	Tags  *map[string]string `json:"tags,omitempty"`
-}
-
-// SearchResponse defines model for SearchResponse.
-type SearchResponse struct {
-	// Answer The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read.
-	Answer   *string `json:"answer,omitempty"`
-	Model    string  `json:"model"`
-	Provider string  `json:"provider"`
-
-	// Results The sources behind it, most relevant first.
-	Results []SearchResult `json:"results"`
 }
 
 // SearchResult defines model for SearchResult.
@@ -12014,7 +12014,7 @@ type AuthorizePluginResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AuthorizePluginResponse
+	JSON200 *PluginAuthorization
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -12026,7 +12026,7 @@ type AuthorizePluginResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthorizePluginResponse) GetJSON200() *AuthorizePluginResponse {
+func (r AuthorizePluginResponse) GetJSON200() *PluginAuthorization {
 	return r.JSON200
 }
 
@@ -15181,7 +15181,7 @@ type SearchResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *SearchResponse
+	JSON200 *SearchAnswer
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -15191,7 +15191,7 @@ type SearchResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r SearchResponse) GetJSON200() *SearchResponse {
+func (r SearchResponse) GetJSON200() *SearchAnswer {
 	return r.JSON200
 }
 
@@ -18649,7 +18649,7 @@ func ParseAuthorizePluginResponse(rsp *http.Response) (*AuthorizePluginResponse,
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AuthorizePluginResponse
+		var dest PluginAuthorization
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -21054,7 +21054,7 @@ func ParseSearchResponse(rsp *http.Response) (*SearchResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest SearchResponse
+		var dest SearchAnswer
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

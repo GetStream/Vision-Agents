@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/agents"
-	"github.com/GetStream/Vision-Agents/agents-core-go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/agents"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
 // router is where the acceleration backend under test is, or the suite skips.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
 )
 
 // Sync stores the agent's configuration in the backend, along with its skills and whatever
@@ -100,7 +100,7 @@ func DefineAgent(
 
 // DefineSkills stores skills, editing whichever is already under each name.
 func DefineSkills(ctx context.Context, client *acceleration.ClientWithResponses, skills []Skill) error {
-	listed, err := client.ListSkillsWithResponse(ctx)
+	listed, err := client.ListSkillsWithResponse(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("agents: listing skills: %w", err)
 	}

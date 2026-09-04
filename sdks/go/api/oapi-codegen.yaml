@@ -1,5 +1,5 @@
 package: acceleration
-# Paths are resolved against the working directory, so generation runs from agents-core-go/.
+# Paths are resolved against the working directory, so generation runs from sdks/go/.
 output: acceleration/generated.go
 generate:
   models: true
