@@ -1,11 +1,14 @@
 """CLI: uv run python -m voicebench_agents <pack>."""
 
 import argparse
+import asyncio
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from voicebench_agents.healthcare import create_agent as create_healthcare
+from voicebench_agents.pipeline import build_llm, sync_accelerated_pack
 from voicebench_agents.restaurant import create_agent as create_restaurant
 from voicebench_agents.serve_webrtc import serve_webrtc
 from voicebench_agents.telecom import create_agent as create_telecom
@@ -31,8 +34,21 @@ def main() -> None:
     parser.add_argument("pack", choices=sorted(FACTORIES), help="scenario pack")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=8000, type=int)
+    parser.add_argument(
+        "--pipeline",
+        default=os.environ.get("VOICEBENCH_PIPELINE", "realtime"),
+        choices=["realtime", "accelerated"],
+        help="realtime OpenAI or the acceleration bundle",
+    )
     args = parser.parse_args()
-    serve_webrtc(FACTORIES[args.pack], host=args.host, port=args.port)
+
+    async def create_agent(**kwargs):
+        kwargs["llm"] = build_llm(args.pipeline, pack=args.pack)
+        return await FACTORIES[args.pack](**kwargs)
+
+    if args.pipeline == "accelerated":
+        asyncio.run(sync_accelerated_pack(args.pack))
+    serve_webrtc(create_agent, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

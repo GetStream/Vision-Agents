@@ -2345,6 +2345,30 @@ dev = [
 ]
 
 [[package]]
+name = "vision-agents-plugins-stream"
+source = { editable = "../../plugins/stream" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "attrs" },
+    { name = "httpx" },
+    { name = "vision-agents" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.10" },
+    { name = "attrs", specifier = ">=23.2" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "vision-agents", editable = "../../sdks/python" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
 name = "voicebench-agents"
 version = "0.0.0"
 source = { editable = "." }
@@ -2355,6 +2379,7 @@ dependencies = [
     { name = "vision-agents" },
     { name = "vision-agents-plugins-getstream" },
     { name = "vision-agents-plugins-openai" },
+    { name = "vision-agents-plugins-stream" },
 ]
 
 [package.metadata]
@@ -2365,6 +2390,7 @@ requires-dist = [
     { name = "vision-agents", editable = "../../sdks/python" },
     { name = "vision-agents-plugins-getstream", editable = "../../plugins/getstream" },
     { name = "vision-agents-plugins-openai", editable = "../../plugins/openai" },
+    { name = "vision-agents-plugins-stream", editable = "../../plugins/stream" },
 ]
 
 [[package]]

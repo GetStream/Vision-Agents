@@ -9,7 +9,9 @@ CreateAgent = Callable[..., Awaitable[Agent]]
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
     call = await agent.create_call(call_type, call_id)
-    async with agent.join(call):
+    # Voicebench joins the caller first, then starts this session, so do not wait
+    # for a participant_joined that already happened.
+    async with agent.join(call, participant_wait_timeout=0):
         await agent.simple_response(text="Greet the caller briefly and wait.")
         await agent.finish()
 
