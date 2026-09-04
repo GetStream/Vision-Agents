@@ -12,29 +12,18 @@ load_dotenv()
 """
 A voice agent whose whole pipeline runs in the Go acceleration backend.
 
-Gemini transcribes, Gemini Flash Lite holds the conversation, ElevenLabs speaks it, and
-anything worth thinking about is handed to Sol while the conversation carries on. The
-config names what the agent is; the targets below name who does the work.
+instructions.md says what the agent is, and the router says who does the work: a config
+that names no models transcribes, answers and speaks on the deployment's defaults, and
+hands anything worth thinking about to the quality tier while the conversation carries on.
 
 Needs a router: see acceleration/README.md, then point STREAM_ACCELERATION_URL at it.
 """
 
-NAME = "simple_voice_ai"
-
 
 async def create_agent(**kwargs) -> Agent:
-    await acceleration.sync_agent(NAME)
+    await acceleration.sync_agent("simple_voice_ai")
 
-    return Agent(
-        config=NAME,
-        llm=acceleration.Accelerated(
-            config=NAME,
-            stt="gemini/gemini-3.5-transcribe-live",
-            tts="elevenlabs/eleven_v3_conversational",
-            model="gemini/gemini-3.5-flash-lite",
-            subagent="openai/gpt-5.6-sol",
-        ),
-    )
+    return Agent(config="simple_voice_ai")
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
@@ -42,7 +31,6 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     async with agent.join(call):
         await agent.simple_response("greet the user in one short sentence")
-        await agent.finish()
 
 
 if __name__ == "__main__":

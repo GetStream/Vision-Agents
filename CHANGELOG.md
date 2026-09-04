@@ -1,6 +1,102 @@
 # Unreleased
 
+## Breaking Changes
+
+### `Agent.join`: leaving the block waits for the call to end
+
+`join`, `answer` and `outbound_call` now wait for the call to end on the way out, so an agent
+no longer ends with `await agent.finish()`:
+
+```python
+async with agent.join(call):
+    await agent.simple_response("greet the user in one short sentence")
+```
+
+`finish()` is unchanged and still safe to call. Leaving a call that is still live is
+`wait_for_end=False`.
+
+### `GET /v1/llm/stream`: responses are streamed one at a time
+
+The socket used to answer every `respond` frame on one shared event stream, so a caller had
+to correlate frames itself and abandon a reply by naming the completion. A response is now
+its own stream, which changes the frames:
+
+- `interrupt` takes `response_ids` rather than `completion_ids`.
+- `complete` carries `status` (`completed`, `incomplete`, `failed` or `cancelled`) and
+  `cache_write_tokens`. A response that was interrupted settles as `cancelled` and still
+  reports what it produced and was billed for.
+
+The Go `llm.LLM` interface behind it changed to match, which matters for an out-of-tree
+provider: `Respond(request) error` plus `Events()` becomes
+`Create(ctx, ResponseParams) (*llm.Stream, error)`, `Interrupt(ids...)` becomes
+`stream.Close()`, and `Reasoning() bool` folds into `Capabilities()`. The OpenAI provider now
+calls `/v1/responses` rather than `/v1/chat/completions`, so it can cache a prompt prefix
+under `PromptCacheKey` and continue from a stored response.
+
+### `stream.Router` is a config, not a one-shot resolver
+
+`Router("sonic_36")` used to ask the backend which modality a name was and return the plugin
+for it. `Router` is now the config-driven router, and resolving a bare name is a method on it:
+
+```python
+router = Router("healthcare")          # a stored router config
+tts = router.resolve("sonic_36")       # what Router("sonic_36") used to be
+```
+
+A `start` frame on `/v1/{modality}/stream` with neither `target` nor `config_id` is also
+refused now, rather than falling back to a default nobody asked for.
+
 ## New Features
+
+### A router config, four modalities, live and recorded
+
+`RouterConfig` says the routing options once, for speech-to-text, text-to-speech, completions
+and search, and `/v1/router/configs` stores it. Every option is a default that a per-call
+option overrides, and each of the three streaming modalities now has a non-realtime form
+beside the socket:
+
+- `POST /v1/stt/recordings` transcribes a whole recording — a URL, a path or the bytes — with
+  diarization, word timings, SRT or VTT subtitles, redaction, summaries and entities. It routes
+  to the batch models rather than the streaming ones, which are cheaper per hour and more
+  accurate, under the new `en-recorded` and `multilingual-recorded` aliases.
+- `POST /v1/tts/recordings` speaks a whole text into one file, which is what lets a codec and a
+  bitrate be chosen instead of raw PCM.
+- `POST /v1/search` answers one question without a socket, which is the fourth routed modality
+  finally having a client.
+
+Both jobs take a `callback` so a caller need not poll, and both are addressed by
+`GET .../{id}` in the meantime.
+
+```python
+router = Router("healthcare")
+
+async with router.stt.realtime() as stt:
+    ...
+
+transcript = await router.stt.recording("interview.mp4", diarize=True, words=True)
+audiobook = await router.tts.recording(chapter, format="mp3_44100_128")
+hits = await router.search("perioperative antibiotic guidance", results=5)
+```
+
+`stream.Router` in Go and `Router` in `VisionAgentsCore` are the same four namespaces.
+
+An option the modality does not have is refused rather than sent and ignored, and so is one no
+provider behind that target can express: each model declares in `router.yaml` which optional
+terms it can serve, and a request naming one only routes to a model that declared it. A
+transcript that was quietly not diarized is worse than being told. The `router-stt`,
+`router-tts`, `router-llm` and `router-search` skills record what each vendor calls the same
+option and what the router will not fake.
+
+### A session is given a thinking model it did not ask for
+
+A session that names no `subagent` is now given one, so an agent written down as
+instructions alone can hand the hard parts over instead of guessing at them: the target is
+`multilingual-high-accuracy`, and with it come the built-in `think`, `recall` and `explain`
+skills. Naming a `subagent` still decides it.
+
+It is the one target looked up before it is asked for. A deployment whose `router.yaml`
+routes no high-quality model keeps taking calls, and those agents answer everything
+themselves, the way an agent goes without search when nothing routes it.
 
 ### Swift SDKs: chat and voice from an iOS app
 

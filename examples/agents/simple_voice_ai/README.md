@@ -1,22 +1,23 @@
 # Simple voice AI (accelerated)
 
 A voice agent with nothing in the pipeline running in Python. `instructions.md` says what
-the agent is, and the four targets say who does the work:
+the agent is, and it names no models at all: a config that says nothing about who does the
+work gets the router's defaults.
 
-| Modality     | Target                              |
-| ------------ | ----------------------------------- |
-| Transcribe   | `gemini/gemini-3.5-transcribe-live` |
-| Answer       | `gemini/gemini-3.5-flash-lite`      |
-| Speak        | `elevenlabs/eleven_v3_conversational` |
-| Think        | `openai/gpt-5.6-sol`                |
+| Modality   | Default target               |
+| ---------- | ---------------------------- |
+| Transcribe | `en-low-latency`             |
+| Answer     | `llm-fast`                   |
+| Speak      | `en-low-latency`             |
+| Think      | `multilingual-high-accuracy` |
+
+Each of those is a capability rather than a model, so the router picks inside the tier by
+live health and a degraded provider drops down the list. Set `stt`, `tts`, `llm` or
+`subagent` on the config to pin any of them to one provider.
 
 The agent has no `skills/` directory, so it gets the built-in `think`, `recall` and
-`explain`. Work handed to any of them runs on Sol while the conversation carries on.
-
-`eleven_v3_conversational` performs bracketed directions such as `[laughs]`, and the
-backend tells the model so, which is why the instructions here say nothing about them. It
-is around a second to first audio rather than flash's 75ms; swap in
-`elevenlabs/eleven_flash_v2_5` if latency matters more than performance.
+`explain`. Work handed to any of them runs on the thinking model while the conversation
+carries on.
 
 ## Prerequisites
 
@@ -24,12 +25,13 @@ A running acceleration router: see [acceleration/README.md](../../../acceleratio
 
 - `ROUTER_POSTGRES_DSN`, since a stored agent config is a row. Without it the sync is
   refused rather than half-applied.
-- `GOOGLE_API_KEY`, `ELEVENLABS_API_KEY` and `OPENAI_API_KEY`. Provider credentials live
-  with the router, not here.
+- A key for whichever providers the router routes each default to, `GOOGLE_API_KEY`,
+  `ELEVENLABS_API_KEY` and `OPENAI_API_KEY` among them. Provider credentials live with the
+  router, not here.
 - `TAVILY_API_KEY`, optionally, which is what lets the agent answer about traffic, weather
   or anything else that depends on today. Without it there is no `search` tool and the
-  agent can only say it cannot check: Sol reasons well but knows nothing about this
-  morning.
+  agent can only say it cannot check: a thinking model reasons well but knows nothing
+  about this morning.
 
 ## Run
 
