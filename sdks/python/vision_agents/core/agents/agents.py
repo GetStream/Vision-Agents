@@ -608,6 +608,7 @@ class Agent:
                 if participant_wait_timeout != 0:
                     await self.wait_for_participant(timeout=participant_wait_timeout)
                 yield
+                await self.finish()
                 return
 
             await self._start_components()
@@ -669,6 +670,7 @@ class Agent:
             self._call_ended_event = asyncio.Event()
             self._joined_at = time.time()
             yield
+            await self.finish()
         except Exception as exc:
             if self._closing or self._closed:
                 # Only log exceptions if the agent is already closing

@@ -30,9 +30,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/acceleration"
-	"github.com/GetStream/Vision-Agents/agents-core-go/agents"
-	"github.com/GetStream/Vision-Agents/agents-core-go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/agents"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
 const agentName = "swift_demo"

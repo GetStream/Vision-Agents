@@ -42,7 +42,7 @@ The agent can only answer from what it has read, so read the docs into it first:
 
 ```bash
 cd ../../../acceleration
-go run ./cmd/knowledge -namespace docs ../docs ../README.md ../agents-core
+go run ./cmd/knowledge -namespace docs ../docs ../README.md ../sdks/python
 ```
 
 Markdown is cut at its headings, long sections are cut again at paragraph breaks, and each

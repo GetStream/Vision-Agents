@@ -19,4 +19,4 @@ dependencies = [
 "vision-agents-plugins-elevenlabs" = { path = "../../../plugins/elevenlabs", editable = true }
 "vision-agents-plugins-getstream" = { path = "../../../plugins/getstream", editable = true }
 "vision-agents-plugins-gemini" = { path = "../../../plugins/gemini", editable = true }
-"vision-agents" = { path = "../../../agents-core", editable = true }
+"vision-agents" = { path = "../../../sdks/python", editable = true }

@@ -37,7 +37,7 @@ One thing asked for has no document because nothing was built: sprint 9's Docker
 the Go API. The service is run from source.
 
 Everything lives in [acceleration/](../../acceleration), a Go module beside the Python
-framework, apart from the two SDKs in [agents-core-go/](../../agents-core-go) and
+framework, apart from the two SDKs in [sdks/go/](../../sdks/go) and
 [plugins/stream/](../../plugins/stream) and the [dashboard/](../../dashboard).
 [acceleration/README.md](../../acceleration/README.md) is the operator's view: how to run it,
 what to configure, what each table holds. These documents are the other half, why each

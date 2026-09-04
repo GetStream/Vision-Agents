@@ -2220,7 +2220,7 @@ wheels = [
 
 [[package]]
 name = "vision-agents"
-source = { editable = "../../agents-core" }
+source = { editable = "../../sdks/python" }
 dependencies = [
     { name = "aiortc" },
     { name = "av" },
@@ -2315,7 +2315,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=4.1.0,<5" },
-    { name = "vision-agents", editable = "../../agents-core" },
+    { name = "vision-agents", editable = "../../sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -2335,7 +2335,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "openai", extras = ["realtime"], specifier = ">=2.26.0,<3" },
-    { name = "vision-agents", editable = "../../agents-core" },
+    { name = "vision-agents", editable = "../../sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -2362,7 +2362,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "uvicorn" },
-    { name = "vision-agents", editable = "../../agents-core" },
+    { name = "vision-agents", editable = "../../sdks/python" },
     { name = "vision-agents-plugins-getstream", editable = "../../plugins/getstream" },
     { name = "vision-agents-plugins-openai", editable = "../../plugins/openai" },
 ]

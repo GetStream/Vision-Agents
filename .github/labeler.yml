@@ -1,7 +1,7 @@
 # Core Framework Components
 agents-core:
   - changed-files:
-      - any-glob-to-any-file: 'agents-core/**'
+      - any-glob-to-any-file: 'sdks/python/**'
 
 # Plugin System
 plugins:

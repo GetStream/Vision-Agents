@@ -6,11 +6,11 @@
 | ----------------- | ----------------------------------------------------------------------- |
 | `acceleration/`   | Go model router: STT, TTS, LLM and search behind one API, plus the agent that joins a call. `cmd/router` serves it |
 | `dashboard/`      | Next.js app for watching calls and editing agent configs. Talks to the router from the browser |
-| `agents-core/`    | The Python SDK: `Agent`, `Runner`, the plugin contracts                  |
+| `sdks/python/`    | The Python SDK: `Agent`, `Runner`, the plugin contracts                  |
 | `plugins/`        | 44 Python packages, one per provider. `plugins/stream` is the client for `acceleration/` |
 | `sdks/swift/`     | Three iOS packages: `core` (state and API), `ui` (SwiftUI), `rtc` (voice over Stream Video) |
 | `examples/agents/`| Runnable agents. `simple_voice_ai` is the smallest one                   |
-| `agents-core-go/`, `benchmark/` | The Go SDK and the voice benchmark. `go.work` ties the Go modules together |
+| `sdks/go/`, `benchmark/` | The Go SDK and the voice benchmark. `go.work` ties the Go modules together |
 
 ## Local dev
 

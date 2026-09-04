@@ -19,6 +19,6 @@ build-backend = "hatchling.build"
 packages = ["voicebench_agents"]
 
 [tool.uv.sources]
-"vision-agents" = {path = "../../agents-core", editable=true}
+"vision-agents" = {path = "../../sdks/python", editable=true}
 "vision-agents-plugins-getstream" = {path = "../../plugins/getstream", editable=true}
 "vision-agents-plugins-openai" = {path = "../../plugins/openai", editable=true}

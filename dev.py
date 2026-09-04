@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Development CLI tool for agents-core
+Development CLI tool for sdks/python
 Essential dev commands for testing, linting, and type checking
 """
 
@@ -23,7 +23,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 CORE_EXTRAS_DEV_SECTION = "dev"
-CORE_PACKAGE_NAME = "agents-core"
+CORE_PACKAGE_NAME = "sdks/python"
 PLUGINS_DIR = "plugins"
 
 
@@ -54,7 +54,7 @@ def run(
 @click.group(invoke_without_command=True)
 @click.pass_context
 def cli(ctx):
-    """Development CLI tool for agents-core."""
+    """Development CLI tool for sdks/python."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
@@ -154,7 +154,7 @@ def _get_core_optional_dependencies() -> CoreDependencies:
 @cli.command(name="validate-extras")
 def validate_extra_dependencies():
     """
-    Validate that all namespace packages are include into optional dependencies in "agents-core/pyproject.toml".
+    Validate that all namespace packages are include into optional dependencies in "sdks/python/pyproject.toml".
     This command must be executed from the project root.
     """
     # First, validate that the script is executed from the project's root
@@ -166,7 +166,7 @@ def validate_extra_dependencies():
     plugins_roots = {p.split(".")[0] for p in plugins}
     plugins_packages = [_get_plugin_package_name(plugin) for plugin in plugins_roots]
 
-    # Get optional dependencies for "agents-core" package.
+    # Get optional dependencies for "sdks/python" package.
     core_optional_dependencies = _get_core_optional_dependencies()
 
     # Validate that every plugin has a dedicated section in core's optional dependencies
@@ -207,7 +207,7 @@ def _requires_python(pyproj: Path) -> str:
 def check_python_versions(python_version: str):
     """Verify every workspace member resolves on a target Python version.
 
-    For each workspace member (agents-core + every plugins/*), skip if its
+    For each workspace member (sdks/python + every plugins/*), skip if its
     `requires-python` excludes the target, otherwise call `uv pip compile`
     against its pyproject.toml. Runs from a tmp dir so workspace-level
     `[tool.uv]` overrides are bypassed; `[tool.uv.sources]` from the parent
@@ -262,8 +262,8 @@ def check():
     run("uv run ruff format")
     run("uv run ruff format --check .")
 
-    # Validate extra dependencies included to agents-core/pyproject.toml
-    click.echo("\n=== 2. Validate agents-core/pyproject.toml ===")
+    # Validate extra dependencies included to sdks/python/pyproject.toml
+    click.echo("\n=== 2. Validate sdks/python/pyproject.toml ===")
     validate_extra_dependencies.callback()
 
     # Run mypy on main package

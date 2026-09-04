@@ -6415,7 +6415,7 @@ wheels = [
 
 [[package]]
 name = "vision-agents"
-source = { editable = "agents-core" }
+source = { editable = "sdks/python" }
 dependencies = [
     { name = "aiortc" },
     { name = "av" },
@@ -6649,7 +6649,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anam", specifier = ">=0.6.0,<0.7" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -6675,7 +6675,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.7.0,<1" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -6701,7 +6701,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -6733,7 +6733,7 @@ requires-dist = [
     { name = "aws-sdk-transcribe-streaming", specifier = ">=0.5.0,<1" },
     { name = "boto3", specifier = ">=1.42.65,<2" },
     { name = "onnxruntime", specifier = ">=1.16.1,<2" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -6760,7 +6760,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cartesia", specifier = ">=3.0.2,<3.1" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
     { name = "websockets", specifier = ">=15.0.1,<16" },
 ]
 
@@ -6787,7 +6787,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "decart", specifier = ">=0.0.34,<0.0.36" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -6813,7 +6813,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "deepgram-sdk", specifier = ">=7.1.0,<7.2.0" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -6839,7 +6839,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "elevenlabs", specifier = ">=2.38.1,<3" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -6865,7 +6865,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "faster-whisper", specifier = ">=1.2.1,<2" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -6891,7 +6891,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fish-audio-sdk", specifier = ">=1.3.0,<2" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -6918,7 +6918,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "google-genai", specifier = ">=2.8.0,<3" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -6945,7 +6945,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "getstream", extras = ["telemetry", "webrtc"], specifier = ">=4.1.0,<5" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -6999,7 +6999,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'transformers-quantized'", specifier = ">=2.0.0,<3" },
     { name = "transformers", marker = "extra == 'transformers'", specifier = ">=4.45.0,<5" },
     { name = "transformers", marker = "extra == 'transformers-quantized'", specifier = ">=4.45.0,<5" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 provides-extras = ["transformers", "transformers-quantized"]
 
@@ -7032,7 +7032,7 @@ requires-dist = [
     { name = "aiortc", specifier = ">=1.9" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "openai", extras = ["realtime"], specifier = ">=2.26.0,<3" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
     { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
     { name = "websockets", specifier = ">=14.0" },
 ]
@@ -7064,7 +7064,7 @@ requires-dist = [
     { name = "kokoro", specifier = ">=0.9.4" },
     { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7094,7 +7094,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1,<1" },
     { name = "livekit", specifier = ">=1.1.2,<2" },
     { name = "livekit-api", specifier = ">=1.1.0,<2" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7123,7 +7123,7 @@ dev = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1,<1" },
     { name = "livekit", specifier = ">=1.1.2,<2" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
     { name = "websockets", specifier = ">=13.0,<16" },
 ]
 
@@ -7154,7 +7154,7 @@ requires-dist = [
     { name = "aiortc", specifier = ">=1.14.0,<1.15.0" },
     { name = "av", specifier = ">=14.2.0,<17" },
     { name = "sounddevice", specifier = ">=0.5.0" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7181,7 +7181,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "openai", specifier = ">=2.26.0,<3" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
     { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
 ]
 
@@ -7208,7 +7208,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mistralai", extras = ["realtime"], specifier = ">=1.12.4,<2" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7247,7 +7247,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=10.4.0,<11" },
     { name = "torch", specifier = ">=2.10.0,<3" },
     { name = "transformers", specifier = ">=4.57.6,<5" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7273,7 +7273,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7299,7 +7299,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "openai", extras = ["realtime"], specifier = ">=2.26.0,<3" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7325,7 +7325,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "openai", specifier = ">=2.26.0,<3" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7351,7 +7351,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pocket-tts", specifier = ">=1.1.1" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7380,7 +7380,7 @@ dev = [
 requires-dist = [
     { name = "langchain-text-splitters", specifier = ">=1.1.1" },
     { name = "qdrant-client", extras = ["fastembed"], specifier = ">=1.12.0,<1.18.0" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7408,7 +7408,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
     { name = "websockets", specifier = ">=15.0.1" },
 ]
 
@@ -7441,7 +7441,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "rfdetr", specifier = ">=1.3.0" },
     { name = "supervision", specifier = ">=0.21.0,<0.28" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7468,7 +7468,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
     { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
 ]
 
@@ -7501,7 +7501,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6,<2.3" },
     { name = "onnxruntime", specifier = ">=1.24.3,<2" },
     { name = "transformers", specifier = ">=4.57.6,<5" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7527,7 +7527,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "speechify-api", specifier = ">=3.0.1" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7557,7 +7557,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
     { name = "attrs", specifier = ">=23.2" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7590,7 +7590,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=44.0.0" },
     { name = "fastapi", specifier = ">=0.135.1" },
     { name = "numpy", specifier = ">=1.24.0" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
     { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
 ]
 
@@ -7619,7 +7619,7 @@ dev = [
 requires-dist = [
     { name = "liteav", marker = "sys_platform == 'linux'", specifier = ">=13.2" },
     { name = "tls-sig-api-v2" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7649,7 +7649,7 @@ requires-dist = [
     { name = "langchain-google-genai", specifier = ">=4.2.1" },
     { name = "langchain-text-splitters", specifier = ">=1.1.1" },
     { name = "turbopuffer", specifier = ">=1.17.0,<1.22" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7678,7 +7678,7 @@ dev = [
 requires-dist = [
     { name = "av", specifier = ">=12.0.0" },
     { name = "twelvelabs", specifier = ">=1.2.8,<2" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7709,7 +7709,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.135.1" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "twilio", specifier = ">=9.10.3,<10" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7737,7 +7737,7 @@ dev = [
 requires-dist = [
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "ultralytics", specifier = ">=8.4.21" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7769,7 +7769,7 @@ requires-dist = [
     { name = "faster-whisper", specifier = ">=1.2.1,<2" },
     { name = "httpx", specifier = ">=0.28.1,<1" },
     { name = "onnxruntime", specifier = ">=1.24.3,<2" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
     { name = "vogent-turn", specifier = ">=0.1.1,<1" },
 ]
 
@@ -7798,7 +7798,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fal-client", specifier = ">=0.13.1" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -7834,7 +7834,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3,<4" },
     { name = "pydub", marker = "extra == 'mp3'", specifier = ">=0.25" },
-    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents", editable = "sdks/python" },
     { name = "websockets", specifier = ">=15.0,<16" },
     { name = "xai-sdk", specifier = ">=1.8.0,<2" },
 ]

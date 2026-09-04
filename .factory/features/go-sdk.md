@@ -4,25 +4,25 @@
 
 ## Asked for
 
-`agents-core-go`, generated in part from the acceleration OpenAPI. Every agent can be a
+`sdks/go`, generated in part from the acceleration OpenAPI. Every agent can be a
 directory holding its skills, its knowledge and its instructions. A text example and a voice
 example, both shaped like the Python ones, plus buying a number, waiting for a call on it and
 calling somebody.
 
 ## What exists
 
-[agents-core-go](../../agents-core-go) is the Go counterpart of
-[plugins/stream](../../plugins/stream), not of `agents-core`. It creates sessions on the
+[sdks/go](../../sdks/go) is the Go counterpart of
+[plugins/stream](../../plugins/stream), not of `sdks/python`. It creates sessions on the
 backend, holds the event socket, runs local functions and configures agents. The pipeline
 itself runs in the router, the same as it does for Python.
 
 | Package                                            | What it holds                                    |
 | -------------------------------------------------- | ------------------------------------------------ |
-| [agents](../../agents-core-go/agents)              | `Agent`, `Session`, `Harness`, the folder loader, `Sync` |
-| [stream](../../agents-core-go/stream)              | `Accelerated`, the backend client, phone, the hand-written socket |
-| [edge](../../agents-core-go/edge)                  | Creating and joining a Stream call, and `MonitorURL` |
-| [tools](../../agents-core-go/tools)                | Function registry, JSON Schema from struct tags   |
-| [acceleration](../../agents-core-go/acceleration)  | The generated REST client                         |
+| [agents](../../sdks/go/agents)              | `Agent`, `Session`, `Harness`, the folder loader, `Sync` |
+| [stream](../../sdks/go/stream)              | `Accelerated`, the backend client, phone, the hand-written socket |
+| [edge](../../sdks/go/edge)                  | Creating and joining a Stream call, and `MonitorURL` |
+| [tools](../../sdks/go/tools)                | Function registry, JSON Schema from struct tags   |
+| [acceleration](../../sdks/go/acceleration)  | The generated REST client                         |
 
 ```go
 llm := stream.Accelerated(stream.Config{

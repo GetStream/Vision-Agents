@@ -2,7 +2,7 @@ go 1.26
 
 use (
 	./acceleration
-	./agents-core-go
 	./benchmark
 	./examples/agents/swift_demo/configure
+	./sdks/go
 )

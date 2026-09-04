@@ -81,7 +81,7 @@ did not work if it is told that it did not work.
 ## Configuration objects, not a second implementation
 
 `Harness`, `DefaultHarness`, `Skill` and `Daytona` in
-[core/harness](../../agents-core/vision_agents/core/harness/harness.py) carry no loop.
+[core/harness](../../sdks/python/vision_agents/core/harness/harness.py) carry no loop.
 They are serialized into the session spec and the decisions are taken in
 [internal/harness](../../acceleration/internal/harness). Reimplementing the loop in Python
 would mean two of them to keep in step, and the one that mattered would be the one holding
