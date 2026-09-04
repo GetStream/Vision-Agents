@@ -24,9 +24,11 @@
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
-	<!-- Without this the first attempt to use the microphone kills the app. -->
+	<!-- Without these the first attempt to use the microphone or dictation kills the app. -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>So you can talk to the agent.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>So you can dictate a message instead of typing it.</string>
 	<!--
 	  The router runs over plain HTTP in local development, which App Transport Security
 	  refuses by default. NSAllowsLocalNetworking permits it for local addresses only: the

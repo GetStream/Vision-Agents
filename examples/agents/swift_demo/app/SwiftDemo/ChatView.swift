@@ -16,7 +16,7 @@ struct ChatView: View {
     var body: some View {
         Group {
             if let session {
-                ConversationView(session: session, prompt: "Ask about an order")
+                ConversationView(session: session)
             } else if let failure {
                 ContentUnavailableView(
                     "Could not start", systemImage: "exclamationmark.triangle", description: Text(failure))

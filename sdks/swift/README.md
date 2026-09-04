@@ -8,7 +8,7 @@ text conversation should not download it.
 | Package | Module | Depends on | What it is |
 | --- | --- | --- | --- |
 | `core/` | `VisionAgentsCore` | OpenAPI runtime, URLSession | The generated client, the session socket, and the conversation state |
-| `ui/` | `VisionAgentsUI` | `core` | SwiftUI views over that state |
+| `ui/` | `VisionAgentsUI` | `core`, `stream-chat-swift-ai` | SwiftUI views over that state |
 | `rtc/` | `VisionAgentsRTC` | `core`, `stream-video-swift` | Joining the call, so the conversation can be spoken |
 
 iOS 17 is the floor. It is `@Observable`'s floor, and the alternative was an `ObservableObject`
@@ -42,6 +42,24 @@ ConversationView(session: chat)
 
 `TranscriptView`, `Composer` and `AgentStatusView` are public and work on their own, so a host
 that wants a different arrangement takes them apart rather than fighting `ConversationView`.
+
+The transcript and the composer are Stream's [AI chat components][ai], so an app that already
+uses them gets one composer rather than two that almost agree. What the agent says is rendered
+as markdown -- code blocks, tables, images -- and written out a letter at a time while it
+streams. The composer carries the send and stop-generating buttons and dictation; it carries no
+attachment button, because a session carries text.
+
+Dictation means the host app needs two usage strings in its Info.plist, which a package cannot
+supply and without which iOS terminates the app the first time it asks:
+
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>So you can talk to the agent.</string>
+<key>NSSpeechRecognitionUsageDescription</key>
+<string>So you can dictate a message instead of typing it.</string>
+```
+
+[ai]: https://github.com/GetStream/stream-chat-swift-ai
 
 ### A tool that runs on the phone
 

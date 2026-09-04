@@ -8,16 +8,14 @@ import VisionAgentsCore
 /// want, and it opens the socket when it appears and closes it when it goes away.
 public struct ConversationView: View {
     private let session: AgentSession
-    private let prompt: String
 
-    public init(session: AgentSession, prompt: String = "Message") {
+    public init(session: AgentSession) {
         self.session = session
-        self.prompt = prompt
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            TranscriptView(turns: session.turns)
+            TranscriptView(turns: session.turns, state: session.state)
                 .frame(maxHeight: .infinity)
 
             if let failure = session.failure {
@@ -33,13 +31,24 @@ public struct ConversationView: View {
             }
             .padding(.horizontal)
 
-            Composer(prompt: prompt, isEnabled: session.isConnected) { text in
-                try? await session.send(text)
-            }
-            .padding()
+            Composer(
+                isEnabled: session.isConnected,
+                isGenerating: isGenerating,
+                send: { try? await session.send($0) },
+                stop: { try? await session.interrupt() }
+            )
         }
         .task {
             await session.start()
+        }
+    }
+
+    /// Answering and thinking are both a reply in flight, and both are what the composer's
+    /// stop button abandons.
+    private var isGenerating: Bool {
+        switch session.state {
+        case .responding, .working: return true
+        case .idle, .listening, .ended: return false
         }
     }
 }

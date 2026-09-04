@@ -18,7 +18,7 @@ struct VoiceView: View {
     var body: some View {
         VStack(spacing: 16) {
             if let voice {
-                TranscriptView(turns: voice.session.turns)
+                TranscriptView(turns: voice.session.turns, state: voice.session.state)
                     .frame(maxHeight: .infinity)
                 AgentStatusView(state: voice.session.state)
                 VoiceCallView(voice: voice)
