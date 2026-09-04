@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -107,19 +108,17 @@ func (s *stubSTT) Close() error {
 
 // stubLLM answers with a fixed reply and, on the first turn, whatever tool the test wants.
 type stubLLM struct {
-	emitter *llm.Emitter
-
 	mu    sync.Mutex
-	asked []llm.Request
+	asked []llm.ResponseParams
 	reply string
 	calls []llm.ToolCall
 }
 
 func (s *stubLLM) Start(context.Context) error { return nil }
 
-func (s *stubLLM) Respond(request llm.Request) error {
+func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
-	s.asked = append(s.asked, request)
+	s.asked = append(s.asked, params)
 	first := len(s.asked) == 1
 	reply := s.reply
 	var calls []llm.ToolCall
@@ -128,44 +127,28 @@ func (s *stubLLM) Respond(request llm.Request) error {
 	}
 	s.mu.Unlock()
 
-	if reply == "" && len(calls) == 0 {
-		return nil
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   s.Provider(),
+		Model:      s.Model(),
+	})
+	script.OutputText(reply)
+	if len(calls) > 0 {
+		script.ToolCalls(calls...)
 	}
-	go func() {
-		s.emitter.Send(llm.CompletionStarted{CompletionID: request.ID, At: time.Now()})
-		if reply != "" {
-			s.emitter.Send(llm.TextDelta{CompletionID: request.ID, Text: reply})
-		}
-		s.emitter.Send(llm.CompletionComplete{
-			CompletionID: request.ID,
-			Text:         reply,
-			ToolCalls:    calls,
-		})
-	}()
-	return nil
+	script.Done()
+	return script.Stream(), nil
 }
 
-func (s *stubLLM) Interrupt(completionIDs ...string) error {
-	for _, id := range completionIDs {
-		s.emitter.Send(llm.CompletionComplete{CompletionID: id, Interrupted: true})
-	}
-	return nil
-}
+func (s *stubLLM) Provider() string               { return "stub" }
+func (s *stubLLM) Model() string                  { return "stub-llm" }
+func (s *stubLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (s *stubLLM) Close() error                   { return nil }
 
-func (s *stubLLM) Events() <-chan llm.Event { return s.emitter.Events() }
-func (s *stubLLM) Provider() string         { return "stub" }
-func (s *stubLLM) Model() string            { return "stub-llm" }
-func (s *stubLLM) Reasoning() bool          { return false }
-
-func (s *stubLLM) Close() error {
-	s.emitter.Close()
-	return nil
-}
-
-func (s *stubLLM) requests() []llm.Request {
+func (s *stubLLM) requests() []llm.ResponseParams {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]llm.Request(nil), s.asked...)
+	return append([]llm.ResponseParams(nil), s.asked...)
 }
 
 // stubTTS produces one chunk of audio per piece of text.
@@ -263,6 +246,9 @@ type SessionSuite struct {
 	voice   *stubTTS
 	// remembers is the memory store the manager was built with, when a test wants one.
 	remembers *stubMemory
+	// thinks routes the target a session defaults its thinking model to, for a test that
+	// wants delegation without naming anything.
+	thinks bool
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -273,6 +259,20 @@ func (s *SessionSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.edges = nil
 	s.remembers = nil
+	s.thinks = false
+}
+
+// thinking is what the LLM router routes. A deployment that routes no high-quality model
+// hands a session no thinking model either, so a test that wants one says so.
+func (s *SessionSuite) thinking() routing.ModalityConfig {
+	config := stubConfig()
+	if s.thinks {
+		config.Aliases[defaultSubagentTarget] = routing.Alias{
+			Languages:       []string{"en"},
+			RequireRealtime: true,
+		}
+	}
+	return config
 }
 
 // manages builds a manager over stub providers. It is called by each test rather than in
@@ -291,18 +291,18 @@ func (s *SessionSuite) manages() {
 
 	// The agent opens a voice model and a flow controller, in that order, and each needs
 	// its own emitter: two sessions on one channel would each consume the other's events.
-	s.model = &stubLLM{emitter: llm.NewEmitter(64), reply: "Hello."}
+	s.model = &stubLLM{reply: "Hello."}
 	var opened int
 	reasoning := llmrouter.NewRegistry()
-	reasoning.Register("stub", func(routing.Spec) (llm.LLM, error) {
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
 		defer func() { opened++ }()
 		if opened == 0 {
 			return s.model, nil
 		}
-		return &stubLLM{emitter: llm.NewEmitter(64)}, nil
+		return &stubLLM{}, nil
 	})
 	reasoner, err := llmrouter.New(llmrouter.Options{
-		Config: stubConfig(), Registry: reasoning, Logger: logger,
+		Config: s.thinking(), Registry: reasoning, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
@@ -443,8 +443,9 @@ func (s *SessionSuite) TestTheRecordedCallSaysWhatItWasRunWith() {
 }
 
 func (s *SessionSuite) TestACallThatDelegatesNothingRecordsNoSkills() {
-	// Without a subagent there is nobody to hand work to, so listing skills on the row
-	// would claim the call could do something it could not.
+	// This deployment routes no thinking model, so the default finds nothing and there is
+	// nobody to hand work to: listing skills on the row would claim the call could do
+	// something it could not.
 	s.manages()
 
 	created := s.joins(Spec{CallID: "call-10"})
@@ -453,6 +454,19 @@ func (s *SessionSuite) TestACallThatDelegatesNothingRecordsNoSkills() {
 
 	s.Empty(recorded.Subagent)
 	s.Empty(recorded.Skills)
+}
+
+func (s *SessionSuite) TestACallNamingNoThinkingModelIsGivenOneItCanRoute() {
+	// What lets an agent written down as instructions alone hand the hard parts over.
+	s.thinks = true
+	s.manages()
+
+	created := s.joins(Spec{CallID: "call-12"})
+
+	recorded := row(created)
+
+	s.Equal(defaultSubagentTarget, recorded.Subagent)
+	s.Contains(recorded.Skills, "think")
 }
 
 func (s *SessionSuite) TestACallThatNamesNoSkillsRecordsTheBuiltInSet() {

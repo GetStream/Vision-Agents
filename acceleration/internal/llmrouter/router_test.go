@@ -5,54 +5,55 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
 // stubLLM stands in for a real provider so a session can be driven without credentials.
 type stubLLM struct {
-	emitter *llm.Emitter
-	asked   []llm.Request
-	// interrupts counts barge-ins, so a session can be checked to forward them.
-	interrupts int
-	// abandoned is every completion id an interrupt named.
-	abandoned []string
-	closed    bool
-	reasoning bool
+	asked  []llm.ResponseParams
+	closed bool
+	// scripts are the responses handed out, newest last, so a test can drive one after
+	// the session has returned it.
+	scripts []*llmtest.Script
+	// capabilities is what this stub claims to accept.
+	capabilities llm.Capabilities
 }
 
-func newStubLLM() *stubLLM {
-	return &stubLLM{emitter: llm.NewEmitter(64)}
-}
+func newStubLLM() *stubLLM { return &stubLLM{} }
 
 func (s *stubLLM) Start(context.Context) error { return nil }
 
-func (s *stubLLM) Respond(request llm.Request) error {
-	s.asked = append(s.asked, request)
-	return nil
+func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	s.asked = append(s.asked, params)
+
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   s.Provider(),
+		Model:      s.Model(),
+	})
+	s.scripts = append(s.scripts, script)
+	return script.Stream(), nil
 }
 
-func (s *stubLLM) Interrupt(completionIDs ...string) error {
-	s.interrupts++
-	s.abandoned = append(s.abandoned, completionIDs...)
-	return nil
-}
-
-func (s *stubLLM) Events() <-chan llm.Event { return s.emitter.Events() }
+// script is the response handed out for the nth request, so a test can write it.
+func (s *stubLLM) script(n int) *llmtest.Script { return s.scripts[n] }
 
 func (s *stubLLM) Close() error {
 	s.closed = true
-	s.emitter.Close()
+	for _, script := range s.scripts {
+		script.Done()
+	}
 	return nil
 }
 
-func (s *stubLLM) Provider() string { return "stub" }
-func (s *stubLLM) Model() string    { return "stub-model" }
-func (s *stubLLM) Reasoning() bool  { return s.reasoning }
+func (s *stubLLM) Provider() string               { return "stub" }
+func (s *stubLLM) Model() string                  { return "stub-model" }
+func (s *stubLLM) Capabilities() llm.Capabilities { return s.capabilities }
 
 type LLMRouterSuite struct {
 	suite.Suite
@@ -102,23 +103,6 @@ func (s *LLMRouterSuite) sessionFor(config routing.ProviderConfig) (*Session, *s
 		recorder.Close()
 	})
 	return session, provider
-}
-
-// drain reads the session's forwarded events until the channel closes.
-func (s *LLMRouterSuite) drain(session *Session) []llm.Event {
-	var events []llm.Event
-	for {
-		select {
-		case event, open := <-session.Events():
-			if !open {
-				return events
-			}
-			events = append(events, event)
-		case <-time.After(5 * time.Second):
-			s.FailNow("timed out draining the session")
-			return events
-		}
-	}
 }
 
 func (s *LLMRouterSuite) TestRouterServesTheLLMModality() {
@@ -183,46 +167,65 @@ func (s *LLMRouterSuite) TestAnUnknownTargetIsRejected() {
 func (s *LLMRouterSuite) TestSessionForwardsRequestsToTheProvider() {
 	session, provider := s.newSession()
 
-	request := llm.Request{ID: "c1", Messages: []llm.Message{{Role: llm.User, Content: "hi"}}}
-	s.Require().NoError(session.Respond(request))
+	_, err := session.Create(s.ctx, llm.ResponseParams{
+		ID:    "c1",
+		Input: []llm.Message{{Role: llm.User, Content: "hi"}},
+	})
+	s.Require().NoError(err)
 
 	s.Require().Len(provider.asked, 1)
 	s.Equal("c1", provider.asked[0].ID)
 }
 
-func (s *LLMRouterSuite) TestSessionForwardsInterruptions() {
-	session, provider := s.newSession()
-
-	s.Require().NoError(session.Interrupt())
-
-	s.Equal(1, provider.interrupts)
-	s.Empty(provider.abandoned, "an unnamed interrupt abandons everything in flight")
-}
-
-func (s *LLMRouterSuite) TestSessionForwardsWhichCompletionToAbandon() {
-	// A caller running several completions at once has to be able to abandon only the one
+func (s *LLMRouterSuite) TestClosingAResponseAbandonsOnlyThatOne() {
+	// A caller running several responses at once has to be able to abandon only the one
 	// whose premise has gone stale.
 	session, provider := s.newSession()
 
-	s.Require().NoError(session.Interrupt("task-2"))
+	first, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: prompt()})
+	s.Require().NoError(err)
+	second, err := session.Create(s.ctx, llm.ResponseParams{ID: "c2", Input: prompt()})
+	s.Require().NoError(err)
 
-	s.Equal([]string{"task-2"}, provider.abandoned)
+	s.Require().NoError(first.Close())
+	provider.script(1).OutputText("still going")
+	provider.script(1).Done()
+
+	s.Equal(llm.StatusCancelled, drain(first).Status)
+	s.Equal("still going", drain(second).OutputText,
+		"abandoning one response leaves the other alone")
+}
+
+// prompt is the smallest input a request can carry.
+func prompt() []llm.Message {
+	return []llm.Message{{Role: llm.User, Content: "hi"}}
+}
+
+// drain reads a stream to the end and returns what it settled as.
+func drain(stream *llm.Stream) llm.Response {
+	for stream.Next() {
+	}
+	return stream.Response()
 }
 
 func (s *LLMRouterSuite) TestSessionForwardsEveryProviderEvent() {
 	session, provider := s.newSession()
 
-	provider.emitter.Send(llm.CompletionStarted{CompletionID: "c1", At: time.Now()})
-	provider.emitter.Send(llm.TextDelta{CompletionID: "c1", Text: "Hi"})
-	provider.emitter.Send(llm.CompletionComplete{CompletionID: "c1", Text: "Hi"})
-	s.Require().NoError(session.Close())
+	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: prompt()})
+	s.Require().NoError(err)
 
-	events := s.drain(session)
+	provider.script(0).OutputText("Hi")
+	provider.script(0).Done()
+
+	var events []llm.Event
+	for stream.Next() {
+		events = append(events, stream.Current())
+	}
 
 	s.Require().Len(events, 3, "the session observes events without swallowing them")
-	s.IsType(llm.CompletionStarted{}, events[0])
-	s.IsType(llm.TextDelta{}, events[1])
-	s.IsType(llm.CompletionComplete{}, events[2])
+	s.IsType(llm.ResponseCreated{}, events[0])
+	s.IsType(llm.OutputTextDelta{}, events[1])
+	s.IsType(llm.ResponseCompleted{}, events[2])
 }
 
 func (s *LLMRouterSuite) TestSessionIdentityComesFromTheRoutingConfig() {
@@ -246,12 +249,12 @@ func (s *LLMRouterSuite) TestSessionExposesThePriceItWillBeBilledAt() {
 	}), "a million tokens each way at $1 in and $2 out is $3")
 }
 
-func (s *LLMRouterSuite) TestSessionReportsWhetherTheModelThinks() {
+func (s *LLMRouterSuite) TestSessionReportsWhatTheModelAccepts() {
 	session, provider := s.newSession()
-	s.False(session.Reasoning())
+	s.Empty(session.Capabilities().ReasoningEfforts)
 
-	provider.reasoning = true
-	s.True(session.Reasoning())
+	provider.capabilities = llm.Capabilities{ReasoningEfforts: []string{"low"}}
+	s.Equal([]string{"low"}, session.Capabilities().ReasoningEfforts)
 }
 
 func (s *LLMRouterSuite) TestSessionExposesTheUnderlyingProvider() {
@@ -267,7 +270,6 @@ func (s *LLMRouterSuite) TestClosingTheSessionClosesTheProvider() {
 	s.Require().NoError(session.Close())
 
 	s.True(provider.closed)
-	s.Empty(s.drain(session), "the event channel closes so a consumer's range loop ends")
 }
 
 func (s *LLMRouterSuite) TestClosingTwiceIsSafe() {
@@ -278,51 +280,41 @@ func (s *LLMRouterSuite) TestClosingTwiceIsSafe() {
 }
 
 func (s *LLMRouterSuite) TestErrorCodeExplainsTheFailure() {
-	s.Equal("provider_fatal", errorCode(llm.Error{Fatal: true, Context: "stream"}))
-	s.Equal("stream", errorCode(llm.Error{Context: "stream"}))
-	s.Equal("provider_error", errorCode(llm.Error{}))
+	s.Equal("provider_error", errorCode(llm.Response{Status: llm.StatusFailed}))
+	s.Empty(errorCode(llm.Response{Status: llm.StatusCompleted}))
+	s.Empty(errorCode(llm.Response{Status: llm.StatusCancelled}),
+		"a response the caller abandoned is not a provider failure")
 }
 
-func (s *LLMRouterSuite) TestACompletionSettlesOnceEvenIfItIsReportedTwice() {
-	// A duplicate completion must not bill twice, so the second one finds nothing in
-	// flight and is stamped with now rather than with the original start.
-	session, _ := s.newSession()
-	started := time.Now().Add(-time.Minute).UTC()
+func (s *LLMRouterSuite) TestAnAbandonedResponseIsStillBilled() {
+	// What it generated before being cut off was generated all the same.
+	session, provider := s.newSession()
 
-	session.observe(llm.CompletionStarted{CompletionID: "c1", At: started})
-	first := session.settle("c1")
-	second := session.settle("c1")
+	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: prompt()})
+	s.Require().NoError(err)
+	provider.script(0).OutputText("half a sen")
+	provider.script(0).Usage(llm.Usage{InputTokens: 10, OutputTokens: 4})
 
-	s.Equal(started, first.startedAt)
-	s.True(second.startedAt.After(first.startedAt))
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	s.Require().NoError(stream.Close())
+
+	response := drain(stream)
+	s.Equal(llm.StatusCancelled, response.Status)
+	s.EqualValues(4, response.Usage.OutputTokens)
 }
 
-func (s *LLMRouterSuite) TestAFailureNamingACompletionIsSettledByThatCompletion() {
-	// One turn is one row: the error marks the completion, and the completion writes it.
-	session, _ := s.newSession()
+func (s *LLMRouterSuite) TestAFailedResponseStillSettles() {
+	// One turn is one row: the failure is carried on the response rather than written as
+	// a row of its own.
+	session, provider := s.newSession()
 
-	session.observe(llm.CompletionStarted{CompletionID: "c1", At: time.Now()})
-	s.True(session.fail("c1", "stream"), "the completion was still in flight")
+	stream, err := session.Create(s.ctx, llm.ResponseParams{ID: "c1", Input: prompt()})
+	s.Require().NoError(err)
+	provider.script(0).Fail(errors.New("the model is down"), "stream")
 
-	settled := session.settle("c1")
-	s.Equal("stream", settled.errorCode)
-}
-
-func (s *LLMRouterSuite) TestOnlyTheFirstFailureExplainsACompletion() {
-	session, _ := s.newSession()
-
-	session.observe(llm.CompletionStarted{CompletionID: "c1", At: time.Now()})
-	session.fail("c1", "stream")
-	session.fail("c1", "provider_fatal")
-
-	s.Equal("stream", session.settle("c1").errorCode)
-}
-
-func (s *LLMRouterSuite) TestAFailureForAnUnknownCompletionIsSessionLevel() {
-	session, _ := s.newSession()
-
-	s.False(session.fail("never-started", "stream"),
-		"a failure the session cannot attribute becomes its own row")
+	s.Equal(llm.StatusFailed, drain(stream).Status)
+	s.ErrorContains(stream.Err(), "the model is down")
 }
 
 func (s *LLMRouterSuite) TestStartFailsWhenNoCandidateCanBeBuilt() {
@@ -348,11 +340,11 @@ func (s *LLMRouterSuite) TestStartFailsOverToTheNextCandidate() {
 	s.Require().NoError(err)
 
 	registry := NewRegistry()
-	registry.Register("deepseek", func(routing.Spec) (llm.LLM, error) {
+	registry.Register("deepseek", func(routing.Spec) (Provider, error) {
 		return nil, errors.New("no credentials")
 	})
-	registry.Register("openai", func(routing.Spec) (llm.LLM, error) {
-		return newStubLLM(), nil
+	registry.Register("openai", func(routing.Spec) (Provider, error) {
+		return Started[llm.LLM](newStubLLM(), nil)
 	})
 
 	router, err := New(Options{Config: config[routing.LLM], Registry: registry})

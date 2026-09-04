@@ -42,5 +42,6 @@ func (s *CerebrasSuite) TestTheDefaultIsGemma4() {
 
 	s.Equal(defaultModel, provider.Model())
 	s.Equal(ProviderName, provider.Provider())
-	s.False(provider.Reasoning(), "reasoning is the wrong trade on the live path")
+	s.Empty(provider.Capabilities().ReasoningEfforts,
+		"reasoning is the wrong trade on the live path")
 }

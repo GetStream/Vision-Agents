@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
 // defaultConfigFS carries the built-in capability config so the router works without an
@@ -157,8 +159,17 @@ type ProviderConfig struct {
 	Realtime bool `yaml:"realtime"`
 	// Tier is what the model optimises for. It defaults to low-latency, since a model
 	// that says nothing is assumed to be usable in a conversation.
-	Tier  Tier  `yaml:"tier"`
-	Price Price `yaml:"price"`
+	Tier Tier `yaml:"tier"`
+	// Terms are the optional terms this model can express - diarization, a speaking
+	// speed, a domain filter. A request asking for one is only routed here if it is
+	// declared, so a term is either honoured or the request is refused.
+	Terms []options.Term `yaml:"supports"`
+	Price Price          `yaml:"price"`
+}
+
+// Supports reports whether this model can express every term a request named.
+func (p ProviderConfig) Supports(terms []options.Term) bool {
+	return options.Expressible(p.Terms, terms)
 }
 
 // Name is the registry key, for example "deepgram/flux-general-en".
@@ -195,6 +206,10 @@ type Alias struct {
 	Multilingual bool `yaml:"multilingual"`
 	// RequireRealtime excludes models that are not suitable for the live path.
 	RequireRealtime bool `yaml:"require_realtime"`
+	// RequireRecorded is the other way round: it excludes the live models, so a whole
+	// recording routes to the batch endpoint that is cheaper and more accurate than the
+	// same vendor's streaming one rather than being streamed at a socket.
+	RequireRecorded bool `yaml:"require_recorded"`
 	// Tier restricts candidates to one tier. Empty accepts any.
 	Tier Tier `yaml:"tier"`
 }
@@ -202,6 +217,9 @@ type Alias struct {
 // matches reports whether a provider satisfies the alias.
 func (a Alias) matches(provider ProviderConfig) bool {
 	if a.RequireRealtime && !provider.Realtime {
+		return false
+	}
+	if a.RequireRecorded && provider.Realtime {
 		return false
 	}
 	if a.Multilingual && !provider.Multilingual() {

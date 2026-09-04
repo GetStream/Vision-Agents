@@ -16,8 +16,31 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
+// Provider is an llm.LLM as the generic router sees it.
+//
+// The router opens every modality the same way, and an LLM has nothing to open: a response
+// is one request, so there is no connection to make before the first one. Start is here to
+// satisfy that shape and does nothing, which is what Started wraps a provider to say.
+type Provider interface {
+	llm.LLM
+	Start(ctx context.Context) error
+}
+
 // Registry is the set of LLM providers a build can construct.
-type Registry = routing.Registry[llm.LLM]
+type Registry = routing.Registry[Provider]
+
+// Started adapts a provider to the router's shape by giving it a Start that opens nothing.
+// It takes a constructor's two results so a registry entry stays one line.
+func Started[P llm.LLM](provider P, err error) (Provider, error) {
+	if err != nil {
+		return nil, err
+	}
+	return started{LLM: provider}, nil
+}
+
+type started struct{ llm.LLM }
+
+func (started) Start(context.Context) error { return nil }
 
 // Options configures a Router. Store and Live are optional: without them the router still
 // routes, it just stops recording.
@@ -45,14 +68,14 @@ type Request struct {
 	LanguageHints []string
 }
 
-// Router selects an LLM provider and opens completion sessions.
+// Router selects an LLM provider and opens sessions.
 type Router struct {
-	*routing.Router[llm.LLM]
+	*routing.Router[Provider]
 }
 
 // New validates the options and returns a Router.
 func New(options Options) (*Router, error) {
-	core, err := routing.New(routing.Options[llm.LLM]{
+	core, err := routing.New(routing.Options[Provider]{
 		Modality: routing.LLM,
 		Config:   options.Config,
 		Registry: options.Registry,
@@ -67,7 +90,7 @@ func New(options Options) (*Router, error) {
 }
 
 // Start selects a provider and opens a session, falling back to the next candidate when one
-// fails to start. One session answers many turns.
+// fails to build. One session answers many turns.
 func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	core := routing.Request{
 		CustomerID:    request.CustomerID,

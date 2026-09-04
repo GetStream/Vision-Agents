@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 )
 
@@ -47,6 +48,15 @@ type Options struct {
 // minimalEffort is the least thinking a Gemini 3 model will do.
 const minimalEffort = "minimal"
 
+// capabilities is what these models accept. There is no none: every Gemini 3 model thinks.
+var capabilities = llm.Capabilities{
+	ReasoningEfforts: []string{minimalEffort, "low", "medium", "high"},
+	DefaultEffort:    minimalEffort,
+	// Google reports thinking as tokens rather than streaming it, so there is no
+	// reasoning text for a caller to separate out.
+	StreamsReasoning: false,
+}
+
 // New builds the provider, reading the API key from the environment when it is not given.
 func New(options Options) (*openaicompat.LLM, error) {
 	if options.APIKey == "" {
@@ -65,16 +75,19 @@ func New(options Options) (*openaicompat.LLM, error) {
 		options.ReasoningEffort = minimalEffort
 	}
 
+	model := capabilities
+	model.DefaultEffort = options.ReasoningEffort
+
 	return openaicompat.New(openaicompat.Options{
-		Provider:   ProviderName,
-		Model:      options.Model,
-		StatsModel: options.Model,
-		APIKey:     options.APIKey,
-		BaseURL:    options.BaseURL,
-		// Google reports thinking as tokens rather than streaming it, so there is no
-		// reasoning text for the session to separate out.
-		Reasoning: false,
-		ExtraBody: map[string]any{"reasoning_effort": options.ReasoningEffort},
-		Logger:    options.Logger,
+		Provider:     ProviderName,
+		Model:        options.Model,
+		StatsModel:   options.Model,
+		APIKey:       options.APIKey,
+		BaseURL:      options.BaseURL,
+		Capabilities: model,
+		RequestFields: func(_ llm.ResponseParams, effort string) map[string]any {
+			return map[string]any{"reasoning_effort": effort}
+		},
+		Logger: options.Logger,
 	})
 }

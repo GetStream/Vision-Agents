@@ -12,6 +12,7 @@
 package harness
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,7 +58,12 @@ type Options struct {
 	Tasks int
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
 	MaxTokens int
-	Logger    *slog.Logger
+	// CacheKey buckets this agent's requests in the provider's prompt cache, so the
+	// instructions every one of them opens with are written once and read back after.
+	// It is shared by every call the agent takes and means nothing to a provider whose
+	// capabilities do not report PromptCacheKey.
+	CacheKey string
+	Logger   *slog.Logger
 }
 
 // noted is something for the fast model to be told, and the skill it came from. The skill
@@ -112,6 +118,9 @@ type Harness struct {
 	// history is the conversation as of the last turn, so a request for help carries the
 	// context it was asked in rather than only the sentence that prompted it.
 	history []llm.Message
+	// stored is what the provider has already read of this conversation, when it keeps
+	// what it generates.
+	stored stored
 	// compaction is private summary work in flight.
 	compaction *compaction
 
@@ -159,9 +168,93 @@ func New(options Options) (*Harness, error) {
 	return h, nil
 }
 
-// Respond asks the fast model to answer a turn. It returns once the request is on its
-// way: the reply arrives on the model session's own events and is filtered by Filter.
-func (h *Harness) Respond(turn Turn) error {
+// stored is what a provider that keeps what it generates has already read.
+//
+// The whole conversation is sent again by default, because routing may answer consecutive
+// turns from different providers and a conversation held by the caller survives that. This
+// is the shortcut taken when it is provably safe: the same model, the same instructions,
+// and an input that only appends to what it last saw.
+type stored struct {
+	// responseID is what the provider called the last reply it kept.
+	responseID string
+	// identity is the provider and model that kept it. A failover changes it, and the
+	// shortcut is dropped rather than offered to a provider that never saw the response.
+	identity string
+	// instructions is what that reply was told. Changed instructions mean the turn is no
+	// longer a continuation of it.
+	instructions string
+	// sent is exactly the input the provider has read, so what to append can be worked
+	// out rather than assumed. Compaction rewrites the conversation from the front, and
+	// what it produces is not a continuation of anything.
+	sent []llm.Message
+}
+
+// Remember records the reply a provider kept, so the next turn can continue from it.
+func (h *Harness) Remember(response llm.Response) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if response.ProviderResponseID == "" {
+		h.stored = stored{}
+		return
+	}
+	h.stored.responseID = response.ProviderResponseID
+	h.stored.identity = response.Provider + "/" + response.Model
+}
+
+// resume works out how much of the input still has to be sent, and what to continue from.
+//
+// It returns the whole input and no previous response whenever the shortcut cannot be
+// proven safe, which costs bandwidth and nothing else.
+func (h *Harness) resume(instructions string, input []llm.Message) ([]llm.Message, string) {
+	model := h.options.Model.Capabilities()
+	if !model.Store {
+		return input, ""
+	}
+
+	previous := h.stored
+	h.stored.instructions = instructions
+	h.stored.sent = input
+
+	if previous.responseID == "" ||
+		previous.identity != h.options.Model.Provider()+"/"+h.options.Model.Model() ||
+		previous.instructions != instructions ||
+		!appendsTo(previous.sent, input) {
+		h.stored.responseID = ""
+		return input, ""
+	}
+	return input[len(previous.sent):], previous.responseID
+}
+
+// appendsTo reports whether the longer conversation starts with the shorter one unchanged.
+func appendsTo(sent, input []llm.Message) bool {
+	if len(sent) > len(input) {
+		return false
+	}
+	for i, message := range sent {
+		if !sameMessage(message, input[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameMessage(a, b llm.Message) bool {
+	if a.Role != b.Role || a.Content != b.Content || a.ToolCallID != b.ToolCallID ||
+		len(a.ToolCalls) != len(b.ToolCalls) {
+		return false
+	}
+	for i, call := range a.ToolCalls {
+		if call != b.ToolCalls[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Respond asks the fast model to answer a turn and returns the stream the reply arrives
+// on. The caller drains it and passes each delta through Filter.
+func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	h.mu.Lock()
 	h.history = append([]llm.Message(nil), turn.History...)
 	instructions := h.instructions(turn.Instructions, turn.Note)
@@ -172,14 +265,22 @@ func (h *Harness) Respond(turn Turn) error {
 	if h.asking {
 		tools = nil
 	}
+	input, previous := h.resume(instructions, answerable(turn.History))
+	model := h.options.Model.Capabilities()
 	h.mu.Unlock()
 
-	return h.options.Model.Respond(llm.Request{
-		ID:           turn.ID,
-		Instructions: instructions,
-		Messages:     answerable(turn.History),
-		MaxTokens:    h.options.MaxTokens,
-		Tools:        tools,
+	return h.options.Model.Create(ctx, llm.ResponseParams{
+		ID:                 turn.ID,
+		Instructions:       instructions,
+		Input:              input,
+		MaxOutputTokens:    h.options.MaxTokens,
+		Tools:              tools,
+		Store:              model.Store,
+		PreviousResponseID: previous,
+		// Every turn of every call this agent takes opens with the same instructions, so
+		// they are written to the provider's cache once under a key the agent owns and
+		// read back from there on every turn after.
+		PromptCacheKey: h.options.CacheKey,
 	})
 }
 

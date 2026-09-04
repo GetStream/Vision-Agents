@@ -105,13 +105,13 @@ func (s *LLMRouterIntegrationSuite) config() routing.ModalityConfig {
 
 func (s *LLMRouterIntegrationSuite) registry() *Registry {
 	registry := NewRegistry()
-	registry.Register(s.broken, func(spec routing.Spec) (llm.LLM, error) {
+	registry.Register(s.broken, func(spec routing.Spec) (Provider, error) {
 		// No API key at all, so the provider cannot even be built and routing has to move
 		// on. This is the same shape of failure an undeployed Gemma produces.
 		return nil, os.ErrNotExist
 	})
-	registry.Register(s.working, func(spec routing.Spec) (llm.LLM, error) {
-		return deepseek.New(deepseek.Options{Model: spec.Model, Logger: spec.Logger})
+	registry.Register(s.working, func(spec routing.Spec) (Provider, error) {
+		return Started(deepseek.New(deepseek.Options{Model: spec.Model, Logger: spec.Logger}))
 	})
 	return registry
 }
@@ -140,26 +140,16 @@ func (s *LLMRouterIntegrationSuite) requests() []store.Request {
 }
 
 // ask sends one turn and waits for it to settle.
-func (s *LLMRouterIntegrationSuite) ask(session *Session, request llm.Request) llm.CompletionComplete {
-	settled := make(chan llm.CompletionComplete, 4)
-	go func() {
-		for event := range session.Events() {
-			if complete, ok := event.(llm.CompletionComplete); ok {
-				settled <- complete
-			}
-		}
-		close(settled)
-	}()
+func (s *LLMRouterIntegrationSuite) ask(session *Session, params llm.ResponseParams) llm.Response {
+	ctx, cancel := context.WithTimeout(s.ctx, 90*time.Second)
+	defer cancel()
 
-	s.Require().NoError(session.Respond(request))
+	stream, err := session.Create(ctx, params)
+	s.Require().NoError(err)
 
-	select {
-	case complete := <-settled:
-		return complete
-	case <-time.After(90 * time.Second):
-		s.FailNow("timed out waiting for a completed turn")
-		return llm.CompletionComplete{}
-	}
+	response, err := llm.Collect(stream)
+	s.Require().NoError(err)
+	return response
 }
 
 func (s *LLMRouterIntegrationSuite) TestFailoverSkipsTheBrokenProviderAndRecordsWhy() {
@@ -195,14 +185,14 @@ func (s *LLMRouterIntegrationSuite) TestCompletedTurnsAreRecordedWithTheirTokens
 	})
 	s.Require().NoError(err)
 
-	complete := s.ask(session, llm.Request{
-		ID:           "c1",
-		Instructions: "Answer with a single word.",
-		Messages:     []llm.Message{{Role: llm.User, Content: "What is the capital of France?"}},
-		MaxTokens:    32,
+	complete := s.ask(session, llm.ResponseParams{
+		ID:              "c1",
+		Instructions:    "Answer with a single word.",
+		Input:           []llm.Message{{Role: llm.User, Content: "What is the capital of France?"}},
+		MaxOutputTokens: 32,
 	})
-	s.Positive(complete.InputTokens)
-	s.Positive(complete.OutputTokens)
+	s.Positive(complete.Usage.InputTokens)
+	s.Positive(complete.Usage.OutputTokens)
 
 	s.Require().NoError(session.Close())
 	router.Close()
@@ -260,31 +250,14 @@ func (s *LLMRouterIntegrationSuite) TestOneSessionAnswersManyTurns() {
 	})
 	s.Require().NoError(err)
 
-	settled := make(chan llm.CompletionComplete, 8)
-	go func() {
-		for event := range session.Events() {
-			if complete, ok := event.(llm.CompletionComplete); ok {
-				settled <- complete
-			}
-		}
-		close(settled)
-	}()
-
 	for _, id := range []string{"c1", "c2", "c3"} {
-		s.Require().NoError(session.Respond(llm.Request{
-			ID:           id,
-			Instructions: "Answer with a single word.",
-			Messages:     []llm.Message{{Role: llm.User, Content: "Name a colour."}},
-			MaxTokens:    16,
-		}))
-	}
-
-	for range 3 {
-		select {
-		case <-settled:
-		case <-time.After(90 * time.Second):
-			s.FailNow("timed out waiting for every turn to settle")
-		}
+		answered := s.ask(session, llm.ResponseParams{
+			ID:              id,
+			Instructions:    "Answer with a single word.",
+			Input:           []llm.Message{{Role: llm.User, Content: "Name a colour."}},
+			MaxOutputTokens: 16,
+		})
+		s.NotEmpty(answered.OutputText)
 	}
 
 	s.Require().NoError(session.Close())

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,10 +55,17 @@ type flow struct {
 	logger  *slog.Logger
 
 	mu sync.Mutex
-	// pending holds when each candidate was put to the controller, so the wait it cost
-	// the caller can be reported with the answer.
-	pending map[string]time.Time
+	// pending holds each candidate still with the controller: when it was asked about, so
+	// the wait it cost the caller can be reported with the answer, and the stream it is
+	// being answered on, so a candidate whose transcript changed can be abandoned.
+	pending map[string]*candidate
 	running sync.WaitGroup
+}
+
+// candidate is one transcript revision the controller is deciding about.
+type candidate struct {
+	askedAt time.Time
+	stream  *llm.Stream
 }
 
 type flowAnswer struct {
@@ -86,15 +94,12 @@ addition that makes the current answer too long, and continue for a brief acknow
 clearly unrelated background speech. If the agent is not speaking, choose continue.`
 
 func newFlow(model *llmrouter.Session, emitter *Emitter, logger *slog.Logger) *flow {
-	f := &flow{
+	return &flow{
 		model:   model,
 		emitter: emitter,
 		logger:  logger,
-		pending: map[string]time.Time{},
+		pending: map[string]*candidate{},
 	}
-	f.running.Add(1)
-	go f.consume()
-	return f
 }
 
 func (f *flow) Decide(turn FlowTurn) error {
@@ -105,20 +110,35 @@ func (f *flow) Decide(turn FlowTurn) error {
 		return errors.New("harness: flow candidate text is required")
 	}
 
+	asked := &candidate{askedAt: time.Now()}
 	f.mu.Lock()
-	f.pending[turn.ID] = time.Now()
+	f.pending[turn.ID] = asked
 	f.mu.Unlock()
 
-	if err := f.model.Respond(llm.Request{
+	stream, err := f.model.Create(context.Background(), llm.ResponseParams{
 		ID:           turn.ID,
 		Instructions: flowInstructions + "\n\nThe agent has been told:\n" + turn.Instructions,
-		Messages:     []llm.Message{{Role: llm.User, Content: flowQuestion(turn)}},
-		MaxTokens:    32,
-		JSON:         true,
-	}); err != nil {
+		Input:        []llm.Message{{Role: llm.User, Content: flowQuestion(turn)}},
+		// A decision is one small JSON object, so there is nothing to think about and
+		// nothing to be verbose with. Both are latency the caller waits through.
+		MaxOutputTokens: 32,
+		Text:            llm.TextParams{Format: llm.FormatJSONObject},
+	})
+	if err != nil {
 		f.forget(turn.ID)
 		return fmt.Errorf("harness: decide flow: %w", err)
 	}
+
+	f.mu.Lock()
+	asked.stream = stream
+	abandoned := f.pending[turn.ID] != asked
+	f.mu.Unlock()
+	if abandoned {
+		stream.Close()
+	}
+
+	f.running.Add(1)
+	go f.consume(turn.ID, stream)
 	return nil
 }
 
@@ -160,58 +180,64 @@ func flowQuestion(turn FlowTurn) string {
 }
 
 func (f *flow) Cancel(candidateID string) error {
-	if _, pending := f.forget(candidateID); !pending {
+	f.mu.Lock()
+	asked, pending := f.pending[candidateID]
+	if pending {
+		delete(f.pending, candidateID)
+	}
+	f.mu.Unlock()
+
+	if !pending || asked.stream == nil {
 		return nil
 	}
-	return f.model.Interrupt(candidateID)
+	return asked.stream.Close()
 }
 
 func (f *flow) Close() error {
+	// Closing the session abandons whatever the controller is still deciding, which is
+	// what lets every consumer reach the end of its stream.
 	err := f.model.Close()
 	f.running.Wait()
 	return err
 }
 
-func (f *flow) consume() {
+// consume waits for one decision and reports it.
+func (f *flow) consume(candidateID string, stream *llm.Stream) {
 	defer f.running.Done()
-	for event := range f.model.Events() {
-		switch typed := event.(type) {
-		case llm.CompletionComplete:
-			took, pending := f.forget(typed.CompletionID)
-			if !pending || typed.Interrupted {
-				continue
-			}
-			answer, err := parseFlow(typed.Text)
-			if err != nil {
-				// An answer that cannot be read must not cost the caller their turn, so
-				// the agent replies to them, after finishing whatever it was saying.
-				f.logger.Warn("unusable flow decision, answering the caller anyway",
-					"error", err, "answer", typed.Text)
-				answer = flowAnswer{Disposition: Respond, Floor: Continue}
-			} else {
-				f.logger.Debug("flow controller answered",
-					"candidate", typed.CompletionID, "answer", typed.Text,
-					"took_ms", typed.TimeToFirstTokenMs)
-			}
-			f.emitter.Send(Decided{
-				CandidateID: typed.CompletionID,
-				Disposition: answer.Disposition,
-				Floor:       answer.Floor,
-				TookMs:      millis(took),
-			})
-		case llm.Error:
-			took, pending := f.forget(typed.CompletionID)
-			if typed.CompletionID == "" || !pending {
-				f.logger.Error("flow controller failed", "error", typed.Err, "context", typed.Context)
-				continue
-			}
-			f.emitter.Send(Decided{
-				CandidateID: typed.CompletionID,
-				TookMs:      millis(took),
-				Err:         typed.Err,
-			})
-		}
+
+	response, err := llm.Collect(stream)
+	took, pending := f.forget(candidateID)
+	if !pending {
+		// The transcript moved on, so nobody is waiting for this any more.
+		return
 	}
+	if err != nil {
+		if response.Status == llm.StatusCancelled {
+			return
+		}
+		f.logger.Error("flow controller failed", "error", err)
+		f.emitter.Send(Decided{CandidateID: candidateID, TookMs: millis(took), Err: err})
+		return
+	}
+
+	answer, err := parseFlow(response.OutputText)
+	if err != nil {
+		// An answer that cannot be read must not cost the caller their turn, so the agent
+		// replies to them, after finishing whatever it was saying.
+		f.logger.Warn("unusable flow decision, answering the caller anyway",
+			"error", err, "answer", response.OutputText)
+		answer = flowAnswer{Disposition: Respond, Floor: Continue}
+	} else {
+		f.logger.Debug("flow controller answered",
+			"candidate", candidateID, "answer", response.OutputText,
+			"took_ms", response.TimeToFirstTokenMs)
+	}
+	f.emitter.Send(Decided{
+		CandidateID: candidateID,
+		Disposition: answer.Disposition,
+		Floor:       answer.Floor,
+		TookMs:      millis(took),
+	})
 }
 
 // forget drops a candidate and reports how long it was pending, so the wait it cost the
@@ -225,7 +251,7 @@ func (f *flow) forget(candidateID string) (time.Duration, bool) {
 		return 0, false
 	}
 	delete(f.pending, candidateID)
-	return time.Since(asked), true
+	return time.Since(asked.askedAt), true
 }
 
 func millis(took time.Duration) float64 {

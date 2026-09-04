@@ -49,14 +49,16 @@ func (s *DeepSeekSuite) TestThinkingIsOffByDefault() {
 	provider, err := New(Options{APIKey: "k"})
 	s.Require().NoError(err)
 
-	s.False(provider.Reasoning())
+	s.Empty(provider.Capabilities().ReasoningEfforts)
 }
 
 func (s *DeepSeekSuite) TestThinkingCanBeTurnedOn() {
 	provider, err := New(Options{APIKey: "k", Thinking: true, ReasoningEffort: "high"})
 	s.Require().NoError(err)
 
-	s.True(provider.Reasoning())
+	model := provider.Capabilities()
+	s.True(model.StreamsReasoning)
+	s.Equal("high", model.DefaultEffort)
 }
 
 func (s *DeepSeekSuite) TestBaseURLCanBeOverriddenForADedicatedDeployment() {

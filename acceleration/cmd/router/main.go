@@ -242,6 +242,22 @@ func run(logger *slog.Logger) error {
 		defer speech.Close()
 		routers[routing.STT] = speech
 		streams.STT = speech
+
+		// The recording half of the same section. It is a second router rather than a
+		// second method because it routes to different models: the batch endpoints,
+		// which are the ones declared realtime: false.
+		recorded, err := sttrouter.NewRecordings(sttrouter.Options{
+			Config:       section,
+			Transcribers: sttrouter.DefaultTranscriberRegistry(),
+			Store:        pgStore,
+			Live:         liveClient,
+			Logger:       logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer recorded.Close()
+		streams.Transcriptions = recorded
 	}
 
 	if section, ok := config[routing.TTS]; ok {
@@ -259,6 +275,20 @@ func run(logger *slog.Logger) error {
 		defer voice.Close()
 		routers[routing.TTS] = voice
 		streams.TTS = voice
+
+		recorded, err := ttsrouter.NewRecordings(ttsrouter.Options{
+			Config:    section,
+			Recorders: ttsrouter.DefaultRecorderRegistry(),
+			Store:     pgStore,
+			Live:      liveClient,
+			Voices:    resolver,
+			Logger:    logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer recorded.Close()
+		streams.Speech = recorded
 	}
 
 	if section, ok := config[routing.LLM]; ok {
@@ -294,6 +324,7 @@ func run(logger *slog.Logger) error {
 		}
 		defer finding.Close()
 		routers[routing.Search] = finding
+		streams.Search = finding
 	}
 
 	telephony, err := buildPhone(pgStore, liveClient, logger)

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -26,35 +27,44 @@ var errModelDown = errors.New("the model is down")
 // stubLLM answers whatever it is asked with whatever the test has queued, and only when
 // the test says so, which is what lets a task be caught mid-flight.
 type stubLLM struct {
-	emitter *llm.Emitter
-
 	mu    sync.Mutex
-	asked []llm.Request
-	// abandoned is every completion id an interrupt named.
-	abandoned []string
-	// answers maps a completion id to what comes back. A request with no answer stays in
+	asked []llm.ResponseParams
+	// answers maps a response id to what comes back. A request with no answer stays in
 	// flight until the test settles it.
 	answers map[string]string
 	// automatic answers every request with this text, for tests that do not care which
-	// completion is which.
+	// response is which.
 	automatic string
 	// calls are tool calls to ask for, one queue entry per request, which is what lets a
 	// test answer with a tool once and with words the next time it is asked.
 	calls [][]llm.ToolCall
 	// failing makes every request report a provider failure before it settles.
 	failing bool
+
+	// scripts are the responses handed out, so a test can settle one and see which were
+	// abandoned. order remembers which came first.
+	scripts map[string]*llmtest.Script
+	order   []string
 }
 
 func newStubLLM() *stubLLM {
-	return &stubLLM{emitter: llm.NewEmitter(64), answers: map[string]string{}}
+	return &stubLLM{answers: map[string]string{}, scripts: map[string]*llmtest.Script{}}
 }
 
 func (s *stubLLM) Start(context.Context) error { return nil }
 
-func (s *stubLLM) Respond(request llm.Request) error {
+func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   s.Provider(),
+		Model:      s.Model(),
+	})
+
 	s.mu.Lock()
-	s.asked = append(s.asked, request)
-	answer, queued := s.answers[request.ID]
+	s.asked = append(s.asked, params)
+	s.scripts[params.ID] = script
+	s.order = append(s.order, params.ID)
+	answer, queued := s.answers[params.ID]
 	if !queued && s.automatic != "" {
 		answer, queued = s.automatic, true
 	}
@@ -65,69 +75,66 @@ func (s *stubLLM) Respond(request llm.Request) error {
 	}
 	s.mu.Unlock()
 
-	s.emitter.Send(llm.CompletionStarted{CompletionID: request.ID, At: time.Now()})
-	if failing {
-		s.emitter.Send(llm.Error{CompletionID: request.ID, Err: errModelDown, Context: "stream"})
-		s.emitter.Send(llm.CompletionComplete{CompletionID: request.ID})
-		return nil
+	switch {
+	case failing:
+		script.Fail(errModelDown, "stream")
+	case len(calls) > 0:
+		script.OutputText(answer)
+		script.ToolCalls(calls...)
+		script.Done()
+	case queued:
+		script.OutputText(answer)
+		script.Done()
 	}
-	if len(calls) > 0 {
-		s.emitter.Send(llm.CompletionComplete{
-			CompletionID: request.ID,
-			Text:         answer,
-			ToolCalls:    calls,
-		})
-		return nil
-	}
-	if queued {
-		s.settle(request.ID, answer, false)
-	}
-	return nil
+	return script.Stream(), nil
 }
 
-// settle finishes a completion, which is how a test controls when an answer lands.
-func (s *stubLLM) settle(completionID, text string, interrupted bool) {
-	s.emitter.Send(llm.CompletionComplete{
-		CompletionID: completionID,
-		Text:         text,
-		Interrupted:  interrupted,
-	})
-}
-
-func (s *stubLLM) Interrupt(completionIDs ...string) error {
+// settle finishes a response, which is how a test controls when an answer lands.
+func (s *stubLLM) settle(responseID, text string) {
 	s.mu.Lock()
-	s.abandoned = append(s.abandoned, completionIDs...)
+	script := s.scripts[responseID]
 	s.mu.Unlock()
 
-	// A real provider settles an abandoned completion rather than dropping it, because
-	// the tokens it already generated were still billed.
-	for _, id := range completionIDs {
-		s.settle(id, "", true)
+	script.OutputText(text)
+	script.Done()
+}
+
+func (s *stubLLM) Close() error {
+	s.mu.Lock()
+	scripts := make([]*llmtest.Script, 0, len(s.scripts))
+	for _, script := range s.scripts {
+		scripts = append(scripts, script)
+	}
+	s.mu.Unlock()
+
+	for _, script := range scripts {
+		script.Done()
 	}
 	return nil
 }
 
-func (s *stubLLM) Events() <-chan llm.Event { return s.emitter.Events() }
+func (s *stubLLM) Provider() string               { return "stub" }
+func (s *stubLLM) Model() string                  { return "stub-model" }
+func (s *stubLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
 
-func (s *stubLLM) Close() error {
-	s.emitter.Close()
-	return nil
-}
-
-func (s *stubLLM) Provider() string { return "stub" }
-func (s *stubLLM) Model() string    { return "stub-model" }
-func (s *stubLLM) Reasoning() bool  { return false }
-
-func (s *stubLLM) requests() []llm.Request {
+func (s *stubLLM) requests() []llm.ResponseParams {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]llm.Request(nil), s.asked...)
+	return append([]llm.ResponseParams(nil), s.asked...)
 }
 
+// interrupted is every response whose stream the code under test closed, oldest first.
 func (s *stubLLM) interrupted() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]string(nil), s.abandoned...)
+
+	var abandoned []string
+	for _, id := range s.order {
+		if s.scripts[id].Abandoned() {
+			abandoned = append(abandoned, id)
+		}
+	}
+	return abandoned
 }
 
 // stubConfig is one provider, which is all these tests need from routing.
@@ -216,7 +223,7 @@ func stubSession(s *suite.Suite, ctx context.Context, provider *stubLLM) *llmrou
 	logger := slog.New(slog.DiscardHandler)
 
 	registry := llmrouter.NewRegistry()
-	registry.Register("stub", func(routing.Spec) (llm.LLM, error) { return provider, nil })
+	registry.Register("stub", func(routing.Spec) (llmrouter.Provider, error) { return provider, nil })
 	router, err := llmrouter.New(llmrouter.Options{
 		Config: stubConfig(), Registry: registry, Logger: logger,
 	})
@@ -257,11 +264,29 @@ func (s *HarnessSuite) build(delegating bool) {
 
 // respond asks the harness to answer a turn.
 func (s *HarnessSuite) respond(turnID, text string) {
-	s.Require().NoError(s.harness.Respond(Turn{
+	s.answer(Turn{
 		ID:           turnID,
 		Instructions: "be brief",
 		History:      []llm.Message{{Role: llm.User, Content: text}},
-	}))
+	})
+}
+
+// answer asks the harness to answer a turn and drains the reply on its own goroutine, as
+// the agent does. A reply the test has not queued stays in flight, which is the point.
+func (s *HarnessSuite) answer(turn Turn) {
+	stream, err := s.harness.Respond(s.ctx, turn)
+	s.Require().NoError(err)
+
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for stream.Next() {
+		}
+	}()
+	s.T().Cleanup(func() {
+		_ = stream.Close()
+		<-drained
+	})
 }
 
 // reply feeds a whole model reply through the filter and returns what would be spoken.
@@ -443,7 +468,7 @@ func (s *HarnessSuite) TestATurnThatCalledAToolIsAnsweredWithTheResult() {
 	s.tools = testTools()
 	s.build(false)
 
-	s.Require().NoError(s.harness.Respond(Turn{
+	s.answer(Turn{
 		ID:           "turn-2",
 		Instructions: "be brief",
 		History: []llm.Message{
@@ -455,10 +480,10 @@ func (s *HarnessSuite) TestATurnThatCalledAToolIsAnsweredWithTheResult() {
 			},
 			{Role: llm.ToolResult, Content: "transferred", ToolCallID: "call-1"},
 		},
-	}))
+	})
 
 	s.Require().Len(s.fast.requests(), 1)
-	sent := s.fast.requests()[0].Messages
+	sent := s.fast.requests()[0].Input
 	s.Require().Len(sent, 3)
 	s.Require().Len(sent[1].ToolCalls, 1)
 	s.Equal("call-1", sent[1].ToolCalls[0].ID)
@@ -488,9 +513,9 @@ func (s *HarnessSuite) TestARequestForHelpIsDelegatedAndNotSpoken() {
 	s.eventually(func() bool { return len(s.slow.requests()) == 1 }, "the subagent was never asked")
 	asked := s.slow.requests()[0]
 	s.Equal("think it through", asked.Instructions, "the skill's own instructions")
-	s.Require().Len(asked.Messages, 2)
-	s.Equal("what is 15% of 84.20", asked.Messages[0].Content, "the conversation it was asked in")
-	s.Equal("15% of 84.20", asked.Messages[1].Content)
+	s.Require().Len(asked.Input, 2)
+	s.Equal("what is 15% of 84.20", asked.Input[0].Content, "the conversation it was asked in")
+	s.Equal("15% of 84.20", asked.Input[1].Content)
 
 	s.Equal("think", s.awaitDelegated(1)[0].Skill)
 }
@@ -502,16 +527,16 @@ func (s *HarnessSuite) TestATurnNobodyPromptedHasSomethingToAnswer() {
 	// supported" -- and the caller never hears what came back.
 	s.build(true)
 
-	s.Require().NoError(s.harness.Respond(Turn{
+	s.answer(Turn{
 		ID:           "turn-1",
 		Instructions: "be brief",
 		History: []llm.Message{
 			{Role: llm.User, Content: "travel advice for Boulder?"},
 			{Role: llm.Assistant, Content: "Let me look into that."},
 		},
-	}))
+	})
 
-	asked := s.fast.requests()[0].Messages
+	asked := s.fast.requests()[0].Input
 	s.Equal(llm.User, asked[len(asked)-1].Role, "the model was asked to follow its own turn")
 	s.Len(s.harness.history, 2, "what was added is the request's, not the conversation's")
 }
@@ -521,7 +546,7 @@ func (s *HarnessSuite) TestAnAnsweredTurnIsSentAsItStands() {
 
 	s.respond("turn-1", "what is 15% of 84.20")
 
-	asked := s.fast.requests()[0].Messages
+	asked := s.fast.requests()[0].Input
 	s.Require().Len(asked, 1, "there was already something to answer")
 	s.Equal("what is 15% of 84.20", asked[0].Content)
 }

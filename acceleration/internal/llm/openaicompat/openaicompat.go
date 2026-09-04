@@ -1,10 +1,15 @@
 // Package openaicompat implements the llm contract over an OpenAI-compatible chat
 // completions endpoint.
 //
-// OpenAI's own API, Baseten's Model APIs and a vLLM deployment all speak the same
-// protocol, so they share one implementation and differ only in base URL, credentials and
-// whatever extra request fields they understand. Each provider package wraps this one with
-// its own name, defaults and environment variables.
+// Baseten's Model APIs, a vLLM deployment and Google's compatibility shim all speak the
+// same protocol, so they share one implementation and differ only in base URL, credentials
+// and whatever extra request fields they understand. Each provider package wraps this one
+// with its own name, defaults and environment variables.
+//
+// The contract above this is shaped like the Responses API, and chat completions is the
+// older and smaller of the two. What it cannot express -- a stored response to continue
+// from, a cache key, a conversation held by the provider -- is dropped rather than
+// approximated, and the capabilities this reports say so.
 package openaicompat
 
 import (
@@ -14,21 +19,20 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/packages/respjson"
+	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
-// eventBuffer is how many events may queue before a slow consumer applies backpressure.
-const eventBuffer = 64
-
-// defaultTimeout bounds one completion. A conversational turn that takes this long has
+// defaultTimeout bounds one response. A conversational turn that takes this long has
 // already failed as far as the listener is concerned.
 const defaultTimeout = 2 * time.Minute
 
@@ -56,12 +60,14 @@ type Options struct {
 	APIKey     string
 	// BaseURL is the endpoint root, up to and including /v1.
 	BaseURL string
-	// Reasoning declares that this model streams its thinking.
-	Reasoning bool
-	// ExtraBody carries request fields outside the OpenAI schema, such as a vLLM chat
-	// template's arguments.
-	ExtraBody map[string]any
-	// Timeout bounds one completion.
+	// Capabilities is what this model accepts. Store, Conversations and PromptCacheKey
+	// are forced off, because chat completions has nowhere to put them.
+	Capabilities llm.Capabilities
+	// RequestFields builds the request fields outside the OpenAI schema, such as a vLLM
+	// chat template's arguments or a reasoning effort the endpoint spells its own way.
+	// It is given the effort already resolved against the model's capabilities.
+	RequestFields func(params llm.ResponseParams, effort string) map[string]any
+	// Timeout bounds one response.
 	Timeout time.Duration
 	// HTTPClient replaces the default transport.
 	HTTPClient option.HTTPClient
@@ -72,22 +78,17 @@ type Options struct {
 type LLM struct {
 	options Options
 	client  openai.Client
-	emitter *llm.Emitter
 	logger  *slog.Logger
 
-	// ctx is the session's lifetime; every completion derives from it so Close stops
-	// everything in flight.
-	ctx    context.Context
-	cancel context.CancelFunc
-
 	mu sync.Mutex
-	// inFlight cancels completions that have not settled, keyed by completion id.
-	inFlight map[string]context.CancelFunc
+	// inFlight cancels the responses that have not settled, so closing the provider
+	// abandons them rather than leaving them to their own timeouts.
+	inFlight map[uint64]context.CancelFunc
+	nextID   atomic.Uint64
 	closed   bool
-	running  sync.WaitGroup
 }
 
-// New builds a provider. It performs no network access; Start does that.
+// New builds a provider. It performs no network access.
 func New(options Options) (*LLM, error) {
 	if options.Provider == "" {
 		return nil, errors.New("openaicompat: provider name is required")
@@ -110,6 +111,10 @@ func New(options Options) (*LLM, error) {
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
+	options.Capabilities.Store = false
+	options.Capabilities.Conversations = false
+	options.Capabilities.PromptCacheKey = false
+	options.Capabilities.CacheTTLs = nil
 
 	clientOptions := []option.RequestOption{
 		option.WithAPIKey(options.APIKey),
@@ -122,88 +127,58 @@ func New(options Options) (*LLM, error) {
 	return &LLM{
 		options:  options,
 		client:   openai.NewClient(clientOptions...),
-		emitter:  llm.NewEmitter(eventBuffer),
 		logger:   options.Logger.With("provider", options.Provider, "model", options.StatsModel),
-		inFlight: map[string]context.CancelFunc{},
+		inFlight: map[uint64]context.CancelFunc{},
 	}, nil
 }
 
 // Client exposes the underlying SDK client, so anything this package does not standardise
-// -- tools, structured output, embeddings -- is still one call away.
+// -- embeddings, moderation, the responses endpoint itself -- is still one call away.
 func (l *LLM) Client() *openai.Client { return &l.client }
 
-// Start makes the provider ready. There is no connection to open for a request-per-turn
-// protocol, so this only fixes the session's lifetime.
-func (l *LLM) Start(ctx context.Context) error {
+// Create asks for one response and returns the stream it arrives on.
+func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	if len(params.Input) == 0 {
+		return nil, fmt.Errorf("openaicompat: %s: a request needs at least one input message", l.options.Provider)
+	}
+	if err := l.options.Capabilities.Validate(params); err != nil {
+		return nil, fmt.Errorf("openaicompat: %s: %w", l.options.Provider, err)
+	}
+
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
-		return fmt.Errorf("openaicompat: %s: provider is closed", l.options.Provider)
+		return nil, fmt.Errorf("openaicompat: %s: provider is closed", l.options.Provider)
 	}
-	if l.ctx != nil {
+	requestCtx, cancel := context.WithTimeout(ctx, l.options.Timeout)
+	id := l.nextID.Add(1)
+	l.inFlight[id] = cancel
+	l.mu.Unlock()
+
+	upstream := l.client.Chat.Completions.NewStreaming(
+		requestCtx, l.params(params), l.requestOptions(params)...,
+	)
+	return llm.NewStream(
+		llm.StreamOptions{
+			ResponseID: params.ID,
+			Provider:   l.options.Provider,
+			Model:      l.options.StatsModel,
+		},
+		&puller{llm: l, id: id, upstream: upstream, cancel: cancel},
+	), nil
+}
+
+// Close abandons everything in flight.
+func (l *LLM) Close() error {
+	l.mu.Lock()
+	if l.closed {
 		l.mu.Unlock()
 		return nil
 	}
-	l.ctx, l.cancel = context.WithCancel(ctx)
-	l.mu.Unlock()
-
-	l.emitter.Send(llm.Connected{
-		Provider: l.options.Provider,
-		Model:    l.options.StatsModel,
-		At:       time.Now(),
-	})
-	return nil
-}
-
-// Respond asks for a completion and streams it back through Events. It returns as soon as
-// the request is on its way.
-func (l *LLM) Respond(request llm.Request) error {
-	if len(request.Messages) == 0 {
-		return fmt.Errorf("openaicompat: %s: a request needs at least one message", l.options.Provider)
-	}
-
-	completion := llm.NewCompletion(request.ID)
-
-	l.mu.Lock()
-	if l.closed || l.ctx == nil {
-		l.mu.Unlock()
-		return fmt.Errorf("openaicompat: %s: provider is not started", l.options.Provider)
-	}
-	ctx, cancel := context.WithTimeout(l.ctx, l.options.Timeout)
-	l.inFlight[completion.ID] = cancel
-	l.running.Add(1)
-	l.mu.Unlock()
-
-	l.emitter.Send(llm.CompletionStarted{
-		CompletionID: completion.ID,
-		Provider:     l.options.Provider,
-		Model:        l.options.StatsModel,
-		At:           time.Now(),
-	})
-
-	go func() {
-		defer l.running.Done()
-		defer cancel()
-		l.stream(ctx, request, completion)
-	}()
-	return nil
-}
-
-// Interrupt abandons the named completions, or every completion in flight when given
-// none. The ones that had already produced text still settle, and still report what they
-// cost.
-func (l *LLM) Interrupt(completionIDs ...string) error {
-	l.mu.Lock()
+	l.closed = true
 	cancels := make([]context.CancelFunc, 0, len(l.inFlight))
-	if len(completionIDs) == 0 {
-		for _, cancel := range l.inFlight {
-			cancels = append(cancels, cancel)
-		}
-	}
-	for _, id := range completionIDs {
-		if cancel, ok := l.inFlight[id]; ok {
-			cancels = append(cancels, cancel)
-		}
+	for _, cancel := range l.inFlight {
+		cancels = append(cancels, cancel)
 	}
 	l.mu.Unlock()
 
@@ -213,119 +188,112 @@ func (l *LLM) Interrupt(completionIDs ...string) error {
 	return nil
 }
 
-// Events carries deltas and completion boundaries. It is closed by Close.
-func (l *LLM) Events() <-chan llm.Event { return l.emitter.Events() }
-
-// Close abandons anything in flight and closes the event channel.
-func (l *LLM) Close() error {
-	l.mu.Lock()
-	if l.closed {
-		l.mu.Unlock()
-		return nil
-	}
-	l.closed = true
-	cancel := l.cancel
-	l.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-	// Wait for the streams to emit their final events before the channel closes, so a
-	// consumer draining Events sees every completion settle.
-	l.running.Wait()
-
-	l.emitter.Send(llm.Disconnected{
-		Provider: l.options.Provider,
-		Model:    l.options.StatsModel,
-		Reason:   "closed by caller",
-		Clean:    true,
-		At:       time.Now(),
-	})
-	l.emitter.Close()
-	return nil
-}
-
 // Provider is the stable provider name used in stats.
 func (l *LLM) Provider() string { return l.options.Provider }
 
 // Model is the model identifier used in stats.
 func (l *LLM) Model() string { return l.options.StatsModel }
 
-// Reasoning reports whether this model streams its thinking.
-func (l *LLM) Reasoning() bool { return l.options.Reasoning }
+// Capabilities is what this model accepts.
+func (l *LLM) Capabilities() llm.Capabilities { return l.options.Capabilities }
 
-// stream consumes the response and turns it into events. It always settles the completion,
-// so a caller waiting on CompletionComplete is never left hanging.
-func (l *LLM) stream(ctx context.Context, request llm.Request, completion *llm.Completion) {
-	interrupted := false
-	defer func() {
-		l.settle(completion.ID)
-		l.emitter.Send(completion.Complete(l.options.Provider, l.options.StatsModel, interrupted))
-	}()
-
-	stream := l.client.Chat.Completions.NewStreaming(ctx, l.params(request), l.requestOptions()...)
-	defer stream.Close()
-
-	for stream.Next() {
-		chunk := stream.Current()
-
-		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
-			// Some providers repeat a cumulative usage frame on every chunk rather than
-			// sending one at the end, so the tracker keeps the last one it is told.
-			completion.Usage(
-				chunk.Usage.PromptTokens,
-				chunk.Usage.PromptTokensDetails.CachedTokens,
-				chunk.Usage.CompletionTokens,
-				chunk.Usage.CompletionTokensDetails.ReasoningTokens,
-			)
-		}
-
-		for _, choice := range chunk.Choices {
-			if text := choice.Delta.Content; text != "" {
-				l.emitter.Send(completion.Delta(text))
-			}
-			if thinking := reasoning(choice.Delta.JSON.ExtraFields); thinking != "" {
-				l.emitter.Send(completion.Reasoning(thinking))
-			}
-			for _, call := range choice.Delta.ToolCalls {
-				l.emitter.Send(completion.SignedToolCall(
-					call.Index,
-					call.ID,
-					call.Function.Name,
-					call.Function.Arguments,
-					signature(call.JSON.ExtraFields),
-				))
-			}
-			if choice.FinishReason != "" {
-				completion.Finish(choice.FinishReason)
-			}
-		}
-	}
-
-	if err := stream.Err(); err != nil {
-		// A cancelled stream is barge-in or shutdown, not a provider failure, so it
-		// settles as interrupted instead of being recorded as an error.
-		if errors.Is(err, context.Canceled) {
-			interrupted = true
-			return
-		}
-		l.emitter.Send(llm.Error{
-			Provider:     l.options.Provider,
-			Model:        l.options.StatsModel,
-			CompletionID: completion.ID,
-			Err:          err,
-			Context:      "stream",
-		})
-	}
+// forget releases a response that has settled.
+func (l *LLM) forget(id uint64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.inFlight, id)
 }
 
-// params builds the upstream request.
-func (l *LLM) params(request llm.Request) openai.ChatCompletionNewParams {
-	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(request.Messages)+1)
+// puller turns the chat completion chunks into what a Stream reports.
+type puller struct {
+	llm      *LLM
+	id       uint64
+	upstream *ssestream.Stream[openai.ChatCompletionChunk]
+	cancel   context.CancelFunc
+
+	err  error
+	done bool
+}
+
+// Advance reads one chunk and records what it carried.
+func (p *puller) Advance(w *llm.ResponseWriter) bool {
+	if p.done {
+		return false
+	}
+	if !p.upstream.Next() {
+		p.finish(w)
+		return false
+	}
+
+	chunk := p.upstream.Current()
+	if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+		// Some providers repeat a cumulative usage frame on every chunk rather than
+		// sending one at the end, so the writer keeps the last one it is told.
+		w.Usage(llm.Usage{
+			InputTokens: chunk.Usage.PromptTokens,
+			InputTokensDetails: llm.InputTokensDetails{
+				CachedTokens: chunk.Usage.PromptTokensDetails.CachedTokens,
+			},
+			OutputTokens: chunk.Usage.CompletionTokens,
+			OutputTokensDetails: llm.OutputTokensDetails{
+				ReasoningTokens: chunk.Usage.CompletionTokensDetails.ReasoningTokens,
+			},
+			TotalTokens: chunk.Usage.TotalTokens,
+		})
+	}
+
+	for _, choice := range chunk.Choices {
+		w.OutputText(choice.Delta.Content)
+		w.ReasoningText(reasoning(choice.Delta.JSON.ExtraFields))
+		for _, call := range choice.Delta.ToolCalls {
+			w.FunctionCall(
+				call.Index,
+				call.ID,
+				call.Function.Name,
+				call.Function.Arguments,
+				signature(call.JSON.ExtraFields),
+			)
+		}
+		if reason := incomplete(choice.FinishReason); reason != "" {
+			w.Incomplete(reason)
+		}
+	}
+	return true
+}
+
+// Err is the provider failure that ended the stream, if there was one.
+func (p *puller) Err() error { return p.err }
+
+// Close abandons the response. It only cancels: the upstream is released by the goroutine
+// reading it, once the cancellation has unblocked it.
+func (p *puller) Close() error {
+	p.cancel()
+	return nil
+}
+
+// finish releases the upstream and works out what ended it.
+func (p *puller) finish(w *llm.ResponseWriter) {
+	p.done = true
+
+	if err := p.upstream.Err(); err != nil && !errors.Is(err, context.Canceled) {
+		p.err = err
+	} else if err != nil {
+		// A cancelled stream is barge-in or shutdown, not a provider failure.
+		w.Cancelled()
+	}
+
+	p.upstream.Close()
+	p.cancel()
+	p.llm.forget(p.id)
+}
+
+// params builds the upstream request from what the Responses-shaped one asked for.
+func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams {
+	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(request.Input)+1)
 	if request.Instructions != "" {
 		messages = append(messages, openai.SystemMessage(request.Instructions))
 	}
-	for _, message := range request.Messages {
+	for _, message := range request.Input {
 		switch message.Role {
 		case llm.System:
 			messages = append(messages, openai.SystemMessage(message.Content))
@@ -349,13 +317,18 @@ func (l *LLM) params(request llm.Request) openai.ChatCompletionNewParams {
 	if len(request.Tools) > 0 {
 		params.Tools = tools(request.Tools)
 	}
-	if request.JSON {
+	if request.ToolChoice != "" {
+		params.ToolChoice = openai.ChatCompletionToolChoiceOptionUnionParam{
+			OfAuto: param.NewOpt(request.ToolChoice),
+		}
+	}
+	if request.Text.Format == llm.FormatJSONObject {
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
 		}
 	}
-	if request.MaxTokens > 0 {
-		params.MaxCompletionTokens = param.NewOpt(int64(request.MaxTokens))
+	if request.MaxOutputTokens > 0 {
+		params.MaxCompletionTokens = param.NewOpt(int64(request.MaxOutputTokens))
 	}
 	if request.Temperature != nil {
 		params.Temperature = param.NewOpt(*request.Temperature)
@@ -419,24 +392,31 @@ func assistantMessage(message llm.Message) openai.ChatCompletionMessageParamUnio
 	return openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant}
 }
 
-// requestOptions applies the provider's extra body fields.
-func (l *LLM) requestOptions() []option.RequestOption {
-	if len(l.options.ExtraBody) == 0 {
+// requestOptions applies the request fields outside the OpenAI schema.
+func (l *LLM) requestOptions(request llm.ResponseParams) []option.RequestOption {
+	if l.options.RequestFields == nil {
 		return nil
 	}
 
-	options := make([]option.RequestOption, 0, len(l.options.ExtraBody))
-	for key, value := range l.options.ExtraBody {
+	fields := l.options.RequestFields(request, l.options.Capabilities.Effort(request))
+	options := make([]option.RequestOption, 0, len(fields))
+	for key, value := range fields {
 		options = append(options, option.WithJSONSet(key, value))
 	}
 	return options
 }
 
-// settle forgets a completion that is no longer in flight.
-func (l *LLM) settle(completionID string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.inFlight, completionID)
+// incomplete translates a finish reason into why a response stopped early, returning empty
+// for the model simply having finished.
+func incomplete(reason string) string {
+	switch reason {
+	case "length":
+		return llm.ReasonMaxOutputTokens
+	case "content_filter":
+		return llm.ReasonContentFilter
+	default:
+		return ""
+	}
 }
 
 // reasoning reads the non-standard thinking field off a delta, returning empty when the

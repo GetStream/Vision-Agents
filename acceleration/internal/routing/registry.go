@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
 // Spec is what the router asks a factory to build. It carries the session-level settings
@@ -18,7 +20,13 @@ type Spec struct {
 	Voice string
 	// Keyterms are the words a modality that recognises speech should expect.
 	Keyterms []string
-	Logger   *slog.Logger
+	// STT, TTS and Search carry the rest of what the request asked for. A factory reads
+	// its own modality's block and ignores the others, and only ever sees terms its model
+	// declared, since routing does not offer a request to a model that cannot serve it.
+	STT    options.STT
+	TTS    options.TTS
+	Search options.Search
+	Logger *slog.Logger
 }
 
 // Factory builds an unstarted provider.

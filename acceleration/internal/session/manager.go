@@ -135,6 +135,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	m.mu.Unlock()
 
 	m.supersede(spec)
+	m.think(ctx, &spec)
 
 	skills, err := m.skills(ctx, spec)
 	if err != nil {
@@ -205,6 +206,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		Instructions:       spec.prompt(),
 		CustomerID:         spec.CustomerID,
 		AgentID:            spec.AgentID,
+		ConfigID:           spec.ConfigID,
 		CallID:             spec.CallID,
 		Tags:               spec.Tags,
 		LLM:                m.options.LLM,

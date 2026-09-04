@@ -25,6 +25,12 @@ func DefaultRegistry() *Registry {
 			Keyterms: spec.Keyterms,
 			Logger:   spec.Logger,
 		}
+		// Flux decides where a turn ended itself, and eot_timeout_ms is how long a
+		// silence has to be before it does, which is what a caller asking for silence
+		// endpointing is asking for.
+		if spec.STT.SilenceMs != nil {
+			options.EotTimeoutMs = *spec.STT.SilenceMs
+		}
 		// Flux only accepts language hints on the multilingual model.
 		if spec.Model == deepgram.MultilingualModel {
 			options.LanguageHints = spec.LanguageHints

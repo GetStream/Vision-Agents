@@ -10,6 +10,7 @@ import (
 	"log/slog"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -23,9 +24,12 @@ type Registry = routing.Registry[stt.STT]
 type Options struct {
 	Config   routing.ModalityConfig
 	Registry *Registry
-	Store    *store.Store
-	Live     *live.Client
-	Logger   *slog.Logger
+	// Transcribers is the batch half, for NewRecordings. The two registries are separate
+	// because a vendor's recording model is not its streaming one.
+	Transcribers *Transcribers
+	Store        *store.Store
+	Live         *live.Client
+	Logger       *slog.Logger
 }
 
 // Request is what a caller wants transcribed.
@@ -45,6 +49,10 @@ type Request struct {
 	// Keyterms are the business-specific words the transcriber should expect. A provider
 	// that cannot be told about vocabulary ignores them.
 	Keyterms []string
+	// Options is the rest of what the caller asked for: partials, endpointing,
+	// diarization, redaction. A term named here narrows the candidates to the models that
+	// declared it, so it is either honoured or the request is refused.
+	Options options.STT
 }
 
 // Router selects a speech-to-text provider and opens transcription sessions.
@@ -79,6 +87,8 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		Target:        request.Target,
 		LanguageHints: request.LanguageHints,
 		Keyterms:      request.Keyterms,
+		Terms:         request.Options.Terms(),
+		STT:           request.Options,
 	}
 	provider, config, err := r.Select(ctx, core)
 	if err != nil {

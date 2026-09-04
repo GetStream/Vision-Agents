@@ -77,14 +77,15 @@ func (s *FlowSuite) TestTheConversationIsQuotedRatherThanReplayed() {
 
 	asked := s.model.requests()
 	s.Require().Len(asked, 1)
-	s.Require().Lenf(asked[0].Messages, 1,
+	s.Require().Lenf(asked[0].Input, 1,
 		"a conversation replayed as turns is one the controller answers instead of judging: %v",
-		asked[0].Messages)
-	question := asked[0].Messages[0].Content
+		asked[0].Input)
+	question := asked[0].Input[0].Content
 	s.Contains(question, "Caller: what is the capital of France")
 	s.Contains(question, "Agent: Paris.")
 	s.Contains(question, `"and of Spain"`, "the words being judged have to be in there")
-	s.True(asked[0].JSON, "the answer is parsed, so prose is not an option")
+	s.Equal(llm.FormatJSONObject, asked[0].Text.Format,
+		"the answer is parsed, so prose is not an option")
 }
 
 func (s *FlowSuite) TestOnlyTheRecentConversationIsShown() {
@@ -98,7 +99,7 @@ func (s *FlowSuite) TestOnlyTheRecentConversationIsShown() {
 
 	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "candidate-1", History: history, Text: "and now"}))
 
-	question := s.model.requests()[0].Messages[0].Content
+	question := s.model.requests()[0].Input[0].Content
 	s.NotContains(question, "question 0", "an old turn does not decide whose the floor is")
 	s.Contains(question, fmt.Sprintf("answer %d", flowHistory-1))
 }

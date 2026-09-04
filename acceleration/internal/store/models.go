@@ -1,9 +1,12 @@
 package store
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/uptrace/bun"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
 // Request is one recorded unit of work, stored so billing, cost and health can all be
@@ -267,6 +270,85 @@ type AgentConfig struct {
 	UpdatedAt time.Time  `bun:"updated_at,notnull"`
 	DeletedAt *time.Time `bun:"deleted_at"`
 }
+
+// RouterConfig is a named set of per-modality routing options, for a caller that routes
+// one modality at a time rather than holding a conversation.
+//
+// It is a separate table from agent_configs because it configures a different thing.
+// An agent config describes a conversation: a voice, instructions, a greeting, the skills
+// the subagent may be handed. This describes transcribing, speaking, answering and
+// searching on their own, each with the options that modality has and no others.
+type RouterConfig struct {
+	bun.BaseModel `bun:"table:router_configs,alias:rc"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	Name       string `bun:"name,notnull"`
+	// The option blocks, one per routed modality. They are the routing package's own
+	// types rather than copies of them, so what is stored and what reaches a provider
+	// cannot drift apart.
+	STT    options.STT    `bun:"stt,type:jsonb"`
+	TTS    options.TTS    `bun:"tts,type:jsonb"`
+	LLM    options.LLM    `bun:"llm,type:jsonb"`
+	Search options.Search `bun:"search,type:jsonb"`
+	// Tags are cost labels carried onto every request made under this config.
+	Tags      map[string]string `bun:"tags,type:jsonb"`
+	CreatedAt time.Time         `bun:"created_at,notnull"`
+	UpdatedAt time.Time         `bun:"updated_at,notnull"`
+	DeletedAt *time.Time        `bun:"deleted_at"`
+}
+
+// Recording is one non-realtime job: a recording to transcribe or a text to speak.
+//
+// It is stored rather than held in memory because it outlives the request that created
+// it. A caller is handed an id and comes back for the result, and an hour of audio takes
+// minutes to transcribe, so there is nowhere else the answer could wait.
+type Recording struct {
+	bun.BaseModel `bun:"table:recordings,alias:rec"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// Modality is stt for a transcription and tts for a recorded voice.
+	Modality string `bun:"modality,notnull"`
+	// Status is where the job has got to: RecordingQueued, RecordingRunning,
+	// RecordingCompleted or RecordingFailed.
+	Status string `bun:"status,notnull"`
+	// Provider and Model are what served it, once routing has picked.
+	Provider string `bun:"provider,nullzero"`
+	Model    string `bun:"model,nullzero"`
+	// Source is the recording to transcribe: a URL, or empty when the audio was sent
+	// inline, which is not kept.
+	Source string `bun:"source,nullzero"`
+	// Text is what to say, for a voice job.
+	Text string `bun:"text,nullzero"`
+	// Options are what was asked for. Only the block for this modality is set.
+	STT options.STT `bun:"stt,type:jsonb"`
+	TTS options.TTS `bun:"tts,type:jsonb"`
+	// Callback is a URL the finished job is POSTed to. Empty means the caller polls.
+	Callback string            `bun:"callback,nullzero"`
+	Tags     map[string]string `bun:"tags,type:jsonb"`
+	// Result is the finished transcript or the finished audio, as JSON. It is one column
+	// rather than a table per modality because nothing queries inside it: a result is
+	// written once and read whole.
+	Result json.RawMessage `bun:"result,type:jsonb,nullzero"`
+	// Error is why the job failed, if it did.
+	Error       string     `bun:"error,nullzero"`
+	CreatedAt   time.Time  `bun:"created_at,notnull"`
+	UpdatedAt   time.Time  `bun:"updated_at,notnull"`
+	CompletedAt *time.Time `bun:"completed_at"`
+}
+
+// Where a recording job has got to.
+const (
+	// RecordingQueued is accepted and not yet started.
+	RecordingQueued = "queued"
+	// RecordingRunning is at the provider.
+	RecordingRunning = "running"
+	// RecordingCompleted has a result.
+	RecordingCompleted = "completed"
+	// RecordingFailed has a reason instead.
+	RecordingFailed = "failed"
+)
 
 // How an agent is talked to.
 const (

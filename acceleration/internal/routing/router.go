@@ -18,11 +18,13 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -104,6 +106,15 @@ type Request struct {
 	Voice string
 	// Keyterms are the words a modality that recognises speech should expect.
 	Keyterms []string
+	// Terms are the optional terms this request asks for beyond a target and a language.
+	// A candidate that has not declared one of them is not a candidate, so a term is
+	// either honoured or the request fails saying nothing can serve it.
+	Terms []options.Term
+	// STT, TTS and Search are the per-modality options, handed to the factory of
+	// whichever modality this router serves.
+	STT    options.STT
+	TTS    options.TTS
+	Search options.Search
 }
 
 // Owner returns who the request is billed to and how it is labelled.
@@ -225,6 +236,10 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
+	candidates, err = serving(candidates, request.Terms)
+	if err != nil {
+		return zero, ProviderConfig{}, err
+	}
 
 	var failures []error
 	for _, candidate := range candidates {
@@ -260,6 +275,9 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 		LanguageHints: request.LanguageHints,
 		Voice:         voice,
 		Keyterms:      request.Keyterms,
+		STT:           request.STT,
+		TTS:           request.TTS,
+		Search:        request.Search,
 		Logger:        r.logger,
 	}
 
@@ -313,6 +331,42 @@ func (r *Router[P]) health(ctx context.Context, provider ProviderConfig) live.He
 		return live.Health{Provider: provider.Provider, Model: provider.Model, Available: true}
 	}
 	return health
+}
+
+// serving narrows candidates to the ones that can express every term the request names.
+//
+// A request asking for something none of them can do fails here rather than being served
+// by a provider that ignores the term: a transcript that was quietly not diarized is
+// worse than one that was refused, because nothing about it says so.
+func serving(candidates []Candidate, terms []options.Term) ([]Candidate, error) {
+	if len(terms) == 0 {
+		return candidates, nil
+	}
+
+	kept := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Config.Supports(terms) {
+			kept = append(kept, candidate)
+		}
+	}
+	if len(kept) > 0 {
+		return kept, nil
+	}
+
+	// Which terms to name is the ones nothing offered, since a request refused for
+	// asking two things of which one is available should say which one is not.
+	var unserved []string
+	for _, term := range terms {
+		if !slices.ContainsFunc(candidates, func(candidate Candidate) bool {
+			return candidate.Config.Supports([]options.Term{term})
+		}) {
+			unserved = append(unserved, string(term))
+		}
+	}
+	if len(unserved) == 0 {
+		unserved = []string{"that combination of terms"}
+	}
+	return nil, fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", "))
 }
 
 // rank orders candidates best first. The sort is stable, so equally-ranked candidates keep

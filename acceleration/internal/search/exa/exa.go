@@ -149,10 +149,28 @@ type searchRequest struct {
 	Type       string         `json:"type"`
 	NumResults int            `json:"numResults"`
 	Contents   searchContents `json:"contents"`
+	// IncludeDomains and ExcludeDomains are how Exa narrows where an answer comes from.
+	IncludeDomains []string `json:"includeDomains,omitempty"`
+	ExcludeDomains []string `json:"excludeDomains,omitempty"`
+	// Category names the slice of the index to search.
+	Category string `json:"category,omitempty"`
+	// StartPublishedDate is how Exa expresses recency: everything published since then.
+	StartPublishedDate string `json:"startPublishedDate,omitempty"`
+	// UserLocation is a two-letter country code.
+	UserLocation string `json:"userLocation,omitempty"`
 }
 
 type searchContents struct {
-	Highlights highlightOptions `json:"highlights"`
+	// Text is the whole page, which a caller asks for when something other than a voice
+	// is going to read it.
+	Text       bool              `json:"text,omitempty"`
+	Highlights *highlightOptions `json:"highlights,omitempty"`
+	Summary    *summaryOptions   `json:"summary,omitempty"`
+}
+
+// summaryOptions asks Exa to write a summary of each page rather than quote from it.
+type summaryOptions struct {
+	Query string `json:"query,omitempty"`
 }
 
 // highlightOptions asks for the excerpts that bear on the question rather than the ones
@@ -167,6 +185,7 @@ type searchResponse struct {
 		URL        string   `json:"url"`
 		Text       string   `json:"text"`
 		Highlights []string `json:"highlights"`
+		Summary    string   `json:"summary"`
 		Score      float64  `json:"score"`
 	} `json:"results"`
 }
@@ -186,20 +205,32 @@ func (p *Provider) Search(ctx context.Context, query search.Query) (search.Resul
 	}
 	question := strings.TrimSpace(query.Text)
 
+	request := searchRequest{
+		Query:          question,
+		Type:           p.model,
+		NumResults:     limit,
+		Contents:       contentsFor(question, query.Contents),
+		IncludeDomains: query.IncludeDomains,
+		ExcludeDomains: query.ExcludeDomains,
+		Category:       query.Category,
+		UserLocation:   strings.ToUpper(query.Location),
+	}
+	if query.MaxAgeHours > 0 {
+		since := time.Now().UTC().Add(-time.Duration(query.MaxAgeHours) * time.Hour)
+		request.StartPublishedDate = since.Format(time.RFC3339)
+	}
+
 	var decoded searchResponse
-	err := p.call(ctx, "/search", searchRequest{
-		Query:      question,
-		Type:       p.model,
-		NumResults: limit,
-		Contents:   searchContents{Highlights: highlightOptions{Query: question}},
-	}, &decoded)
-	if err != nil {
+	if err := p.call(ctx, "/search", request, &decoded); err != nil {
 		return search.Result{}, err
 	}
 
 	var found search.Result
 	for _, result := range decoded.Results {
 		text := strings.TrimSpace(strings.Join(result.Highlights, "\n\n"))
+		if text == "" {
+			text = strings.TrimSpace(result.Summary)
+		}
 		if text == "" {
 			text = strings.TrimSpace(result.Text)
 		}
@@ -211,6 +242,28 @@ func (p *Provider) Search(ctx context.Context, query search.Query) (search.Resul
 		})
 	}
 	return found, nil
+}
+
+// contentsFor is what to return alongside each hit. Highlights are the default because
+// the answer is about to be read out and a model handed five full articles will read
+// them; a caller that named something else asked for it on purpose.
+func contentsFor(question string, wanted []string) searchContents {
+	if len(wanted) == 0 {
+		return searchContents{Highlights: &highlightOptions{Query: question}}
+	}
+
+	contents := searchContents{}
+	for _, want := range wanted {
+		switch strings.ToLower(want) {
+		case "text":
+			contents.Text = true
+		case "highlights":
+			contents.Highlights = &highlightOptions{Query: question}
+		case "summary":
+			contents.Summary = &summaryOptions{Query: question}
+		}
+	}
+	return contents
 }
 
 type contentsRequest struct {

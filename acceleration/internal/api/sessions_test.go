@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -46,8 +47,6 @@ func (e *silentEdge) Leave() error {
 // scriptedLLM answers with a fixed reply and, on the first turn, whatever tool the test
 // wants the model to reach for.
 type scriptedLLM struct {
-	emitter *llm.Emitter
-
 	mu    sync.Mutex
 	turns int
 	reply string
@@ -56,7 +55,7 @@ type scriptedLLM struct {
 
 func (s *scriptedLLM) Start(context.Context) error { return nil }
 
-func (s *scriptedLLM) Respond(request llm.Request) error {
+func (s *scriptedLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.turns++
 	first := s.turns == 1
@@ -67,31 +66,23 @@ func (s *scriptedLLM) Respond(request llm.Request) error {
 	}
 	s.mu.Unlock()
 
-	if reply == "" && len(calls) == 0 {
-		return nil
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   s.Provider(),
+		Model:      s.Model(),
+	})
+	script.OutputText(reply)
+	if len(calls) > 0 {
+		script.ToolCalls(calls...)
 	}
-	go func() {
-		s.emitter.Send(llm.CompletionStarted{CompletionID: request.ID, At: time.Now()})
-		if reply != "" {
-			s.emitter.Send(llm.TextDelta{CompletionID: request.ID, Text: reply})
-		}
-		s.emitter.Send(llm.CompletionComplete{
-			CompletionID: request.ID, Text: reply, ToolCalls: calls,
-		})
-	}()
-	return nil
+	script.Done()
+	return script.Stream(), nil
 }
 
-func (s *scriptedLLM) Interrupt(...string) error { return nil }
-func (s *scriptedLLM) Events() <-chan llm.Event  { return s.emitter.Events() }
-func (s *scriptedLLM) Provider() string          { return "stub" }
-func (s *scriptedLLM) Model() string             { return "stub-llm" }
-func (s *scriptedLLM) Reasoning() bool           { return false }
-
-func (s *scriptedLLM) Close() error {
-	s.emitter.Close()
-	return nil
-}
+func (s *scriptedLLM) Provider() string               { return "stub" }
+func (s *scriptedLLM) Model() string                  { return "stub-llm" }
+func (s *scriptedLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (s *scriptedLLM) Close() error                   { return nil }
 
 // quietSTT hears nothing, since these tests drive the session over HTTP rather than
 // through a microphone.
@@ -188,15 +179,15 @@ func (s *SessionAPISuite) SetupTest() {
 
 	// The agent opens a voice model and a flow controller, each needing its own emitter:
 	// two sessions sharing one channel would each consume the other's events.
-	s.model = &scriptedLLM{emitter: llm.NewEmitter(64), reply: "Hello."}
+	s.model = &scriptedLLM{reply: "Hello."}
 	var opened int
 	reasoning := llmrouter.NewRegistry()
-	reasoning.Register("stub", func(routing.Spec) (llm.LLM, error) {
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
 		defer func() { opened++ }()
 		if opened == 0 {
 			return s.model, nil
 		}
-		return &scriptedLLM{emitter: llm.NewEmitter(64)}, nil
+		return &scriptedLLM{}, nil
 	})
 	reasoner, err := llmrouter.New(llmrouter.Options{
 		Config: routableConfig(), Registry: reasoning, Logger: logger,

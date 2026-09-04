@@ -92,6 +92,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/router/configs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The router configs the calling customer holds
+         * @description A router config is what an agent config is for a session, for a caller that routes one modality at a time: the target, the language and every per-modality option, decided once and named. It is separate from an agent config because it configures transcribing, speaking, answering and searching on their own, with no conversation behind them.
+         */
+        get: operations["listRouterConfigs"];
+        put?: never;
+        /**
+         * Store a named set of per-modality routing options
+         * @description A modality block that names no target falls back to what a session falls back to, so a config only has to say what it wants changed.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        post: operations["createRouterConfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/router/configs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One router config */
+        get: operations["getRouterConfig"];
+        /**
+         * Replace a router config
+         * @description Every field is written, so the body is what the config now is rather than what changed about it. Sockets already open keep the options they were started with.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        put: operations["updateRouterConfig"];
+        post?: never;
+        /**
+         * Delete a router config
+         * @description The requests that ran under it still name it, so the config stops being usable rather than stops having existed.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        delete: operations["deleteRouterConfig"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/turns/stats": {
         parameters: {
             query?: never;
@@ -1182,10 +1234,106 @@ export interface paths {
         /**
          * Route one modality over a socket, for a pipeline running elsewhere
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does, offered a piece at a time: a caller running its own pipeline sends audio or text and gets transcripts, audio or completions back, and the request is failed over and billed exactly as it would be inside a session.
-         *     Every socket opens with a `start` frame naming the target and the cost tags. Speech-to-text then takes binary 16 kHz mono PCM and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Completions take `respond` frames and return `delta` and `complete`. All three report failures as `error` frames and end with `closed`.
-         *     Memory and phone are recorded rather than routed, so they are not served here.
+         *     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to take the options from, or the options outright; naming both overrides that config field by field. What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice, `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a conversation and `tags` to bill it.
+         *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off. All three report failures as `error` frames and end with `closed`.
+         *     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held open between them. Memory and phone are recorded rather than routed, so they are not served either.
          */
         get: operations["streamModality"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer a question out of what is true now
+         * @description The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for. One question, one answer: routed, failed over and billed like the rest, and with no socket because nothing arrives in pieces.
+         */
+        post: operations["search"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/stt/recordings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transcribe a recording, off the live path
+         * @description The non-realtime half of speech-to-text: a whole recording in, a whole transcript out. It is a job rather than a response because an hour of audio takes minutes to transcribe, so this returns immediately with an id to poll, or calls a callback when it is done.
+         *     Routing works as it does everywhere else, except that the candidates are the providers registered as not realtime - the batch APIs, which are cheaper and more accurate than the same vendor's streaming model.
+         */
+        post: operations["transcribeRecording"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/stt/recordings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One transcription job, and its transcript once it has one */
+        get: operations["getTranscription"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tts/recordings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Speak a whole text into one audio file, off the live path
+         * @description The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
+         */
+        post: operations["recordSpeech"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tts/recordings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One speech job, and its audio once it has some */
+        get: operations["getSpeech"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1352,6 +1500,364 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        RouterConfigRequest: {
+            /** @description What the config is called, which is unique among the customer's own. */
+            name: string;
+            /** @description Cost labels, carried onto every request made under this config. At most 16, keys matching ^[a-zA-Z0-9_.-]{1,64}$ and values under 256 characters, which is what the rollups can carry. */
+            tags?: {
+                [key: string]: string;
+            };
+            stt?: components["schemas"]["SttOptions"];
+            tts?: components["schemas"]["TtsOptions"];
+            llm?: components["schemas"]["LlmOptions"];
+            search?: components["schemas"]["SearchOptions"];
+        };
+        RouterConfig: {
+            id: string;
+            name: string;
+            tags?: {
+                [key: string]: string;
+            };
+            stt?: components["schemas"]["SttOptions"];
+            tts?: components["schemas"]["TtsOptions"];
+            llm?: components["schemas"]["LlmOptions"];
+            search?: components["schemas"]["SearchOptions"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently. */
+        SttOptions: {
+            /**
+             * @description A provider/model or a capability shortcut such as en-low-latency for the live path or en-recorded for a recording.
+             * @example en-low-latency
+             */
+            target?: string;
+            /**
+             * @description ISO codes candidates must cover. Empty with detect_language lets the provider decide.
+             * @example [
+             *       "en"
+             *     ]
+             */
+            languages?: string[];
+            /** @description Let the provider identify the language instead of being told it. */
+            detect_language?: boolean;
+            /**
+             * @description Rate of the PCM sent on the socket. Zero means 16 kHz. Live only.
+             * @example 16000
+             */
+            sample_rate?: number;
+            /** @description Emit partial transcripts as they firm up, not only final ones. Live only. */
+            interim?: boolean;
+            endpointing?: components["schemas"]["Endpointing"];
+            /**
+             * @description How long a pause ends a turn, for silence endpointing. Live only.
+             * @example 300
+             */
+            silence_ms?: number;
+            /** @description How long after the last word an utterance is declared over. Live only. */
+            utterance_end_ms?: number;
+            /** @description Label each stretch of speech with who said it. */
+            diarize?: boolean;
+            /** @description A hard cap on the speakers diarization may find, not a hint. Providers differ in what they allow, so one asked for more than it supports refuses. */
+            max_speakers?: number;
+            /** @description Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary refuse them. */
+            keyterms?: string[];
+            /** @description Punctuation, capitalisation and smart formatting of numbers and dates. */
+            format?: boolean;
+            /** @description Remove personally identifying information from the transcript. */
+            redact?: boolean;
+            /** @description Tag non-speech audio events such as laughter or music. */
+            events?: boolean;
+            /** @description Transcribe a multichannel recording per channel rather than mixed down. */
+            channels?: number;
+            /** @description Word-level timestamps. Recording only. */
+            words?: boolean;
+            output?: components["schemas"]["TranscriptFormat"];
+            /** @description Summarise the recording, where the provider offers audio intelligence. Recording only. */
+            summary?: boolean;
+            /** @description Extract named entities from the recording. Recording only. */
+            entities?: boolean;
+        };
+        /**
+         * @description What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
+         * @enum {string}
+         */
+        Endpointing: "silence" | "semantic";
+        /**
+         * @description What a finished transcript is rendered as. json carries the words and speakers; srt and vtt are subtitle files. Recording only.
+         * @enum {string}
+         */
+        TranscriptFormat: "json" | "srt" | "vtt";
+        /** @description How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot. */
+        TtsOptions: {
+            /**
+             * @description A provider/model or a capability shortcut.
+             * @example en-low-latency
+             */
+            target?: string;
+            /** @description Provider-specific voice id. */
+            voice?: string;
+            languages?: string[];
+            /**
+             * Format: float
+             * @description Rate of delivery, 1 being the voice's own. Providers differ in the range they accept, so one asked for a speed outside its own refuses.
+             * @example 1
+             */
+            speed?: number;
+            /**
+             * Format: float
+             * @description Loudness, 1 being the voice's own.
+             */
+            volume?: number;
+            /** @description Affect to speak with, for the providers that take one. */
+            emotion?: string;
+            /** @description Delivery style, for the providers that name styles rather than emotions. */
+            style?: string;
+            /**
+             * Format: float
+             * @description How much the voice may vary between chunks. Higher is flatter and more consistent.
+             */
+            stability?: number;
+            /**
+             * Format: float
+             * @description How closely a cloned voice tracks its reference.
+             */
+            similarity?: number;
+            /**
+             * @description Codec, sample rate and bitrate as one name - pcm_16000, mp3_44100_128, ulaw_8000 for telephony.
+             * @example pcm_16000
+             */
+            format?: string;
+            /** @description How to say words the voice gets wrong, keyed by the word. */
+            pronunciations?: {
+                [key: string]: string;
+            };
+            /** @description Character counts at which a streaming voice flushes audio. Smaller first values start speaking sooner and cost more requests. Live only. */
+            chunk_schedule?: number[];
+        };
+        /** @description How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. */
+        LlmOptions: {
+            /**
+             * @description A provider/model or a capability shortcut.
+             * @example llm-fast
+             */
+            target?: string;
+            /** @description What the model answers under, when a request does not say. */
+            instructions?: string;
+            max_output_tokens?: number;
+            /** Format: float */
+            temperature?: number;
+            /**
+             * @description How long the model may think before answering, on the models that think.
+             * @enum {string}
+             */
+            reasoning_effort?: "minimal" | "low" | "medium" | "high";
+            /**
+             * @description Whether the answer is prose or a JSON object.
+             * @enum {string}
+             */
+            format?: "text" | "json_object";
+            /** @enum {string} */
+            verbosity?: "low" | "medium" | "high";
+            /** @description auto, none, required, or the name of a tool the model must call. Which tools exist is per-request, since they change with the turn. */
+            tool_choice?: string;
+            /** @description Keep the response on the provider so a later one can continue from it. */
+            store?: boolean;
+            /** @description What a cached prompt prefix is keyed by. Requests sharing a key and a prefix are read from the cache rather than charged in full. */
+            prompt_cache_key?: string;
+            /** @description Passed to the provider untouched, for the providers that store it. */
+            metadata?: {
+                [key: string]: string;
+            };
+        };
+        /** @description How this config finds out today's answers. */
+        SearchOptions: {
+            /**
+             * @description A provider/model or a capability shortcut.
+             * @example search-fast
+             */
+            target?: string;
+            depth?: components["schemas"]["SearchDepth"];
+            /** @description How many hits to return. */
+            results?: number;
+            /** @description Only answer from these domains. */
+            include_domains?: string[];
+            exclude_domains?: string[];
+            /** @description The kind of source to prefer - news, papers, company, github - for the providers that classify their index. */
+            category?: string;
+            /** @description How stale a cached page may be. Zero forces a live crawl, which is slower and costs more. */
+            max_age_hours?: number;
+            /** @description Country or region to answer from, for queries whose answer depends on where. */
+            location?: string;
+            /** @description What to return alongside each hit. */
+            contents?: ("text" | "highlights" | "summary")[];
+            /** @description A JSON schema the answer must fit, for the providers that can be asked to structure what they found. */
+            output_schema?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * @description How much work a search is worth. instant answers from the index in a few hundred milliseconds; deep crawls and reasons over what it finds and can take tens of seconds. Providers offer different ladders, so each one maps these four onto its own.
+         * @enum {string}
+         */
+        SearchDepth: "instant" | "fast" | "standard" | "deep";
+        SearchRequest: {
+            /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
+            config_id?: string;
+            /**
+             * @description The question, in the caller's own words.
+             * @example perioperative antibiotic guidance
+             */
+            query: string;
+            options?: components["schemas"]["SearchOptions"];
+            tags?: {
+                [key: string]: string;
+            };
+        };
+        SearchResponse: {
+            provider: string;
+            model: string;
+            /** @description The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read. */
+            answer?: string;
+            /** @description The sources behind it, most relevant first. */
+            results: components["schemas"]["SearchResult"][];
+        };
+        SearchResult: {
+            title?: string;
+            url: string;
+            /** @description The relevant extract, which is what a model reads. */
+            text?: string;
+            /**
+             * Format: float
+             * @description How relevant the provider judged it.
+             */
+            score?: number;
+        };
+        /** @description Where the audio to work on comes from. A URL is what every vendor's batch API takes and what anything longer than a clip should use; inline bytes save a caller with a short local file from having to host it somewhere first. */
+        RecordingSource: {
+            /** @description A fetchable audio or video file. */
+            url?: string;
+            /**
+             * Format: byte
+             * @description The file itself, base64. For clips - a long recording belongs behind a URL.
+             */
+            audio?: string;
+        };
+        /**
+         * @description Where a job has got to. A failed job carries the reason in `error`, and a completed one carries its result.
+         * @enum {string}
+         */
+        RecordingStatus: "queued" | "running" | "completed" | "failed";
+        TranscriptionRequest: {
+            /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
+            config_id?: string;
+            source: components["schemas"]["RecordingSource"];
+            options?: components["schemas"]["SttOptions"];
+            /** @description A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns. */
+            callback?: string;
+            /** @description Cost labels for this job. */
+            tags?: {
+                [key: string]: string;
+            };
+        };
+        Transcription: {
+            id: string;
+            status: components["schemas"]["RecordingStatus"];
+            provider?: string;
+            model?: string;
+            /** @description What was spoken, whether it was asked for or detected. */
+            language?: string;
+            /** @description The whole transcript as prose. */
+            text?: string;
+            /** @description Present when word-level timestamps were asked for. */
+            words?: components["schemas"]["TranscriptWord"][];
+            /** @description The speakers diarization found, in the order they first spoke. */
+            speakers?: string[];
+            /** @description The transcript as an SRT or VTT file, when one of those was asked for. */
+            subtitles?: string;
+            summary?: string;
+            entities?: components["schemas"]["TranscriptEntity"][];
+            /**
+             * Format: int64
+             * @description How long the recording was, which is what it was billed on.
+             */
+            audio_duration_ms?: number;
+            /** @description Why the job failed, if it did. */
+            error?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            completed_at?: string;
+        };
+        TranscriptWord: {
+            text: string;
+            /** Format: int64 */
+            start_ms: number;
+            /** Format: int64 */
+            end_ms: number;
+            /** Format: float */
+            confidence?: number;
+            /** @description Who said it, when diarization was asked for. */
+            speaker?: string;
+        };
+        /** @description Something the recording named, for the providers that pick them out. */
+        TranscriptEntity: {
+            /** @example person */
+            type: string;
+            text: string;
+            /** Format: int64 */
+            start_ms?: number;
+            /** Format: int64 */
+            end_ms?: number;
+        };
+        SpeechRequest: {
+            /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
+            config_id?: string;
+            /** @description What to say. Whole paragraphs rather than the sentence at a time a socket takes. */
+            text: string;
+            options?: components["schemas"]["TtsOptions"];
+            /** @description A URL the finished job is POSTed to, so a caller does not have to poll. */
+            callback?: string;
+            tags?: {
+                [key: string]: string;
+            };
+        };
+        Speech: {
+            id: string;
+            status: components["schemas"]["RecordingStatus"];
+            provider?: string;
+            model?: string;
+            /**
+             * @description What the audio is encoded as, which is what was asked for.
+             * @example mp3_44100_128
+             */
+            format?: string;
+            /** @description Where the finished audio is, on a deployment that stores it. Empty means the audio came back inline instead. */
+            url?: string;
+            /**
+             * Format: byte
+             * @description The audio itself, base64, when it was not stored behind a URL.
+             */
+            audio?: string;
+            /** Format: int64 */
+            audio_duration_ms?: number;
+            /**
+             * Format: int64
+             * @description How much text was spoken, which is what it was billed on.
+             */
+            characters?: number;
+            error?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            completed_at?: string;
         };
         /** @description One hosted MCP server from the built-in catalog. */
         Plugin: {
@@ -2516,6 +3022,137 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listRouterConfigs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The customer's router configs, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouterConfig"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createRouterConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RouterConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description The config was stored */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouterConfig"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getRouterConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The config */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouterConfig"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateRouterConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RouterConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description The config as it now is */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouterConfig"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteRouterConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The config is gone */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -4460,6 +5097,139 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    search: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchRequest"];
+            };
+        };
+        responses: {
+            /** @description What the provider found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    transcribeRecording: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TranscriptionRequest"];
+            };
+        };
+        responses: {
+            /** @description The job was accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transcription"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getTranscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The job as it now stands */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Transcription"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    recordSpeech: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpeechRequest"];
+            };
+        };
+        responses: {
+            /** @description The job was accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Speech"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getSpeech: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The resource, as returned when it was created. */
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The job as it now stands */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Speech"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
         };

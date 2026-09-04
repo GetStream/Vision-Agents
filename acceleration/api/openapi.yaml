@@ -211,6 +211,135 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/router/configs:
+    get:
+      operationId: listRouterConfigs
+      summary: The router configs the calling customer holds
+      description: >
+        A router config is what an agent config is for a session, for a caller that routes
+        one modality at a time: the target, the language and every per-modality option,
+        decided once and named. It is separate from an agent config because it configures
+        transcribing, speaking, answering and searching on their own, with no conversation
+        behind them.
+      responses:
+        "200":
+          description: The customer's router configs, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RouterConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createRouterConfig
+      x-server-side-only: true
+      summary: Store a named set of per-modality routing options
+      description: >
+        A modality block that names no target falls back to what a session falls back to,
+        so a config only has to say what it wants changed.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an
+        end user's device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouterConfigRequest"
+      responses:
+        "201":
+          description: The config was stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouterConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/router/configs/{id}:
+    get:
+      operationId: getRouterConfig
+      summary: One router config
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouterConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateRouterConfig
+      x-server-side-only: true
+      summary: Replace a router config
+      description: >
+        Every field is written, so the body is what the config now is rather than what
+        changed about it. Sockets already open keep the options they were started with.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an
+        end user's device.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouterConfigRequest"
+      responses:
+        "200":
+          description: The config as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouterConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteRouterConfig
+      x-server-side-only: true
+      summary: Delete a router config
+      description: >
+        The requests that ran under it still name it, so the config stops being usable
+        rather than stops having existed.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an
+        end user's device.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "204":
+          description: The config is gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/turns/stats:
     get:
       operationId: getTurnStats
@@ -838,7 +967,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthorizePluginResponse"
+                $ref: "#/components/schemas/PluginAuthorization"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -2252,21 +2381,163 @@ paths:
         audio or text and gets transcripts, audio or completions back, and the request is
         failed over and billed exactly as it would be inside a session.
 
-        Every socket opens with a `start` frame naming the target and the cost tags.
-        Speech-to-text then takes binary 16 kHz mono PCM and returns `transcript` frames.
-        Text-to-speech takes `speak` frames and returns binary audio with
-        `synthesis_complete` between utterances: each audio frame opens with a
-        little-endian header of a uint32 sample rate, a uint16 channel count and two
-        reserved bytes, followed by PCM16 samples. Completions take `respond` frames and
-        return `delta` and `complete`. All three report failures as `error` frames and end
-        with `closed`.
+        Every socket opens with a `start` frame. It names either a `config_id`, a stored
+        router config to take the options from, or the options outright; naming both
+        overrides that config field by field. What it may carry is the modality's own
+        option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice,
+        `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a
+        conversation and `tags` to bill it.
 
-        Memory and phone are recorded rather than routed, so they are not served here.
+        Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16
+        kHz mono by default, and returns `transcript` frames. Text-to-speech takes `speak`
+        frames and returns binary audio with `synthesis_complete` between utterances: each
+        audio frame opens with a little-endian header of a uint32 sample rate, a uint16
+        channel count and two reserved bytes, followed by PCM16 samples. Language models
+        take `respond` frames, each naming an `id` and anything from `LlmOptions` for that
+        one response along with its `tools`, and return `delta`, `reasoning_delta` and one
+        `complete` per response; a `complete` reports the `status` the response ended in,
+        what it cost in tokens and how long the caller waited for the first of them. An
+        `interrupt` frame naming `response_ids` abandons responses still being generated,
+        which still settle and are still billed for what they produced before being cut
+        off. All three report failures as `error` frames and end with `closed`.
+
+        Search is answered at `/v1/search` rather than here: one question and its answer
+        need no socket held open between them. Memory and phone are recorded rather than
+        routed, so they are not served either.
       parameters:
         - $ref: "#/components/parameters/Modality"
       responses:
         "101":
           description: The socket is open
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/search:
+    post:
+      operationId: search
+      summary: Answer a question out of what is true now
+      description: >
+        The fourth routed modality, reachable on its own rather than only as a tool an
+        agent reaches for. One question, one answer: routed, failed over and billed like
+        the rest, and with no socket because nothing arrives in pieces.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: What the provider found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchAnswer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/stt/recordings:
+    post:
+      operationId: transcribeRecording
+      summary: Transcribe a recording, off the live path
+      description: >
+        The non-realtime half of speech-to-text: a whole recording in, a whole transcript
+        out. It is a job rather than a response because an hour of audio takes minutes to
+        transcribe, so this returns immediately with an id to poll, or calls a callback
+        when it is done.
+
+        Routing works as it does everywhere else, except that the candidates are the
+        providers registered as not realtime - the batch APIs, which are cheaper and more
+        accurate than the same vendor's streaming model.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TranscriptionRequest"
+      responses:
+        "202":
+          description: The job was accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transcription"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/stt/recordings/{id}:
+    get:
+      operationId: getTranscription
+      summary: One transcription job, and its transcript once it has one
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The job as it now stands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transcription"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/tts/recordings:
+    post:
+      operationId: recordSpeech
+      summary: Speak a whole text into one audio file, off the live path
+      description: >
+        The non-realtime half of text-to-speech: a chapter in, a file out. A job for the
+        same reason transcription is - an audiobook is not a conversation, and nothing is
+        waiting to hear the first chunk.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SpeechRequest"
+      responses:
+        "202":
+          description: The job was accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Speech"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/tts/recordings/{id}:
+    get:
+      operationId: getSpeech
+      summary: One speech job, and its audio once it has some
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The job as it now stands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Speech"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -2658,6 +2929,580 @@ components:
           type: string
           format: date-time
 
+    RouterConfigRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: What the config is called, which is unique among the customer's own.
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            Cost labels, carried onto every request made under this config. At most 16,
+            keys matching ^[a-zA-Z0-9_.-]{1,64}$ and values under 256 characters, which is
+            what the rollups can carry.
+        stt:
+          $ref: "#/components/schemas/SttOptions"
+        tts:
+          $ref: "#/components/schemas/TtsOptions"
+        llm:
+          $ref: "#/components/schemas/LlmOptions"
+        search:
+          $ref: "#/components/schemas/SearchOptions"
+
+    RouterConfig:
+      type: object
+      required: [id, name, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+        stt:
+          $ref: "#/components/schemas/SttOptions"
+        tts:
+          $ref: "#/components/schemas/TtsOptions"
+        llm:
+          $ref: "#/components/schemas/LlmOptions"
+        search:
+          $ref: "#/components/schemas/SearchOptions"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SttOptions:
+      type: object
+      description: >
+        How this config transcribes, live or from a recording. A field that only means
+        something on one of the two forms says so: a recording has no endpointing to do,
+        and a socket has no file to write subtitles from. A provider that cannot express a
+        term refuses the request rather than dropping it silently.
+      properties:
+        target:
+          type: string
+          description: >
+            A provider/model or a capability shortcut such as en-low-latency for the live
+            path or en-recorded for a recording.
+          example: en-low-latency
+        languages:
+          type: array
+          items:
+            type: string
+          description: ISO codes candidates must cover. Empty with detect_language lets the provider decide.
+          example: ["en"]
+        detect_language:
+          type: boolean
+          description: Let the provider identify the language instead of being told it.
+        sample_rate:
+          type: integer
+          description: Rate of the PCM sent on the socket. Zero means 16 kHz. Live only.
+          example: 16000
+        interim:
+          type: boolean
+          description: Emit partial transcripts as they firm up, not only final ones. Live only.
+        endpointing:
+          $ref: "#/components/schemas/Endpointing"
+        silence_ms:
+          type: integer
+          description: How long a pause ends a turn, for silence endpointing. Live only.
+          example: 300
+        utterance_end_ms:
+          type: integer
+          description: How long after the last word an utterance is declared over. Live only.
+        diarize:
+          type: boolean
+          description: Label each stretch of speech with who said it.
+        max_speakers:
+          type: integer
+          minimum: 1
+          maximum: 32
+          description: >
+            A hard cap on the speakers diarization may find, not a hint. Providers differ
+            in what they allow, so one asked for more than it supports refuses.
+        keyterms:
+          type: array
+          items:
+            type: string
+          description: >
+            Business-specific words the transcriber would otherwise get wrong. Up to 100
+            terms, and providers that cannot be told about vocabulary refuse them.
+        format:
+          type: boolean
+          description: Punctuation, capitalisation and smart formatting of numbers and dates.
+        redact:
+          type: boolean
+          description: Remove personally identifying information from the transcript.
+        events:
+          type: boolean
+          description: Tag non-speech audio events such as laughter or music.
+        channels:
+          type: integer
+          minimum: 1
+          description: Transcribe a multichannel recording per channel rather than mixed down.
+        words:
+          type: boolean
+          description: Word-level timestamps. Recording only.
+        output:
+          $ref: "#/components/schemas/TranscriptFormat"
+        summary:
+          type: boolean
+          description: >
+            Summarise the recording, where the provider offers audio intelligence.
+            Recording only.
+        entities:
+          type: boolean
+          description: Extract named entities from the recording. Recording only.
+
+    Endpointing:
+      type: string
+      enum: [silence, semantic]
+      description: >
+        What decides a turn is over: a long enough pause, or a model reading the words and
+        judging the sentence finished.
+
+    TranscriptFormat:
+      type: string
+      enum: [json, srt, vtt]
+      description: >
+        What a finished transcript is rendered as. json carries the words and speakers;
+        srt and vtt are subtitle files. Recording only.
+
+    TtsOptions:
+      type: object
+      description: >
+        How this config speaks. A provider that cannot express a term refuses the request
+        rather than dropping it silently, since a voice asked to sound urgent and speaking
+        flatly is worse than one that says it cannot.
+      properties:
+        target:
+          type: string
+          description: A provider/model or a capability shortcut.
+          example: en-low-latency
+        voice:
+          type: string
+          description: Provider-specific voice id.
+        languages:
+          type: array
+          items:
+            type: string
+        speed:
+          type: number
+          format: float
+          description: >
+            Rate of delivery, 1 being the voice's own. Providers differ in the range they
+            accept, so one asked for a speed outside its own refuses.
+          example: 1
+        volume:
+          type: number
+          format: float
+          description: Loudness, 1 being the voice's own.
+        emotion:
+          type: string
+          description: Affect to speak with, for the providers that take one.
+        style:
+          type: string
+          description: Delivery style, for the providers that name styles rather than emotions.
+        stability:
+          type: number
+          format: float
+          description: How much the voice may vary between chunks. Higher is flatter and more consistent.
+        similarity:
+          type: number
+          format: float
+          description: How closely a cloned voice tracks its reference.
+        format:
+          type: string
+          description: >
+            Codec, sample rate and bitrate as one name - pcm_16000, mp3_44100_128,
+            ulaw_8000 for telephony.
+          example: pcm_16000
+        pronunciations:
+          type: object
+          additionalProperties:
+            type: string
+          description: How to say words the voice gets wrong, keyed by the word.
+        chunk_schedule:
+          type: array
+          items:
+            type: integer
+          description: >
+            Character counts at which a streaming voice flushes audio. Smaller first
+            values start speaking sooner and cost more requests. Live only.
+
+    LlmOptions:
+      type: object
+      description: >
+        How this config answers. The names are the response parameters the router already
+        speaks rather than a second vocabulary for the same things.
+      properties:
+        target:
+          type: string
+          description: A provider/model or a capability shortcut.
+          example: llm-fast
+        instructions:
+          type: string
+          description: What the model answers under, when a request does not say.
+        max_output_tokens:
+          type: integer
+        temperature:
+          type: number
+          format: float
+        reasoning_effort:
+          type: string
+          enum: [minimal, low, medium, high]
+          description: How long the model may think before answering, on the models that think.
+        format:
+          type: string
+          enum: [text, json_object]
+          description: Whether the answer is prose or a JSON object.
+        verbosity:
+          type: string
+          enum: [low, medium, high]
+        tool_choice:
+          type: string
+          description: >
+            auto, none, required, or the name of a tool the model must call. Which tools
+            exist is per-request, since they change with the turn.
+        store:
+          type: boolean
+          description: Keep the response on the provider so a later one can continue from it.
+        prompt_cache_key:
+          type: string
+          description: >
+            What a cached prompt prefix is keyed by. Requests sharing a key and a prefix
+            are read from the cache rather than charged in full.
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Passed to the provider untouched, for the providers that store it.
+
+    SearchOptions:
+      type: object
+      description: How this config finds out today's answers.
+      properties:
+        target:
+          type: string
+          description: A provider/model or a capability shortcut.
+          example: search-fast
+        depth:
+          $ref: "#/components/schemas/SearchDepth"
+        results:
+          type: integer
+          minimum: 1
+          description: How many hits to return.
+        include_domains:
+          type: array
+          items:
+            type: string
+          description: Only answer from these domains.
+        exclude_domains:
+          type: array
+          items:
+            type: string
+        category:
+          type: string
+          description: >
+            The kind of source to prefer - news, papers, company, github - for the
+            providers that classify their index.
+        max_age_hours:
+          type: integer
+          minimum: 0
+          description: >
+            How stale a cached page may be. Zero forces a live crawl, which is slower and
+            costs more.
+        location:
+          type: string
+          description: Country or region to answer from, for queries whose answer depends on where.
+        contents:
+          type: array
+          items:
+            type: string
+            enum: [text, highlights, summary]
+          description: What to return alongside each hit.
+        output_schema:
+          type: object
+          additionalProperties: true
+          description: >
+            A JSON schema the answer must fit, for the providers that can be asked to
+            structure what they found.
+
+    SearchDepth:
+      type: string
+      enum: [instant, fast, standard, deep]
+      description: >
+        How much work a search is worth. instant answers from the index in a few hundred
+        milliseconds; deep crawls and reasons over what it finds and can take tens of
+        seconds. Providers offer different ladders, so each one maps these four onto its
+        own.
+
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        config_id:
+          type: string
+          description: >
+            A stored router config to take the options from. Anything named here as well
+            overrides that one field of it.
+        query:
+          type: string
+          description: The question, in the caller's own words.
+          example: perioperative antibiotic guidance
+        options:
+          $ref: "#/components/schemas/SearchOptions"
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+
+    SearchAnswer:
+      type: object
+      required: [provider, model, results]
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        answer:
+          type: string
+          description: >
+            The provider's own summary, where it offers one. It is what a voice agent
+            wants: a sentence to say rather than a page to read.
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+          description: The sources behind it, most relevant first.
+
+    SearchResult:
+      type: object
+      required: [url]
+      properties:
+        title:
+          type: string
+        url:
+          type: string
+        text:
+          type: string
+          description: The relevant extract, which is what a model reads.
+        score:
+          type: number
+          format: float
+          description: How relevant the provider judged it.
+
+    RecordingSource:
+      type: object
+      description: >
+        Where the audio to work on comes from. A URL is what every vendor's batch API
+        takes and what anything longer than a clip should use; inline bytes save a caller
+        with a short local file from having to host it somewhere first.
+      properties:
+        url:
+          type: string
+          description: A fetchable audio or video file.
+        audio:
+          type: string
+          format: byte
+          description: The file itself, base64. For clips - a long recording belongs behind a URL.
+
+    RecordingStatus:
+      type: string
+      enum: [queued, running, completed, failed]
+      description: >
+        Where a job has got to. A failed job carries the reason in `error`, and a completed
+        one carries its result.
+
+    TranscriptionRequest:
+      type: object
+      required: [source]
+      properties:
+        config_id:
+          type: string
+          description: >
+            A stored router config to take the options from. Anything named here as well
+            overrides that one field of it.
+        source:
+          $ref: "#/components/schemas/RecordingSource"
+        options:
+          $ref: "#/components/schemas/SttOptions"
+        callback:
+          type: string
+          description: >
+            A URL the finished job is POSTed to, so a caller does not have to poll. The
+            body is the same Transcription this returns.
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+          description: Cost labels for this job.
+
+    Transcription:
+      type: object
+      required: [id, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        status:
+          $ref: "#/components/schemas/RecordingStatus"
+        provider:
+          type: string
+        model:
+          type: string
+        language:
+          type: string
+          description: What was spoken, whether it was asked for or detected.
+        text:
+          type: string
+          description: The whole transcript as prose.
+        words:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptWord"
+          description: Present when word-level timestamps were asked for.
+        speakers:
+          type: array
+          items:
+            type: string
+          description: The speakers diarization found, in the order they first spoke.
+        subtitles:
+          type: string
+          description: The transcript as an SRT or VTT file, when one of those was asked for.
+        summary:
+          type: string
+        entities:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptEntity"
+        audio_duration_ms:
+          type: integer
+          format: int64
+          description: How long the recording was, which is what it was billed on.
+        error:
+          type: string
+          description: Why the job failed, if it did.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    TranscriptWord:
+      type: object
+      required: [text, start_ms, end_ms]
+      properties:
+        text:
+          type: string
+        start_ms:
+          type: integer
+          format: int64
+        end_ms:
+          type: integer
+          format: int64
+        confidence:
+          type: number
+          format: float
+        speaker:
+          type: string
+          description: Who said it, when diarization was asked for.
+
+    TranscriptEntity:
+      type: object
+      required: [type, text]
+      description: Something the recording named, for the providers that pick them out.
+      properties:
+        type:
+          type: string
+          example: person
+        text:
+          type: string
+        start_ms:
+          type: integer
+          format: int64
+        end_ms:
+          type: integer
+          format: int64
+
+    SpeechRequest:
+      type: object
+      required: [text]
+      properties:
+        config_id:
+          type: string
+          description: >
+            A stored router config to take the options from. Anything named here as well
+            overrides that one field of it.
+        text:
+          type: string
+          description: What to say. Whole paragraphs rather than the sentence at a time a socket takes.
+        options:
+          $ref: "#/components/schemas/TtsOptions"
+        callback:
+          type: string
+          description: A URL the finished job is POSTed to, so a caller does not have to poll.
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+
+    Speech:
+      type: object
+      required: [id, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        status:
+          $ref: "#/components/schemas/RecordingStatus"
+        provider:
+          type: string
+        model:
+          type: string
+        format:
+          type: string
+          description: What the audio is encoded as, which is what was asked for.
+          example: mp3_44100_128
+        url:
+          type: string
+          description: >
+            Where the finished audio is, on a deployment that stores it. Empty means the
+            audio came back inline instead.
+        audio:
+          type: string
+          format: byte
+          description: The audio itself, base64, when it was not stored behind a URL.
+        audio_duration_ms:
+          type: integer
+          format: int64
+        characters:
+          type: integer
+          format: int64
+          description: How much text was spoken, which is what it was billed on.
+        error:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
     Plugin:
       type: object
       required: [id, name, category, description]
@@ -2708,7 +3553,7 @@ components:
             The shop hostname or Salesforce my-domain. Required for plugins that have no
             single global URL.
 
-    AuthorizePluginResponse:
+    PluginAuthorization:
       type: object
       required: [authorize_url]
       properties:

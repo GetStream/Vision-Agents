@@ -38,6 +38,10 @@ const (
 	defaultSTTTarget    = "en-low-latency"
 	defaultTTSTarget    = "en-low-latency"
 	defaultSearchTarget = "search-fast"
+	// The model the skills run on. A quality tier rather than a fast one, since the
+	// conversation carries on without it: what is handed over is what the talking model
+	// could not answer itself.
+	defaultSubagentTarget = "multilingual-high-accuracy"
 )
 
 // daytonaProvider is the one sandbox a caller may ask for by name.
@@ -347,6 +351,24 @@ func (s *Session) askTool(call ToolCall) error {
 		return fmt.Errorf("session: %s could not be asked for, the connection is behind", call.Name)
 	}
 	return nil
+}
+
+// think names the model the skills run on when the spec did not, so that an agent written
+// down as instructions alone can hand the hard parts over rather than guess at them.
+//
+// It is the one target looked up before it is asked for. A target a caller named and this
+// deployment cannot route is a refusal, but a deployment routing no thinking model should
+// still take calls: that agent answers everything itself, the way it goes without search.
+func (m *Manager) think(ctx context.Context, spec *Spec) {
+	if spec.SubagentTarget != "" {
+		return
+	}
+	if _, err := m.options.LLM.Resolve(ctx, defaultSubagentTarget, spec.LanguageHints); err != nil {
+		m.logger.Debug("this agent has nothing to hand the hard parts to",
+			"target", defaultSubagentTarget, "error", err)
+		return
+	}
+	spec.SubagentTarget = defaultSubagentTarget
 }
 
 // skills are what the voice model may hand over, which is nothing without a subagent to

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -50,33 +49,24 @@ func (s *GeminiSuite) SetupTest() {
 	s.T().Cleanup(s.server.Close)
 }
 
-// ask runs one completion against the test server and waits for it to settle.
+// ask runs one response against the test server and waits for it to settle.
 func (s *GeminiSuite) ask(options Options) {
 	options.APIKey = "k"
 	options.BaseURL = s.server.URL
 
 	provider, err := New(options)
 	s.Require().NoError(err)
-	s.Require().NoError(provider.Start(context.Background()))
 	s.T().Cleanup(func() { provider.Close() })
 
-	s.Require().NoError(provider.Respond(llm.Request{
-		ID:       "c1",
-		Messages: []llm.Message{{Role: llm.User, Content: "hello"}},
-	}))
+	stream, err := provider.Create(context.Background(), llm.ResponseParams{
+		ID:    "c1",
+		Input: []llm.Message{{Role: llm.User, Content: "hello"}},
+	})
+	s.Require().NoError(err)
 
-	deadline := time.After(5 * time.Second)
-	for {
-		select {
-		case event := <-provider.Events():
-			if _, done := event.(llm.CompletionComplete); done {
-				return
-			}
-		case <-deadline:
-			s.FailNow("the completion never settled")
-			return
-		}
-	}
+	response, err := llm.Collect(stream)
+	s.Require().NoError(err)
+	s.Equal("ok", response.OutputText)
 }
 
 func (s *GeminiSuite) TestCredentialsComeFromTheEnvironmentWhenNotGiven() {
@@ -119,11 +109,20 @@ func (s *GeminiSuite) TestMoreThinkingCanBeAskedForOffTheLivePath() {
 	s.Equal("high", s.request["reasoning_effort"])
 }
 
-func (s *GeminiSuite) TestReasoningIsNotClaimedBecauseGoogleDoesNotStreamIt() {
+func (s *GeminiSuite) TestReasoningIsNotStreamedBecauseGoogleDoesNotSendIt() {
 	// Google reports thinking as a token count and keeps the text, so there is nothing
-	// for the session to separate out of the answer.
+	// for a caller to separate out of the answer.
 	provider, err := New(Options{APIKey: "k"})
 	s.Require().NoError(err)
 
-	s.False(provider.Reasoning())
+	s.False(provider.Capabilities().StreamsReasoning)
+}
+
+func (s *GeminiSuite) TestChatCompletionsCannotStoreAResponseToContinueFrom() {
+	// The shim has nowhere to put it, so the whole conversation is sent every turn.
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	s.False(provider.Capabilities().Store)
+	s.False(provider.Capabilities().PromptCacheKey)
 }

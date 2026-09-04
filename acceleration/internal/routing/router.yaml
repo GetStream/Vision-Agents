@@ -8,6 +8,13 @@
 # than fact: check each vendor's pricing page, and for a self-hosted model divide the GPU
 # hour by the throughput you measured. A model sets whichever unit it is billed in and
 # leaves the rest at zero, and a model with no price reports a cost of zero.
+#
+# supports lists the optional terms a model can express: diarization, a speaking speed, a
+# domain filter. A request asking for one is only routed to a model that declared it, so a
+# term is either honoured or the request is refused - never dropped in silence. A model
+# that declares nothing serves every request that asks for nothing, which is most of them.
+# The list is what the code behind the model actually sends upstream, so adding a term here
+# is a claim about the provider package as much as about the vendor.
 
 stt:
   providers:
@@ -16,6 +23,7 @@ stt:
       languages: [en]
       realtime: true
       tier: low-latency
+      supports: [keyterms, endpointing]
       price:
         per_audio_hour: 0.276
 
@@ -24,6 +32,7 @@ stt:
       languages: [en, es, fr, de, hi, it, ja, ko, nl, pt, ru, zh]
       realtime: true
       tier: low-latency
+      supports: [keyterms, endpointing]
       price:
         per_audio_hour: 0.276
 
@@ -73,6 +82,7 @@ stt:
         ]
       realtime: true
       tier: low-latency
+      supports: [keyterms]
       price:
         per_audio_hour: 0.54
 
@@ -188,6 +198,7 @@ stt:
         ]
       realtime: true
       tier: low-latency
+      supports: [keyterms]
       price:
         per_audio_hour: 0.20
 
@@ -228,8 +239,34 @@ stt:
         ]
       realtime: true
       tier: low-latency
+      supports: [keyterms]
       price:
         per_audio_hour: 0.18
+
+    # Nova-3 on the batch listen endpoint, which is the recording path rather than the
+    # live one. It is not a Flux model: Flux exists to decide where a turn ended while
+    # somebody is still talking, and a recording has the whole file in front of it, which
+    # is what makes this both cheaper per hour and more accurate. $0.0043 an audio minute,
+    # which is the rate below.
+    - provider: deepgram
+      model: nova-3
+      languages: [de, en, es, fr, hi, it, ja, nl, pt, ru]
+      realtime: false
+      tier: high-quality
+      supports:
+        [
+          detect_language,
+          diarize,
+          words,
+          format,
+          redact,
+          summary,
+          entities,
+          keyterms,
+          channels,
+        ]
+      price:
+        per_audio_hour: 0.258
 
   aliases:
     en-low-latency:
@@ -242,13 +279,27 @@ stt:
       require_realtime: true
       tier: low-latency
 
-    # No tier requirement: accuracy is worth waiting for, so an offline-only model is a
-    # candidate here even though it cannot serve a live call.
+    # The recording path. It excludes the live models rather than merely allowing the
+    # batch ones, because a whole recording streamed at a socket is the expensive way to
+    # do the thing this alias exists for.
+    en-recorded:
+      languages: [en]
+      require_recorded: true
+
+    multilingual-recorded:
+      multilingual: true
+      require_recorded: true
+
+    # No tier requirement: accuracy is worth waiting for, so a slower live model is a
+    # candidate here. It is still the live path, though - a recording belongs at
+    # en-recorded, where the batch models are.
     en-high-accuracy:
       languages: [en]
+      require_realtime: true
 
     multilingual-high-accuracy:
       multilingual: true
+      require_realtime: true
 
     # The names sprint 1 shipped, kept so existing callers keep working.
     en-realtime-best:
@@ -261,9 +312,11 @@ stt:
 
     en-slow-best:
       languages: [en]
+      require_realtime: true
 
     multi-language-slow-best:
       multilingual: true
+      require_realtime: true
 
 tts:
   providers:
@@ -591,6 +644,53 @@ tts:
       price:
         per_million_chars: 14.8
 
+    # v3 on the plain synthesis endpoint, which returns the whole file rather than
+    # streaming it. That is the recording path: an audiobook is not a conversation, so
+    # nothing is gained by getting the first sound out early, and asking for the file is
+    # what lets a codec and a bitrate be chosen. Priced as the standard rate.
+    - provider: elevenlabs
+      model: eleven_v3
+      languages:
+        [
+          ar,
+          bg,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fi,
+          fil,
+          fr,
+          hi,
+          hr,
+          hu,
+          id,
+          it,
+          ja,
+          ko,
+          ms,
+          nl,
+          no,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          ta,
+          tr,
+          uk,
+          vi,
+          zh,
+        ]
+      realtime: false
+      tier: high-quality
+      supports: [speed, stability, format]
+      price:
+        per_million_chars: 110.0
+
   aliases:
     en-low-latency:
       languages: [en]
@@ -602,12 +702,22 @@ tts:
       require_realtime: true
       tier: low-latency
 
+    en-recorded:
+      languages: [en]
+      require_recorded: true
+
+    multilingual-recorded:
+      multilingual: true
+      require_recorded: true
+
     en-high-accuracy:
       languages: [en]
+      require_realtime: true
       tier: high-quality
 
     multilingual-high-accuracy:
       multilingual: true
+      require_realtime: true
       tier: high-quality
 
 llm:
@@ -750,6 +860,7 @@ search:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
+      supports: [domains, category, recency, location, contents]
       price:
         per_thousand_requests: 5.0
 
@@ -781,6 +892,7 @@ search:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
+      supports: [domains, category, recency, location, contents]
       price:
         per_thousand_requests: 5.0
 

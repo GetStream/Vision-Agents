@@ -25,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
@@ -82,10 +83,45 @@ func (s *APIIntegrationSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.T().Cleanup(voice.Close)
 
+	// The recording paths are wired against providers that answer in process: what a real
+	// batch endpoint makes of a real file is the provider package's own suite, and what is
+	// under test here is the job - a row, a result and a callback.
+	transcribers := sttrouter.NewTranscriberRegistry()
+	transcribers.Register("deepgram", func(spec routing.Spec) (stt.Transcriber, error) {
+		return &recordedTranscriber{model: spec.Model}, nil
+	})
+	transcriptions, err := sttrouter.NewRecordings(sttrouter.Options{
+		Config:       config[routing.STT],
+		Transcribers: transcribers,
+		Store:        pgStore,
+		Live:         liveClient,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(transcriptions.Close)
+
+	recorders := ttsrouter.NewRecorderRegistry()
+	recorders.Register("elevenlabs", func(spec routing.Spec) (tts.Recorder, error) {
+		return &recordedVoice{model: spec.Model}, nil
+	})
+	recordings, err := ttsrouter.NewRecordings(ttsrouter.Options{
+		Config:    config[routing.TTS],
+		Recorders: recorders,
+		Store:     pgStore,
+		Live:      liveClient,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(recordings.Close)
+
 	server, err := NewServer(Options{
 		Routers: map[routing.Modality]routing.Inspector{
 			routing.STT: speech,
 			routing.TTS: voice,
+		},
+		Streams: &Streams{
+			STT:            speech,
+			TTS:            voice,
+			Transcriptions: transcriptions,
+			Speech:         recordings,
 		},
 		Store:         pgStore,
 		Live:          liveClient,
@@ -147,6 +183,54 @@ func (pageReader) Read(_ context.Context, address string) (search.Page, error) {
 		Text:  "# Pricing\n\nA call costs a penny.\n",
 	}, nil
 }
+
+// recordedTranscriber transcribes whatever it is handed into the same transcript, so the
+// job path can be followed from the row it creates to the result a caller reads back.
+type recordedTranscriber struct{ model string }
+
+func (t *recordedTranscriber) Transcribe(_ context.Context, recording stt.Recording) (stt.Transcription, error) {
+	transcription := stt.Transcription{
+		Text:            "a call costs a penny",
+		Language:        "en",
+		AudioDurationMs: 4000,
+	}
+	if recording.Words {
+		transcription.Words = []stt.Word{
+			{Text: "a", StartMs: 0, EndMs: 200, Confidence: 0.9},
+			{Text: "call", StartMs: 200, EndMs: 600, Confidence: 0.9},
+		}
+	}
+	if recording.Diarize {
+		transcription.Speakers = []string{"speaker_0"}
+	}
+	return transcription, nil
+}
+
+func (t *recordedTranscriber) Start(context.Context) error { return nil }
+func (t *recordedTranscriber) Close() error                { return nil }
+func (t *recordedTranscriber) Provider() string            { return "deepgram" }
+func (t *recordedTranscriber) Model() string               { return t.model }
+
+// recordedVoice speaks whatever it is handed into the same audio.
+type recordedVoice struct{ model string }
+
+func (v *recordedVoice) Record(_ context.Context, recording tts.Recording) (tts.Recorded, error) {
+	format := recording.Format
+	if format == "" {
+		format = "mp3_44100_128"
+	}
+	return tts.Recorded{
+		Audio:           []byte{0xff, 0xfb, 0x90},
+		Format:          format,
+		AudioDurationMs: 1200,
+		Characters:      int64(len(recording.Text)),
+	}, nil
+}
+
+func (v *recordedVoice) Start(context.Context) error { return nil }
+func (v *recordedVoice) Close() error                { return nil }
+func (v *recordedVoice) Provider() string            { return "elevenlabs" }
+func (v *recordedVoice) Model() string               { return v.model }
 
 func (s *APIIntegrationSuite) TearDownSuite() {
 	if s.server != nil {
@@ -620,6 +704,233 @@ func (s *APIIntegrationSuite) TestAConfigRemembersWhichSearchItRoutesTo() {
 	s.Equal("en-high-accuracy", *created.Search)
 }
 
+func (s *APIIntegrationSuite) TestARouterConfigSurvivesBeingStoredAndReadBack() {
+	response, payload := s.do(http.MethodPost, "/v1/router/configs", `{
+		"name":"healthcare",
+		"stt":{"target":"en-recorded","diarize":true,"keyterms":["perioperative"]},
+		"tts":{"target":"en-low-latency","voice":"aurora","speed":1.1},
+		"llm":{"target":"llm-fast","temperature":0.2},
+		"search":{"depth":"standard","include_domains":["nice.org.uk"]},
+		"tags":{"project":"clinic"}
+	}`)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	var created RouterConfig
+	s.Require().NoError(json.Unmarshal(payload, &created))
+	s.Require().NotEmpty(created.Id)
+
+	response, payload = s.do(http.MethodGet, "/v1/router/configs/"+created.Id, "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var read RouterConfig
+	s.Require().NoError(json.Unmarshal(payload, &read))
+	s.Require().NotNil(read.Stt)
+	s.Equal("en-recorded", *read.Stt.Target)
+	s.Require().NotNil(read.Stt.Keyterms)
+	s.Equal([]string{"perioperative"}, *read.Stt.Keyterms)
+	s.Require().NotNil(read.Tts)
+	s.InDelta(1.1, *read.Tts.Speed, 0.001)
+	s.Require().NotNil(read.Llm)
+	s.InDelta(0.2, *read.Llm.Temperature, 0.001)
+	s.Require().NotNil(read.Search)
+	s.Equal([]string{"nice.org.uk"}, *read.Search.IncludeDomains)
+	s.Require().NotNil(read.Tags)
+	s.Equal("clinic", (*read.Tags)["project"])
+}
+
+func (s *APIIntegrationSuite) TestARouterConfigIsFoundByNameAsWellAsById() {
+	// Naming a config is what a caller writes in their own code, so the id they never saw
+	// cannot be the only way back to it.
+	_, payload := s.do(http.MethodPost, "/v1/router/configs",
+		`{"name":"clinic","stt":{"target":"en-recorded"}}`)
+	var created RouterConfig
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	response, payload := s.do(http.MethodPost, "/v1/stt/recordings",
+		`{"config_id":"clinic","source":{"url":"https://example.test/call.mp3"}}`)
+	s.Require().Equal(http.StatusAccepted, response.StatusCode, string(payload))
+}
+
+func (s *APIIntegrationSuite) TestUpdatingARouterConfigReplacesWhatItWas() {
+	_, payload := s.do(http.MethodPost, "/v1/router/configs",
+		`{"name":"clinic","stt":{"target":"en-recorded","diarize":true}}`)
+	var created RouterConfig
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	response, payload := s.do(http.MethodPut, "/v1/router/configs/"+created.Id,
+		`{"name":"clinic","stt":{"target":"multilingual-recorded"}}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var updated RouterConfig
+	s.Require().NoError(json.Unmarshal(payload, &updated))
+	s.Equal(created.Id, updated.Id, "an update keeps the id callers already hold")
+	s.Equal("multilingual-recorded", *updated.Stt.Target)
+	s.Nil(updated.Stt.Diarize, "a field left out of a replacement is gone from it")
+}
+
+func (s *APIIntegrationSuite) TestARouterConfigNobodyHasIsRefusedRatherThanIgnored() {
+	// A caller that named a config meant it: transcribing at whatever the fallback happens
+	// to be is not what they asked for.
+	response, payload := s.do(http.MethodPost, "/v1/stt/recordings",
+		`{"config_id":"nope","source":{"url":"https://example.test/call.mp3"}}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode)
+
+	var failure Error
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Contains(failure.Error, "no such router config")
+}
+
+func (s *APIIntegrationSuite) TestARecordingIsTranscribedAndReadBack() {
+	response, payload := s.do(http.MethodPost, "/v1/stt/recordings", `{
+		"source":{"url":"https://example.test/call.mp3"},
+		"options":{"diarize":true,"words":true,"language":"en"}
+	}`)
+	s.Require().Equal(http.StatusAccepted, response.StatusCode, string(payload))
+
+	var accepted Transcription
+	s.Require().NoError(json.Unmarshal(payload, &accepted))
+	s.Require().NotEmpty(accepted.Id)
+	s.Equal(RecordingStatusQueued, accepted.Status, "a job is a row before it is work")
+
+	finished := s.finishedTranscription(accepted.Id)
+	s.Require().NotNil(finished.Text)
+	s.Equal("a call costs a penny", *finished.Text)
+	s.Require().NotNil(finished.Words)
+	s.Len(*finished.Words, 2, "word timings were asked for")
+	s.Require().NotNil(finished.Speakers)
+	s.Equal([]string{"speaker_0"}, *finished.Speakers)
+	s.Require().NotNil(finished.Provider)
+	s.Equal("deepgram", *finished.Provider)
+}
+
+func (s *APIIntegrationSuite) TestSubtitlesAreRenderedFromTheTimingsWhoeverServedThem() {
+	// Vendors offer subtitles inconsistently, and every one of them returns what it takes
+	// to render them, so a caller asking for srt gets it from whichever one answered.
+	response, payload := s.do(http.MethodPost, "/v1/stt/recordings", `{
+		"source":{"url":"https://example.test/call.mp3"},
+		"options":{"output":"srt"}
+	}`)
+	s.Require().Equal(http.StatusAccepted, response.StatusCode, string(payload))
+
+	var accepted Transcription
+	s.Require().NoError(json.Unmarshal(payload, &accepted))
+
+	finished := s.finishedTranscription(accepted.Id)
+	s.Require().NotNil(finished.Subtitles)
+	s.Contains(*finished.Subtitles, "00:00:00,000 --> 00:00:00,600")
+	s.Contains(*finished.Subtitles, "a call")
+}
+
+func (s *APIIntegrationSuite) TestARecordingWithNothingToTranscribeIsRefused() {
+	response, payload := s.do(http.MethodPost, "/v1/stt/recordings", `{"source":{}}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode)
+
+	var failure Error
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Contains(failure.Error, "url or the audio")
+}
+
+func (s *APIIntegrationSuite) TestAnOutputFormatNobodyRendersIsRefusedBeforeTheJobRuns() {
+	response, payload := s.do(http.MethodPost, "/v1/stt/recordings", `{
+		"source":{"url":"https://example.test/call.mp3"},
+		"options":{"output":"ass"}
+	}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+	s.Contains(string(payload), "srt or vtt")
+}
+
+func (s *APIIntegrationSuite) TestATextIsSpokenIntoOneFileAndReadBack() {
+	response, payload := s.do(http.MethodPost, "/v1/tts/recordings", `{
+		"text":"Chapter one. A call costs a penny.",
+		"options":{"format":"mp3_44100_128"}
+	}`)
+	s.Require().Equal(http.StatusAccepted, response.StatusCode, string(payload))
+
+	var accepted Speech
+	s.Require().NoError(json.Unmarshal(payload, &accepted))
+	s.Require().NotEmpty(accepted.Id)
+
+	var finished Speech
+	s.Require().Eventually(func() bool {
+		_, payload := s.do(http.MethodGet, "/v1/tts/recordings/"+accepted.Id, "")
+		s.Require().NoError(json.Unmarshal(payload, &finished))
+		return finished.Status != RecordingStatusQueued && finished.Status != RecordingStatusRunning
+	}, 10*time.Second, 25*time.Millisecond, "the job never finished")
+
+	s.Require().Equal(RecordingStatusCompleted, finished.Status, value(finished.Error))
+	s.Require().NotNil(finished.Audio)
+	s.NotEmpty(*finished.Audio)
+	s.Require().NotNil(finished.Format)
+	s.Equal("mp3_44100_128", *finished.Format)
+	s.Require().NotNil(finished.Characters)
+	s.EqualValues(34, *finished.Characters)
+}
+
+func (s *APIIntegrationSuite) TestASpeechJobWithNothingToSayIsRefused() {
+	response, payload := s.do(http.MethodPost, "/v1/tts/recordings", `{"text":"   "}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode)
+	s.Contains(string(payload), "nothing to say")
+}
+
+func (s *APIIntegrationSuite) TestAFinishedRecordingCallsBackWhoeverAskedToBeTold() {
+	told := make(chan Transcription, 1)
+	listener := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		var finished Transcription
+		s.Require().NoError(json.NewDecoder(r.Body).Decode(&finished))
+		told <- finished
+	}))
+	defer listener.Close()
+
+	body := fmt.Sprintf(`{"source":{"url":"https://example.test/call.mp3"},"callback":%q}`,
+		listener.URL+"/done")
+	response, payload := s.do(http.MethodPost, "/v1/stt/recordings", body)
+	s.Require().Equal(http.StatusAccepted, response.StatusCode, string(payload))
+
+	select {
+	case finished := <-told:
+		s.Equal(RecordingStatusCompleted, finished.Status)
+		s.Require().NotNil(finished.Text)
+		s.Equal("a call costs a penny", *finished.Text)
+	case <-time.After(10 * time.Second):
+		s.Fail("nobody was told the job had finished")
+	}
+}
+
+func (s *APIIntegrationSuite) TestAnotherCustomersRecordingIsNotFound() {
+	_, payload := s.do(http.MethodPost, "/v1/stt/recordings",
+		`{"source":{"url":"https://example.test/call.mp3"}}`)
+	var accepted Transcription
+	s.Require().NoError(json.Unmarshal(payload, &accepted))
+
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodGet,
+		s.server.URL+"/v1/stt/recordings/"+accepted.Id, strings.NewReader(""))
+	s.Require().NoError(err)
+	request.Header.Set(CustomerHeader, "somebody-else")
+
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+// finishedTranscription polls a job until it is neither queued nor running.
+func (s *APIIntegrationSuite) finishedTranscription(id string) Transcription {
+	var finished Transcription
+	s.Require().Eventually(func() bool {
+		_, payload := s.do(http.MethodGet, "/v1/stt/recordings/"+id, "")
+		s.Require().NoError(json.Unmarshal(payload, &finished))
+		return finished.Status != RecordingStatusQueued && finished.Status != RecordingStatusRunning
+	}, 10*time.Second, 25*time.Millisecond, "the job never finished")
+
+	s.Require().Equal(RecordingStatusCompleted, finished.Status, value(finished.Error))
+	return finished
+}
+
 func (s *APIIntegrationSuite) TestASkillWithoutADescriptionIsRefused() {
 	// The description is the whole of how the fast model decides when to hand work over,
 	// so a skill without one would never be reached for.
@@ -698,7 +1009,7 @@ func (s *APIIntegrationSuite) campaign(concurrency int) Campaign {
 func (s *APIIntegrationSuite) TestACampaignIsCreatedStoppedWithNobodyToRing() {
 	created := s.campaign(3)
 
-	s.Equal(Draft, created.State, "a campaign that started itself would ring people nobody added yet")
+	s.Equal(CampaignStateDraft, created.State, "a campaign that started itself would ring people nobody added yet")
 	s.Equal(3, created.Concurrency)
 
 	response, payload := s.do(http.MethodGet, "/v1/agents/campaigns/"+created.Id+"/contacts", "")
