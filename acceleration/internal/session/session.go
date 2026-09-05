@@ -41,7 +41,7 @@ const (
 	// The model the skills run on. A quality tier rather than a fast one, since the
 	// conversation carries on without it: what is handed over is what the talking model
 	// could not answer itself.
-	defaultSubagentTarget = "multilingual-high-accuracy"
+	defaultSubagentTarget = "llm-thinking"
 )
 
 // daytonaProvider is the one sandbox a caller may ask for by name.

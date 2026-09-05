@@ -4,12 +4,12 @@ A voice agent with nothing in the pipeline running in Python. `instructions.md` 
 the agent is, and it names no models at all: a config that says nothing about who does the
 work gets the router's defaults.
 
-| Modality   | Default target               |
-| ---------- | ---------------------------- |
-| Transcribe | `en-low-latency`             |
-| Answer     | `llm-fast`                   |
-| Speak      | `en-low-latency`             |
-| Think      | `multilingual-high-accuracy` |
+| Modality   | Default target   |
+| ---------- | ---------------- |
+| Transcribe | `en-low-latency` |
+| Answer     | `llm-fast`       |
+| Speak      | `en-low-latency` |
+| Think      | `llm-thinking`   |
 
 Each of those is a capability rather than a model, so the router picks inside the tier by
 live health and a degraded provider drops down the list. Set `stt`, `tts`, `llm` or

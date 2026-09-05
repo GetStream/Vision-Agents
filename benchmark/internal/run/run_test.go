@@ -82,7 +82,7 @@ func TestBuildManifestAcceleratedDefaults(t *testing.T) {
 	if manifest.TargetTTS != "inworld/inworld-tts-2-flash" {
 		t.Fatalf("tts %q", manifest.TargetTTS)
 	}
-	if manifest.TargetModel != "gemini/gemini-3.5-flash-lite" || manifest.TargetLLM != "gemini/gemini-3.5-flash-lite" {
+	if manifest.TargetModel != "gemini/gemini-3.8-flash" || manifest.TargetLLM != "gemini/gemini-3.8-flash" {
 		t.Fatalf("model %q llm %q", manifest.TargetModel, manifest.TargetLLM)
 	}
 	if manifest.TargetSubagent != "openai/gpt-5.6-sol" {

@@ -7,8 +7,10 @@ package gemini
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
@@ -25,9 +27,10 @@ const apiKeyEnvVar = "GOOGLE_API_KEY"
 // compatibility layer lives under the versioned path rather than replacing it.
 const defaultBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
-// defaultModel is used when the caller names no model. Flash-Lite is the fast, cheap tier,
-// which is what a conversation wants; a caller who wants a better answer names one.
-const defaultModel = "gemini-3.5-flash-lite"
+// defaultModel is used when the caller names no model. It is the same model llm-fast
+// prefers, so the provider does not give a second answer to the question of which Gemini a
+// conversation gets.
+const defaultModel = "gemini-3.8-flash"
 
 // Options configures the provider.
 type Options struct {
@@ -35,26 +38,57 @@ type Options struct {
 	Model  string
 	// BaseURL overrides the endpoint, for a gateway or a test server.
 	BaseURL string
-	// ReasoningEffort is how long the model may think before answering, one of minimal,
-	// low, medium or high. Empty means minimal, because thinking spends the latency
-	// budget before the first word and a live conversation has none to spend.
+	// ReasoningEffort is how long the model may think before answering. Empty leaves the
+	// model's own floor, because thinking spends the latency budget before the first word
+	// and a live conversation has none to spend.
 	//
 	// It cannot be turned off altogether: unlike the 2.5 series, every Gemini 3 model
-	// thinks, and minimal is as low as the setting goes.
+	// thinks, and the floor is as low as the setting goes.
 	ReasoningEffort string
 	Logger          *slog.Logger
 }
 
-// minimalEffort is the least thinking a Gemini 3 model will do.
+// minimalEffort is the least thinking the Gemini 3 models up to 3.5 will do.
 const minimalEffort = "minimal"
 
-// capabilities is what these models accept. There is no none: every Gemini 3 model thinks.
-var capabilities = llm.Capabilities{
-	ReasoningEfforts: []string{minimalEffort, "low", "medium", "high"},
+// lowEffort is the floor from 3.8 Flash onwards, which took minimal away.
+const lowEffort = "low"
+
+// modelCapabilities is what each model family accepts.
+//
+// 3.8 Flash made thinking a level rather than a budget and dropped minimal with it, so low
+// is as far down as it goes. Asking for minimal there is a 400 halfway through a call
+// rather than a slower turn, which is why the floor is a table and not one constant.
+var modelCapabilities = map[string]llm.Capabilities{
+	"gemini-3.8": {
+		ReasoningEfforts: []string{lowEffort, "medium", "high"},
+		DefaultEffort:    lowEffort,
+		StreamsReasoning: false,
+	},
+}
+
+// fallbackCapabilities is the older Gemini 3 line, where minimal is still the floor. There
+// is no none: every Gemini 3 model thinks.
+var fallbackCapabilities = llm.Capabilities{
+	ReasoningEfforts: []string{minimalEffort, lowEffort, "medium", "high"},
 	DefaultEffort:    minimalEffort,
 	// Google reports thinking as tokens rather than streaming it, so there is no
 	// reasoning text for a caller to separate out.
 	StreamsReasoning: false,
+}
+
+// capabilitiesFor returns what one model accepts, by longest matching family.
+func capabilitiesFor(model string) llm.Capabilities {
+	best := ""
+	for family := range modelCapabilities {
+		if strings.HasPrefix(model, family) && len(family) > len(best) {
+			best = family
+		}
+	}
+	if best == "" {
+		return fallbackCapabilities
+	}
+	return modelCapabilities[best]
 }
 
 // New builds the provider, reading the API key from the environment when it is not given.
@@ -71,12 +105,16 @@ func New(options Options) (*openaicompat.LLM, error) {
 	if options.BaseURL == "" {
 		options.BaseURL = defaultBaseURL
 	}
-	if options.ReasoningEffort == "" {
-		options.ReasoningEffort = minimalEffort
-	}
 
-	model := capabilities
-	model.DefaultEffort = options.ReasoningEffort
+	model := capabilitiesFor(options.Model)
+	if options.ReasoningEffort != "" {
+		if err := model.Validate(
+			llm.ResponseParams{Reasoning: llm.ReasoningParams{Effort: options.ReasoningEffort}},
+		); err != nil {
+			return nil, fmt.Errorf("gemini: %s: %w", options.Model, err)
+		}
+		model.DefaultEffort = options.ReasoningEffort
+	}
 
 	return openaicompat.New(openaicompat.Options{
 		Provider:     ProviderName,

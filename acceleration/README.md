@@ -222,8 +222,19 @@ which mean the same thing in every modality:
 | `en-high-accuracy`           | English, quality over speed                         |
 | `multilingual-high-accuracy` | More than one language, quality over speed          |
 
+A shortcut normally describes what it wants and takes whoever meets it, so adding a model is
+a config edit and nothing else. `en-low-latency` for speech-to-text is the exception: every
+live transcriber is realtime, low-latency and speaks English, so nothing any of them declares
+tells one from another, and it names both Deepgram Flux models, Grok and Muse outright with
+`only`. Gemini and the two Parakeets stay reachable by `provider/model` and through the other
+shortcuts.
+
 Speech-to-text also keeps its sprint-1 names (`en-realtime-best` and friends) as synonyms.
-LLM adds `llm-fast`: whichever model answers quickest, in whatever language.
+LLM adds two of its own. `llm-fast` is a fast answer, in whatever language, and `llm-thinking`
+is what the skills run on: the part of a turn the talking model could not answer itself, which
+the conversation carries on without. Both name the model this deployment wants rather than
+leaving the choice to the ranking — `gemini/gemini-3.8-flash` and `openai/gpt-5.6-sol` — and
+only reach the rest of their tier when that model is unavailable or fails to start.
 
 Which models those shortcuts reach for LLM, and what each is billed at per million tokens:
 
@@ -231,7 +242,7 @@ Which models those shortcuts reach for LLM, and what each is billed at per milli
 | -------------------------------- | ------------ | ------ | ------- | ------- |
 | `deepseek/DeepSeek-V4-Flash-0731` | low-latency  | $0.13  | $0.028  | $0.26   |
 | `openai/gpt-5.6-luna`             | low-latency  | $0.20  | $0.02   | $1.20   |
-| `gemini/gemini-3.5-flash-lite`    | low-latency  | $0.30  | $0.03   | $2.50   |
+| `gemini/gemini-3.8-flash`         | low-latency  | $0.75  | $0.075  | $3.75   |
 | `gemma/gemma-4-E2B-it`            | low-latency  | $0.032 | -       | $0.16   |
 | `deepseek/DeepSeek-V4-Pro-0813`   | high-quality | $1.32  | $0.132  | $3.96   |
 | `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |
@@ -249,10 +260,13 @@ the answer.
 
 Gemini is reached over Google's OpenAI-compatible endpoint, so it needs no implementation of
 its own. Every Gemini 3 model thinks and none of them can be told not to, so the provider
-pins the effort to `minimal` rather than letting a conversation wait on the model's own
-default; `Options.ReasoningEffort` raises it for anything off the live path. Google reports
-the thinking as a token count rather than streaming it, so there are no `ReasoningDelta`
-events to separate out.
+pins the effort to the model's floor rather than letting a conversation wait on its own
+default; `Options.ReasoningEffort` raises it for anything off the live path. That floor is
+`minimal` up to 3.5 and `low` from 3.8 Flash, which made thinking a level and dropped
+`minimal` with it, so asking for it there is refused here rather than 400ing mid-turn.
+Gemini bills thinking as output, which is the other reason a live turn asks for the floor.
+Google reports it as a token count rather than streaming it, so there are no
+`ReasoningDelta` events to separate out.
 
 ### Transcribers, and what Gemini does differently
 
@@ -274,8 +288,23 @@ and fail over from one to the other.
 Muse Voice Transcribe is configured by its opening frame rather than by a header or a
 query string, credentials included, so a rejected key arrives as an error event on the
 socket rather than as a failed dial. It finds turn boundaries itself, which is what
-`ENDPOINTING`, the mode the provider defaults to, asks for; `DIARIZATION` adds speaker
-labels the router has no use for, since it already knows whose track the audio came in on.
+`ENDPOINTING`, the mode the provider defaults to, asks for; `PUSH_TO_TALK` leaves them to
+the caller and settles on the flag the transcript carries rather than on `speechComplete`.
+Turns can overlap, so the provider keys its bookkeeping on the `turnId` the server sends
+rather than on the order the frames arrive in.
+
+Muse and Grok are the only two of these that can tell one voice from another. What that is
+for is the microphone with more than one person at it: a track says who joined the call,
+which is the wrong answer for everybody else in the room with them, so the label is what
+lets the agent leave a bystander's question alone. It is a label the session made up rather
+than an identity, and the four transcribers that cannot hear the difference leave it empty.
+
+Grok names the voice on every session, because it costs nothing to ask for. Muse does it
+only when a request asks, because its `DIARIZATION` mode looks for a speaker change rather
+than a clean end of speech: measured on the same clip it settles a turn in about 2150ms
+where `ENDPOINTING` takes about 770ms, and that second and a half is time the caller spends
+waiting. Both declare `diarize` and both honour it, so asking narrows an English call to
+those two rather than serving it unlabelled from one of the others.
 
 Deepgram, Grok, Muse and Parakeet are speech recognisers. Gemini 3.5 Transcribe is a Gemini model that
 happens to be listening, reached over the Live API's `BidiGenerateContent` socket with the

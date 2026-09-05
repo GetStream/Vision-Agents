@@ -96,6 +96,7 @@ plugins/*/example/uv.lock
 /acceleration/router
 /acceleration/say
 /acceleration/transcribe
+/examples/agents/swift_demo/configure/configure
 
 /benchmark/voicebench
 /benchmark/out/

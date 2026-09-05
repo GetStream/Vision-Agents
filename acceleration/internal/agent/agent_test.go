@@ -745,6 +745,19 @@ func (s *AgentSuite) mutters(participant stt.Participant, text string) {
 	})
 }
 
+// saysInVoice reports a settled turn the transcriber could tell the voice of, which is
+// what a microphone with more than one person at it sounds like.
+func (s *AgentSuite) saysInVoice(participant stt.Participant, text, voice string) {
+	s.ears.emitter.Send(stt.Transcript{
+		Participant: participant,
+		Mode:        stt.ModeFinal,
+		Speaker:     voice,
+		Text:        text,
+		Language:    "en",
+		Confidence:  1,
+	})
+}
+
 // eventually waits for a condition, which is how a test asserts on a flow that crosses
 // goroutines without sleeping for a fixed time.
 func (s *AgentSuite) eventually(condition func() bool, message string) {
@@ -938,6 +951,46 @@ func (s *AgentSuite) TestBackgroundSpeechIsIgnored() {
 	s.Empty(s.model.requests(), "speech addressed to somebody else should stay in the background")
 	s.Empty(s.agent.History())
 	s.Zero(countOf[Heard](s.reported()))
+}
+
+func (s *AgentSuite) TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller() {
+	// One track, two people in the room. The track says who joined the call, so it names
+	// the caller for both of them, and only a transcriber that hears the difference can
+	// say that the second turn came from somebody else.
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"respond","floor":"continue"}`}
+	s.flow.then = []string{`{"disposition":"ignore","floor":"continue"}`}
+	participant := stt.Participant{ID: "alice", Name: "Alice"}
+	s.speak(participant)
+
+	s.saysInVoice(participant, "what time is my flight", "A")
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 },
+		"the caller's own turn was never considered")
+
+	s.saysInVoice(participant, "mom where is my backpack", "B")
+	s.eventually(func() bool { return len(s.flow.requests()) == 2 },
+		"the second voice was never considered")
+
+	asked := s.flow.requests()
+	s.NotContains(asked[0].Input[0].Content, "different voice",
+		"the first voice heard on a track is the caller's")
+	s.Contains(asked[1].Input[0].Content, "different voice")
+	s.Len(s.model.requests(), 1, "only the caller was answered")
+}
+
+func (s *AgentSuite) TestATranscriberThatCannotHearVoicesLeavesTheCallerAlone() {
+	// Most transcribers say nothing about who is talking. A turn with no voice on it is
+	// the caller's as far as anybody can tell, and calling it somebody else's would have
+	// the agent stop answering the person it is on a call with.
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"respond","floor":"continue"}`}
+	participant := stt.Participant{ID: "alice", Name: "Alice"}
+	s.speak(participant)
+
+	s.says(participant, "what time is my flight")
+
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the turn was never considered")
+	s.NotContains(s.flow.requests()[0].Input[0].Content, "different voice")
 }
 
 func (s *AgentSuite) TestAmbiguousSpeechAsksAClarifyingQuestion() {

@@ -15,6 +15,7 @@ edits them.
 | [Text to speech](text-to-speech.md)            | sprints 2, 11        | Built; Qwen not implemented, S2 Pro and Breeze not deployed |
 | [Completions](completions.md)                  | sprint 3             | Built; Gemma not deployed               |
 | [The voice agent](voice-agent.md)              | sprints 3, 6, 15     | Built; every judgement in one `converse` |
+| [The conversation](conversation.md)            | sprints 5, 6, 15     | Built; waiting ends in a question       |
 | [Cost tracking](cost-tracking.md)              | sprint 4             | Built                                   |
 | [Observability](observability.md)              | sprints 4, 15        | Built, with a persisted decision log    |
 | [Transcript storage](transcript-storage.md)    | sprint 4             | Built                                   |

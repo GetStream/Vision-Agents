@@ -59,7 +59,7 @@ with whatever it can reach.
 ```go
 llm := stream.Accelerated(stream.Config{
     STT: "deepgram/flux-general-en", TTS: "cartesia/sonic-preview",
-    LLM: "gemini/gemini-3.5-flash-lite",
+    LLM: "gemini/gemini-3.8-flash",
     Greeting: "Hey, I'm Jean. What can I do for you?",
 })
 agent, _ := agents.New(agents.Options{

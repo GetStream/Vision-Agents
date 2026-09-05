@@ -184,7 +184,8 @@ func (r *Router[P]) Providers(ctx context.Context) []Candidate {
 // A concrete "provider/model" resolves to itself. A capability shortcut resolves to every
 // provider that meets its requirements, ranked by availability, then error rate, then
 // average latency. Providers with no recent history keep their config order rather than
-// jumping the queue on an unmeasured zero latency.
+// jumping the queue on an unmeasured zero latency. A shortcut that names a preferred model
+// puts that one first instead, for as long as it is available.
 func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []string) ([]Candidate, error) {
 	if target == "" {
 		return nil, errors.New("routing: target is required")
@@ -216,6 +217,7 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 	}
 
 	rank(candidates)
+	prefer(candidates, alias.Prefer)
 	return candidates, nil
 }
 
@@ -383,6 +385,27 @@ func rank(candidates []Candidate) {
 		}
 		return latencyRank(left) < latencyRank(right)
 	})
+}
+
+// prefer moves the alias's pinned model to the front, leaving the rest in ranked order
+// behind it.
+//
+// Only while it is available: a pin says which model this deployment wants, not that a
+// request should fail with it. Once it is back the ranking stops mattering again, which is
+// the point of pinning in the first place.
+func prefer(candidates []Candidate, name string) {
+	if name == "" {
+		return
+	}
+	at := slices.IndexFunc(candidates, func(candidate Candidate) bool {
+		return candidate.Config.Name() == name && candidate.Health.Available
+	})
+	if at <= 0 {
+		return
+	}
+	pinned := candidates[at]
+	copy(candidates[1:at+1], candidates[:at])
+	candidates[0] = pinned
 }
 
 // latencyRank keeps unmeasured providers from winning on a latency of zero.

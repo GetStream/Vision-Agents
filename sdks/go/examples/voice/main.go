@@ -49,7 +49,7 @@ func run(ctx context.Context, number, dial string, buy bool, greeting string) er
 	llm := stream.Accelerated(stream.Config{
 		STT:      "deepgram/flux-general-en",
 		TTS:      "cartesia/sonic-preview",
-		LLM:      "gemini/gemini-3.5-flash-lite",
+		LLM:      "gemini/gemini-3.8-flash",
 		Greeting: greeting,
 	})
 

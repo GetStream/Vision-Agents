@@ -14,25 +14,21 @@ const modalities = [
     label: "Transcribe",
     of: (call: Call) => call.stt,
     used: (call: Call) => call.stt_used,
-    hint: "Speech to text",
   },
   {
     label: "Answer",
     of: (call: Call) => call.llm,
     used: (call: Call) => call.llm_used,
-    hint: "Holds the conversation",
   },
   {
     label: "Speak",
     of: (call: Call) => call.tts,
     used: (call: Call) => call.tts_used,
-    hint: "Text to speech",
   },
   {
     label: "Think",
     of: (call: Call) => call.subagent,
     used: (call: Call) => call.subagent_used,
-    hint: "Runs delegated work",
   },
 ] as const;
 
@@ -105,7 +101,6 @@ export function Pipeline({
             <div className="mt-1">
               <Target value={modality.of(call)} used={modality.used(call)} />
             </div>
-            <div className="mt-0.5 text-xs text-muted">{modality.hint}</div>
           </div>
         ))}
       </div>

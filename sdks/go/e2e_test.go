@@ -133,7 +133,7 @@ func TestAFunctionRegisteredHereIsRunHereWhenTheModelAsksForIt(t *testing.T) {
 	// result handed back unsigned, which is the whole round-trip this exercises.
 	llm := stream.Accelerated(stream.Config{
 		Backend: router(t),
-		LLM:     "gemini/gemini-3.5-flash-lite",
+		LLM:     "gemini/gemini-3.8-flash",
 	})
 
 	asked := make(chan string, 4)
@@ -214,7 +214,7 @@ func TestAHardQuestionIsHandedToTheThinkingModel(t *testing.T) {
 		Instructions: "You are Jean. Be brief.",
 		LLM: stream.Accelerated(stream.Config{
 			Backend: router(t),
-			LLM:     "gemini/gemini-3.5-flash-lite",
+			LLM:     "gemini/gemini-3.8-flash",
 		}),
 		Harness: &agents.Harness{
 			UseSkills: true,

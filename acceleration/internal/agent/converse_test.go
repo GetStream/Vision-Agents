@@ -18,6 +18,9 @@ const (
 	testGap    = 10 * time.Millisecond
 	testRetry  = 20 * time.Millisecond
 	testWithin = time.Second
+	// testPatience is shorter than one retry, so the second ruling about words nobody has
+	// added to is the one that gives up on waiting for them.
+	testPatience = 5 * time.Millisecond
 )
 
 var caller = stt.Participant{ID: "caller", UserID: "caller", Name: "Alex"}
@@ -45,12 +48,17 @@ func (s *ConverseSuite) SetupTest() {
 // build starts a conversation with the given listening options and watches everything it
 // reports, which is how the decision trail is asserted on.
 func (s *ConverseSuite) build(options DuplexOptions) {
+	s.start(options, testPatience)
+}
+
+// start is build, for the tests that also care how long an unfinished thought is waited on.
+func (s *ConverseSuite) start(options DuplexOptions, patience time.Duration) {
 	s.teardown()
 
 	logger := slog.New(slog.DiscardHandler)
 	s.settling = newCadence(testGap, testRetry, time.Hour, logger)
 	s.emitter = NewEmitter(eventBuffer)
-	s.converse = newConverse(s.settling, newDuplex(options), s.emitter, nil, logger)
+	s.converse = newConverse(s.settling, newDuplex(options), s.emitter, nil, patience, logger)
 
 	s.mu.Lock()
 	s.events = nil
@@ -88,11 +96,17 @@ func (s *ConverseSuite) settle(text string, state floor) candidate {
 		Text:        text,
 	}, state)
 
+	return s.converse.Settled(s.held(), state).Candidate
+}
+
+// held is the next turn whose words have stopped changing, whether they are being put for
+// the first time or put again after the conversation decided to wait on them.
+func (s *ConverseSuite) held() candidate {
 	select {
 	case ready := <-s.settling.Ready():
-		return s.converse.Settled(ready, state).Candidate
+		return ready
 	case <-time.After(testWithin):
-		s.FailNow("the words never held still", "text %q", text)
+		s.FailNow("the words never held still")
 		return candidate{}
 	}
 }
@@ -173,7 +187,7 @@ func (s *ConverseSuite) TestWhatIsDecidedAboutATurnAndWhoHasTheFloor() {
 		floor       harness.Floor
 		speaking    bool
 		expected    []ActionKind
-		clarify     bool
+		clarify     string
 	}{
 		{
 			name:        "an unfinished thought is left alone",
@@ -198,7 +212,7 @@ func (s *ConverseSuite) TestWhatIsDecidedAboutATurnAndWhoHasTheFloor() {
 			disposition: harness.Clarify,
 			floor:       harness.Continue,
 			expected:    []ActionKind{ActAnswer},
-			clarify:     true,
+			clarify:     ambiguousNote,
 		},
 		{
 			name:        "a correction takes the floor from the agent",
@@ -301,6 +315,107 @@ func (s *ConverseSuite) TestAnUnfinishedThoughtIsPutAgainOnceTheCallerStops() {
 	case <-time.After(testWithin):
 		s.Fail("the caller lost their turn to a controller that wanted to wait")
 	}
+}
+
+func (s *ConverseSuite) TestACallerWhoGoesQuietOnAnUnfinishedThoughtIsAskedWhatTheyMeant() {
+	// Waiting is a loop only the caller can end, so a thought that never arrives leaves the
+	// agent listening to silence for the rest of the call. It is also as likely to be
+	// something the transcriber mangled as something the caller gave up on.
+	ready := s.settle("book a", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	again := s.held()
+	s.converse.Settled(again, s.quiet())
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: again.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(actions))
+	s.Equal(unfinishedNote, actions[0].Clarify)
+	s.Equal("book a", actions[0].Candidate.Text)
+}
+
+func (s *ConverseSuite) TestWordsThatKeepChangingAreStillWaitedOn() {
+	// Only silence runs the patience out. Somebody who is still talking is finishing their
+	// thought, and asking them what they meant is interrupting them to do it.
+	first := s.settle("could you", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: first.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	time.Sleep(2 * testPatience)
+	second := s.settle("could you book", s.quiet())
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: second.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	s.Equal([]ActionKind{ActWait}, kinds(actions))
+}
+
+func (s *ConverseSuite) TestWordsThatHaveNotChangedAreOnlyWrittenDownOnce() {
+	// The retry puts the same words to the controller for as long as the caller says
+	// nothing more, and each lap decides exactly what the last one did. A trail with all of
+	// them in it is one nobody can read.
+	s.start(DuplexOptions{}, time.Hour)
+
+	ready := s.settle("book a", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.eventually(func() bool { return len(s.decisions()) == 2 },
+		"the first ask and wait were never reported")
+
+	again := s.held()
+	s.converse.Settled(again, s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: again.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	s.Len(s.decisions(), 2, "the same judgement about the same words was written down twice")
+
+	added := s.settle("book a table", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: added.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	s.eventually(func() bool { return len(s.decisions()) > 2 },
+		"the caller said something new and nobody wrote it down")
+}
+
+func (s *ConverseSuite) TestTheTurnAfterAnOverlapIsGivenLongerToSettle() {
+	// Two people talking at once is as often a line running late as a change of mind, so
+	// the next thing said is given longer to arrive in full before it is answered.
+	ready := s.settle("actually", s.talking())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Stop,
+	}, s.talking())
+
+	started := time.Now()
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Text: "make it nine",
+	}, s.quiet())
+	s.held()
+
+	s.GreaterOrEqual(time.Since(started), interruptGrace,
+		"the turn after an overlap was settled at the usual pace")
 }
 
 func (s *ConverseSuite) TestARulingAboutWordsThatHaveChangedIsNotActedOn() {

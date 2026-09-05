@@ -200,6 +200,12 @@ func (p ProviderConfig) tier() Tier {
 // provider must meet, so the candidate list follows from the config rather than from a
 // hand-maintained list of names.
 type Alias struct {
+	// Only names the candidates outright, for the shortcut whose members have nothing
+	// declarable in common. It is the exception to everything above: a name here is a
+	// judgement about which models are wanted rather than a fact about what they can do,
+	// so it goes stale in a way the requirements do not, and a shortcut that can say what
+	// it means in requirements should. Empty leaves the choice to them.
+	Only []string `yaml:"only"`
 	// Languages every candidate must cover.
 	Languages []string `yaml:"languages"`
 	// Multilingual requires candidates that handle more than one language.
@@ -212,10 +218,17 @@ type Alias struct {
 	RequireRecorded bool `yaml:"require_recorded"`
 	// Tier restricts candidates to one tier. Empty accepts any.
 	Tier Tier `yaml:"tier"`
+	// Prefer is a "provider/model" that goes ahead of the ranking for as long as it is
+	// available. It is how a shortcut names the model it means while keeping the rest of
+	// the tier as failover; empty leaves the order to health alone.
+	Prefer string `yaml:"prefer"`
 }
 
 // matches reports whether a provider satisfies the alias.
 func (a Alias) matches(provider ProviderConfig) bool {
+	if len(a.Only) > 0 && !slices.Contains(a.Only, provider.Name()) {
+		return false
+	}
 	if a.RequireRealtime && !provider.Realtime {
 		return false
 	}
@@ -278,8 +291,32 @@ func (c ModalityConfig) validate() error {
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(c.Aliases)) {
-		if !slices.ContainsFunc(c.Providers, c.Aliases[name].matches) {
+		alias := c.Aliases[name]
+		if !slices.ContainsFunc(c.Providers, alias.matches) {
 			return fmt.Errorf("alias %s matches no provider", name)
+		}
+		// A name nobody answers to would quietly shrink the shortcut instead of failing,
+		// which is the one way naming candidates is worse than describing them.
+		for _, only := range alias.Only {
+			named, ok := c.Provider(only)
+			if !ok {
+				return fmt.Errorf("alias %s names %s, which is not declared", name, only)
+			}
+			if !alias.matches(named) {
+				return fmt.Errorf("alias %s names %s, which does not meet its own requirements", name, only)
+			}
+		}
+		if alias.Prefer == "" {
+			continue
+		}
+		// A pin that no candidate answers to would be silently ignored, which is the one
+		// way this config can lie about where a request goes.
+		preferred, ok := c.Provider(alias.Prefer)
+		if !ok {
+			return fmt.Errorf("alias %s prefers %s, which is not declared", name, alias.Prefer)
+		}
+		if !alias.matches(preferred) {
+			return fmt.Errorf("alias %s prefers %s, which does not meet its own requirements", name, alias.Prefer)
 		}
 	}
 	return nil

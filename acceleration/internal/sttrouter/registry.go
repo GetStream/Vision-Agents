@@ -56,17 +56,30 @@ func DefaultRegistry() *Registry {
 			Model:    spec.Model,
 			Keyterms: spec.Keyterms,
 			Language: firstLanguage(spec.LanguageHints),
-			Logger:   spec.Logger,
+			// Always on, rather than only when a request asks: a request that asked would
+			// be routed away from every provider that cannot diarize, which is four of the
+			// six that serve a live call. The label is worth having where it is free and
+			// not worth losing failover for. Muse is diarised by its own default.
+			Diarize: true,
+			Logger:  spec.Logger,
 		})
 	})
 
 	registry.Register(muse.ProviderName, func(spec routing.Spec) (stt.STT, error) {
-		return muse.New(muse.Options{
+		options := muse.Options{
 			Model:         spec.Model,
 			Keyterms:      spec.Keyterms,
 			LanguageHints: spec.LanguageHints,
 			Logger:        spec.Logger,
-		})
+		}
+		// Diarization on this model settles a turn about a second and a half later than
+		// endpointing does, so unlike Grok it is what a request asks for rather than what
+		// every call gets. Declared and honoured either way: a model that said it could
+		// name the voice and then quietly did not would be worse than one that cannot.
+		if spec.STT.Diarize != nil && *spec.STT.Diarize {
+			options.Mode = muse.ModeDiarization
+		}
+		return muse.New(options)
 	})
 
 	registry.Register(togetherparakeet.ProviderName, func(spec routing.Spec) (stt.STT, error) {

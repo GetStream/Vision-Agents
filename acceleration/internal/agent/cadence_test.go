@@ -248,6 +248,31 @@ func (s *CadenceSuite) TestWaitingRetriesUnchangedWords() {
 	s.Equal(first.Text, retried.Text)
 }
 
+func (s *CadenceSuite) TestGraceGivesOneTurnLongerToHoldStill() {
+	// The turn after an overlap waits longer, because the line is running late and the rest
+	// of the sentence is still on its way. The call is not slow for having had one
+	// collision in it, so the next turn is settled at the usual pace.
+	alice := stt.Participant{ID: "alice"}
+	grace := 60 * time.Millisecond
+	s.cadence.Grace(grace)
+
+	started := time.Now()
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Text: "book a table",
+	})
+	first := s.ready()
+	s.GreaterOrEqual(time.Since(started), grace)
+	s.Require().True(s.cadence.Resolve(first.ID, false))
+
+	started = time.Now()
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Text: "for four people",
+	})
+	s.ready()
+
+	s.Less(time.Since(started), grace, "the grace was for one turn, not for the rest of the call")
+}
+
 func (s *CadenceSuite) TestDeltasAreAccumulated() {
 	alice := stt.Participant{ID: "alice"}
 	s.cadence.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeDelta, Text: "hello "})

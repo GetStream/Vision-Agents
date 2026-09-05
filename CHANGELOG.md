@@ -124,8 +124,9 @@ anything that needs the call before joining it.
 
 A session that names no `subagent` is now given one, so an agent written down as
 instructions alone can hand the hard parts over instead of guessing at them: the target is
-`multilingual-high-accuracy`, and with it come the built-in `think`, `recall` and `explain`
-skills. Naming a `subagent` still decides it.
+`llm-thinking`, a new shortcut for the high-quality tier that prefers `openai/gpt-5.6-sol`
+and keeps the rest of the tier behind it as failover. With it come the built-in `think`,
+`recall` and `explain` skills. Naming a `subagent` still decides it.
 
 It is the one target looked up before it is asked for. A deployment whose `router.yaml`
 routes no high-quality model keeps taking calls, and those agents answer everything

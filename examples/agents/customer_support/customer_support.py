@@ -29,7 +29,7 @@ async def main() -> None:
             config="customer_support",
             stt="gemini/gemini-3.5-transcribe-live",
             tts="inworld/inworld-tts-2-flash",
-            model="gemini/gemini-3.5-flash-lite",
+            model="gemini/gemini-3.8-flash",
             subagent="openai/gpt-5.6-sol",
         ),
     )

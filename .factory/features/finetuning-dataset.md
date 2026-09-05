@@ -40,7 +40,8 @@ Not designed yet. The open questions:
 
 - Where the conversations come from, and how much of the 100k can be synthetic before a finetune
   learns the generator's habits rather than a person's.
-- Which model to finetune. `llm-fast` currently reaches DeepSeek Flash, OpenAI and Gemma;
+- Which model to finetune. `llm-fast` now prefers Gemini 3.8 Flash and only falls through to
+  DeepSeek Flash, OpenAI and Gemma;
   [deploy/gemma-4](../../acceleration/deploy/gemma-4) is the one we host ourselves and so the only
   one we could serve a finetune of.
 - How to tell it worked. Sprint 6's synthetic and real-call evaluations are the measuring

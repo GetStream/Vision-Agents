@@ -12,7 +12,7 @@ const defaultAccelURL = "http://127.0.0.1:8080"
 const (
 	DefaultAcceleratedSTT      = "gemini/gemini-3.5-transcribe-live"
 	DefaultAcceleratedTTS      = "inworld/inworld-tts-2-flash"
-	DefaultAcceleratedModel    = "gemini/gemini-3.5-flash-lite"
+	DefaultAcceleratedModel    = "gemini/gemini-3.8-flash"
 	DefaultAcceleratedSubagent = "openai/gpt-5.6-sol"
 )
 

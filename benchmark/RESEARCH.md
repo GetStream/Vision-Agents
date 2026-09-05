@@ -166,11 +166,11 @@ Render each pack contract into a generated agent directory at run time. Hash tha
 
 ### Acceleration competes with OpenAI Realtime
 
-Acceleration is a bundled product, not a pipeline variant. Co-locating STT, LLM, and TTS behind one API so the hops between them disappear is the proposition. `Accelerated` being a cascade (for example Gemini transcribe, Gemini flash-lite, Inworld TTS-2 Flash) while [`agents-livekit/worker.py`](agents-livekit/worker.py) pins `gpt-realtime-2` with voice `marin` is the comparison we want, not a confound to eliminate.
+Acceleration is a bundled product, not a pipeline variant. Co-locating STT, LLM, and TTS behind one API so the hops between them disappear is the proposition. `Accelerated` being a cascade (for example Gemini transcribe, Gemini 3.8 Flash, Inworld TTS-2 Flash) while [`agents-livekit/worker.py`](agents-livekit/worker.py) pins `gpt-realtime-2` with voice `marin` is the comparison we want, not a confound to eliminate.
 
 Insisting on a matched provider triple would force acceleration to compete with its bundling switched off and hide the advantage it is built to win on. The headline row is acceleration as shipped against what a LiveKit or Pipecat developer actually builds today, which is OpenAI Realtime.
 
-The as-shipped pipeline is pinned to [`customer_support.py`](../examples/agents/customer_support/customer_support.py): `gemini/gemini-3.5-transcribe-live`, `gemini/gemini-3.5-flash-lite`, `inworld/inworld-tts-2-flash`, subagent `openai/gpt-5.6-sol`. Voicebench does not load that stored config (its instructions and skills are a different product). Changing the triple is a methodology bump.
+The as-shipped pipeline is pinned to [`customer_support.py`](../examples/agents/customer_support/customer_support.py): `gemini/gemini-3.5-transcribe-live`, `gemini/gemini-3.8-flash`, `inworld/inworld-tts-2-flash`, subagent `openai/gpt-5.6-sol`. Voicebench does not load that stored config (its instructions and skills are a different product). Changing the triple is a methodology bump.
 
 ### Two comparison tiers
 

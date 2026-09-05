@@ -44,6 +44,26 @@ const (
 	ActFail ActionKind = "fail"
 )
 
+const (
+	// interruptGrace is how much longer the turn after an overlap is given to hold still.
+	// Somebody talking over somebody else is as often a connection running late as it is a
+	// change of mind, and words that arrive late are answered half-said if the next turn
+	// is settled at the usual pace.
+	interruptGrace = 150 * time.Millisecond
+	// defaultPatience is how long the same unfinished words are waited on before the
+	// caller is asked what they meant instead.
+	defaultPatience = 3 * time.Second
+)
+
+// What the model is told about a turn it is answering with a question rather than an
+// answer. There are two reasons to ask, and they are not the same question.
+const (
+	ambiguousNote = "The caller addressed you, but their meaning is ambiguous. " +
+		"Ask one short clarifying question."
+	unfinishedNote = "You may not have heard the whole of what the caller said, and they " +
+		"have gone quiet. Ask them briefly to say it again."
+)
+
 // Action is one thing the conversation decided to do. It says what and why; carrying it
 // out is the agent's part, because doing any of these means touching a provider session.
 type Action struct {
@@ -61,8 +81,9 @@ type Action struct {
 	// Supersede names an earlier turn whose delegated work is no longer wanted, because
 	// the caller has moved on from what asked for it.
 	Supersede string
-	// Clarify asks for a short clarifying question rather than an answer.
-	Clarify bool
+	// Clarify is what the model is told when the turn is owed a short question rather than
+	// an answer. Empty on a turn that is simply answered.
+	Clarify string
 	// LatencyMs is what the flow controller took to rule. Zero where nothing was asked.
 	LatencyMs float64
 	// Err is why a judgement could not be made.
@@ -112,6 +133,9 @@ type converse struct {
 	duplex  *duplex
 	emitter *Emitter
 	logger  *slog.Logger
+	// patience is how long the same unfinished words are waited on before the caller is
+	// asked what they meant.
+	patience time.Duration
 	// record keeps the trail after the process holding it is gone. Nil when the
 	// deployment has nowhere to put it, in which case the decisions are still logged and
 	// still reported live.
@@ -128,12 +152,30 @@ type converse struct {
 	// back lands against the exchange that wanted it. A subagent's result names the task
 	// and not the turn, and by the time it arrives the conversation has usually moved on.
 	delegated map[string]string
+	// waiting is the unfinished words each participant is being given longer to finish.
+	waiting map[string]unfinished
+	// reported is the last ask and the last wait written down, so words that have not
+	// changed are not judged out loud again on every retry.
+	reported map[ActionKind]judged
 }
 
 // queuedCandidate is a turn held back until the agent stops talking.
 type queuedCandidate struct {
 	candidate candidate
-	clarify   bool
+	clarify   string
+}
+
+// unfinished is a thought the controller keeps wanting to wait on, and when the waiting
+// for it began.
+type unfinished struct {
+	text  string
+	since time.Time
+}
+
+// judged is what a judgement was about: who was speaking and what they said.
+type judged struct {
+	participant string
+	text        string
 }
 
 func newConverse(
@@ -141,8 +183,12 @@ func newConverse(
 	listening *duplex,
 	emitter *Emitter,
 	record func(Decided),
+	patience time.Duration,
 	logger *slog.Logger,
 ) *converse {
+	if patience <= 0 {
+		patience = defaultPatience
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -151,9 +197,12 @@ func newConverse(
 		duplex:     listening,
 		emitter:    emitter,
 		logger:     logger,
+		patience:   patience,
 		record:     record,
 		candidates: map[string]candidate{},
 		delegated:  map[string]string{},
+		waiting:    map[string]unfinished{},
+		reported:   map[ActionKind]judged{},
 	}
 }
 
@@ -255,16 +304,29 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		})}
 	}
 
+	clarify, clarified := "", ""
+	if ruling.Disposition == harness.Clarify {
+		clarify = ambiguousNote
+		clarified = "the caller addressed the agent but their meaning is ambiguous"
+	}
+
 	if ruling.Disposition == harness.Wait {
-		c.cadence.Resolve(ruling.CandidateID, true)
-		return []Action{c.decide(Action{
-			Kind:        ActWait,
-			Reason:      "the caller has not finished the thought",
-			Candidate:   ready,
-			Participant: ready.Participant,
-			Text:        ready.Text,
-			LatencyMs:   ruling.TookMs,
-		})}
+		if c.patient(ready) {
+			c.cadence.Resolve(ruling.CandidateID, true)
+			return []Action{c.decide(Action{
+				Kind:        ActWait,
+				Reason:      "the caller has not finished the thought",
+				Candidate:   ready,
+				Participant: ready.Participant,
+				Text:        ready.Text,
+				LatencyMs:   ruling.TookMs,
+			})}
+		}
+		// Waiting again would be waiting for good, and a thought that never arrives is as
+		// likely to be one the transcriber mangled as one the caller abandoned. Either way
+		// the answer is to say something rather than to keep listening to silence.
+		clarify = unfinishedNote
+		clarified = "the caller went quiet on an unfinished thought, so what was heard may not be what was said"
 	}
 
 	if !c.cadence.Resolve(ruling.CandidateID, false) {
@@ -272,6 +334,11 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 			"candidate", ruling.CandidateID)
 		return nil
 	}
+
+	// The words are dealt with, so the next unfinished thought starts its own wait.
+	c.mu.Lock()
+	delete(c.waiting, ready.Participant.ID)
+	c.mu.Unlock()
 
 	if ruling.Disposition == harness.Ignore {
 		return []Action{c.decide(Action{
@@ -300,7 +367,6 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		previous = ""
 	}
 
-	clarify := ruling.Disposition == harness.Clarify
 	answer := Action{
 		Kind:        ActAnswer,
 		Reason:      "a complete thought addressed to the agent",
@@ -311,8 +377,8 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		Clarify:     clarify,
 		LatencyMs:   ruling.TookMs,
 	}
-	if clarify {
-		answer.Reason = "the caller addressed the agent but their meaning is ambiguous"
+	if clarify != "" {
+		answer.Reason = clarified
 	}
 
 	if state.Quiet {
@@ -326,6 +392,10 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		Participant: ready.Participant,
 		Action:      string(ruling.Floor),
 	})
+	// Two people were talking at once, whichever of them gives way. The turn after that is
+	// given longer to settle, because a caller heard over the agent is a caller whose audio
+	// may be arriving late.
+	c.cadence.Grace(interruptGrace)
 
 	switch ruling.Floor {
 	case harness.Stop:
@@ -520,9 +590,27 @@ func settlement(result harness.Result) string {
 	return "the subagent could not answer " + result.Skill
 }
 
+// patient reports whether an unfinished thought is still worth waiting on.
+//
+// The controller is asked about the same words every retry for as long as the caller says
+// nothing more, and it answers the same way every time, so waiting is a loop that only the
+// caller can end. Somebody who has gone quiet mid-sentence has usually finished and been
+// misheard, and at that point asking them is better than listening to silence.
+func (c *converse) patient(ready candidate) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	waiting, known := c.waiting[ready.Participant.ID]
+	if !known || !sameWords(waiting.text, ready.Text) {
+		c.waiting[ready.Participant.ID] = unfinished{text: ready.Text, since: time.Now()}
+		return true
+	}
+	return time.Since(waiting.since) < c.patience
+}
+
 // hold keeps a turn until the agent has stopped talking. Only one is kept: a caller who
 // has said two more things while being talked over is owed an answer to the last of them.
-func (c *converse) hold(ready candidate, clarify bool) {
+func (c *converse) hold(ready candidate, clarify string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -537,6 +625,9 @@ func (c *converse) hold(ready candidate, clarify bool) {
 // `return c.decide(...)` and have the reporting be part of making the decision rather
 // than something to remember afterwards.
 func (c *converse) decide(action Action) Action {
+	if !c.worthReporting(action) {
+		return action
+	}
 	at := time.Now()
 
 	c.logger.Info("the conversation decided",
@@ -563,4 +654,30 @@ func (c *converse) decide(action Action) Action {
 		c.record(decided)
 	}
 	return action
+}
+
+// worthReporting says whether a judgement tells a reader anything the last one did not,
+// and remembers it when it does.
+//
+// A caller who has stopped mid-thought is asked about and waited on again every retry,
+// which is the same two judgements over and over about words that have not changed. The
+// first pair says everything the rest do, and the rest are only volume: in the log, in the
+// dashboard's trail and in the table behind it. Anything else decided means the words moved
+// on, so what was remembered is dropped and the same sentence said again is written down
+// again.
+func (c *converse) worthReporting(action Action) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if action.Kind != ActAsk && action.Kind != ActWait {
+		clear(c.reported)
+		return true
+	}
+
+	subject := judged{participant: action.Participant.ID, text: action.Text}
+	if c.reported[action.Kind] == subject {
+		return false
+	}
+	c.reported[action.Kind] = subject
+	return true
 }

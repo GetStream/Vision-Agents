@@ -76,7 +76,7 @@ func run(ctx context.Context, dir string) error {
 		Name:     folder.Name,
 		Stt:      text("deepgram/flux-general-en"),
 		Tts:      text("cartesia/sonic-preview"),
-		Llm:      text("gemini/gemini-3.5-flash-lite"),
+		Llm:      text("gemini/gemini-3.8-flash"),
 		Subagent: text("openai/gpt-5.6-sol"),
 		Greeting: text("Larkspur support, how can I help?"),
 		Keyterms: &[]string{"Larkspur", "store credit"},
