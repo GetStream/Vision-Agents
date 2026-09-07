@@ -59,6 +59,13 @@ def _class_names_by_id(
     Pretrained COCO checkpoints use sparse category IDs, so a class ID is not
     necessarily a zero-based index into ``model.class_names``. RF-DETR 1.9+
     attaches the resolved names to each prediction for callers to consume.
+
+    Args:
+        detections: RF-DETR predictions containing class IDs and optional names.
+        fallback_names: Class names ordered by zero-based class ID.
+
+    Returns:
+        A mapping from each detected class ID to its label.
     """
     class_ids = detections.class_id
     resolved_names = detections.data.get("class_name")

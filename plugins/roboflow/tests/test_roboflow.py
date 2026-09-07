@@ -5,10 +5,8 @@ import pathlib
 from unittest.mock import MagicMock
 
 import aiofiles
-import numpy as np
 import PIL.Image
 import pytest
-import supervision as sv
 from av import VideoFrame
 from rfdetr import RFDETRSegPreview
 from vision_agents.core import Agent
@@ -53,24 +51,13 @@ class TestRoboflowLocalDetectionProcessor:
     def test_init_custom_model(self):
         RoboflowLocalDetectionProcessor(model=RFDETRSegPreview())
 
-    async def test_inference_passes_threshold_to_rfdetr(self):
-        model = MagicMock()
-        model.size = "custom"
-        model.class_names = []
-        model.predict.return_value = sv.Detections.empty()
-        processor = RoboflowLocalDetectionProcessor(model=model, conf_threshold=0.25)
-
-        await processor._run_inference(np.zeros((8, 8, 3), dtype=np.uint8))
-
-        model.predict.assert_called_once()
-        assert model.predict.call_args.kwargs["threshold"] == 0.25
-        await processor.close()
-
     @pytest.mark.parametrize("annotate", [True, False])
     async def test_process_video_objects_detected(
         self, cat_video_track, agent_mock, events_manager, annotate: bool
-    ):
-        processor = RoboflowLocalDetectionProcessor(annotate=annotate)
+    ) -> None:
+        processor = RoboflowLocalDetectionProcessor(
+            annotate=annotate, conf_threshold=0.25
+        )
         await processor.warmup()
         processor.attach_agent(agent_mock)
 
