@@ -111,6 +111,7 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 		Result:    result,
 		Err:       err,
 	})
+	a.noteToolDone()
 	if !left {
 		// A tool result is not something the caller can hear. Whether it worked or not,
 		// somebody asked a question and is waiting on the answer, so the agent says it
@@ -124,9 +125,7 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 		// that responds to a broken trunk by trying it again would keep the call and the
 		// bill going without the caller hearing a word.
 		if requested.Call.Name != toolPress && !strings.HasPrefix(requested.TurnID, toolPrefix) {
-			if err := a.respondAfterTool(toolPrefix + turnStamp()); err != nil {
-				a.fail(err, "llm")
-			}
+			a.queueToolReply()
 		}
 		return
 	}

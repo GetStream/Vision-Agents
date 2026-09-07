@@ -2,6 +2,7 @@ package agent
 
 import (
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -271,6 +272,17 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		c.logger.Debug("not acting on a ruling, the words changed while it was being made",
 			"candidate", ruling.CandidateID)
 		return nil
+	}
+
+	if !state.Quiet && overlapNoise(ready.Text) {
+		return []Action{c.decide(Action{
+			Kind:        ActIgnore,
+			Reason:      "a cough or other non-speech noise overlapping the reply, so the agent keeps talking",
+			Candidate:   ready,
+			Participant: ready.Participant,
+			Text:        ready.Text,
+			LatencyMs:   ruling.TookMs,
+		})}
 	}
 
 	if ruling.Disposition == harness.Ignore {
@@ -563,4 +575,21 @@ func (c *converse) decide(action Action) Action {
 		c.record(decided)
 	}
 	return action
+}
+
+// overlapNoise reports whether settled words overlapping the agent's reply are a cough or
+// similar non-speech, which the flow controller often classifies as a new request.
+func overlapNoise(text string) bool {
+	t := strings.ToLower(words(text))
+	if t == "" {
+		return false
+	}
+	if strings.Contains(t, "cough") || strings.Contains(t, "ahem") {
+		return true
+	}
+	switch t {
+	case "huh", "uh", "mm", "hm", "hmm":
+		return true
+	}
+	return false
 }

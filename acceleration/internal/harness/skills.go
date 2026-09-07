@@ -63,9 +63,10 @@ func (s Skills) Prompt() string {
 
 	var prompt strings.Builder
 	prompt.WriteString("You have a slower, more capable colleague listening in. " +
-		"When something needs more thought than a phone conversation leaves room for, " +
-		"hand it over rather than working it out yourself, and keep talking to the " +
-		"caller while they do it.\n\n" +
+		"Hand work over only when a value looks truncated, mashed, or you cannot " +
+		"tell what they said. If the caller already gave complete identifiers, " +
+		"answer yourself and call any tool you need; do not wait for a colleague " +
+		"on a complete thought.\n\n" +
 		"To hand something over, write <ask skill=\"name\">what you need</ask> in your " +
 		"reply. It is never spoken aloud, so the caller hears only the rest of the " +
 		"sentence: say something that fills the pause, like \"let me check that\", and " +

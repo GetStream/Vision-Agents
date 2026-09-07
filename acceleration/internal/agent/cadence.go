@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -111,6 +112,15 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		return "", ""
 	}
 
+	newUtterance := transcript.Utterance != 0 && current.utterance != 0 &&
+		transcript.Utterance != current.utterance
+	if current.text != "" && newUtterance && !revisesTranscript(current.text, text) {
+		// A new utterance that is not a revision of the words in flight, which is how a
+		// transcriber splitting "7:30" into "7:00." and "thirty" arrives. Keep both so
+		// the next answer is about everything the caller said, not only the tail.
+		text = strings.TrimSpace(current.text) + " " + strings.TrimSpace(text)
+	}
+
 	current.participant = transcript.Participant
 	current.language = transcript.Language
 	current.confidence = transcript.Confidence
@@ -133,7 +143,13 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.candidateID = ""
 	current.generation++
 	current.revisedAt = time.Now()
-	c.scheduleLocked(current, c.gap)
+	delay := c.gap
+	if incompleteIdentifier(text) {
+		// Member IDs, PINs and clock times arrive a digit at a time. Answering
+		// "ABC12345" 350ms before the last 6 is how verify_identity got the wrong id.
+		delay = c.retry
+	}
+	c.scheduleLocked(current, delay)
 	c.logger.Debug("heard more, waiting for the words to stop changing",
 		"participant", transcript.Participant.ID, "mode", transcript.Mode, "text", text,
 		"confidence", transcript.Confidence, "gap", c.gap, "superseded", superseded)
@@ -287,6 +303,9 @@ func (c *cadence) restating(current *cadenceSpeaker, transcript stt.Transcript, 
 		if transcript.Utterance != current.committedUtterance {
 			return false
 		}
+		if growsTranscript(current.committed, text) {
+			return false
+		}
 		// The words a transcriber settles on need not be the words it streamed: Gemini
 		// writes an order number as "1 2 3" while the caller is talking and "one two
 		// three" when it commits. Asking for the same words back would let one reading of
@@ -303,4 +322,48 @@ func (c *cadence) speakerFor(participant stt.Participant) *cadenceSpeaker {
 		c.speakers[participant.ID] = current
 	}
 	return current
+}
+
+// revisesTranscript reports whether next is the same run of speech as previous, restated
+// or grown, rather than a second utterance that happens to have arrived next.
+func revisesTranscript(previous, next string) bool {
+	prev := words(previous)
+	nxt := words(next)
+	if prev == "" || nxt == "" {
+		return true
+	}
+	return strings.HasPrefix(nxt, prev) || strings.HasPrefix(prev, nxt)
+}
+
+// growsTranscript reports whether next is previous with more words or a longer last token,
+// which is how "ABC12345" becomes "ABC123456" after the agent already answered the short
+// form.
+func growsTranscript(previous, next string) bool {
+	prev := strings.ToLower(words(previous))
+	nxt := strings.ToLower(words(next))
+	return prev != "" && nxt != prev && strings.HasPrefix(nxt, prev)
+}
+
+// incompleteIdentifier reports whether the last token still looks like a PIN, member ID,
+// phone fragment, or clock time that the transcriber may grow.
+func incompleteIdentifier(text string) bool {
+	fields := strings.Fields(words(text))
+	if len(fields) == 0 {
+		return false
+	}
+	last := fields[len(fields)-1]
+	if len(last) < 2 || len(last) > 16 {
+		return false
+	}
+	hasDigit := false
+	for _, symbol := range last {
+		if unicode.IsDigit(symbol) {
+			hasDigit = true
+			continue
+		}
+		if !unicode.IsLetter(symbol) {
+			return false
+		}
+	}
+	return hasDigit
 }

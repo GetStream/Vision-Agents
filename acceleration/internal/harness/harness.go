@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -441,6 +442,16 @@ func (h *Harness) act(turnID string, found directive) {
 	}
 
 	h.mu.Lock()
+	history := append([]llm.Message(nil), h.history...)
+	complete := identifiersAlreadyComplete(history)
+	if complete {
+		h.notes = append(h.notes, noted{text: "Those values are already complete. " +
+			"Call the tool yourself this turn; do not wait for a colleague."})
+		h.mu.Unlock()
+		h.logger.Debug("not delegating, the caller already gave complete identifiers",
+			"skill", skill.Name)
+		return
+	}
 	// This reply was written to tell the caller what the colleague said, and handing the
 	// same work straight back is how the two of them talk to each other: the colleague
 	// asks its question again, the answer earns another turn, and round it goes without
@@ -451,7 +462,6 @@ func (h *Harness) act(turnID string, found directive) {
 			"skill", skill.Name, "prompt", found.body)
 		return
 	}
-	history := append([]llm.Message(nil), h.history...)
 	h.mu.Unlock()
 
 	taskID, err := h.tasks.Create(skill, found.body, history, turnID, false)
@@ -610,4 +620,25 @@ func note(result Result) string {
 			"could not find out, and carry on.", result.Skill)
 	}
 	return ""
+}
+
+var (
+	spokenClock = regexp.MustCompile(`\b\d{1,2}:\d{2}\b`)
+	spokenID    = regexp.MustCompile(`\b[A-Za-z]{2,}[0-9]{3,}[A-Za-z0-9-]*\b`)
+	spokenPhone = regexp.MustCompile(`\b\d{3}[-.]\d{4}\b`)
+)
+
+// identifiersAlreadyComplete reports whether the caller already said a clock time, a
+// member or order id, or a phone number. Those turns are the fast model's to answer and
+// to call tools on; handing them to a colleague is a multi-second wait on a complete
+// thought.
+func identifiersAlreadyComplete(history []llm.Message) bool {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role != llm.User {
+			continue
+		}
+		text := history[i].Content
+		return spokenClock.MatchString(text) || spokenID.MatchString(text) || spokenPhone.MatchString(text)
+	}
+	return false
 }

@@ -88,6 +88,19 @@ func (s *FlowSuite) TestTheConversationIsQuotedRatherThanReplayed() {
 		"the answer is parsed, so prose is not an option")
 }
 
+func (s *FlowSuite) TestAnOverlappingReplyIsQuotedSoTheControllerCanHold() {
+	s.Require().NoError(s.flow.Decide(FlowTurn{
+		ID:          "candidate-1",
+		Participant: "Alex",
+		Text:        "cough",
+		Speaking:    true,
+		Reply:       "party of four at 7:30",
+	}))
+
+	question := s.model.requests()[0].Input[0].Content
+	s.Contains(question, `is speaking right now, saying "party of four at 7:30"`)
+}
+
 func (s *FlowSuite) TestOnlyTheRecentConversationIsShown() {
 	var history []llm.Message
 	for turn := range flowHistory {

@@ -240,8 +240,15 @@ type Agent struct {
 	utterances int
 	// generating is true while the voice model is still writing the current reply.
 	generating bool
-	joined     bool
-	closed     bool
+	// toolReply is set when a tool returned and the caller has not been told yet. A
+	// second tool in the same turn must not start a competing generate: it would steal
+	// speakingTurn and drop the first result unspoken.
+	toolReply bool
+	// pendingTools is how many tool calls from the current turn have not come back yet.
+	// The spoken follow-up waits until this is zero so two results share one generate.
+	pendingTools int
+	joined       bool
+	closed       bool
 
 	// lastParticipant is who the agent was last talking to, so a reply prompted by
 	// delegated work coming back is attributed to the person who is waiting for it.
@@ -995,6 +1002,7 @@ func (a *Agent) ask(ready candidate) {
 	history := append([]llm.Message(nil), a.history...)
 	instructions := a.instructions()
 	speaking := a.generating || a.utterances > 0
+	reply := lastAssistantSaid(history)
 	a.mu.Unlock()
 
 	if err := current.Decide(harness.FlowTurn{
@@ -1004,6 +1012,7 @@ func (a *Agent) ask(ready candidate) {
 		Participant:  participantName(ready.Participant),
 		Text:         ready.Text,
 		Speaking:     speaking,
+		Reply:        reply,
 	}); err != nil {
 		a.converse.Unasked(ready.ID)
 		a.fail(err, "flow")
@@ -1042,6 +1051,15 @@ func participantName(participant stt.Participant) string {
 	return participant.ID
 }
 
+func lastAssistantSaid(history []llm.Message) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == llm.Assistant && strings.TrimSpace(history[i].Content) != "" {
+			return history[i].Content
+		}
+	}
+	return ""
+}
+
 // turnStamp names a turn. The clock is enough: a conversation cannot produce two turns
 // in the same nanosecond.
 func turnStamp() string { return strconv.FormatInt(time.Now().UnixNano(), 10) }
@@ -1063,6 +1081,32 @@ func (a *Agent) respondCandidate(ready candidate, clarify bool) error {
 	}, note)
 }
 
+// noteToolDone records that one of the tools the current turn asked for has returned.
+func (a *Agent) noteToolDone() {
+	a.mu.Lock()
+	if a.pendingTools > 0 {
+		a.pendingTools--
+	}
+	a.mu.Unlock()
+}
+
+// queueToolReply starts a turn that says what the tools came back with, or marks one as
+// owed if a generate is already in flight or more tools from this turn are still running.
+// Two tools in one reply used to each start a generate, and the second stole speakingTurn
+// so the first result was never said.
+func (a *Agent) queueToolReply() {
+	a.mu.Lock()
+	a.toolReply = true
+	wait := a.pendingTools > 0 || a.generating
+	a.mu.Unlock()
+	if wait {
+		return
+	}
+	if err := a.respondAfterTool(toolPrefix + turnStamp()); err != nil {
+		a.fail(err, "llm")
+	}
+}
+
 // respondAfterTool asks for a reply to what a tool returned.
 //
 // There is nothing to add to the history, unlike respondTurn: it already ends with the
@@ -1079,6 +1123,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	participant := a.lastParticipant
 	a.speakingTurn = turnID
 	a.generating = true
+	a.toolReply = false
 	instructions := a.instructions()
 	a.mu.Unlock()
 
@@ -1419,6 +1464,16 @@ func (a *Agent) finish(response llm.Response) {
 	// Tools are handed over rather than run here, because this is the goroutine that
 	// speaks and a transfer is several seconds of network the caller would hear as silence.
 	if currentHarness != nil && len(calls) > 0 {
+		pending := 0
+		tools := a.availableTools()
+		for _, call := range calls {
+			if _, known := tools.Lookup(call.Name); known {
+				pending++
+			}
+		}
+		a.mu.Lock()
+		a.pendingTools += pending
+		a.mu.Unlock()
 		currentHarness.Requested(response.ID, calls)
 	}
 	a.respondQueued()
@@ -1633,10 +1688,19 @@ func (a *Agent) follow() error {
 	}
 
 	a.mu.Lock()
-	if a.harness == nil || a.generating || a.utterances > 0 || !a.harness.Pending() {
+	if a.harness == nil || a.generating || a.utterances > 0 {
 		a.mu.Unlock()
 		return nil
 	}
+	if !a.harness.Pending() && !a.toolReply {
+		a.mu.Unlock()
+		return nil
+	}
+	if a.pendingTools > 0 {
+		a.mu.Unlock()
+		return nil
+	}
+	a.toolReply = false
 	history := append([]llm.Message(nil), a.history...)
 	turnID := replyPrefix + turnStamp()
 	a.speakingTurn = turnID
@@ -1697,7 +1761,13 @@ func (a *Agent) Busy() bool {
 	if working {
 		return true
 	}
-	return current != nil && (current.Delegating() || current.Pending())
+	if current == nil {
+		return false
+	}
+	a.mu.Lock()
+	owed := a.toolReply
+	a.mu.Unlock()
+	return current.Delegating() || current.Pending() || owed
 }
 
 // delegating reports whether the subagent is still working on something.

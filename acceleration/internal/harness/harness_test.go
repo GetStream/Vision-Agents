@@ -520,6 +520,17 @@ func (s *HarnessSuite) TestARequestForHelpIsDelegatedAndNotSpoken() {
 	s.Equal("think", s.awaitDelegated(1)[0].Skill)
 }
 
+func (s *HarnessSuite) TestCompleteIdentifiersAreNotHandedToAColleague() {
+	s.build(true)
+	s.respond("turn-1", "Maya Chen, date of birth March 4 1987, member ID ABC123456")
+
+	spoken := s.reply("turn-1", `A B C 1 2 3 4 5 6. <ask skill="think">read that back</ask>`)
+
+	s.Equal("A B C 1 2 3 4 5 6. ", spoken)
+	s.True(s.harness.Pending(), "the fast model still owes the caller a tool call")
+	s.Empty(s.slow.requests(), "a complete identifier must not wait on the subagent")
+}
+
 func (s *HarnessSuite) TestATurnNobodyPromptedHasSomethingToAnswer() {
 	// Work coming back is a turn nobody asked for, so the conversation ends with the
 	// agent's own reply rather than a caller's sentence. Asked to follow its own turn,

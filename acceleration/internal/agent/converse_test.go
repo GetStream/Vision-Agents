@@ -261,6 +261,20 @@ func (s *ConverseSuite) TestWhatIsDecidedAboutATurnAndWhoHasTheFloor() {
 	}
 }
 
+func (s *ConverseSuite) TestACoughOverlappingAReplyIsIgnoredEvenIfTheControllerWouldAnswer() {
+	s.build(DuplexOptions{})
+	state := s.talking()
+	ready := s.settle("cough", state)
+
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Stop,
+	}, state)
+
+	s.Equal([]ActionKind{ActIgnore}, kinds(actions))
+}
+
 func (s *ConverseSuite) TestOnlyAnAcceptedTurnCountsAsSomethingTheCallerSaid() {
 	// A turn the agent decided not to answer was still heard by the transcriber, and
 	// reporting it as heard would put words in the conversation nobody acted on.

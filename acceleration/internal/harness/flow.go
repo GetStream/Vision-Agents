@@ -47,6 +47,9 @@ type FlowTurn struct {
 	Participant  string
 	Text         string
 	Speaking     bool
+	// Reply is what the agent is currently saying, so the controller can tell a cough
+	// overlapping a read-back from a caller who is correcting it.
+	Reply string
 }
 
 type flow struct {
@@ -82,7 +85,8 @@ to the caller and you never answer their question: another model does that. Your
 is one JSON object and no other text:
 {"disposition":"wait|ignore|respond|clarify","floor":"stop|shorten|continue"}
 
-Choose wait when the words are probably incomplete.
+Choose wait when the words are probably incomplete, especially when they end on a PIN,
+member ID, phone number, or clock time that may still be growing.
 Choose ignore only when the words are clearly background speech or addressed to somebody else.
 Choose clarify when the caller addressed the agent but their request is ambiguous.
 Choose respond for a complete, relevant thought.
@@ -90,8 +94,9 @@ A recorded menu reading out its options is one thought and not several, however 
 pauses between them: choose wait until it has asked for a choice, and never interrupt one,
 because it is not listening and starts again from the top if it is talked over.
 If the agent is speaking, stop for a correction or direct interruption, shorten for a related
-addition that makes the current answer too long, and continue for a brief acknowledgement or
-clearly unrelated background speech. If the agent is not speaking, choose continue.`
+addition that makes the current answer too long, and continue for a brief acknowledgement,
+a cough or other non-speech noise, or clearly unrelated background speech. If the agent is
+not speaking, choose continue.`
 
 func newFlow(model *llmrouter.Session, emitter *Emitter, logger *slog.Logger) *flow {
 	return &flow{
@@ -169,6 +174,9 @@ func flowQuestion(turn FlowTurn) string {
 	state := "is not speaking"
 	if turn.Speaking {
 		state = "is speaking right now"
+		if reply := strings.TrimSpace(turn.Reply); reply != "" {
+			state = fmt.Sprintf("is speaking right now, saying %q", reply)
+		}
 	}
 	participant := strings.TrimSpace(turn.Participant)
 	if participant == "" {

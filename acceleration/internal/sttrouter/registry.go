@@ -43,6 +43,7 @@ func DefaultRegistry() *Registry {
 			Model:         spec.Model,
 			Keyterms:      spec.Keyterms,
 			LanguageHints: spec.LanguageHints,
+			Mode:          gemini.ModeVerbatim,
 			Logger:        spec.Logger,
 		})
 	})

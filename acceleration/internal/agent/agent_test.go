@@ -1798,6 +1798,28 @@ func (s *AgentSuite) TestAudioFromAnAbandonedTurnIsNotPublished() {
 	s.Equal(before, len(s.edge.heard()), "audio from the abandoned turn stays unheard")
 }
 
+func (s *AgentSuite) TestASecondToolDoesNotStartACompetingReply() {
+	// Two tools in one reply each used to call respondAfterTool. The second stole
+	// speakingTurn, so the first result's generate was dropped unspoken.
+	s.ownsTools("both orders found")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"Both came back."}
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"1"}`},
+		{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"2"}`},
+	}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where are my orders")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 2 }, "both tools should run")
+	s.eventually(func() bool { return s.spokenText("Both came back") },
+		"the caller was left in silence after the second tool stole the floor")
+	s.Len(s.model.requests(), 2, "a second tool must not start a competing generate")
+}
+
 func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
 	// Only a caller talking over the agent abandons a turn. The agent starting one for
 	// itself, to say what a tool came back with, does not: the reply that promised to go

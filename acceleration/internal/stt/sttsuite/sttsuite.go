@@ -88,6 +88,9 @@ type Suite struct {
 	// SettlesOnClose marks a provider that transcribes what it is still holding when the
 	// audio stream ends, rather than losing the tail of a call that was cut off.
 	SettlesOnClose bool
+	// ClockFixture is a clip with a mid-utterance clock time such as "Saturday at 7:30".
+	// Empty skips TestAMidUtteranceClockTimeSettlesAsOneTranscript.
+	ClockFixture string
 
 	// Audio is the fixture and Reference is what is said in it. SetupSuite loads both.
 	Audio     stt.PcmData

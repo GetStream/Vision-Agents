@@ -259,6 +259,14 @@ The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). S
 
 ## Bug Fixes
 
+### Acceleration: say what a tool found, and talk through a cough
+
+Two tools in one reply each started a generate, and the second stole the floor so the first result was never spoken. Overlapping coughs and similar non-speech were answered as new turns. The agent now waits for every tool in the turn, speaks once, and keeps talking through a cough. Complete identifiers are answered by the fast model instead of a multi-second colleague round-trip.
+
+### Voicebench: compare against a stored baseline by target name
+
+`voicebench compare --baseline accelerated` resolves `baselines/accelerated/<commit>/`. `--store-baseline` on a run copies (and merges per-pack) `summary.json` and `manifest.json` there.
+
 ### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct` (#625)
 
 `nvidia/cosmos-reason2-8b` is no longer available on the NVIDIA Chat Completions API for typical API Catalog keys. The plugin default, README, and example now use `meta/llama-3.2-11b-vision-instruct`.
