@@ -149,26 +149,25 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	if len(sum.Calls) > 0 {
 		report.FprintTable(os.Stdout, sum)
 	}
+	var storeErr error
+	if *storeBaseline && sum.RunID != "" {
+		runDir := filepath.Join(root, "out", sum.RunID)
+		if *out != "" {
+			runDir = *out
+		}
+		targetName := sum.Manifest.Target
+		if targetName == "" {
+			targetName = sum.System
+		}
+		storeErr = report.StoreBaseline(root, targetName, sum.Manifest.GitCommit, runDir)
+	}
 	if err != nil {
 		return err
 	}
 	if invalid := sum.InvalidTrials(); invalid > 0 {
 		return fmt.Errorf("run: %d trial(s) produced no verdict", invalid)
 	}
-	if *storeBaseline {
-		runDir := filepath.Join(root, "out", sum.RunID)
-		if *out != "" {
-			runDir = *out
-		}
-		target := sum.Manifest.Target
-		if target == "" {
-			target = sum.System
-		}
-		if err := report.StoreBaseline(root, target, sum.Manifest.GitCommit, runDir); err != nil {
-			return err
-		}
-	}
-	return nil
+	return storeErr
 }
 
 func cmdCalibrate(root string, args []string) error {
