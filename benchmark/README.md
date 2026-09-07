@@ -88,8 +88,8 @@ Results go to `out/<run_id>/`: `report.md`, schema-v3 `summary.json` with a `kin
 
 ```bash
 go run ./cmd/voicebench compare --baseline out/old out/new --mde-v2v-ms 50
-# or --baseline accelerated to resolve baselines/accelerated/<newest-commit>
-# --store-baseline copies summary.json and manifest.json there after a run
+# or --baseline accelerated to resolve a local baselines/accelerated/<newest-commit>
+# --store-baseline copies summary.json and manifest.json there after a run (gitignored)
 ```
 
 Score transcripts (raw and normalized WER) or clip health without a live call:
