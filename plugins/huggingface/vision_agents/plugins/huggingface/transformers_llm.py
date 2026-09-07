@@ -538,7 +538,7 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
                     loop.call_soon_threadsafe(async_queue.put_nowait, None)
 
         streamer = _AsyncBridgeStreamer(
-            cast(AutoTokenizer, tokenizer),
+            tokenizer,
             skip_prompt=True,
             skip_special_tokens=True,
         )
@@ -661,7 +661,9 @@ class TransformersLLM(LLM, Warmable[ModelResources]):
 
         input_length = inputs["input_ids"].shape[1]
         generated_ids = outputs[0][input_length:]
-        text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+        # A single token sequence always decodes to a string. Transformers 5
+        # widens the return annotation to cover batched inputs as well.
+        text = cast(str, tokenizer.decode(generated_ids, skip_special_tokens=True))
         latency_ms = (time.perf_counter() - request_start) * 1000
 
         if text:
