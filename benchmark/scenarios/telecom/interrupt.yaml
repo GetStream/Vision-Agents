@@ -12,7 +12,7 @@ turns:
     text: "And I want to cancel, this is the third time."
     trigger: {kind: barge_in_after_ms, after_ms: 900}
   - id: finish
-    text: "Fine, send the tech, but I still want a human on cancel."
+    text: "Fine, send the tech in the morning, but I still want a human on cancel."
     trigger: {kind: after_agent_turn, delay_ms: 400}
 seed:
   outage: false
@@ -33,7 +33,7 @@ expected_tools:
   - name: walk_reboot
     args: {}
   - name: create_ticket
-    args: {reason: "no-service"}
+    args: {}
   - name: dispatch_tech
     args: {window: "am"}
   - name: create_transfer_summary

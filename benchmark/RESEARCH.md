@@ -162,7 +162,7 @@ Keep all five. A gap between two columns is only readable if each column has a j
 
 Voicebench's guarantee is that every target receives an identical prompt and tool set. Config-driven agents read instructions, skills, and knowledge from a directory synced by `sync_agent`. A second hand-written copy of the prompt will drift from [`agents/contracts/`](agents/contracts/).
 
-Render each pack contract into a generated agent directory at run time. Hash that directory into the manifest. That keeps the frozen-definition rule enforceable: a contract change is a new `contract_hash`, which starts a new series rather than silently moving the old one.
+**Landed, and not the way this section recommended.** Generating an agent directory per pack was the plan; it was not built, because a generated tree is one more thing that can fall out of sync. Instead the contract prompt reaches the router from Python through the identical code path every other target uses, so prompt identity across targets is structural rather than maintained. The synced directory under [`agents/accelerated/{pack}/`](agents/accelerated/) holds skills only, and `contractHash` walks its `*.md` alongside `contracts/{pack}.prompt` and `.tools.yaml`. The frozen-definition rule still holds: a change to either the prompt or a skill is a new `contract_hash`, which starts a new series rather than silently moving the old one.
 
 ### Acceleration competes with OpenAI Realtime
 
@@ -170,7 +170,7 @@ Acceleration is a bundled product, not a pipeline variant. Co-locating STT, LLM,
 
 Insisting on a matched provider triple would force acceleration to compete with its bundling switched off and hide the advantage it is built to win on. The headline row is acceleration as shipped against what a LiveKit or Pipecat developer actually builds today, which is OpenAI Realtime.
 
-The as-shipped pipeline is pinned to [`customer_support.py`](../examples/agents/customer_support/customer_support.py): `gemini/gemini-3.5-transcribe-live`, `gemini/gemini-3.5-flash-lite`, `inworld/inworld-tts-2-flash`, subagent `openai/gpt-5.6-sol`. Voicebench does not load that stored config (its instructions and skills are a different product). Changing the triple is a methodology bump.
+The as-shipped pipeline is pinned to [`customer_support.py`](../examples/agents/customer_support/customer_support.py): `gemini/gemini-3.5-transcribe-live`, `gemini/gemini-3.5-flash-lite`, `inworld/inworld-tts-2-flash`, subagent `openai/gpt-5.6-sol`. Voicebench does not reuse *that* stored config, whose instructions and skills belong to a different product; it syncs a per-pack config of its own carrying the pack's skills, so the subagent runs real skills rather than an inline prompt. Changing the triple is a methodology bump.
 
 ### Two comparison tiers
 
@@ -370,7 +370,6 @@ Driven by getting a usable progress instrument first.
 
 These need a human before implementation treats them as settled.
 
-- How contracts reach config-driven agents. Generated directory from `agents/contracts/` is the recommendation; a maintained parallel tree is the failure mode to avoid.
 - Which runner and region the trend line is pinned to. A laptop number and a CI number are different series.
 - MOS: skip, Python side-car, or human subset.
 - Dataset licensing for `pipecat-ai/stt-benchmark-data` and Inworld's stress-set text, before either is a dependency.

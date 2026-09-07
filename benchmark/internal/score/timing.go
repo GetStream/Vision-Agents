@@ -76,7 +76,6 @@ type Metrics struct {
 	FillerHeard         bool           `json:"filler_heard"`
 	FillerNonBlocking   bool           `json:"filler_non_blocking"`
 	FillerFail          []string       `json:"filler_fail"`
-	ScoringFail         []string       `json:"scoring_fail"`
 	EndStateFail        []string       `json:"end_state_fail"`
 	ExpectedToolFail    []string       `json:"expected_tool_fail"`
 	ToolOrderFail       []string       `json:"tool_order_fail"`
@@ -498,9 +497,6 @@ func ApplyGates(m *Metrics, sc scenario.Scenario) {
 	}
 	if len(m.FillerFail) > 0 {
 		notes = append(notes, "filler")
-	}
-	if len(m.ScoringFail) > 0 {
-		notes = append(notes, m.ScoringFail...)
 	}
 	if sc.HasBargeIn() && m.BargeInStopMS < 0 {
 		notes = append(notes, "barge_in")

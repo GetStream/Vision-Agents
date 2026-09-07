@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 )
 
 func TestLoadRestaurantPack(t *testing.T) {
@@ -90,8 +91,50 @@ func TestBuildManifestAcceleratedDefaults(t *testing.T) {
 	}
 }
 
-func TestBuildManifestLiveKitInferenceDefaults(t *testing.T) {
+func TestBuildManifestRecordsTheScoringASRAndNormalizer(t *testing.T) {
+	cfg := Config{
+		Root:       findTestRoot(t),
+		Pack:       "restaurant",
+		TargetName: "accelerated",
+	}
+	scenarios := []scenario.Scenario{{ID: "restaurant.golden", Pack: "restaurant", Category: scenario.Golden}}
+
+	scored := buildManifest(cfg, scenarios)
+	if scored.ScoringASR != score.ScoringASR || scored.NormalizerVersion != score.NormalizerVersion {
+		t.Fatalf("asr %q normalizer %q", scored.ScoringASR, scored.NormalizerVersion)
+	}
+
+	cfg.SkipSTT = true
+	skipped := buildManifest(cfg, scenarios)
+	if skipped.ScoringASR != "" || skipped.NormalizerVersion != "" {
+		t.Fatalf("no transcript was scored, so both fields must be absent: asr %q normalizer %q",
+			skipped.ScoringASR, skipped.NormalizerVersion)
+	}
+}
+
+func TestBuildManifestLiveKitDefaultsToRealtime(t *testing.T) {
 	t.Setenv("VOICEBENCH_LIVEKIT_PIPELINE", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_MODEL", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_STT", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_TTS", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_VOICE", "")
+	t.Setenv("VOICEBENCH_MODEL", "")
+	manifest := buildManifest(Config{
+		Root:        findTestRoot(t),
+		Pack:        "healthcare",
+		TargetName:  "livekit",
+		SpawnTarget: true,
+	}, []scenario.Scenario{{ID: "healthcare.golden", Pack: "healthcare", Category: scenario.Golden}})
+	if manifest.TargetModel != "gpt-realtime-2" || manifest.TargetVoice != "marin" {
+		t.Fatalf("model %q voice %q", manifest.TargetModel, manifest.TargetVoice)
+	}
+	if manifest.TargetSTT != "" || manifest.TargetTTS != "" {
+		t.Fatalf("realtime carries no separate stt/tts: stt %q tts %q", manifest.TargetSTT, manifest.TargetTTS)
+	}
+}
+
+func TestBuildManifestLiveKitInferenceDefaults(t *testing.T) {
+	t.Setenv("VOICEBENCH_LIVEKIT_PIPELINE", "inference")
 	t.Setenv("VOICEBENCH_LIVEKIT_MODEL", "")
 	t.Setenv("VOICEBENCH_LIVEKIT_STT", "")
 	t.Setenv("VOICEBENCH_LIVEKIT_TTS", "")
@@ -121,7 +164,7 @@ func TestWebRTCJoinFailsWithoutCredentials(t *testing.T) {
 	t.Setenv("STREAM_API_KEY", "")
 	t.Setenv("STREAM_API_SECRET", "")
 	t.Setenv("STREAM_USER_TOKEN", "")
-	_, err := runWebRTC(context.Background(), Config{}, scenario.Scenario{ID: "restaurant.golden"}, nil, 1)
+	_, err := runWebRTC(context.Background(), Config{}, scenario.Scenario{ID: "restaurant.golden"}, nil, 1, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}

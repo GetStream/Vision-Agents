@@ -12,6 +12,12 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/audio"
 )
 
+const deepgramModel = "nova-3"
+
+// ScoringASR is the pinned ASR that transcribes every leg Voicebench scores.
+// A run that scored transcripts with a different ASR is a different series.
+const ScoringASR = "deepgram/" + deepgramModel
+
 // TranscriptWord is one timestamped word from STT.
 type TranscriptWord struct {
 	Text    string `json:"text"`
@@ -35,7 +41,7 @@ func TranscribeDeepgram(pcm audio.PCM) (Transcript, error) {
 	if err := audio.EncodeWAV(&buf, pcm); err != nil {
 		return Transcript{}, err
 	}
-	req, err := http.NewRequest(http.MethodPost, "https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true", &buf)
+	req, err := http.NewRequest(http.MethodPost, "https://api.deepgram.com/v1/listen?model="+deepgramModel+"&smart_format=true", &buf)
 	if err != nil {
 		return Transcript{}, err
 	}

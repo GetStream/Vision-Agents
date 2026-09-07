@@ -59,7 +59,7 @@ func CompareMarkdown(cfg CompareConfig) string {
 	rows := compareRows(cfg.Runs)
 	var b strings.Builder
 	b.WriteString("# Voicebench compare\n\n")
-	b.WriteString("Headline rows compare products as configured, not matched models. Intervals that do not overlap the best run are marked *.\n\n")
+	b.WriteString(pipelineDisclosure(cfg.Runs))
 	b.WriteString("| Metric")
 	for _, run := range cfg.Runs {
 		fmt.Fprintf(&b, " | %s", run.Label)
@@ -89,6 +89,47 @@ func CompareMarkdown(cfg CompareConfig) string {
 	}
 	b.WriteString("\nEach run's manifest target, model, and network profile should match before a gap is treated as a product result.\n")
 	return b.String()
+}
+
+// pipelineDisclosure reads each run's manifest triple so a reader can tell a
+// product comparison from a framework-overhead one without opening the manifests.
+func pipelineDisclosure(runs []LabeledRun) string {
+	matched := true
+	for _, run := range runs[1:] {
+		if pipelineOf(run.Summary.Manifest) != pipelineOf(runs[0].Summary.Manifest) {
+			matched = false
+			break
+		}
+	}
+	var b strings.Builder
+	switch {
+	case len(runs) == 1:
+		b.WriteString("One run, so no cross-run gap is implied.")
+	case matched:
+		b.WriteString("Every run shares one provider pipeline, so a gap is framework overhead, not a product difference.")
+	default:
+		b.WriteString("Runs differ in provider pipeline, so headline gaps compare products as configured, not matched models.")
+	}
+	b.WriteString(" Intervals that do not overlap the best run are marked *.\n\n")
+	b.WriteString("| Run | STT | LLM | TTS | Voice |\n| --- | --- | --- | --- | --- |\n")
+	for _, run := range runs {
+		m := run.Summary.Manifest
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n",
+			run.Label, orDash(m.TargetSTT), orDash(m.TargetLLM), orDash(m.TargetTTS), orDash(m.TargetVoice))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+func pipelineOf(m RunManifest) string {
+	return strings.Join([]string{m.TargetSTT, m.TargetLLM, m.TargetTTS}, "|")
+}
+
+func orDash(value string) string {
+	if value == "" {
+		return "—"
+	}
+	return value
 }
 
 func compareRows(runs []LabeledRun) []compareRow {

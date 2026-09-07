@@ -23,8 +23,10 @@ func (e targetFailure) Error() string { return e.err.Error() }
 
 func (e targetFailure) Unwrap() error { return e.err }
 
-func runWebRTC(ctx context.Context, cfg Config, sc scenario.Scenario, audioMap map[string][]int16, trial int) (caller.Result, error) {
-	callID := webrtcCallID(cfg, sc, trial)
+func runWebRTC(ctx context.Context, cfg Config, sc scenario.Scenario, audioMap map[string][]int16, trial int, callID string) (caller.Result, error) {
+	if callID == "" {
+		callID = webrtcCallID(cfg, sc, trial)
+	}
 	callType := cfg.CallType
 	if callType == "" {
 		callType = "default"

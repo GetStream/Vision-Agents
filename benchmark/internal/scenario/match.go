@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -65,7 +66,27 @@ func MatchStructuredValue(got, want string) bool {
 		gotTime, gotOK := clockValue(got)
 		return gotOK && gotTime == normalizedTime
 	}
-	return alnum(got) == alnum(want)
+	if normalizedDate, ok := dateValue(want); ok {
+		gotDate, gotOK := dateValue(got)
+		return gotOK && gotDate == normalizedDate
+	}
+	return sameMeaning(got, want)
+}
+
+func sameMeaning(got, want string) bool {
+	g := canonicalToken(got)
+	w := canonicalToken(want)
+	return g == w && g != ""
+}
+
+func canonicalToken(s string) string {
+	compact := alnum(s)
+	switch compact {
+	case "none", "noallergies", "noallergy":
+		return "none"
+	default:
+		return compact
+	}
 }
 
 func containsTokens(text, want []string) bool {
@@ -106,6 +127,48 @@ func tokens(s string) []string {
 	}
 	flush()
 	return out
+}
+
+func dateValue(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", false
+	}
+	candidates := []string{s, titleWords(s)}
+	layouts := []string{
+		"2006-01-02",
+		"01/02/2006",
+		"1/2/2006",
+		"01-02-2006",
+		"1-2-2006",
+		"January 2 2006",
+		"January 2, 2006",
+		"Jan 2 2006",
+		"Jan 2, 2006",
+		"2 January 2006",
+		"2 January, 2006",
+	}
+	for _, candidate := range candidates {
+		for _, layout := range layouts {
+			if parsed, err := time.Parse(layout, candidate); err == nil {
+				return parsed.Format("2006-01-02"), true
+			}
+		}
+	}
+	return "", false
+}
+
+func titleWords(s string) string {
+	parts := strings.Fields(strings.ToLower(s))
+	for i, part := range parts {
+		runes := []rune(part)
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = unicode.ToUpper(runes[0])
+		parts[i] = string(runes)
+	}
+	return strings.Join(parts, " ")
 }
 
 func clockValue(s string) (string, bool) {

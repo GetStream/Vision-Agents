@@ -72,7 +72,7 @@ CGO_ENABLED=1 go run -tags webrtc ./cmd/voicebench run \
   --pack restaurant --target acceleration --spawn --bin /tmp/accel-router --k 3
 ```
 
-Evaluate LiveKit with the reference worker in [`agents-livekit/`](agents-livekit/). It registers as `voicebench`, builds its tools from the dispatch metadata, and answers on LiveKit Inference with the closest match to the as-shipped acceleration triple: Gemini transcribe-live, Gemini flash-lite, Inworld TTS-2 Flash (`google/` / `inworld/` model IDs on LiveKit Cloud). That is a framework-and-transport comparison on the same modality split, not OpenAI Realtime. LiveKit has no Sol subagent; tools run on the conversation LLM. `VOICEBENCH_LIVEKIT_PIPELINE=realtime` restores `gpt-realtime-2` / `marin`. `agents-livekit/uv.lock` records the stack that ran.
+Evaluate LiveKit with the reference worker in [`agents-livekit/`](agents-livekit/). It registers as `voicebench`, builds its tools from the dispatch metadata, and answers on OpenAI Realtime (`gpt-realtime-2`, voice `marin`) by default, because the headline comparison is acceleration as shipped against what a LiveKit developer actually builds today. LiveKit has no Sol subagent; tools run on the conversation LLM. `VOICEBENCH_LIVEKIT_PIPELINE=inference` switches to LiveKit Inference with the closest match to the as-shipped acceleration triple — Gemini transcribe-live, Gemini flash-lite, Inworld TTS-2 Flash (`google/` / `inworld/` model IDs on LiveKit Cloud). That arm is the diagnostic: it holds providers constant so a remaining gap is framework and transport overhead rather than a product difference. `agents-livekit/uv.lock` records the stack that ran.
 
 ```bash
 cd agents-livekit && uv sync && cd ..
@@ -88,6 +88,8 @@ Results go to `out/<run_id>/`: `report.md`, schema-v3 `summary.json` with a `kin
 
 ```bash
 go run ./cmd/voicebench compare --baseline out/old out/new --mde-v2v-ms 50
+# or --baseline accelerated to resolve baselines/accelerated/<newest-commit>
+# --store-baseline copies summary.json and manifest.json there after a run
 ```
 
 Score transcripts (raw and normalized WER) or clip health without a live call:

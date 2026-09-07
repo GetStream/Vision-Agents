@@ -52,7 +52,7 @@ func dispatch(cmd string, args []string) error {
 	case "calibrate":
 		return cmdCalibrate(root, args)
 	case "compare":
-		return cmdCompare(args)
+		return cmdCompare(root, args)
 	case "stt":
 		return cmdSTT(args)
 	case "tts":
@@ -112,6 +112,7 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	skipSTT := fs.Bool("skip-stt", false, "skip Deepgram (fails the trial)")
 	skipJudge := fs.Bool("skip-judge", false, "skip LLM judge (fails the trial)")
 	frozen := fs.Bool("frozen", false, "run only the frozen scenario set used for the trend line")
+	storeBaseline := fs.Bool("store-baseline", false, "copy summary.json and manifest.json to baselines/<target>/<commit>/")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -153,6 +154,19 @@ func cmdRun(ctx context.Context, root string, args []string) error {
 	}
 	if invalid := sum.InvalidTrials(); invalid > 0 {
 		return fmt.Errorf("run: %d trial(s) produced no verdict", invalid)
+	}
+	if *storeBaseline {
+		runDir := filepath.Join(root, "out", sum.RunID)
+		if *out != "" {
+			runDir = *out
+		}
+		target := sum.Manifest.Target
+		if target == "" {
+			target = sum.System
+		}
+		if err := report.StoreBaseline(root, target, sum.Manifest.GitCommit, runDir); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -222,9 +236,9 @@ func cmdReport(root string, args []string) error {
 	return os.WriteFile(filepath.Join(*dir, "report.md"), []byte(report.Markdown(sum)), 0o644)
 }
 
-func cmdCompare(args []string) error {
+func cmdCompare(root string, args []string) error {
 	fs := flag.NewFlagSet("compare", flag.ExitOnError)
-	baseline := fs.String("baseline", "", "run directory treated as the previous baseline")
+	baseline := fs.String("baseline", "", "run directory or stored target name (baselines/<target>/<commit>)")
 	mde := fs.Int("mde-v2v-ms", 0, "flag V2V P50 changes at least this many milliseconds")
 	out := fs.String("out", "", "write the comparison markdown here")
 	if err := fs.Parse(args); err != nil {
@@ -232,7 +246,11 @@ func cmdCompare(args []string) error {
 	}
 	dirs := fs.Args()
 	if *baseline != "" {
-		dirs = append([]string{*baseline}, dirs...)
+		resolved, err := report.ResolveBaseline(root, *baseline)
+		if err != nil {
+			return err
+		}
+		dirs = append([]string{resolved}, dirs...)
 	}
 	if len(dirs) < 2 {
 		return fmt.Errorf("compare: need at least two run directories")

@@ -6,7 +6,9 @@ import (
 	"unicode"
 )
 
-const NormalizerVersion = "english-basic-v1"
+// NormalizerVersion pins the WER fold and the structured matcher used for tool
+// arguments. v2 adds date-form equivalence (1987-03-04 = 03/04/1987).
+const NormalizerVersion = "english-basic-v2"
 
 var (
 	currency = regexp.MustCompile(`\$([0-9]+(?:\.[0-9]+)?)`)
@@ -104,8 +106,9 @@ func ScoreWER(reference, heard string, normalize bool) Alignment {
 	return out
 }
 
-// Normalize is the english-basic-v1 preset: casefold, contractions, currency,
-// fillers, then punctuation dropped. A new preset is a new version string.
+// Normalize is the english-basic-v2 preset: casefold, contractions, currency,
+// fillers, then punctuation dropped. Date-form equivalence for tool arguments
+// lives in scenario.MatchStructuredValue and is pinned by the same version.
 func Normalize(text string) string {
 	text = strings.ToLower(text)
 	text = currency.ReplaceAllString(text, "$1 dollars")

@@ -154,6 +154,22 @@ class TestAccelerated:
             assert router.created["subagent"] == "llm-smart"
             assert router.created["sandbox"] == "daytona"
 
+    async def test_named_keyterms_reach_the_session(
+        self, router: Router, call: RemoteCall
+    ):
+        llm = stream.Accelerated(
+            model="gemma4",
+            url=router.url,
+            customer_id="acme",
+            keyterms=["Alvarez", "ABC123456"],
+        )
+        await llm.join_remote(call)
+        try:
+            assert router.created is not None
+            assert router.created["keyterms"] == ["Alvarez", "ABC123456"]
+        finally:
+            await llm.leave_remote()
+
     async def test_cost_labels_reach_the_session_as_tags(
         self, router: Router, joined: stream.Accelerated
     ):

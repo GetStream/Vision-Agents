@@ -214,7 +214,8 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 		audioMap[text] = pcm
 	}
 
-	rec, callErr := runWebRTC(ctx, cfg, sc, audioMap, trial)
+	callID := webrtcCallID(cfg, sc, trial)
+	rec, callErr := runWebRTC(ctx, cfg, sc, audioMap, trial, callID)
 	if rec.Rate > 0 {
 		if err := audio.WriteWAV(filepath.Join(callDir, "caller.wav"), audio.PCM{Rate: rec.Rate, Samples: rec.Caller}); err != nil {
 			return result, err
@@ -340,6 +341,10 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 
 	if err := writeJSON(filepath.Join(callDir, "transcript.json"), map[string]score.Transcript{"caller": callerTranscript, "agent": agentTranscript}); err != nil {
 		return result, err
+	}
+	if err := captureAgentHeard(cfg, callID, callDir); err != nil {
+		result.Warnings = append(result.Warnings, "agent heard transcript: "+err.Error())
+		cfg.Logger.Warn("agent heard transcript", "err", err)
 	}
 	if judgeVerdict != nil {
 		if err := writeJSON(filepath.Join(callDir, "judge.json"), judgeVerdict); err != nil {

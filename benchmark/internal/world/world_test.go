@@ -189,6 +189,27 @@ func TestCheckExpectedTools(t *testing.T) {
 	}
 }
 
+func TestCheckExpectedToolsResolvesPriorResult(t *testing.T) {
+	tools := []ToolCall{
+		{Name: "create_ticket", Args: map[string]any{"reason": "no-service"}, Result: map[string]any{"id": "T-99"}},
+		{Name: "dispatch_tech", Args: map[string]any{"window": "am", "ticket_id": "T-99"}},
+	}
+	fails := CheckExpectedTools(tools, []scenario.ExpectedTool{
+		{Name: "create_ticket", Args: map[string]any{"reason": "no-service"}},
+		{Name: "dispatch_tech", Args: map[string]any{"window": "am", "ticket_id": "$create_ticket.id"}},
+	})
+	if len(fails) != 0 {
+		t.Fatalf("matching prior ticket id failed: %v", fails)
+	}
+	tools[1].Args["ticket_id"] = "T-other"
+	fails = CheckExpectedTools(tools, []scenario.ExpectedTool{
+		{Name: "dispatch_tech", Args: map[string]any{"ticket_id": "$create_ticket.id"}},
+	})
+	if len(fails) != 1 || !strings.Contains(fails[0], "T-99") {
+		t.Fatalf("mismatch against prior result: %v", fails)
+	}
+}
+
 func TestToolOrder(t *testing.T) {
 	tools := []ToolCall{{Name: "dispatch_tech"}, {Name: "walk_reboot"}}
 	fails := CheckToolOrder(tools, []scenario.OrderConstraint{{Before: "walk_reboot", After: "dispatch_tech"}})
@@ -317,7 +338,15 @@ func TestExpectedScenarioTracesReachTheirEndState(t *testing.T) {
 				session := srv.Seed(sc)
 				session.Delays = map[string]time.Duration{}
 				for _, expected := range sc.ExpectedTools {
-					postTool(t, srv.Addr, expected.Name, expected.Args)
+					args := map[string]any{}
+					for key, value := range expected.Args {
+						resolved, err := resolveExpectedValue(value, srv.Snapshot().Tools)
+						if err != nil {
+							t.Fatalf("%s.%s: %v", expected.Name, key, err)
+						}
+						args[key] = resolved
+					}
+					postTool(t, srv.Addr, expected.Name, args)
 				}
 				snapshot := srv.Snapshot()
 				if failures := CheckAssertions(snapshot.State, sc.EndState); len(failures) > 0 {

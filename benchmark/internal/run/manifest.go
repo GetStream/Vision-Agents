@@ -76,7 +76,7 @@ func buildManifest(cfg Config, scenarios []scenario.Scenario) report.RunManifest
 	}
 	scenarioJSON, _ := json.Marshal(scenarios)
 	calibration, _ := score.LoadCalibrationSet(filepath.Join(cfg.Root, "calibration", "judge.json"))
-	return report.RunManifest{
+	manifest := report.RunManifest{
 		GitCommit:                commit,
 		GitDirty:                 dirty,
 		ScenarioHash:             digest(scenarioJSON),
@@ -97,6 +97,11 @@ func buildManifest(cfg Config, scenarios []scenario.Scenario) report.RunManifest
 		JudgeCalibrationReviewer: calibration.ReviewedBy,
 		Command:                  append([]string{"voicebench"}, os.Args[1:]...),
 	}
+	if !cfg.SkipSTT {
+		manifest.ScoringASR = score.ScoringASR
+		manifest.NormalizerVersion = score.NormalizerVersion
+	}
+	return manifest
 }
 
 func contractHash(root, pack string) string {

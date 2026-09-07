@@ -31,6 +31,35 @@ func TestCompareMarkdownMarksTheBetterPassRate(t *testing.T) {
 	}
 }
 
+func TestCompareDisclosureReadsThePipelineTriples(t *testing.T) {
+	run := func(label, stt, llm, tts string) LabeledRun {
+		sum := BuildSummary(label, label, 1, []CallResult{
+			{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Passed: true, Outcome: OutcomePass, Metrics: score.Metrics{V2V: []score.Timing{{V2VMS: 400}}}},
+		})
+		sum.Manifest = RunManifest{TargetSTT: stt, TargetLLM: llm, TargetTTS: tts}
+		return LabeledRun{Label: label, Summary: sum}
+	}
+
+	differing := CompareMarkdown(CompareConfig{Baseline: -1, Runs: []LabeledRun{
+		run("accelerated", "gemini/transcribe", "gemini/flash-lite", "inworld/flash"),
+		run("livekit", "", "gpt-realtime-2", ""),
+	}})
+	if !strings.Contains(differing, "not matched models") {
+		t.Fatalf("differing pipelines must be disclosed as a product comparison:\n%s", differing)
+	}
+	if !strings.Contains(differing, "gpt-realtime-2") || !strings.Contains(differing, "inworld/flash") {
+		t.Fatalf("both pipelines must appear:\n%s", differing)
+	}
+
+	matched := CompareMarkdown(CompareConfig{Baseline: -1, Runs: []LabeledRun{
+		run("accelerated", "gemini/transcribe", "gemini/flash-lite", "inworld/flash"),
+		run("livekit", "gemini/transcribe", "gemini/flash-lite", "inworld/flash"),
+	}})
+	if !strings.Contains(matched, "framework overhead") {
+		t.Fatalf("a matched triple must be disclosed as framework overhead:\n%s", matched)
+	}
+}
+
 func TestCompareBaselineFlagsMDE(t *testing.T) {
 	old := BuildSummary("accelerated", "old", 1, []CallResult{
 		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Passed: true, Outcome: OutcomePass, Metrics: score.Metrics{V2V: []score.Timing{{V2VMS: 400}}}},

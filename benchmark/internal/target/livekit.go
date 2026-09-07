@@ -173,7 +173,10 @@ func (l *LiveKit) logger() *slog.Logger {
 }
 
 const (
-	DefaultLiveKitPipeline      = "inference"
+	// DefaultLiveKitPipeline is OpenAI Realtime because the headline comparison is
+	// acceleration as shipped against what a LiveKit developer builds today. Set
+	// VOICEBENCH_LIVEKIT_PIPELINE=inference for the matched-provider diagnostic.
+	DefaultLiveKitPipeline      = "realtime"
 	DefaultLiveKitSTT           = "google/gemini-3.5-transcribe-live"
 	DefaultLiveKitModel         = "google/gemini-3.5-flash-lite"
 	DefaultLiveKitTTS           = "inworld/inworld-tts-2-flash"

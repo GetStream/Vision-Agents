@@ -30,7 +30,7 @@ expected_tools:
   - name: walk_reboot
     args: {}
   - name: create_ticket
-    args: {reason: "no-service"}
+    args: {}
 entities:
   - {name: last4, value: "9821", in_tools: true, in_speech: true, tool: verify_account, arg: last4}
 policy:

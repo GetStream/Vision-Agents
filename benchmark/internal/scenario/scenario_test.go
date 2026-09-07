@@ -128,6 +128,18 @@ func TestMatchStructuredValue(t *testing.T) {
 	if MatchStructuredValue("QW4T9-88210", "QW4T9-8821") {
 		t.Fatal("extra identifier digit matched")
 	}
+	if !MatchStructuredValue("03/04/1987", "1987-03-04") {
+		t.Fatal("US slash date should match ISO")
+	}
+	if !MatchStructuredValue("March 4 1987", "1987-03-04") {
+		t.Fatal("spoken date should match ISO")
+	}
+	if MatchStructuredValue("1987-03-05", "1987-03-04") {
+		t.Fatal("different dates matched")
+	}
+	if !MatchStructuredValue("no allergies", "none") {
+		t.Fatal("no allergies should match none")
+	}
 }
 
 func TestLoadPacks(t *testing.T) {

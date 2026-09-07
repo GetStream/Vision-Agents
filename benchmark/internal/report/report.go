@@ -60,6 +60,8 @@ type RunManifest struct {
 	CallerVoice              string            `json:"caller_voice"`
 	GoVersion                string            `json:"go_version"`
 	NetworkProfile           string            `json:"network_profile,omitempty"`
+	ScoringASR               string            `json:"scoring_asr,omitempty"`
+	NormalizerVersion        string            `json:"normalizer_version,omitempty"`
 	JudgeCalibrationHash     string            `json:"judge_calibration_hash,omitempty"`
 	JudgeCalibrationReviewer string            `json:"judge_calibration_reviewer,omitempty"`
 	Command                  []string          `json:"command"`
@@ -371,9 +373,20 @@ func Markdown(s Summary) string {
 	if len(failures) == 0 {
 		b.WriteString("No hard-gate failures.\n")
 	} else {
-		b.WriteString("| Gate | Count |\n| --- | ---: |\n")
+		b.WriteString("| Gate | Failure | Count |\n| --- | --- | ---: |\n")
 		for _, f := range failures {
-			fmt.Fprintf(&b, "| %s | %d |\n", f.Name, f.Count)
+			fmt.Fprintf(&b, "| %s | %s | %d |\n", f.Gate, f.Name, f.Count)
+		}
+	}
+	details := trialFailures(s.Calls)
+	if len(details) > 0 {
+		b.WriteString("\n## Failed trials\n\n")
+		for _, d := range details {
+			fmt.Fprintf(&b, "### %s trial %d\n\n", d.ScenarioID, d.Trial)
+			for _, line := range d.Lines {
+				fmt.Fprintf(&b, "- %s\n", line)
+			}
+			b.WriteString("\n")
 		}
 	}
 	warnings := runWarnings(s)
@@ -465,32 +478,127 @@ func callWarnings(calls []CallResult) []string {
 }
 
 type failureCount struct {
+	Gate  string
 	Name  string
 	Count int
 }
 
 func failureSummary(calls []CallResult) []failureCount {
-	counts := map[string]int{}
+	counts := map[string]failureCount{}
 	for _, c := range calls {
-		for _, note := range c.Metrics.GateNotes {
-			if note != "" {
-				counts[note]++
-			}
-		}
 		if callOutcome(c) == OutcomeInvalid {
-			counts["evaluator_invalid"]++
+			key := "evaluator_invalid|"
+			counts[key] = failureCount{Gate: "evaluator_invalid", Name: strings.Join(c.InvalidReason, "; "), Count: counts[key].Count + 1}
+			continue
+		}
+		for _, detail := range gateDetails(c.Metrics) {
+			if detail.Cascade {
+				continue
+			}
+			key := detail.Gate + "|" + detail.Message
+			item := counts[key]
+			item.Gate = detail.Gate
+			item.Name = detail.Message
+			item.Count++
+			counts[key] = item
 		}
 	}
-	names := make([]string, 0, len(counts))
-	for name := range counts {
-		names = append(names, name)
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
 	}
-	sort.Strings(names)
-	out := make([]failureCount, 0, len(names))
-	for _, name := range names {
-		out = append(out, failureCount{Name: name, Count: counts[name]})
+	sort.Strings(keys)
+	out := make([]failureCount, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, counts[key])
 	}
 	return out
+}
+
+type trialFailure struct {
+	ScenarioID string
+	Trial      int
+	Lines      []string
+}
+
+func trialFailures(calls []CallResult) []trialFailure {
+	var out []trialFailure
+	for _, c := range calls {
+		if callOutcome(c) != OutcomeFail {
+			continue
+		}
+		var lines []string
+		for _, detail := range gateDetails(c.Metrics) {
+			if detail.Cascade {
+				lines = append(lines, fmt.Sprintf("%s (cascade): %s", detail.Gate, detail.Message))
+				continue
+			}
+			lines = append(lines, detail.Gate+": "+detail.Message)
+		}
+		if c.Error != "" {
+			lines = append(lines, "target: "+c.Error)
+		}
+		if len(lines) == 0 {
+			continue
+		}
+		out = append(out, trialFailure{ScenarioID: c.ScenarioID, Trial: c.Trial, Lines: lines})
+	}
+	return out
+}
+
+type gateDetail struct {
+	Gate    string
+	Message string
+	Cascade bool
+}
+
+func gateDetails(m score.Metrics) []gateDetail {
+	var out []gateDetail
+	add := func(gate string, items []string) {
+		rootSeen := false
+		for _, item := range items {
+			cascade := gate == "expected_tools" && rootSeen && isCascadeToolFail(item)
+			out = append(out, gateDetail{Gate: gate, Message: item, Cascade: cascade})
+			if !cascade {
+				rootSeen = true
+			}
+		}
+	}
+	add("end_state", m.EndStateFail)
+	add("expected_tools", m.ExpectedToolFail)
+	add("policy", m.PolicyFail)
+	add("entity_tools", m.EntityToolFail)
+	add("entity_speech", m.EntitySpeechFail)
+	add("tool_order", m.ToolOrderFail)
+	add("say_do", m.SayDoFail)
+	add("filler", m.FillerFail)
+	if m.BargeInStopMS > score.MaxBargeInStopMS {
+		add("barge_in", []string{fmt.Sprintf("stop %d ms exceeds %d ms", m.BargeInStopMS, score.MaxBargeInStopMS)})
+	} else if containsNote(m.GateNotes, "barge_in") {
+		add("barge_in", []string{"barge-in stop was not measured"})
+	}
+	if containsNote(m.GateNotes, "selectivity") {
+		add("selectivity", []string{"agent started a turn on non-directed overlap"})
+	}
+	if containsNote(m.GateNotes, "hold") {
+		add("hold", []string{"agent did not continue through mid-speech overlap"})
+	}
+	return out
+}
+
+func containsNote(notes []string, gate string) bool {
+	for _, note := range notes {
+		if note == gate {
+			return true
+		}
+	}
+	return false
+}
+
+func isCascadeToolFail(item string) bool {
+	return strings.HasSuffix(item, " not called") ||
+		strings.Contains(item, "identity not verified") ||
+		strings.Contains(item, " not available")
 }
 
 func artifactLinks(c CallResult) string {
@@ -505,6 +613,7 @@ func artifactLinks(c CallResult) string {
 	}{
 		{name: "audio", file: "mixed.wav"},
 		{name: "transcript", file: "transcript.json"},
+		{name: "heard", file: "heard.json"},
 		{name: "judge", file: "judge.json"},
 		{name: "tools", file: "tools.json"},
 		{name: "state", file: "state.json"},

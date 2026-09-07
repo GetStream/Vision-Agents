@@ -46,15 +46,25 @@ func TestAcceleratedPipelineEnvDefaults(t *testing.T) {
 	}
 }
 
-func TestLiveKitPipelineEnvDefaults(t *testing.T) {
-	t.Setenv("VOICEBENCH_LIVEKIT_PIPELINE", "")
-	t.Setenv("VOICEBENCH_LIVEKIT_MODEL", "")
-	t.Setenv("VOICEBENCH_LIVEKIT_STT", "")
-	t.Setenv("VOICEBENCH_LIVEKIT_TTS", "")
-	t.Setenv("VOICEBENCH_LIVEKIT_VOICE", "")
+func TestLiveKitPipelineEnvDefaultsToRealtime(t *testing.T) {
+	clearLiveKitEnv(t)
 	got := liveKitPipelineEnv()
 	want := []string{
-		"VOICEBENCH_LIVEKIT_PIPELINE=" + DefaultLiveKitPipeline,
+		"VOICEBENCH_LIVEKIT_PIPELINE=realtime",
+		"VOICEBENCH_LIVEKIT_MODEL=" + DefaultLiveKitRealtimeModel,
+		"VOICEBENCH_LIVEKIT_VOICE=" + DefaultLiveKitRealtimeVoice,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestLiveKitPipelineEnvInferenceCarriesTheMatchedTriple(t *testing.T) {
+	clearLiveKitEnv(t)
+	t.Setenv("VOICEBENCH_LIVEKIT_PIPELINE", "inference")
+	got := liveKitPipelineEnv()
+	want := []string{
+		"VOICEBENCH_LIVEKIT_PIPELINE=inference",
 		"VOICEBENCH_LIVEKIT_MODEL=" + DefaultLiveKitModel,
 		"VOICEBENCH_LIVEKIT_STT=" + DefaultLiveKitSTT,
 		"VOICEBENCH_LIVEKIT_TTS=" + DefaultLiveKitTTS,
@@ -63,6 +73,14 @@ func TestLiveKitPipelineEnvDefaults(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
+}
+
+func clearLiveKitEnv(t *testing.T) {
+	t.Setenv("VOICEBENCH_LIVEKIT_PIPELINE", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_MODEL", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_STT", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_TTS", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_VOICE", "")
 }
 
 func TestRemoteTargetsRequireURL(t *testing.T) {
