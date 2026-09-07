@@ -57,7 +57,7 @@ const (
 func main() {
 	options := options{}
 	flag.StringVar(&options.callID, "call", "", "Stream call id to join (required)")
-	flag.StringVar(&options.callType, "call-type", "default", "Stream call type")
+	flag.StringVar(&options.callType, "call-type", "agent", "Stream call type")
 	flag.StringVar(&options.userID, "user", "vision-agent", "user id to join as")
 	flag.StringVar(&options.customerID, "customer", "demo", "customer the usage is billed to")
 	flag.StringVar(&options.agentID, "agent", "", "agent id transcripts and stats are keyed by, defaults to the call id")

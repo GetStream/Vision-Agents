@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -55,6 +56,53 @@ func (s *STTRouterSuite) TestLowLatencyShortcutPrefersTheEnglishFluxModel() {
 
 	s.Require().NotEmpty(candidates)
 	s.Equal("deepgram/flux-general-en", candidates[0].Config.Name())
+}
+
+func (s *STTRouterSuite) TestAnEnglishCallGoesToTheFourTrustedModelsAndNowhereElse() {
+	// Every live model is realtime, low-latency and speaks English, so this shortcut is
+	// the ones the deployment trusts an English call to rather than everything that could
+	// serve one. The rest stay reachable by name and through the other shortcuts.
+	candidates, err := s.newRouter().Resolve(s.ctx, "en-low-latency", nil)
+	s.Require().NoError(err)
+
+	var names []string
+	for _, candidate := range candidates {
+		names = append(names, candidate.Config.Name())
+	}
+	s.ElementsMatch([]string{
+		"deepgram/flux-general-en",
+		"deepgram/flux-general-multi",
+		"grok/grok-stt",
+		"muse/muse-voice-transcribe-1.0",
+	}, names)
+}
+
+func (s *STTRouterSuite) TestTheModelsLeftOutOfTheEnglishShortcutAreStillReachable() {
+	router := s.newRouter()
+
+	for _, name := range []string{"gemini/gemini-3.5-transcribe-live", "parakeet/parakeet-tdt-0.6b-v3"} {
+		candidates, err := router.Resolve(s.ctx, name, nil)
+		s.Require().NoErrorf(err, "target %s", name)
+		s.Require().Lenf(candidates, 1, "target %s", name)
+		s.Equal(name, candidates[0].Config.Name())
+	}
+}
+
+func (s *STTRouterSuite) TestAnEnglishCallCanStillAskForTheVoiceToBeNamed() {
+	// Two of the four can name it, and asking narrows to them rather than being served
+	// without the label by one of the two that cannot.
+	diarize := true
+	asked := options.STT{Diarize: &diarize}.Terms()
+	candidates, err := s.newRouter().Resolve(s.ctx, "en-low-latency", nil)
+	s.Require().NoError(err)
+
+	var names []string
+	for _, candidate := range candidates {
+		if candidate.Config.Supports(asked) {
+			names = append(names, candidate.Config.Name())
+		}
+	}
+	s.ElementsMatch([]string{"grok/grok-stt", "muse/muse-voice-transcribe-1.0"}, names)
 }
 
 func (s *STTRouterSuite) TestGermanNarrowsToTheModelThatSpeaksIt() {

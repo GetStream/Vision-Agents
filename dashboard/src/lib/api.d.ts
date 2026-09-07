@@ -1073,7 +1073,7 @@ export interface paths {
         put?: never;
         /**
          * What a browser needs to read an agent's conversation
-         * @description An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
+         * @description An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
          *     The secret stays here, the same as for a call token: the browser is handed something that expires.
          */
         post: operations["createChatToken"];
@@ -1717,7 +1717,7 @@ export interface components {
                 [key: string]: string;
             };
         };
-        SearchResponse: {
+        SearchAnswer: {
             provider: string;
             model: string;
             /** @description The provider's own summary, where it offers one. It is what a voice agent wants: a sentence to say rather than a page to read. */
@@ -1884,7 +1884,7 @@ export interface components {
             /** @description The shop hostname or Salesforce my-domain. Required for plugins that have no single global URL. */
             instance_url?: string;
         };
-        AuthorizePluginResponse: {
+        PluginAuthorization: {
             /** @description The URL the browser should open to finish the login. */
             authorize_url: string;
         };
@@ -2249,6 +2249,14 @@ export interface components {
             llm?: string;
             /** @description The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. */
             subagent?: string;
+            /** @description The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over. */
+            stt_used?: string;
+            /** @description The provider/model that spoke, on the same terms as stt_used. */
+            tts_used?: string;
+            /** @description The provider/model that held the conversation. */
+            llm_used?: string;
+            /** @description The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached. */
+            subagent_used?: string;
             /** @description What the agent was told to be on this call. */
             instructions?: string;
             /** @description What the fast model could hand to the subagent. The instructions behind each name are in the skill registry. */
@@ -2301,7 +2309,7 @@ export interface components {
             token: string;
             user_id: string;
             user_name: string;
-            /** @description Always messaging, which is the type a conversation is written to. */
+            /** @description Always agent, which is the type a conversation is written to. */
             channel_type: string;
             /** @description The channel holding the conversation, which is the agent id. */
             channel_id: string;
@@ -2445,6 +2453,10 @@ export interface components {
             llm?: string;
             /** @description The provider and model speaking. */
             tts?: string;
+            /** @description The provider and model transcribing, once somebody has been heard. */
+            stt?: string;
+            /** @description The provider and model delegated work runs on. */
+            subagent?: string;
             instructions?: string;
         };
         SayRequest: {
@@ -2725,7 +2737,7 @@ export interface components {
         AttachNumberRequest: {
             /** @description The call every caller joins. Omit to give each caller their own call, named after the number they rang. */
             call_id?: string;
-            /** @description The Stream call type. Omit for "default". */
+            /** @description The Stream call type. Omit for "agent". */
             call_type?: string;
             /** @description The vendor's signalling addresses, as IPs or CIDR blocks. */
             allowed_ips?: string[];
@@ -2742,7 +2754,7 @@ export interface components {
             to: string;
             /** @description The Stream call the answered leg joins, and so the one the agent has to be in. Omit to have one named after this call, since two calls from the same number are two conversations. */
             call_id?: string;
-            /** @description The Stream call type. Omit for "default". */
+            /** @description The Stream call type. Omit for "agent". */
             call_type?: string;
             /** @description How long to ring before giving up. Omit to leave the vendor's default, which is long enough to reach voicemail. A vendor whose call API cannot express it refuses the call rather than ringing for its own default. */
             ring_timeout_seconds?: number;
@@ -2777,7 +2789,7 @@ export interface components {
             to: string;
             /** @description The Stream call the caller and the agent are already on. */
             call_id: string;
-            /** @description The Stream call type. Omit for "default". */
+            /** @description The Stream call type. Omit for "agent". */
             call_type?: string;
             tags?: {
                 [key: string]: string;
@@ -3707,7 +3719,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AuthorizePluginResponse"];
+                    "application/json": components["schemas"]["PluginAuthorization"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -5120,7 +5132,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SearchResponse"];
+                    "application/json": components["schemas"]["SearchAnswer"];
                 };
             };
             400: components["responses"]["BadRequest"];

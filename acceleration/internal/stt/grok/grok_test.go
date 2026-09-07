@@ -337,6 +337,50 @@ func (s *GrokSuite) TestTheEndpointLeavesUnsetOptionsToTheServer() {
 	s.NotContains(endpoint, "endpointing=")
 	s.NotContains(endpoint, "smart_turn")
 	s.NotContains(endpoint, "keyterm")
+	s.NotContains(endpoint, "diarize")
+}
+
+func (s *GrokSuite) TestDiarizationIsAskedForOnTheSocket() {
+	s.Contains(s.newSTT(Options{Diarize: true}).endpoint(), "diarize=true")
+}
+
+func (s *GrokSuite) TestTheTurnIsReportedInTheVoiceMostOfItWasSpokenIn() {
+	// The server labels each word, and a word of somebody else's speech caught at the
+	// edge of a turn should not rename the whole of it.
+	provider := s.newSTT(Options{Diarize: true})
+
+	provider.handleMessage(serverMessage{
+		Type: eventPartial, Text: "thanks for calling how can I help", IsFinal: true, SpeechFinal: true,
+		Words: []word{
+			{Text: "thanks", Speaker: 1},
+			{Text: "for", Speaker: 0},
+			{Text: "calling", Speaker: 0},
+			{Text: "how", Speaker: 0},
+			{Text: "can", Speaker: 0},
+			{Text: "I", Speaker: 0},
+			{Text: "help", Speaker: 0},
+		},
+	})
+
+	heard := s.transcripts(provider)
+	s.Require().Len(heard, 1)
+	s.Equal("0", heard[0].Speaker)
+}
+
+func (s *GrokSuite) TestATranscriptNamesNoVoiceWhenDiarizationIsOff() {
+	// Zero is a label the server uses, so the number alone cannot say whether anybody was
+	// named. A transcript that claimed voice "0" would have the agent believe it could
+	// tell two people at one microphone apart when it was never asked to listen for it.
+	provider := s.newSTT(Options{})
+
+	provider.handleMessage(serverMessage{
+		Type: eventPartial, Text: "hello", IsFinal: true, SpeechFinal: true,
+		Words: []word{{Text: "hello", Speaker: 0}},
+	})
+
+	heard := s.transcripts(provider)
+	s.Require().Len(heard, 1)
+	s.Empty(heard[0].Speaker)
 }
 
 func (s *GrokSuite) TestASmartTurnTimeoutWithoutSmartTurnIsNotSent() {

@@ -225,6 +225,13 @@ type Agent struct {
 	// listeners holds one transcription session per participant, because a speech-to-text
 	// stream is bound to a single speaker.
 	listeners map[string]*sttrouter.Session
+	// voices is the diarised label of the first voice heard on each participant's track,
+	// which is taken to be the caller's. A later turn in a different voice is somebody
+	// else at the same microphone: the track says who joined the call, and it is the
+	// wrong answer for everybody else in the room with them. Empty for the transcribers
+	// that cannot tell one voice from another, which leaves it saying nothing rather
+	// than guessing.
+	voices map[string]string
 	// speakingTurn is the turn the agent is currently on. It says which reply an
 	// interruption would abandon and which one the floor belongs to; it does not decide
 	// what may be heard, because the agent starts a turn for itself while the turn before
@@ -340,6 +347,7 @@ func New(options Options) (*Agent, error) {
 		emitter:   emitter,
 		prompt:    options.Instructions,
 		listeners: map[string]*sttrouter.Session{},
+		voices:    map[string]string{},
 		abandoned: map[string]struct{}{},
 		replies:   make(chan llm.Event, replyBuffer),
 		streams:   map[string]*llm.Stream{},
@@ -357,7 +365,7 @@ func New(options Options) (*Agent, error) {
 		agent.decisionStore = newDecisionRecorder(options.Store, owner, logger)
 		record = agent.decisionStore.Record
 	}
-	agent.converse = newConverse(settling, listening, emitter, record, logger)
+	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)
 	agent.turns = newTurnTracker(agent.finishTurn)
 
 	if options.Memory != nil {
@@ -615,6 +623,24 @@ func (a *Agent) LLM() *llmrouter.Session { return a.llm }
 // TTS exposes the voice session.
 func (a *Agent) TTS() *ttsrouter.Session { return a.tts }
 
+// STT is one of the live transcriptions, if anybody has been heard yet.
+func (a *Agent) STT() *sttrouter.Session {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, session := range a.listeners {
+		return session
+	}
+	return nil
+}
+
+// Subagent is the slower model delegated work runs on.
+func (a *Agent) Subagent() *llmrouter.Session {
+	if a.harness == nil {
+		return nil
+	}
+	return a.harness.Subagent()
+}
+
 // History returns the conversation so far.
 func (a *Agent) History() []llm.Message {
 	a.mu.Lock()
@@ -828,6 +854,10 @@ func (a *Agent) dropListener(participantID string, session *sttrouter.Session) {
 	if a.listeners[participantID] == session {
 		delete(a.listeners, participantID)
 	}
+	// The voice, though, goes either way: a diarised label belongs to the session that
+	// made it up, so whichever session serves this participant next has to be listened to
+	// afresh rather than held to names it never chose.
+	delete(a.voices, participantID)
 	a.mu.Unlock()
 
 	// Closing releases the provider's socket and ends the stream of events this was
@@ -1003,6 +1033,7 @@ func (a *Agent) ask(ready candidate) {
 	instructions := a.instructions()
 	speaking := a.generating || a.utterances > 0
 	reply := lastAssistantSaid(history)
+	anotherVoice := a.anotherVoiceLocked(ready)
 	a.mu.Unlock()
 
 	if err := current.Decide(harness.FlowTurn{
@@ -1013,10 +1044,32 @@ func (a *Agent) ask(ready candidate) {
 		Text:         ready.Text,
 		Speaking:     speaking,
 		Reply:        reply,
+		AnotherVoice: anotherVoice,
 	}); err != nil {
 		a.converse.Unasked(ready.ID)
 		a.fail(err, "flow")
 	}
+}
+
+// anotherVoiceLocked reports whether a turn came from somebody other than the person whose
+// track it arrived on.
+//
+// The first voice heard on a track is taken to be the caller's, since they are the one who
+// joined. A turn in a different voice is somebody in the room with them, whom the flow
+// controller has no reason to answer. Transcribers that cannot tell voices apart say
+// nothing here, and a turn nobody was named in is the caller's as far as anyone can tell.
+//
+// The caller holds the lock.
+func (a *Agent) anotherVoiceLocked(ready candidate) bool {
+	if ready.Speaker == "" {
+		return false
+	}
+	known, heard := a.voices[ready.Participant.ID]
+	if !heard {
+		a.voices[ready.Participant.ID] = ready.Speaker
+		return false
+	}
+	return known != ready.Speaker
 }
 
 // abandon drops the delegated work a turn owns, because whatever asked for it is no
@@ -1069,11 +1122,9 @@ func (a *Agent) respond(participant stt.Participant, text string, listened heard
 	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "")
 }
 
-func (a *Agent) respondCandidate(ready candidate, clarify bool) error {
-	note := ""
-	if clarify {
-		note = "The caller addressed you, but their meaning is ambiguous. Ask one short clarifying question."
-	}
+// respondCandidate answers a settled turn. The note is what the conversation decided the
+// model should know beyond the words, and is empty on a turn that is simply answered.
+func (a *Agent) respondCandidate(ready candidate, note string) error {
 	return a.respondTurn(ready.ID, ready.Participant, ready.Text, heard{
 		at:           ready.ReadyAt,
 		sttLatencyMs: ready.STTLatencyMs,

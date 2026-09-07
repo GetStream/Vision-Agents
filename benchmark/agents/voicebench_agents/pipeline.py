@@ -9,7 +9,7 @@ from vision_agents.plugins import openai, stream
 # The skills its subagent may run live under agents/accelerated/{pack}/skills/.
 DEFAULT_ACCELERATED_STT = "gemini/gemini-3.5-transcribe-live"
 DEFAULT_ACCELERATED_TTS = "inworld/inworld-tts-2-flash"
-DEFAULT_ACCELERATED_MODEL = "gemini/gemini-3.5-flash-lite"
+DEFAULT_ACCELERATED_MODEL = "gemini/gemini-3.8-flash"
 DEFAULT_ACCELERATED_SUBAGENT = "openai/gpt-5.6-sol"
 DEFAULT_CUSTOMER_ID = "voicebench"
 

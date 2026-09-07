@@ -50,6 +50,11 @@ type FlowTurn struct {
 	// Reply is what the agent is currently saying, so the controller can tell a cough
 	// overlapping a read-back from a caller who is correcting it.
 	Reply string
+	// AnotherVoice says the words came from someone other than the participant whose
+	// microphone they arrived on, which the transcribers that tell voices apart can hear.
+	// It is evidence rather than a verdict: somebody else in the room is usually talking
+	// to the room, but they may equally have leaned in to answer for the caller.
+	AnotherVoice bool
 }
 
 type flow struct {
@@ -88,6 +93,9 @@ is one JSON object and no other text:
 Choose wait when the words are probably incomplete, especially when they end on a PIN,
 member ID, phone number, or clock time that may still be growing.
 Choose ignore only when the words are clearly background speech or addressed to somebody else.
+Words in a different voice come from somebody else at the caller's microphone, who is
+usually talking to the room rather than to the agent, so lean towards ignore unless they
+plainly address it.
 Choose clarify when the caller addressed the agent but their request is ambiguous.
 Choose respond for a complete, relevant thought.
 A recorded menu reading out its options is one thought and not several, however long the
@@ -182,8 +190,12 @@ func flowQuestion(turn FlowTurn) string {
 	if participant == "" {
 		participant = "An unknown speaker"
 	}
-	fmt.Fprintf(&asked, "\nThe agent %s.\n%s has just said: %q\n\nReturn the JSON object.",
-		state, participant, turn.Text)
+	voice := ""
+	if turn.AnotherVoice {
+		voice = ", in a different voice from the one the agent has been talking to"
+	}
+	fmt.Fprintf(&asked, "\nThe agent %s.\n%s has just said%s: %q\n\nReturn the JSON object.",
+		state, participant, voice, turn.Text)
 	return asked.String()
 }
 

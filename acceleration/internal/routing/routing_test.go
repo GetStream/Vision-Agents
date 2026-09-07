@@ -229,6 +229,72 @@ func (s *RoutingSuite) TestConfigRejectsAnAliasNoProviderCanServe() {
 	s.ErrorContains(config.Validate(), "alias klingon-best matches no provider")
 }
 
+func (s *RoutingSuite) TestConfigRejectsAPreferredModelThatIsNotDeclared() {
+	config := s.config()
+	config.Aliases["en-low-latency"] = Alias{
+		Languages: []string{"en"}, RequireRealtime: true, Tier: LowLatency,
+		Prefer: "quick/does-not-exist",
+	}
+
+	s.ErrorContains(config.Validate(),
+		"alias en-low-latency prefers quick/does-not-exist, which is not declared")
+}
+
+func (s *RoutingSuite) TestConfigRejectsAPreferredModelTheAliasWouldNotPick() {
+	// lush/multi is high-quality, so pinning it to a low-latency shortcut would be a pin
+	// that never applies rather than one that changes where requests go.
+	config := s.config()
+	config.Aliases["en-low-latency"] = Alias{
+		Languages: []string{"en"}, RequireRealtime: true, Tier: LowLatency,
+		Prefer: "lush/multi",
+	}
+
+	s.ErrorContains(config.Validate(), "does not meet its own requirements")
+}
+
+func (s *RoutingSuite) TestNamingCandidatesLeavesOutTheOnesNotNamed() {
+	config := s.config()
+	config.Aliases["en-low-latency"] = Alias{
+		Languages: []string{"en"}, RequireRealtime: true, Tier: LowLatency,
+		Only: []string{"quick/en"},
+	}
+	s.Require().NoError(config.Validate())
+
+	var matched []string
+	for _, provider := range config.Providers {
+		if config.Aliases["en-low-latency"].matches(provider) {
+			matched = append(matched, provider.Name())
+		}
+	}
+
+	s.Equal([]string{"quick/en"}, matched, "quick/multi meets every requirement but was not named")
+}
+
+func (s *RoutingSuite) TestConfigRejectsANamedModelThatIsNotDeclared() {
+	config := s.config()
+	config.Aliases["en-low-latency"] = Alias{
+		Languages: []string{"en"}, RequireRealtime: true, Tier: LowLatency,
+		Only: []string{"quick/en", "quick/does-not-exist"},
+	}
+
+	s.ErrorContains(config.Validate(),
+		"alias en-low-latency names quick/does-not-exist, which is not declared")
+}
+
+func (s *RoutingSuite) TestConfigRejectsANamedModelTheAliasWouldNotPick() {
+	// lush/multi is high-quality, so naming it in a low-latency shortcut asks for a model
+	// that would be filtered straight back out, which is a config that says one thing and
+	// does another.
+	config := s.config()
+	config.Aliases["en-low-latency"] = Alias{
+		Languages: []string{"en"}, RequireRealtime: true, Tier: LowLatency,
+		Only: []string{"quick/en", "lush/multi"},
+	}
+
+	s.ErrorContains(config.Validate(),
+		"alias en-low-latency names lush/multi, which does not meet its own requirements")
+}
+
 func (s *RoutingSuite) TestConfigRejectsAModalityWithNoProviders() {
 	config := Config{TTS: ModalityConfig{}}
 
@@ -525,6 +591,46 @@ func (s *RoutingSuite) TestRankPrefersAMeasuredProviderOverAnUnmeasuredOne() {
 	rank(candidates)
 
 	s.Equal([]string{"known-good/m", "unmeasured/m"}, names(candidates))
+}
+
+func (s *RoutingSuite) TestPreferredModelGoesAheadOfABetterMeasuredOne() {
+	// The point of a pin: the deployment has chosen, and a rival's numbers do not reopen
+	// the question.
+	candidates := []Candidate{
+		{Config: ProviderConfig{Provider: "faster", Model: "m"}, Health: live.Health{Requests: 100, LatencyMsAvg: 40, Available: true}},
+		{Config: ProviderConfig{Provider: "chosen", Model: "m"}, Health: live.Health{Requests: 100, LatencyMsAvg: 300, Available: true}},
+	}
+
+	rank(candidates)
+	prefer(candidates, "chosen/m")
+
+	s.Equal([]string{"chosen/m", "faster/m"}, names(candidates))
+}
+
+func (s *RoutingSuite) TestAnUnavailablePreferredModelLetsTheRankingDecide() {
+	candidates := []Candidate{
+		{Config: ProviderConfig{Provider: "standby", Model: "m"}, Health: live.Health{Requests: 100, LatencyMsAvg: 300, Available: true}},
+		{Config: ProviderConfig{Provider: "chosen", Model: "m"}, Health: live.Health{Requests: 100, Errors: 100, Available: false}},
+	}
+
+	rank(candidates)
+	prefer(candidates, "chosen/m")
+
+	s.Equal([]string{"standby/m", "chosen/m"}, names(candidates),
+		"a pin says which model is wanted, not that the request should fail with it")
+}
+
+func (s *RoutingSuite) TestPreferringKeepsTheRestOfTheRankingIntact() {
+	candidates := []Candidate{
+		{Config: ProviderConfig{Provider: "fast", Model: "m"}, Health: live.Health{Requests: 10, LatencyMsAvg: 50, Available: true}},
+		{Config: ProviderConfig{Provider: "middling", Model: "m"}, Health: live.Health{Requests: 10, LatencyMsAvg: 100, Available: true}},
+		{Config: ProviderConfig{Provider: "chosen", Model: "m"}, Health: live.Health{Requests: 10, LatencyMsAvg: 500, Available: true}},
+	}
+
+	rank(candidates)
+	prefer(candidates, "chosen/m")
+
+	s.Equal([]string{"chosen/m", "fast/m", "middling/m"}, names(candidates))
 }
 
 func (s *RoutingSuite) TestRegistryBuildsRegisteredProvidersOnly() {

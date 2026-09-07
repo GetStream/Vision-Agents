@@ -23,8 +23,11 @@ const (
 
 // candidate is a stable transcript revision worth asking the flow controller about.
 type candidate struct {
-	ID           string
-	Participant  stt.Participant
+	ID          string
+	Participant stt.Participant
+	// Speaker is the voice the transcriber heard, for the ones that tell voices apart. It
+	// is how a second person at the caller's microphone is told from the caller.
+	Speaker      string
 	Text         string
 	Language     string
 	Confidence   float64
@@ -43,11 +46,17 @@ type cadence struct {
 
 	mu       sync.Mutex
 	speakers map[string]*cadenceSpeaker
-	closed   bool
+	// grace is extra settling time owed to the next turn, whoever says it. It lasts until
+	// a turn has been put rather than until the next revision, so every revision of that
+	// turn is given it and not only the first.
+	grace  time.Duration
+	closed bool
 }
 
 type cadenceSpeaker struct {
 	participant stt.Participant
+	// speaker is the diarised voice the words were last heard in.
+	speaker     string
 	text        string
 	language    string
 	confidence  float64
@@ -122,6 +131,12 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	}
 
 	current.participant = transcript.Participant
+	// A transcriber names the voice part way through a turn, so the last word on it is
+	// the one to keep: an early revision that had nothing to say about who was talking
+	// should not erase what a later one worked out.
+	if transcript.Speaker != "" {
+		current.speaker = transcript.Speaker
+	}
 	current.language = transcript.Language
 	current.confidence = transcript.Confidence
 	current.latencyMs = transcript.ProcessingTimeMs
@@ -143,7 +158,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.candidateID = ""
 	current.generation++
 	current.revisedAt = time.Now()
-	delay := c.gap
+	delay := c.gap + c.grace
 	if incompleteIdentifier(text) {
 		// Member IDs, PINs and clock times arrive a digit at a time. Answering
 		// "ABC12345" 350ms before the last 6 is how verify_identity got the wrong id.
@@ -152,7 +167,7 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	c.scheduleLocked(current, delay)
 	c.logger.Debug("heard more, waiting for the words to stop changing",
 		"participant", transcript.Participant.ID, "mode", transcript.Mode, "text", text,
-		"confidence", transcript.Confidence, "gap", c.gap, "superseded", superseded)
+		"confidence", transcript.Confidence, "gap", delay, "superseded", superseded)
 	return superseded, strings.TrimSpace(text)
 }
 
@@ -176,6 +191,7 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 			current.committedUtterance = current.utterance
 			current.committedAt = time.Now()
 			current.text = ""
+			current.speaker = ""
 			current.language = ""
 			current.confidence = 0
 			current.latencyMs = 0
@@ -187,6 +203,17 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 		return true
 	}
 	return false
+}
+
+// Grace gives the next turn longer than usual to hold still, and is spent on it.
+//
+// What it is for is the turn after somebody was talked over: the line is running late, so
+// the words are still arriving when the usual gap says they have stopped. It is a one-off
+// rather than a setting, because a call is not slow for having had one collision in it.
+func (c *cadence) Grace(extra time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.grace = extra
 }
 
 // Active reports the most recently heard participant while words are still evolving.
@@ -262,9 +289,11 @@ func (c *cadence) emit(participantID string, generation int64) {
 	waited := time.Since(current.revisedAt)
 	current.candidateID = replyPrefix + turnStamp()
 	current.timer = nil
+	c.grace = 0
 	ready := candidate{
 		ID:           current.candidateID,
 		Participant:  current.participant,
+		Speaker:      current.speaker,
 		Text:         strings.TrimSpace(current.text),
 		Language:     current.language,
 		Confidence:   current.confidence,

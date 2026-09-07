@@ -22,7 +22,7 @@ class OutboundCall:
         from_: One of your own numbers, which is what the person sees.
         to: Who to call.
         call_id: The call the answered leg joins, and so the one the agent has to be in.
-        call_type: The call type. Empty means "default".
+        call_type: The call type. Empty means "agent".
         ring_timeout: How long to ring before giving up. None leaves the vendor's default,
             which is long enough to reach voicemail.
         initial_digits: Pressed once the person answers, for reaching an extension behind
@@ -82,7 +82,7 @@ class InboundCall:
     """
 
     call_id: str
-    call_type: str = "default"
+    call_type: str = "agent"
     called_number: str = ""
     caller_number: str = ""
     custom: dict[str, str] = field(default_factory=dict)

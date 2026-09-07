@@ -71,6 +71,10 @@ type Options struct {
 	// turns on the written form of numbers, currencies and units. Empty leaves them as
 	// they were spoken.
 	Language string
+	// Diarize labels each word with the voice it was in, which is what tells a second
+	// person at the same microphone from the caller. Off leaves every transcript
+	// unattributed, which is the right answer when one track carries one person.
+	Diarize bool
 	// EndpointingMs is the silence that ends an utterance. Zero leaves the server's own
 	// 400ms in place.
 	EndpointingMs int
@@ -89,10 +93,19 @@ type Options struct {
 	Logger       *slog.Logger
 }
 
+// word is one word of a transcript, and the voice it was in when diarization is on.
+type word struct {
+	Text    string `json:"text"`
+	Speaker int    `json:"speaker"`
+}
+
 // serverMessage is a frame sent by the server.
 type serverMessage struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+	// Words carry the diarised labels. The server puts them on the words rather than on
+	// the transcript, so the turn's own voice has to be read off them.
+	Words []word `json:"words"`
 	// IsFinal says the text will not change. SpeechFinal says the speaker stopped, which
 	// is the only one of the two that ends a turn.
 	IsFinal     bool `json:"is_final"`
@@ -279,6 +292,9 @@ func (s *STT) endpoint() string {
 	if s.options.Language != "" {
 		query.Set("language", s.options.Language)
 	}
+	if s.options.Diarize {
+		query.Set("diarize", "true")
+	}
 	if s.options.EndpointingMs > 0 {
 		query.Set("endpointing", strconv.Itoa(s.options.EndpointingMs))
 	}
@@ -452,6 +468,7 @@ func (s *STT) sendTranscript(message serverMessage, mode stt.Mode, text string) 
 		Participant: participant,
 		Mode:        mode,
 		Utterance:   s.utteranceID(),
+		Speaker:     s.dominant(message.Words),
 		Text:        text,
 		// Only sent when Smart Turn is on, and then only at a silence boundary.
 		Confidence:       message.EndOfTurnConfidence,
@@ -461,6 +478,29 @@ func (s *STT) sendTranscript(message serverMessage, mode stt.Mode, text string) 
 		ProcessingTimeMs: latencyMs,
 		AudioDurationMs:  message.Duration * 1000,
 	})
+}
+
+// dominant is the voice most of a transcript's words were in, which is the one the turn is
+// reported as being in.
+//
+// The server labels the words rather than the turn, so a word of somebody else's speech
+// caught at the edge of one does not get to rename the whole of it. Zero is a label the
+// server uses, so a transcript with no voice on it is told by diarization being off rather
+// than by the number being empty.
+func (s *STT) dominant(words []word) string {
+	if !s.options.Diarize || len(words) == 0 {
+		return ""
+	}
+
+	counts := map[int]int{}
+	loudest, most := 0, 0
+	for _, spoken := range words {
+		counts[spoken.Speaker]++
+		if counts[spoken.Speaker] > most {
+			loudest, most = spoken.Speaker, counts[spoken.Speaker]
+		}
+	}
+	return strconv.Itoa(loudest)
 }
 
 // settledTheLastUtterance reports whether the run of speech that was in progress has

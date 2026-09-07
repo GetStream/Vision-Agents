@@ -198,7 +198,7 @@ stt:
         ]
       realtime: true
       tier: low-latency
-      supports: [keyterms]
+      supports: [keyterms, diarize]
       price:
         per_audio_hour: 0.20
 
@@ -239,7 +239,7 @@ stt:
         ]
       realtime: true
       tier: low-latency
-      supports: [keyterms]
+      supports: [keyterms, diarize]
       price:
         per_audio_hour: 0.18
 
@@ -269,10 +269,21 @@ stt:
         per_audio_hour: 0.258
 
   aliases:
+    # The transcribers an English call is trusted to. Every live model here is realtime
+    # and low-latency and speaks English, so nothing any of them declares tells these
+    # apart from the rest and the names have to be given outright. Gemini and the two
+    # Parakeets stay reachable through the shortcuts below and by naming a provider and
+    # model. Grok is the one of these four that names the voice without being asked, and
+    # so the one that can tell a bystander at the caller's microphone from the caller.
     en-low-latency:
       languages: [en]
       require_realtime: true
       tier: low-latency
+      only:
+        - deepgram/flux-general-en
+        - deepgram/flux-general-multi
+        - grok/grok-stt
+        - muse/muse-voice-transcribe-1.0
 
     multilingual-low-latency:
       multilingual: true
@@ -745,19 +756,19 @@ llm:
         per_million_cached_input_tokens: 0.02
         per_million_output_tokens: 1.20
 
-    # The fastest of the Gemini 3.5 line at around 350 output tokens a second, which is what
-    # earns it a place here: the output price is above the rest of this tier, and a turn that
-    # arrives sooner is what is being paid for. Every Gemini 3 model thinks, so the provider
-    # pins it to minimal rather than letting it reason through a conversation.
+    # What llm-fast prefers, so this is the model a conversation gets unless it is down. It
+    # is the dearest of this tier by some way and its thinking is billed as output, which is
+    # why the provider asks for the low thinking level rather than the medium it defaults to.
+    # These are Google's introductory rates and double on 1 January 2027.
     - provider: gemini
-      model: gemini-3.5-flash-lite
+      model: gemini-3.8-flash
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
       price:
-        per_million_input_tokens: 0.30
-        per_million_cached_input_tokens: 0.03
-        per_million_output_tokens: 2.50
+        per_million_input_tokens: 0.75
+        per_million_cached_input_tokens: 0.075
+        per_million_output_tokens: 3.75
 
     # Self-hosted, so there is no per-token bill: the deployment is charged by the minute.
     # The rates below convert Baseten's L4 rate of $0.01414/min at an assumed 1500 output
@@ -805,8 +816,9 @@ llm:
         per_million_cached_input_tokens: 0.20
         per_million_output_tokens: 12.00
 
-    # Sol is the frontier tier. OpenAI defaults it to medium reasoning effort, which the
-    # provider also sends explicitly when this concrete model is selected.
+    # Sol is the frontier tier, and what llm-thinking prefers, so this is the model the
+    # skills run on unless it is down. OpenAI defaults it to medium reasoning effort, which
+    # the provider also sends explicitly when this concrete model is selected.
     - provider: openai
       model: gpt-5.6-sol
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
@@ -836,11 +848,27 @@ llm:
       multilingual: true
       tier: high-quality
 
-    # Whichever model is quickest, in whatever language. The shorthand a caller reaches for
-    # when the only thing that matters is that the answer starts arriving.
+    # A fast answer, in whatever language. The shorthand a caller reaches for when the only
+    # thing that matters is that the answer starts arriving.
+    #
+    # Gemini 3.8 Flash is preferred outright rather than left to the ranking, so the model a
+    # conversation gets is the one this deployment chose. The rest of the tier is still here
+    # to catch it being down.
     llm-fast:
       require_realtime: true
       tier: low-latency
+      prefer: gemini/gemini-3.8-flash
+
+    # What a skill runs on: the model asked the part of a turn the talking model could not
+    # answer itself. The conversation carries on while it thinks, so this is the shorthand
+    # for quality over speed, and nothing here is chosen for how soon it starts.
+    #
+    # GPT-5.6 Sol is preferred outright rather than left to the ranking, for the same reason
+    # llm-fast pins its own: the model that does the thinking is the one this deployment
+    # chose. The rest of the tier is still here to catch it being down.
+    llm-thinking:
+      tier: high-quality
+      prefer: openai/gpt-5.6-sol
 
 # What is true today, which neither a model nor a handbook can answer. These providers all
 # read the same web, so what separates them is whether a model writes the answer before it

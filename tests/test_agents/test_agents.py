@@ -164,7 +164,12 @@ class DummyRemotePipeline(OmniLLM):
         self.joined: Optional[RemoteCall] = None
         self.left = False
         self.said: list[str] = []
+        self.session_id: Optional[str] = None
         self._reported: asyncio.Queue[Optional[RemoteEvent]] = asyncio.Queue()
+
+    @property
+    def router_session_id(self) -> Optional[str]:
+        return self.session_id
 
     async def join_remote(self, call: RemoteCall) -> None:
         self.joined = call
@@ -889,6 +894,34 @@ class TestAgent:
         async with agent.join(call, wait_for_end=False):
             assert edge.authenticate_call_count == 1
 
+    async def test_joining_a_call_type_and_an_id_creates_the_call(self):
+        edge = DummyEdge()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        async with agent.join("default", "call-9", wait_for_end=False):
+            pass
+
+        assert edge.created_calls == ["call-9"]
+        assert agent.call is not None
+        assert agent.call.id == "call-9"
+
+    async def test_joining_a_call_type_without_an_id_is_refused(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        with pytest.raises(ValueError, match="needs the call's id"):
+            async with agent.join("default", wait_for_end=False):
+                pass
+
     async def test_avatar_wiring(self):
         """Avatar metrics forward to agent metrics after merge, and the
         avatar's video track becomes the agent's outbound video track."""
@@ -1047,3 +1080,48 @@ class TestAgent:
             pass
 
         assert llm.left
+
+
+class TestOpenUI:
+    """How `run` decides whether there is a dashboard page to open."""
+
+    async def test_a_remote_pipeline_that_has_joined_names_the_page(self):
+        from vision_agents.core.runner.runner import _router_session_id
+
+        llm = DummyRemotePipeline()
+        llm.session_id = "call-page"
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        assert await _router_session_id(agent) == "call-page"
+
+    async def test_a_join_that_already_failed_does_not_hold_the_ui(self):
+        from vision_agents.core.runner.runner import _router_session_id
+
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async def fail() -> None:
+            raise RuntimeError("the call was not created")
+
+        task = asyncio.create_task(fail())
+        # The task finishes on its own; waiting on it would raise and is not what
+        # opening the UI does.
+        while not task.done():
+            await asyncio.sleep(0)
+        task.exception()
+        started = time.monotonic()
+
+        assert await _router_session_id(agent, join_task=task) is None
+        assert time.monotonic() - started < 1
+
+    async def test_a_local_pipeline_has_no_dashboard_page(self):
+        from vision_agents.core.runner.runner import _router_session_id
+
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        assert await _router_session_id(agent) is None

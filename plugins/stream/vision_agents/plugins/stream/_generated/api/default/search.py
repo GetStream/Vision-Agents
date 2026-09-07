@@ -6,8 +6,8 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.error import Error
+from ...models.search_answer import SearchAnswer
 from ...models.search_request import SearchRequest
-from ...models.search_response import SearchResponse
 from ...types import Response
 
 
@@ -32,9 +32,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Error | SearchResponse | None:
+) -> Error | SearchAnswer | None:
     if response.status_code == 200:
-        response_200 = SearchResponse.from_dict(response.json())
+        response_200 = SearchAnswer.from_dict(response.json())
 
         return response_200
 
@@ -61,7 +61,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Error | SearchResponse]:
+) -> Response[Error | SearchAnswer]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -74,7 +74,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: SearchRequest,
-) -> Response[Error | SearchResponse]:
+) -> Response[Error | SearchAnswer]:
     """Answer a question out of what is true now
 
      The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for.
@@ -89,7 +89,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | SearchResponse]
+        Response[Error | SearchAnswer]
     """
 
     kwargs = _get_kwargs(
@@ -107,7 +107,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: SearchRequest,
-) -> Error | SearchResponse | None:
+) -> Error | SearchAnswer | None:
     """Answer a question out of what is true now
 
      The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for.
@@ -122,7 +122,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | SearchResponse
+        Error | SearchAnswer
     """
 
     return sync_detailed(
@@ -135,7 +135,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: SearchRequest,
-) -> Response[Error | SearchResponse]:
+) -> Response[Error | SearchAnswer]:
     """Answer a question out of what is true now
 
      The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for.
@@ -150,7 +150,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Error | SearchResponse]
+        Response[Error | SearchAnswer]
     """
 
     kwargs = _get_kwargs(
@@ -166,7 +166,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: SearchRequest,
-) -> Error | SearchResponse | None:
+) -> Error | SearchAnswer | None:
     """Answer a question out of what is true now
 
      The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for.
@@ -181,7 +181,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Error | SearchResponse
+        Error | SearchAnswer
     """
 
     return (

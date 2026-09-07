@@ -20,7 +20,14 @@ type Transcript struct {
 	// It is what tells a provider going over words again apart from the speaker saying
 	// them again, which no amount of looking at the words can settle. Providers that
 	// cannot see where an utterance ends leave it zero.
-	Utterance        int64
+	Utterance int64
+	// Speaker is the voice the provider heard, for the providers that tell one voice on a
+	// track from another. It is a label the session made up, "A" or "1", not an identity:
+	// it says nothing about who the person is and it does not survive a reconnect. What it
+	// is for is the microphone more than one person is talking into, where the participant
+	// the audio arrived under is the wrong answer for everyone but the first of them.
+	// Providers that cannot hear the difference leave it empty.
+	Speaker          string
 	Text             string
 	Confidence       float64
 	Language         string

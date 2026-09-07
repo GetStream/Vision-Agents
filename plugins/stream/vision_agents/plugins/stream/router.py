@@ -31,7 +31,7 @@ from ._generated.models import (
     SearchOptions,
     SearchRequest,
     SearchRequestTags,
-    SearchResponse,
+    SearchAnswer,
     Speech,
     SpeechRequest,
     SpeechRequestTags,
@@ -110,7 +110,7 @@ class Router:
         self.tts = TextToSpeech(self)
         self.llm = Completions(self)
 
-    async def search(self, query: str, **options) -> SearchResponse:
+    async def search(self, query: str, **options) -> SearchAnswer:
         """Answer `query` out of what is true now.
 
         Args:

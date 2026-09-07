@@ -271,7 +271,7 @@ class AgentLauncher:
     async def start_session(
         self,
         call_id: str,
-        call_type: str = "default",
+        call_type: str = "agent",
         video_track_override_path: Optional[str] = None,
     ) -> AgentSession:
         """
@@ -282,7 +282,7 @@ class AgentLauncher:
 
         Args:
             call_id: Unique identifier for the call to join.
-            call_type: Type of call. Default is "default".
+            call_type: Type of call. Default is "agent".
             video_track_override_path: Optional path to a video file to use
                 instead of a live video track.
 

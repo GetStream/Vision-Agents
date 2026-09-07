@@ -1721,6 +1721,24 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Call/subagent`.
             internal var subagent: Swift.String?
+            /// The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/Call/stt_used`.
+            internal var sttUsed: Swift.String?
+            /// The provider/model that spoke, on the same terms as stt_used.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Call/tts_used`.
+            internal var ttsUsed: Swift.String?
+            /// The provider/model that held the conversation.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Call/llm_used`.
+            internal var llmUsed: Swift.String?
+            /// The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/Call/subagent_used`.
+            internal var subagentUsed: Swift.String?
             /// What the agent was told to be on this call.
             ///
             /// - Remark: Generated from `#/components/schemas/Call/instructions`.
@@ -1778,6 +1796,10 @@ extension Components {
             ///   - tts: The voice target, on the same terms as stt.
             ///   - llm: The target that held the conversation.
             ///   - subagent: The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered.
+            ///   - sttUsed: The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over.
+            ///   - ttsUsed: The provider/model that spoke, on the same terms as stt_used.
+            ///   - llmUsed: The provider/model that held the conversation.
+            ///   - subagentUsed: The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
             ///   - instructions: What the agent was told to be on this call.
             ///   - skills: What the fast model could hand to the subagent. The instructions behind each name are in the skill registry.
             ///   - summary: What a model made of the call, written once it was over.
@@ -1800,6 +1822,10 @@ extension Components {
                 tts: Swift.String? = nil,
                 llm: Swift.String? = nil,
                 subagent: Swift.String? = nil,
+                sttUsed: Swift.String? = nil,
+                ttsUsed: Swift.String? = nil,
+                llmUsed: Swift.String? = nil,
+                subagentUsed: Swift.String? = nil,
                 instructions: Swift.String? = nil,
                 skills: [Swift.String]? = nil,
                 summary: Swift.String? = nil,
@@ -1822,6 +1848,10 @@ extension Components {
                 self.tts = tts
                 self.llm = llm
                 self.subagent = subagent
+                self.sttUsed = sttUsed
+                self.ttsUsed = ttsUsed
+                self.llmUsed = llmUsed
+                self.subagentUsed = subagentUsed
                 self.instructions = instructions
                 self.skills = skills
                 self.summary = summary
@@ -1845,6 +1875,10 @@ extension Components {
                 case tts
                 case llm
                 case subagent
+                case sttUsed = "stt_used"
+                case ttsUsed = "tts_used"
+                case llmUsed = "llm_used"
+                case subagentUsed = "subagent_used"
                 case instructions
                 case skills
                 case summary
@@ -2019,7 +2053,7 @@ extension Components {
             internal var userId: Swift.String
             /// - Remark: Generated from `#/components/schemas/ChatToken/user_name`.
             internal var userName: Swift.String
-            /// Always messaging, which is the type a conversation is written to.
+            /// Always agent, which is the type a conversation is written to.
             ///
             /// - Remark: Generated from `#/components/schemas/ChatToken/channel_type`.
             internal var channelType: Swift.String
@@ -2036,7 +2070,7 @@ extension Components {
             ///   - token:
             ///   - userId:
             ///   - userName:
-            ///   - channelType: Always messaging, which is the type a conversation is written to.
+            ///   - channelType: Always agent, which is the type a conversation is written to.
             ///   - channelId: The channel holding the conversation, which is the agent id.
             ///   - expiresAt:
             internal init(
@@ -2373,6 +2407,14 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Session/tts`.
             internal var tts: Swift.String?
+            /// The provider and model transcribing, once somebody has been heard.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/stt`.
+            internal var stt: Swift.String?
+            /// The provider and model delegated work runs on.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/subagent`.
+            internal var subagent: Swift.String?
             /// - Remark: Generated from `#/components/schemas/Session/instructions`.
             internal var instructions: Swift.String?
             /// Creates a new `Session`.
@@ -2388,6 +2430,8 @@ extension Components {
             ///   - createdAt:
             ///   - llm: The provider and model answering, once routing has picked one.
             ///   - tts: The provider and model speaking.
+            ///   - stt: The provider and model transcribing, once somebody has been heard.
+            ///   - subagent: The provider and model delegated work runs on.
             ///   - instructions:
             internal init(
                 id: Swift.String,
@@ -2400,6 +2444,8 @@ extension Components {
                 createdAt: Foundation.Date,
                 llm: Swift.String? = nil,
                 tts: Swift.String? = nil,
+                stt: Swift.String? = nil,
+                subagent: Swift.String? = nil,
                 instructions: Swift.String? = nil
             ) {
                 self.id = id
@@ -2412,6 +2458,8 @@ extension Components {
                 self.createdAt = createdAt
                 self.llm = llm
                 self.tts = tts
+                self.stt = stt
+                self.subagent = subagent
                 self.instructions = instructions
             }
             internal enum CodingKeys: String, CodingKey {
@@ -2425,6 +2473,8 @@ extension Components {
                 case createdAt = "created_at"
                 case llm
                 case tts
+                case stt
+                case subagent
                 case instructions
             }
         }

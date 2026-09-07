@@ -146,16 +146,40 @@ func (s *LLMRouterSuite) TestLowLatencyAndQualityShortcutsPickDifferentModels() 
 		"asking for speed and asking for quality should not land on the same model")
 }
 
-func (s *LLMRouterSuite) TestTheCheapestFastModelIsPreferred() {
-	// Ranking is stable within a tier, so config order decides. Flash is first because it
-	// is both the cheapest and the quickest of the low-latency models.
+func (s *LLMRouterSuite) TestLLMFastGoesToTheModelItPins() {
+	// llm-fast names the model this deployment wants rather than leaving it to whichever
+	// of the tier is measuring quickest, so consecutive turns are answered by the same
+	// model.
 	router := s.newRouter()
 
 	candidates, err := router.Resolve(s.ctx, "llm-fast", nil)
 	s.Require().NoError(err)
+
+	s.Equal("gemini/gemini-3.8-flash", candidates[0].Config.Name())
+	s.Greater(len(candidates), 1, "the rest of the tier has to stay behind it as failover")
+}
+
+func (s *LLMRouterSuite) TestLLMThinkingGoesToTheModelItPins() {
+	router := s.newRouter()
+
+	candidates, err := router.Resolve(s.ctx, "llm-thinking", nil)
+	s.Require().NoError(err)
+
+	s.Equal("openai/gpt-5.6-sol", candidates[0].Config.Name())
+	s.Greater(len(candidates), 1, "the rest of the tier has to stay behind it as failover")
+}
+
+func (s *LLMRouterSuite) TestLLMThinkingResolvesToAQualityModel() {
+	router := s.newRouter()
+
+	candidates, err := router.Resolve(s.ctx, "llm-thinking", nil)
+	s.Require().NoError(err)
 	s.Require().NotEmpty(candidates)
 
-	s.Equal("deepseek/DeepSeek-V4-Flash-0731", candidates[0].Config.Name())
+	for _, candidate := range candidates {
+		s.Equal(routing.HighQuality, candidate.Config.Tier,
+			"what the conversation carries on without should never be picked for speed")
+	}
 }
 
 func (s *LLMRouterSuite) TestAnUnknownTargetIsRejected() {

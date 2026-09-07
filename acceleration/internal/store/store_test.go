@@ -450,6 +450,44 @@ func (s *StoreSuite) TestAnEarlierCallOnTheSameIdIsNotThisOnes() {
 	s.Equal("this call", read[0].Reason)
 }
 
+func (s *StoreSuite) TestACallReportsTheModelsThatServedIt() {
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "stt", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "deepgram", Model: "flux-general-en",
+		StartedAt: s.base.Add(time.Second), Success: true,
+	}))
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "gemini", Model: "gemini-3.5-flash-lite",
+		StartedAt: s.base.Add(2 * time.Second), Success: true,
+	}))
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "openai", Model: "gpt-5.6-sol",
+		StartedAt: s.base.Add(3 * time.Second), Success: true,
+	}))
+	// A failed start is not what served the call.
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "tts", CustomerID: "acme", AgentID: "agent-1",
+		Provider: "cartesia", Model: "sonic-preview",
+		StartedAt: s.base.Add(4 * time.Second), Success: false, ErrorCode: "start_failed",
+	}))
+	// Another agent is not this call.
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "stt", CustomerID: "acme", AgentID: "agent-2",
+		Provider: "grok", Model: "grok-stt",
+		StartedAt: s.base.Add(2 * time.Second), Success: true,
+	}))
+
+	used, err := s.store.CallUsedModels(s.ctx, "acme", "agent-1", s.base, nil)
+	s.Require().NoError(err)
+	s.Equal([]UsedModel{
+		{Modality: "llm", Provider: "openai", Model: "gpt-5.6-sol"},
+		{Modality: "llm", Provider: "gemini", Model: "gemini-3.5-flash-lite"},
+		{Modality: "stt", Provider: "deepgram", Model: "flux-general-en"},
+	}, used)
+}
+
 func (s *StoreSuite) TestRecordingNoDecisionsIsNotAnError() {
 	s.Require().NoError(s.store.RecordCallEvents(s.ctx, nil))
 }

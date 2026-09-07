@@ -38,7 +38,7 @@ async def create_agent(**kwargs) -> Agent:
         agent_user=User(name="My accelerated AI friend", id="agent"),
         instructions=INSTRUCTIONS,
         llm=stream.Accelerated(
-            model="gemini/gemini-3.5-flash-lite",
+            model="gemini/gemini-3.8-flash",
             stt="deepgram/flux-general-en",
             tts="elevenlabs/eleven_v3_conversational",
             subagent="openai/gpt-5.6-sol",

@@ -4,12 +4,12 @@ A voice agent with nothing in the pipeline running in Python. `instructions.md` 
 the agent is, and it names no models at all: a config that says nothing about who does the
 work gets the router's defaults.
 
-| Modality   | Default target               |
-| ---------- | ---------------------------- |
-| Transcribe | `en-low-latency`             |
-| Answer     | `llm-fast`                   |
-| Speak      | `en-low-latency`             |
-| Think      | `multilingual-high-accuracy` |
+| Modality   | Default target   |
+| ---------- | ---------------- |
+| Transcribe | `en-low-latency` |
+| Answer     | `llm-fast`       |
+| Speak      | `en-low-latency` |
+| Think      | `llm-thinking`   |
 
 Each of those is a capability rather than a model, so the router picks inside the tier by
 live health and a degraded provider drops down the list. Set `stt`, `tts`, `llm` or
@@ -38,8 +38,12 @@ A running acceleration router: see [acceleration/README.md](../../../acceleratio
 ```bash
 cd examples/agents/simple_voice_ai
 uv sync
-uv run simple_voice_ai.py
+uv run simple_voice_ai.py run
 ```
+
+`run` joins one call and opens the demo UI on it, which is what to talk into. `--call-id`
+joins a call by name rather than a new one, `--no-demo` leaves the browser alone, and
+`serve` instead starts the HTTP server that sends an agent to whichever call asks for one.
 
 Needs a `.env` with:
 

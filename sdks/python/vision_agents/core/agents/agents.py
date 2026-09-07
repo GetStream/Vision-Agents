@@ -250,7 +250,7 @@ class Agent:
 
         self._id = str(uuid4())
         self.call: Optional[Call] = None
-        self._call_type = "default"
+        self._call_type = "agent"
 
         self._active_processed_track_id: Optional[str] = None
         self._active_source_track_id: Optional[str] = None
@@ -561,7 +561,8 @@ class Agent:
     @asynccontextmanager
     async def join(
         self,
-        call: Call | InboundCall,
+        call: Call | InboundCall | str,
+        call_id: str = "",
         participant_wait_timeout: Optional[float] = 10.0,
         wait_for_end: bool = True,
     ) -> AsyncIterator[None]:
@@ -575,7 +576,9 @@ class Agent:
         caller with `call.wait_for_phone_participant()` before greeting them.
 
         Args:
-            call: the call to join, or an inbound call to attach to.
+            call: the call to join, an inbound call to attach to, or the type of a call
+                 to create and then join, in which case `call_id` names it.
+            call_id: what the call is called, when `call` is a call type.
             participant_wait_timeout: timeout in seconds to wait for other participants to join before proceeding.
                  If `0`, do not wait at all. If `None`, wait forever.
                  Default - `10.0`, or `0` for an inbound call.
@@ -586,15 +589,17 @@ class Agent:
         Returns:
 
         """
-        if isinstance(call, InboundCall):
+        if isinstance(call, str):
+            if not call_id:
+                raise ValueError("joining a call by its type needs the call's id too")
+            call = await self.create_call(call, call_id)
+        elif isinstance(call, InboundCall):
             if not call.call_id:
                 raise ValueError(
                     "an inbound call has to name the call the caller is in"
                 )
             inbound = call
-            call = await self.create_call(
-                inbound.call_type or "default", inbound.call_id
-            )
+            call = await self.create_call(inbound.call_type or "agent", inbound.call_id)
             inbound._joined = self
             if participant_wait_timeout == 10.0:
                 participant_wait_timeout = 0.0
@@ -698,7 +703,7 @@ class Agent:
         self,
         from_: str,
         to: str,
-        call_type: str = "default",
+        call_type: str = "agent",
         call_id: str = "",
         ring_timeout: Optional[float] = None,
         initial_digits: str = "",
@@ -800,7 +805,7 @@ class Agent:
 
         # get_or_create, so this attaches to the call Stream already made for the caller
         # rather than making a second one they are not in.
-        joined = await self.create_call(call.call_type or "default", call.call_id)
+        joined = await self.create_call(call.call_type or "agent", call.call_id)
         self.logger.info(
             "answering %s on %s, call %s",
             call.caller_number or "a caller",

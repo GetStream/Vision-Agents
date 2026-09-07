@@ -94,13 +94,28 @@ func (s *GeminiSuite) TestModelIsSentUnqualified() {
 	s.Equal("gemini-3.6-flash", provider.Model())
 }
 
-func (s *GeminiSuite) TestThinkingIsHeldAtItsMinimumForAConversation() {
+func (s *GeminiSuite) TestThinkingIsHeldAtItsFloorForAConversation() {
 	// Every Gemini 3 model thinks and none of them can be told not to, so the least it
 	// will do is the most a live turn can afford. Left unset, Google picks the model's
 	// own default, which on the Flash models is higher than this.
 	s.ask(Options{})
 
+	s.Equal(lowEffort, s.request["reasoning_effort"])
+}
+
+func (s *GeminiSuite) TestTheFloorIsWhicheverOneTheModelStillHas() {
+	// 3.8 Flash made thinking a level and dropped minimal; the models before it kept it.
+	s.ask(Options{Model: "gemini-3.5-flash-lite"})
+
 	s.Equal(minimalEffort, s.request["reasoning_effort"])
+}
+
+func (s *GeminiSuite) TestAnEffortTheModelDroppedIsRefusedBeforeItIsSent() {
+	// Google answers minimal on 3.8 with a 400, which on the live path arrives in the
+	// middle of a turn somebody is waiting through.
+	_, err := New(Options{APIKey: "k", Model: "gemini-3.8-flash", ReasoningEffort: minimalEffort})
+
+	s.ErrorContains(err, `reasoning effort "minimal" is not one of low, medium, high`)
 }
 
 func (s *GeminiSuite) TestMoreThinkingCanBeAskedForOffTheLivePath() {

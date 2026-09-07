@@ -33,7 +33,7 @@ type Spec struct {
 	// model afterwards, which is worth paying for once per caller and not worth paying for
 	// once per conversation in a batch that is already being judged.
 	NoReview bool
-	// CallType defaults to "default".
+	// CallType defaults to "agent".
 	CallType string
 	// UserID is who the agent joins the call as.
 	UserID string

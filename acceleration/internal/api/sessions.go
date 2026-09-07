@@ -309,7 +309,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 // sessionOf renders a session for the wire.
 func sessionOf(found *session.Session) Session {
 	spec := found.Spec()
-	model, voice := found.Provider()
+	stt, model, voice, think := found.Resolved()
 	instructions := spec.Instructions
 
 	rendered := Session{
@@ -324,11 +324,17 @@ func sessionOf(found *session.Session) Session {
 	if spec.Text {
 		rendered.Text = &spec.Text
 	}
+	if stt != "" {
+		rendered.Stt = &stt
+	}
 	if model != "" {
 		rendered.Llm = &model
 	}
 	if voice != "" {
 		rendered.Tts = &voice
+	}
+	if think != "" {
+		rendered.Subagent = &think
 	}
 	if instructions != "" {
 		rendered.Instructions = &instructions

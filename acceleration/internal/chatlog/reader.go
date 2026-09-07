@@ -76,10 +76,15 @@ func (r *Reader) Transcript(ctx context.Context, agentID string) ([]Spoken, erro
 	// Without asking for the state the channel comes back without its messages, which
 	// reads as a conversation nobody stored rather than as the error it is.
 	state := true
+	// A custom channel type such as "agent" refuses server-side create without a
+	// creator; "messaging" used to let this through. The channel is named for the
+	// agent, so the agent is who created it.
+	createdBy := agentID
 	response, err := r.client.Chat().GetOrCreateChannel(ctx, ChannelType, agentID,
 		&getstream.GetOrCreateChannelRequest{
 			State:    &state,
 			Messages: &getstream.MessagePaginationParams{Limit: &limit},
+			Data:     &getstream.ChannelInput{CreatedByID: &createdBy},
 		})
 	if err != nil {
 		return nil, err

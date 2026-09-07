@@ -27,9 +27,7 @@ async def create_agent(**kwargs) -> Agent:
 
 
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
-    call = await agent.create_call(call_type, call_id)
-
-    async with agent.join(call):
+    async with agent.join(call_type, call_id):
         await agent.simple_response("greet the user in one short sentence")
 
 
