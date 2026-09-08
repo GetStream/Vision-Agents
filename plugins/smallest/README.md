@@ -5,10 +5,13 @@ a low-latency speech platform with strong support for Indian languages.
 
 ## Features
 
-- **STT**: WebSocket streaming speech-to-text (Pulse), 38 languages, 64ms
-  time-to-first-transcript.
+- **STT**: WebSocket streaming speech-to-text (Pulse), multilingual.
 - **TTS**: WebSocket streaming text-to-speech (Lightning v3.1 / v3.1 Pro),
-  ~100ms first audio chunk, with voice cloning support on the base model.
+  with voice cloning support on the base model.
+
+See the [Pulse](https://docs.smallest.ai/waves/model-cards/speech-to-text/pulse)
+and [Lightning v3.1](https://docs.smallest.ai/waves/model-cards/text-to-speech/lightning-v-3-1)
+model cards for supported languages and current latency benchmarks.
 
 ## Installation
 
