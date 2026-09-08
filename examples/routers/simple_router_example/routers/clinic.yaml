@@ -3,6 +3,10 @@
 tags:
   team: clinical
 
+# Nothing in either of these configs is about live or recorded. The same block serves a
+# streaming session and a whole recording; the router picks the streaming or the batch half
+# of a vendor from which one is asking.
+
 stt:
   # List order is try order. Deepgram first because Flux is the better turn detector, then
   # our own Parakeet, which is the one answer here that is structural rather than a
