@@ -64,6 +64,8 @@ venv.bak/
 .env.local
 .env.*.local
 .env.bak
+# Local Truss secrets. Never commit these.
+acceleration/deploy/**/secrets.yaml
 pyvenv.cfg
 .python-version
 
@@ -133,3 +135,5 @@ xcuserdata/
 # A library's resolved versions are not used by anybody who depends on it, so they are
 # churn. The app's, under xcshareddata, is committed.
 /sdks/swift/*/Package.resolved
+*.spec.md
+
