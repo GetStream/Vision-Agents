@@ -1,10 +1,39 @@
 import asyncio
+from pathlib import Path
 
 import pytest
-from vision_agents.core.utils.examples import get_weather_by_location
+from vision_agents.core.utils.examples import get_weather_by_location, recorded_call
 from vision_agents.core.utils.utils import cancel_and_wait
 
 from tests.base_test import BaseTest
+
+AUDIO = Path(__file__).parent / "test_assets" / "saturday_seven_thirty.wav"
+
+
+class TestRecordedCall:
+    async def test_delivers_the_clip_and_the_silence_after_it(self):
+        chunk_ms, quiet_ms = 500, 1000
+
+        async with recorded_call(AUDIO, chunk_ms=chunk_ms, quiet_ms=quiet_ms) as chunks:
+            delivered = [chunk async for chunk in chunks]
+
+        spoken = sum(chunk.duration_ms for chunk in delivered)
+        assert spoken == pytest.approx(8016 + quiet_ms, abs=50)
+        assert all(chunk.sample_rate == 16000 for chunk in delivered)
+        assert not delivered[-1].samples.any()
+
+    async def test_paces_the_chunks_rather_than_sending_them_at_once(self):
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+
+        async with recorded_call(AUDIO, chunk_ms=100) as chunks:
+            delivered = 0
+            async for _ in chunks:
+                delivered += 1
+                if delivered == 5:
+                    break
+
+        assert loop.time() - started >= 0.4
 
 
 class TestWeatherUtils(BaseTest):

@@ -1,6 +1,53 @@
-from typing import Dict, Any
+import asyncio
+import wave
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import AsyncIterator, Dict, Any, Union
 
 import httpx
+from getstream.video.rtc.track_util import PcmData
+
+
+@asynccontextmanager
+async def recorded_call(
+    path: Union[str, Path],
+    chunk_ms: int = 100,
+    quiet_ms: int = 2000,
+) -> AsyncIterator[AsyncIterator[PcmData]]:
+    """A wav file delivered the way a call delivers audio, for examples without a speaker.
+
+    Sending a whole clip at once has the model see all of it before anybody has finished
+    talking, which is not the problem a streaming model solves.
+
+    Args:
+        path: The wav file to read.
+        chunk_ms: How much audio a call delivers at a time.
+        quiet_ms: Silence streamed after the clip. Not padding: a streaming model decides
+            a turn is over by hearing the caller stop, and a clip that ends the instant
+            the speech does never gives it that.
+
+    Yields:
+        The clip and then the silence, a chunk at a time, paced as they were spoken.
+    """
+    audio = await asyncio.to_thread(_read_wav, path)
+    quiet = PcmData.from_bytes(
+        bytes(audio.sample_rate * quiet_ms // 1000 * 2), sample_rate=audio.sample_rate
+    )
+
+    async def paced() -> AsyncIterator[PcmData]:
+        for clip in (audio, quiet):
+            for chunk in clip.chunks(clip.sample_rate * chunk_ms // 1000):
+                yield chunk
+                await asyncio.sleep(chunk_ms / 1000)
+
+    yield paced()
+
+
+def _read_wav(path: Union[str, Path]) -> PcmData:
+    with wave.open(str(path)) as f:
+        return PcmData.from_bytes(
+            f.readframes(f.getnframes()), sample_rate=f.getframerate()
+        )
 
 
 async def get_weather_by_location(location: str) -> Dict[str, Any]:
