@@ -63,6 +63,10 @@ type Spec struct {
 	STTTarget      string
 	TTSTarget      string
 	SubagentTarget string
+	// ControllerTarget routes the flow controller. Internal rather than customer-facing:
+	// a caller configures the conversation's model, not the classifier that decides who
+	// holds the floor, so it is defaulted here rather than read from a config.
+	ControllerTarget string
 	// SearchTarget routes what the agent finds out about today. Unlike the three above it
 	// is not needed for a conversation to happen, so a deployment that routes no search
 	// simply leaves the tool unoffered.
@@ -198,6 +202,9 @@ func (s *Spec) Normalize() error {
 	}
 	if s.LLMTarget == "" {
 		s.LLMTarget = defaultLLMTarget
+	}
+	if s.ControllerTarget == "" {
+		s.ControllerTarget = defaultControllerTarget
 	}
 	if s.SearchTarget == "" {
 		s.SearchTarget = defaultSearchTarget

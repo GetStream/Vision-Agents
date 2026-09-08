@@ -63,6 +63,15 @@ func (s *FlowSuite) decisions() []Decided {
 	return append([]Decided(nil), s.decided...)
 }
 
+// waitAsked waits until the model has been asked n times. Create runs on a goroutine, so
+// asserting on requests immediately after Decide would race it.
+func (s *FlowSuite) waitAsked(n int) []llm.ResponseParams {
+	s.T().Helper()
+	s.Require().Eventually(func() bool { return len(s.model.requests()) >= n }, settleFor,
+		5*time.Millisecond, "the controller was never asked")
+	return s.model.requests()
+}
+
 func (s *FlowSuite) TestTheConversationIsQuotedRatherThanReplayed() {
 	s.Require().NoError(s.flow.Decide(FlowTurn{
 		ID:           "candidate-1",
@@ -75,8 +84,7 @@ func (s *FlowSuite) TestTheConversationIsQuotedRatherThanReplayed() {
 		Text: "and of Spain",
 	}))
 
-	asked := s.model.requests()
-	s.Require().Len(asked, 1)
+	asked := s.waitAsked(1)
 	s.Require().Lenf(asked[0].Input, 1,
 		"a conversation replayed as turns is one the controller answers instead of judging: %v",
 		asked[0].Input)
@@ -86,6 +94,8 @@ func (s *FlowSuite) TestTheConversationIsQuotedRatherThanReplayed() {
 	s.Contains(question, `"and of Spain"`, "the words being judged have to be in there")
 	s.Equal(llm.FormatJSONObject, asked[0].Text.Format,
 		"the answer is parsed, so prose is not an option")
+	s.Equal(512, asked[0].MaxOutputTokens,
+		"thinking models spend the budget before the JSON, and 32 was only enough for a fragment")
 }
 
 func (s *FlowSuite) TestAnOverlappingReplyIsQuotedSoTheControllerCanHold() {
@@ -97,8 +107,8 @@ func (s *FlowSuite) TestAnOverlappingReplyIsQuotedSoTheControllerCanHold() {
 		Reply:       "party of four at 7:30",
 	}))
 
-	question := s.model.requests()[0].Input[0].Content
-	s.Contains(question, `is speaking right now, saying "party of four at 7:30"`)
+	question := s.waitAsked(1)[0].Input[0].Content
+	s.Contains(question, `is speaking right now and has so far said "party of four at 7:30"`)
 }
 
 func (s *FlowSuite) TestOnlyTheRecentConversationIsShown() {
@@ -112,7 +122,7 @@ func (s *FlowSuite) TestOnlyTheRecentConversationIsShown() {
 
 	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "candidate-1", History: history, Text: "and now"}))
 
-	question := s.model.requests()[0].Input[0].Content
+	question := s.waitAsked(1)[0].Input[0].Content
 	s.NotContains(question, "question 0", "an old turn does not decide whose the floor is")
 	s.Contains(question, fmt.Sprintf("answer %d", flowHistory-1))
 }
@@ -132,6 +142,20 @@ func (s *FlowSuite) TestAnUnreadableAnswerStillEarnsTheCallerAReply() {
 	s.Equal(Respond, decided.Disposition)
 	s.Equal(Continue, decided.Floor, "an unreadable answer is no reason to cut the agent off")
 	s.NoError(decided.Error())
+}
+
+func (s *FlowSuite) TestAnUnreadableOverlapStopsTheAgent() {
+	s.model.answers["over-1"] = `{"dis`
+
+	s.Require().NoError(s.flow.Decide(FlowTurn{
+		ID: "over-1", Participant: "Alex", Text: "oh my god stop", Unfinished: true, Speaking: true,
+	}))
+
+	s.Require().Eventually(func() bool { return len(s.decisions()) == 1 }, settleFor,
+		5*time.Millisecond, "the overlap was never ruled")
+	decided := s.decisions()[0]
+	s.Equal(Wait, decided.Disposition)
+	s.Equal(Stop, decided.Floor, "truncated JSON while the caller talks over the agent is a stop")
 }
 
 func (s *FlowSuite) TestEveryConversationalDecisionParses() {
@@ -168,4 +192,56 @@ func (s *FlowSuite) TestInventedDecisionsAreRejected() {
 func (s *FlowSuite) TestExtraSpeechIsRejected() {
 	_, err := parseFlow(`Sure: {"disposition":"respond","floor":"continue"}`)
 	s.ErrorContains(err, "decode flow decision")
+}
+
+func (s *FlowSuite) TestCancelAbandonsACreateThatHasNotReturned() {
+	hold := make(chan struct{})
+	s.model.holdCreate = hold
+
+	s.Require().NoError(s.flow.Decide(FlowTurn{
+		ID: "old", Participant: "Alex", Text: "okay",
+	}))
+	s.waitAsked(1)
+
+	s.Require().NoError(s.flow.Cancel("old"))
+	s.Require().Eventually(func() bool {
+		return len(s.model.requests()) == 1 && len(s.decisions()) == 0
+	}, settleFor, 5*time.Millisecond, "the cancelled create still produced a ruling")
+	s.Empty(s.decisions(), "a ruling about words that have moved on must not be acted on")
+}
+
+func (s *FlowSuite) TestCancelStartsTheWaitingTurnBeforeCreateReturns() {
+	hold := make(chan struct{})
+	s.model.holdCreate = hold
+
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "old", Participant: "Alex", Text: "okay"}))
+	s.waitAsked(1)
+
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "mid", Participant: "Alex", Text: "okay wait"}))
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "new", Participant: "Alex", Text: "okay wait stop"}))
+	time.Sleep(20 * time.Millisecond)
+	s.Len(s.model.requests(), 1, "Cerebras must not see a pile of superseded asks")
+
+	s.Require().NoError(s.flow.Cancel("old"))
+	asked := s.waitAsked(2)
+	s.Equal("new", asked[1].ID, "the follow-up must not wait for the cancelled create to return")
+	for _, d := range s.decisions() {
+		s.NotContains([]string{"old", "mid"}, d.CandidateID,
+			"superseded words must not be ruled on")
+	}
+}
+
+func (s *FlowSuite) TestCancelOfAHungCreateLetsTheNextDecideStart() {
+	hold := make(chan struct{})
+	s.model.holdCreate = hold
+
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "old", Participant: "Alex", Text: "okay"}))
+	s.waitAsked(1)
+	s.Require().NoError(s.flow.Cancel("old"))
+
+	s.Require().NoError(s.flow.Decide(FlowTurn{
+		ID: "new", Participant: "Alex", Text: "tell me something else",
+	}))
+	asked := s.waitAsked(2)
+	s.Equal("new", asked[1].ID, "a hung create that was cancelled must not keep the mailbox busy")
 }

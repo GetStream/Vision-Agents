@@ -25,6 +25,9 @@ const (
 	ActAnswer ActionKind = "answer"
 	// ActQueue holds a turn back until the agent has stopped talking.
 	ActQueue ActionKind = "queue"
+	// ActHold leaves a turn the agent owes unanswered while the caller is talking, so the
+	// agent does not take the floor from somebody who still has it.
+	ActHold ActionKind = "hold"
 	// ActInterrupt abandons the reply being spoken.
 	ActInterrupt ActionKind = "interrupt"
 	// ActShorten stops the model adding more while letting the audio already sent finish.
@@ -54,6 +57,22 @@ const (
 	// defaultPatience is how long the same unfinished words are waited on before the
 	// caller is asked what they meant instead.
 	defaultPatience = 3 * time.Second
+	// callerHold is how recently the caller's words must have changed for them to still
+	// hold the floor. A revision younger than this means somebody is mid-utterance, so a
+	// turn the agent owes waits rather than talking over them.
+	callerHold = 1500 * time.Millisecond
+)
+
+const (
+	// overlapPrefix marks a provisional candidate, put to the controller while the caller
+	// is still talking, so it is never confused with a settled one.
+	overlapPrefix = "over-"
+	// overlapAsks caps how many provisional asks one utterance earns. After that the
+	// settled ask decides, as it does when nobody talks over the agent.
+	overlapAsks = 3
+	// overlapReaskWords is how many more words must arrive before the same utterance is
+	// asked about again, which bounds the cost of somebody talking over the agent at length.
+	overlapReaskWords = 3
 )
 
 // What the model is told about a turn it is answering with a question rather than an
@@ -155,9 +174,33 @@ type converse struct {
 	delegated map[string]string
 	// waiting is the unfinished words each participant is being given longer to finish.
 	waiting map[string]unfinished
+	// overlaps names the participant each provisional ask still with the controller is
+	// about, so a ruling can find what was asked.
+	overlaps map[string]string
+	// overlapping is what has been asked about each participant's in-progress utterance,
+	// so a caller talking over the agent at length is asked about at a bounded rate
+	// rather than on every revision.
+	overlapping map[string]overlapState
 	// reported is the last ask and the last wait written down, so words that have not
 	// changed are not judged out loud again on every retry.
 	reported map[ActionKind]judged
+}
+
+// overlapState is what has been asked about a participant's in-progress utterance.
+type overlapState struct {
+	participant stt.Participant
+	// text is the caller's evolving words as of the last observation.
+	text string
+	// askedText is what the most recent provisional ask was about, and askedWords how
+	// many words that was.
+	askedText  string
+	askedWords int
+	// asks is how many provisional asks this utterance has earned.
+	asks int
+	// inflight is the provisional candidate still with the controller, if any, and turnID
+	// the reply it was asked against.
+	inflight string
+	turnID   string
 }
 
 // queuedCandidate is a turn held back until the agent stops talking.
@@ -194,16 +237,18 @@ func newConverse(
 		logger = slog.Default()
 	}
 	return &converse{
-		cadence:    settling,
-		duplex:     listening,
-		emitter:    emitter,
-		logger:     logger,
-		patience:   patience,
-		record:     record,
-		candidates: map[string]candidate{},
-		delegated:  map[string]string{},
-		waiting:    map[string]unfinished{},
-		reported:   map[ActionKind]judged{},
+		cadence:     settling,
+		duplex:      listening,
+		emitter:     emitter,
+		logger:      logger,
+		patience:    patience,
+		record:      record,
+		candidates:  map[string]candidate{},
+		delegated:   map[string]string{},
+		waiting:     map[string]unfinished{},
+		overlaps:    map[string]string{},
+		overlapping: map[string]overlapState{},
+		reported:    map[ActionKind]judged{},
 	}
 }
 
@@ -230,25 +275,125 @@ func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
 			Text:        saying,
 			Language:    transcript.Language,
 		})
+		actions = append(actions, c.overlap(transcript, saying, state)...)
 	}
 	if superseded != "" {
 		c.mu.Lock()
 		delete(c.candidates, superseded)
 		c.mu.Unlock()
-		actions = append(actions, c.decide(Action{
-			Kind:        ActSupersede,
-			Reason:      "the caller said more, so the ruling in flight is about words that have changed",
-			Participant: transcript.Participant,
-			TurnID:      superseded,
-		}))
+		actions = append(actions, c.supersede(transcript.Participant, superseded))
 	}
 
 	return actions
 }
 
+// overlap asks the controller whether the agent should give up the floor to a caller who
+// is talking over it, while their words are still in progress.
+//
+// It is asked from transcript revisions rather than from settled turns, so the floor can be
+// ruled on while the caller is still speaking rather than only once they pause. The cost is
+// bounded: only while the agent holds the floor, at most overlapAsks per utterance, and only
+// once the words have grown by overlapReaskWords since the last ask. An ask still in flight
+// is replaced rather than waited on, so "okay" does not occupy the controller while the
+// caller has already said "wait, make it six".
+func (c *converse) overlap(transcript stt.Transcript, saying string, state floor) []Action {
+	if state.Quiet || state.Speaking == "" || transcript.Final() {
+		return nil
+	}
+	// A murmur is meant to overlap, so hearing the caller carry on is not a reason to stop:
+	// there is no reply to abandon.
+	if strings.HasPrefix(state.Speaking, backchannelPrefix) {
+		return nil
+	}
+	if overlapNoise(saying) {
+		return nil
+	}
+
+	participantID := transcript.Participant.ID
+	count := len(strings.Fields(words(saying)))
+
+	c.mu.Lock()
+	seen := c.overlapping[participantID]
+	var superseded string
+	if seen.askedText != "" && !revisesTranscript(seen.askedText, saying) {
+		// A new utterance rather than more of the one asked about: the ask in flight is
+		// about words that are gone, and the count starts again.
+		superseded = seen.inflight
+		seen = overlapState{}
+	}
+	seen.participant = transcript.Participant
+	seen.text = saying
+	ask := seen.asks < overlapAsks &&
+		(seen.asks == 0 || count-seen.askedWords >= overlapReaskWords)
+	var id string
+	if ask {
+		if seen.inflight != "" {
+			superseded = seen.inflight
+		}
+		id = overlapPrefix + turnStamp()
+		seen.inflight, seen.turnID = id, state.Speaking
+		seen.askedText, seen.askedWords = saying, count
+		seen.asks++
+		c.overlaps[id] = participantID
+	}
+	c.overlapping[participantID] = seen
+	if superseded != "" {
+		delete(c.overlaps, superseded)
+	}
+	c.mu.Unlock()
+
+	var actions []Action
+	if superseded != "" {
+		actions = append(actions, c.supersede(transcript.Participant, superseded))
+	}
+	if !ask {
+		return actions
+	}
+	return append(actions, c.decide(Action{
+		Kind:   ActAsk,
+		Reason: "the caller is talking over the agent, asking whether it should stop",
+		Candidate: candidate{
+			ID:          id,
+			Participant: transcript.Participant,
+			Text:        saying,
+			Language:    transcript.Language,
+			Unfinished:  true,
+		},
+		Participant: transcript.Participant,
+		Text:        saying,
+	}))
+}
+
+// supersede abandons a ruling asked for about words that have since changed.
+func (c *converse) supersede(participant stt.Participant, candidateID string) Action {
+	return c.decide(Action{
+		Kind:        ActSupersede,
+		Reason:      "the caller said more, so the ruling in flight is about words that have changed",
+		Participant: participant,
+		TurnID:      candidateID,
+	})
+}
+
 // Settled registers a turn whose words have stopped changing and asks for a ruling on it.
 func (c *converse) Settled(ready candidate, state floor) Action {
 	c.mu.Lock()
+	if !state.Quiet {
+		if seen, ok := c.overlapping[ready.Participant.ID]; ok && seen.inflight != "" {
+			c.mu.Unlock()
+			// Retrying cadence here used to re-Settle every 700ms for as long as the
+			// overlap Create sat behind a Cerebras generate, so a follow-up never left
+			// the loop. Queue it once; Waiting answers it when the floor is quiet.
+			c.cadence.Resolve(ready.ID, false)
+			c.hold(ready, "")
+			return c.decide(Action{
+				Kind:        ActQueue,
+				Reason:      "the floor is already being asked about, so the settled turn waits",
+				Candidate:   ready,
+				Participant: ready.Participant,
+				Text:        ready.Text,
+			})
+		}
+	}
 	c.candidates[ready.ID] = ready
 	c.mu.Unlock()
 
@@ -270,8 +415,26 @@ func (c *converse) Settled(ready candidate, state floor) Action {
 func (c *converse) Unasked(candidateID string) {
 	c.mu.Lock()
 	delete(c.candidates, candidateID)
+	c.forgetOverlapLocked(candidateID)
 	c.mu.Unlock()
 	c.cadence.Resolve(candidateID, true)
+}
+
+// forgetOverlapLocked drops a provisional ask and returns what has been asked about the
+// participant it concerned, or false when the id is not a provisional ask still in flight.
+// The caller holds the lock.
+func (c *converse) forgetOverlapLocked(candidateID string) (overlapState, bool) {
+	participantID, ok := c.overlaps[candidateID]
+	if !ok {
+		return overlapState{}, false
+	}
+	delete(c.overlaps, candidateID)
+	seen := c.overlapping[participantID]
+	if seen.inflight == candidateID {
+		seen.inflight = ""
+		c.overlapping[participantID] = seen
+	}
+	return seen, true
 }
 
 // Ruled turns the flow controller's answer into what the agent should do about it.
@@ -280,6 +443,13 @@ func (c *converse) Unasked(candidateID string) {
 // interrupted before it is answered, and a turn the agent talks through is held before
 // the reply it is waiting on is cut short.
 func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
+	c.mu.Lock()
+	seen, provisional := c.forgetOverlapLocked(ruling.CandidateID)
+	c.mu.Unlock()
+	if provisional {
+		return c.overlapRuled(ruling, seen, state)
+	}
+
 	c.mu.Lock()
 	ready, known := c.candidates[ruling.CandidateID]
 	delete(c.candidates, ruling.CandidateID)
@@ -336,9 +506,14 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 		return nil
 	}
 
-	// The words are dealt with, so the next unfinished thought starts its own wait.
+	// The words are dealt with, so the next unfinished thought starts its own wait, and any
+	// provisional asks about this utterance are done with.
 	c.mu.Lock()
 	delete(c.waiting, ready.Participant.ID)
+	if seen, ok := c.overlapping[ready.Participant.ID]; ok {
+		delete(c.overlaps, seen.inflight)
+		delete(c.overlapping, ready.Participant.ID)
+	}
 	c.mu.Unlock()
 
 	if !state.Quiet && overlapNoise(ready.Text) {
@@ -447,6 +622,67 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 	}
 }
 
+// overlapRuled turns a provisional ruling — made while the caller was still talking — into
+// what the agent should do about the floor.
+//
+// Unlike a settled ruling it never answers: the words have not settled, so when they do they
+// go through Settled and Ruled with a quiet floor and yield the ordinary answer. It is checked
+// against the reply it was asked about, because revisions arrive faster than a controller
+// round trip and the reply may have ended by itself. A ruling about words that have since
+// changed never gets this far: Observe forgets the ask when it supersedes it.
+func (c *converse) overlapRuled(ruling harness.Decided, seen overlapState, state floor) []Action {
+	if ruling.Err != nil || !ruling.Valid() {
+		c.logger.Debug("dropping a provisional ruling that could not be read",
+			"candidate", ruling.CandidateID, "error", ruling.Error())
+		return nil
+	}
+	if state.Quiet || state.Speaking != seen.turnID {
+		c.logger.Debug("not acting on a provisional ruling, the moment has passed",
+			"candidate", ruling.CandidateID, "quiet", state.Quiet,
+			"speaking", state.Speaking, "asked", seen.turnID)
+		return nil
+	}
+
+	// Background speech does not stop the agent, whatever floor the controller returned.
+	floorDecision := ruling.Floor
+	if ruling.Disposition == harness.Ignore {
+		floorDecision = harness.Continue
+	}
+	if floorDecision == harness.Continue {
+		c.logger.Debug("a provisional ruling let the agent keep the floor",
+			"candidate", ruling.CandidateID, "floor", ruling.Floor)
+		return nil
+	}
+
+	c.emitter.Send(OverlapDecided{
+		TurnID:      seen.turnID,
+		Participant: seen.participant,
+		Action:      string(floorDecision),
+	})
+	if floorDecision == harness.Shorten {
+		return []Action{c.decide(Action{
+			Kind:        ActShorten,
+			Reason:      "the caller is adding to what they asked, so the reply in flight is cut short",
+			Participant: seen.participant,
+			TurnID:      seen.turnID,
+			LatencyMs:   ruling.TookMs,
+		})}
+	}
+
+	// The caller has the floor, so what was asked about this utterance is done with.
+	c.mu.Lock()
+	delete(c.overlapping, seen.participant.ID)
+	c.mu.Unlock()
+	c.cadence.Grace(interruptGrace)
+	return []Action{c.decide(Action{
+		Kind:        ActInterrupt,
+		Reason:      "the caller is still talking and has already said enough to take the floor, so the reply is abandoned",
+		Participant: seen.participant,
+		TurnID:      seen.turnID,
+		LatencyMs:   ruling.TookMs,
+	})}
+}
+
 // idle invites a caller who has gone quiet back into the conversation, because a silence
 // that nobody breaks is how a call ends by accident rather than because it was over.
 func (c *converse) idle(state floor, participant stt.Participant) []Action {
@@ -465,7 +701,7 @@ func (c *converse) idle(state floor, participant stt.Participant) []Action {
 // Tick decides whether a long listening or thinking gap needs filling, so an agent that
 // is busy does not sound like a dead line.
 func (c *converse) Tick(state floor) []Action {
-	participant, hearing := c.cadence.Active()
+	participant, _, hearing := c.cadence.Active()
 	if !hearing {
 		participant = state.LastParticipant
 	}
@@ -490,7 +726,18 @@ func (c *converse) Tick(state floor) []Action {
 	})}
 }
 
+// Listening reports whether somebody has evolving words younger than callerHold, which is
+// a caller who still holds the floor. A turn the agent owes waits while they do.
+func (c *converse) Listening() bool {
+	_, revised, hearing := c.cadence.Active()
+	return hearing && time.Since(revised) < callerHold
+}
+
 // Waiting hands back the turn held while the agent finished speaking, now that it has.
+//
+// A caller who has started talking again keeps the floor: the turn stays queued, so the
+// agent does not answer over the top of them. The hold is reported once rather than on
+// every retry.
 func (c *converse) Waiting(state floor) (Action, bool) {
 	if !state.Quiet {
 		return Action{}, false
@@ -498,12 +745,26 @@ func (c *converse) Waiting(state floor) (Action, bool) {
 
 	c.mu.Lock()
 	held := c.queued
-	c.queued = nil
-	c.mu.Unlock()
 	if held == nil {
+		c.mu.Unlock()
 		return Action{}, false
 	}
+	listening := c.Listening()
+	if !listening {
+		c.queued = nil
+	}
+	c.mu.Unlock()
 
+	if listening {
+		c.decide(Action{
+			Kind:        ActHold,
+			Reason:      "the caller is talking, so the turn the agent owes waits",
+			Candidate:   held.candidate,
+			Participant: held.candidate.Participant,
+			Text:        held.candidate.Text,
+		})
+		return Action{}, false
+	}
 	return c.decide(Action{
 		Kind:        ActAnswer,
 		Reason:      "the agent has stopped talking, so the turn that was waiting can be answered",
@@ -698,7 +959,7 @@ func (c *converse) worthReporting(action Action) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if action.Kind != ActAsk && action.Kind != ActWait {
+	if action.Kind != ActAsk && action.Kind != ActWait && action.Kind != ActHold {
 		clear(c.reported)
 		return true
 	}

@@ -216,6 +216,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		TTS:                m.options.TTS,
 		TTSTarget:          spec.TTSTarget,
 		SubagentTarget:     spec.SubagentTarget,
+		ControllerTarget:   spec.ControllerTarget,
 		Skills:             skills,
 		Telephony:          line,
 		ToolRunner:         runner,

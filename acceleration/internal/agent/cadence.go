@@ -33,6 +33,9 @@ type candidate struct {
 	Confidence   float64
 	STTLatencyMs float64
 	ReadyAt      time.Time
+	// Unfinished says the words are a provisional revision of an utterance still in
+	// progress, put to the controller to decide the floor rather than settled.
+	Unfinished bool
 }
 
 // cadence decides when an evolving transcript has stayed unchanged long enough to act on.
@@ -216,8 +219,9 @@ func (c *cadence) Grace(extra time.Duration) {
 	c.grace = extra
 }
 
-// Active reports the most recently heard participant while words are still evolving.
-func (c *cadence) Active() (stt.Participant, bool) {
+// Active reports the most recently heard participant while words are still evolving, and
+// when their words last changed.
+func (c *cadence) Active() (stt.Participant, time.Time, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -231,9 +235,9 @@ func (c *cadence) Active() (stt.Participant, bool) {
 		}
 	}
 	if latest == nil {
-		return stt.Participant{}, false
+		return stt.Participant{}, time.Time{}, false
 	}
-	return latest.participant, true
+	return latest.participant, latest.revisedAt, true
 }
 
 func (c *cadence) Ready() <-chan candidate { return c.ready }

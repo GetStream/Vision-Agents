@@ -93,6 +93,11 @@ type Options struct {
 	// difference between them is which model, not which service. Empty means the agent
 	// answers everything itself.
 	SubagentTarget string
+	// ControllerTarget routes the flow controller, a fast non-thinking classifier that
+	// only ever returns one small JSON object about who holds the floor. It is a target on
+	// the same router as LLMTarget. Empty falls back to LLMTarget, so a caller who names no
+	// controller shares the conversation's model.
+	ControllerTarget string
 	// Skills are what the voice model may hand over. They mean nothing without a
 	// subagent to run them.
 	Skills harness.Skills
@@ -177,6 +182,10 @@ type Agent struct {
 	replies chan llm.Event
 	// streams are the replies still being generated, by turn. Closing one is barge-in.
 	streams map[string]*llm.Stream
+	// generatingCancel abandons a conversation Create that has not returned a stream yet.
+	// Interrupt used to Close only an existing stream, so a reply waiting on headers kept
+	// the event loop and the floor until Cerebras answered.
+	generatingCancel map[string]context.CancelFunc
 	// pumps are the goroutines draining those streams into replies.
 	pumps sync.WaitGroup
 
@@ -237,6 +246,10 @@ type Agent struct {
 	// what may be heard, because the agent starts a turn for itself while the turn before
 	// it is still being spoken.
 	speakingTurn string
+	// saying is the reply as the caller has heard it so far, so a controller ruling on
+	// words that overlap it can tell a correction from the line echoing back. It is the
+	// spoken text as it streams, or the whole phrase for a greeting or a murmur.
+	saying string
 	// abandoned is every turn an interruption gave up on. Audio belonging to one of them
 	// is dropped rather than published, which is what makes barge-in immediate even while
 	// a provider is still sending. It holds one entry per interruption and lives only as
@@ -342,17 +355,18 @@ func New(options Options) (*Agent, error) {
 	listening := newDuplex(options.Duplex)
 	emitter := NewEmitter(eventBuffer)
 	agent := &Agent{
-		options:   options,
-		logger:    logger,
-		emitter:   emitter,
-		prompt:    options.Instructions,
-		listeners: map[string]*sttrouter.Session{},
-		voices:    map[string]string{},
-		abandoned: map[string]struct{}{},
-		replies:   make(chan llm.Event, replyBuffer),
-		streams:   map[string]*llm.Stream{},
-		cadence:   settling,
-		duplex:    listening,
+		options:          options,
+		logger:           logger,
+		emitter:          emitter,
+		prompt:           options.Instructions,
+		listeners:        map[string]*sttrouter.Session{},
+		voices:           map[string]string{},
+		abandoned:        map[string]struct{}{},
+		replies:          make(chan llm.Event, replyBuffer),
+		streams:          map[string]*llm.Stream{},
+		generatingCancel: map[string]context.CancelFunc{},
+		cadence:          settling,
+		duplex:           listening,
 	}
 
 	// Turns are keyed by agent id and decisions by call id, so an agent missing either is
@@ -445,13 +459,19 @@ func (a *Agent) Join(ctx context.Context) error {
 	a.llm = model
 
 	// Flow decisions use their own fast-model session so deciding whether speech is
-	// complete never competes with the reply being streamed to the voice.
+	// complete never competes with the reply being streamed to the voice. It routes to a
+	// non-thinking model of its own, since a decision this small has nothing to think about
+	// and thinking would only add latency to every turn the caller waits through.
+	controllerTarget := a.options.ControllerTarget
+	if controllerTarget == "" {
+		controllerTarget = a.options.LLMTarget
+	}
 	controller, err := a.options.LLM.Start(a.ctx, llmrouter.Request{
 		CustomerID:    a.options.CustomerID,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,
 		Tags:          a.options.Tags,
-		Target:        a.options.LLMTarget,
+		Target:        controllerTarget,
 		LanguageHints: a.options.LanguageHints,
 	})
 	if err != nil {
@@ -590,6 +610,7 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 		return errors.New("agent: not joined")
 	}
 	a.speakingTurn = turnID
+	a.saying = text
 	a.mu.Unlock()
 
 	return a.speakWhole(turnID, text)
@@ -947,7 +968,10 @@ func (a *Agent) consumePresence() {
 		case <-ticker.C:
 			a.act(a.converse.Tick(a.floor()))
 			// Speech still draining out of the edge has no event when it finishes, so a
-			// note that waited for it is retried here rather than never spoken.
+			// note that waited for it is retried here rather than never spoken. A turn
+			// queued behind a hung create is the same: interrupt made the floor quiet
+			// with no TTS complete to pick it up.
+			a.respondQueued()
 			a.followUp()
 		case <-a.ctx.Done():
 			return
@@ -1032,9 +1056,16 @@ func (a *Agent) ask(ready candidate) {
 	history := append([]llm.Message(nil), a.history...)
 	instructions := a.instructions()
 	speaking := a.generating || a.utterances > 0
-	reply := lastAssistantSaid(history)
+	reply := a.saying
+	if reply == "" {
+		reply = lastAssistantSaid(history)
+	}
 	anotherVoice := a.anotherVoiceLocked(ready)
 	a.mu.Unlock()
+
+	// Speech the voice has finished sending is still on its way out of the edge, so the
+	// agent counts as speaking until it has drained.
+	speaking = speaking || a.speechPending()
 
 	if err := current.Decide(harness.FlowTurn{
 		ID:           ready.ID,
@@ -1044,6 +1075,7 @@ func (a *Agent) ask(ready candidate) {
 		Text:         ready.Text,
 		Speaking:     speaking,
 		Reply:        reply,
+		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
 	}); err != nil {
 		a.converse.Unasked(ready.ID)
@@ -1150,7 +1182,9 @@ func (a *Agent) queueToolReply() {
 	a.toolReply = true
 	wait := a.pendingTools > 0 || a.generating
 	a.mu.Unlock()
-	if wait {
+	// A caller who is talking holds the floor, so the tool result waits for follow to pick
+	// it up rather than being said over them.
+	if wait || a.converse.Listening() {
 		return
 	}
 	if err := a.respondAfterTool(toolPrefix + turnStamp()); err != nil {
@@ -1242,6 +1276,7 @@ func (a *Agent) backchannel(participant stt.Participant, phrase string) {
 		return
 	}
 	a.speakingTurn = turnID
+	a.saying = phrase
 	a.mu.Unlock()
 
 	a.logger.Debug("murmuring while the caller talks",
@@ -1267,6 +1302,7 @@ func (a *Agent) checkIn(participant stt.Participant, phrase string) {
 		return
 	}
 	a.speakingTurn = turnID
+	a.saying = phrase
 	a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: phrase})
 	a.mu.Unlock()
 
@@ -1301,7 +1337,9 @@ func (a *Agent) instructions() string {
 //
 // Every reply is pulled by a goroutine of its own and fanned into one channel, because a
 // turn is answered on its own stream now but only one goroutine may speak: two turns
-// writing to the voice at once is two voices.
+// writing to the voice at once is two voices. Create itself is on that goroutine too:
+// waiting here for headers used to stall STT and flow rulings until Cerebras answered,
+// which is how a follow-up sat unanswered behind the turn it interrupted.
 func (a *Agent) generate(turn harness.Turn) error {
 	a.mu.Lock()
 	if a.closed || a.harness == nil {
@@ -1309,13 +1347,29 @@ func (a *Agent) generate(turn harness.Turn) error {
 		return errors.New("agent: not joined")
 	}
 	current := a.harness
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.generatingCancel[turn.ID] = cancel
 	a.pumps.Add(1)
 	a.mu.Unlock()
 
-	stream, err := current.Respond(a.ctx, turn)
+	go a.startReply(current, turn, ctx)
+	return nil
+}
+
+// startReply opens the model stream and drains it. It is a goroutine of its own because
+// Respond waits for response headers, and the event loop that called generate cannot sit
+// in that: an overlap ruling that arrives while it does is the one that should cancel it.
+func (a *Agent) startReply(current *harness.Harness, turn harness.Turn, ctx context.Context) {
+	defer a.pumps.Done()
+	defer a.finishGenerate(turn.ID)
+
+	stream, err := current.Respond(ctx, turn)
 	if err != nil {
-		a.pumps.Done()
-		return err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
+		a.fail(err, "llm")
+		return
 	}
 
 	a.mu.Lock()
@@ -1327,13 +1381,22 @@ func (a *Agent) generate(turn harness.Turn) error {
 		stream.Close()
 	}
 
-	go a.pump(turn.ID, stream)
-	return nil
+	a.pump(turn.ID, stream)
+}
+
+// finishGenerate drops the cancel for a turn whose Create has settled or been abandoned.
+func (a *Agent) finishGenerate(turnID string) {
+	a.mu.Lock()
+	cancel := a.generatingCancel[turnID]
+	delete(a.generatingCancel, turnID)
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // pump drains one reply into the channel the speaking goroutine reads.
 func (a *Agent) pump(turnID string, stream *llm.Stream) {
-	defer a.pumps.Done()
 	defer stream.Close()
 
 	for stream.Next() {
@@ -1398,6 +1461,9 @@ func (a *Agent) say(turnID, delta string) {
 	plain := a.directions.Add(speech)
 	if plain != "" {
 		a.spoken.WriteString(plain)
+		a.mu.Lock()
+		a.saying = a.spoken.String()
+		a.mu.Unlock()
 		a.emitter.Send(ResponseDelta{TurnID: turnID, Text: plain})
 	}
 	// The delta is the whole of the reply when there is no voice: a reader has already
@@ -1751,6 +1817,11 @@ func (a *Agent) follow() error {
 		a.mu.Unlock()
 		return nil
 	}
+	// A turn nobody asked for must not take the floor from a caller who is still talking.
+	if a.converse.Listening() {
+		a.mu.Unlock()
+		return nil
+	}
 	a.toolReply = false
 	history := append([]llm.Message(nil), a.history...)
 	turnID := replyPrefix + turnStamp()
@@ -1897,6 +1968,9 @@ func (a *Agent) resetTurn() {
 	a.spoken.Reset()
 	a.sentences = 0
 	a.openTurn = ""
+	a.mu.Lock()
+	a.saying = ""
+	a.mu.Unlock()
 }
 
 // interrupt abandons the reply being spoken because a participant started talking.
@@ -1916,9 +1990,11 @@ func (a *Agent) interrupt(participant stt.Participant) {
 	a.abandoned[turnID] = struct{}{}
 	a.speakingTurn = ""
 	a.generating = false
+	a.saying = ""
 	reply, voice := a.streams[turnID], a.tts
 	a.mu.Unlock()
 
+	a.finishGenerate(turnID)
 	a.logger.Debug("stopping mid-reply, the caller took the floor",
 		"turn", turnID, "participant", participant.ID)
 
@@ -1941,6 +2017,7 @@ func (a *Agent) interrupt(participant stt.Participant) {
 
 	a.turns.interrupt(turnID)
 	a.emitter.Send(Interrupted{TurnID: turnID, Participant: participant})
+	a.respondQueued()
 }
 
 // shorten stops the model from adding more while allowing speech already sent to the

@@ -170,6 +170,10 @@ type stubLLM struct {
 	// a tool that failed by reaching for it again.
 	keepCalling bool
 
+	// holdCreate, if set, is waited on after the request is recorded and before a stream
+	// is returned, so a test can interrupt while Create has not come back.
+	holdCreate <-chan struct{}
+
 	// scripts are the responses handed out, keyed by the id the caller correlates on, so
 	// a test can write one as it goes and see which were abandoned.
 	scripts map[string]*llmtest.Script
@@ -180,7 +184,20 @@ func newStubLLM() *stubLLM { return &stubLLM{scripts: map[string]*llmtest.Script
 
 func (s *stubLLM) Start(context.Context) error { return nil }
 
-func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	s.mu.Lock()
+	s.asked = append(s.asked, params)
+	hold := s.holdCreate
+	s.mu.Unlock()
+
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
 	script := llmtest.New(llm.StreamOptions{
 		ResponseID: params.ID,
 		Provider:   s.Provider(),
@@ -188,7 +205,6 @@ func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Str
 	})
 
 	s.mu.Lock()
-	s.asked = append(s.asked, params)
 	s.scripts[params.ID] = script
 	s.order = append(s.order, params.ID)
 	reply := append([]string(nil), s.reply...)
@@ -1729,6 +1745,42 @@ func (s *AgentSuite) TestWithoutDuplexNothingIsMurmured() {
 	s.Empty(s.voice.spoken())
 }
 
+func (s *AgentSuite) TestAReplyWaitingOnHeadersDoesNotBlockTheFloor() {
+	s.join(true)
+	s.model.reply = nil
+	hold := make(chan struct{})
+	s.model.holdCreate = hold
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
+
+	s.mutters(participant, "okay")
+
+	s.eventually(func() bool { return len(s.flow.requests()) >= 2 },
+		"the overlap must be asked about while the reply is still waiting for headers")
+	close(hold)
+}
+
+func (s *AgentSuite) TestBargeInCancelsAReplyThatIsStillOpening() {
+	s.join(true)
+	s.model.reply = nil
+	hold := make(chan struct{})
+	s.model.holdCreate = hold
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+
+	s.mutters(participant, "wait stop")
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"the hung create must not keep the floor")
+	s.Empty(s.voice.spoken(), "nothing was spoken from a create that never returned")
+}
+
 func (s *AgentSuite) TestRelatedOverlapShortensThenAnswersTheAddition() {
 	s.join(true)
 	s.model.reply = nil
@@ -1771,6 +1823,72 @@ func (s *AgentSuite) TestAcknowledgementOverlapLetsTheCurrentReplyContinue() {
 	s.model.finishes(first)
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the queued turn was not answered after the current reply")
+}
+
+func (s *AgentSuite) TestTalkingOverTheAgentStopsItBeforeTheWordsSettle() {
+	// The caller talks over a long reply and changes direction. The agent stops on the
+	// in-progress words rather than waiting for them to settle first.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.voice.silent = true
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "no turn was started")
+
+	s.mutters(participant, "actually wait")
+
+	s.eventually(func() bool { return s.voice.interrupted() == 1 && s.model.interrupted() == 1 },
+		"talking over the agent should stop it before the words settle")
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"the interruption was never reported")
+
+	s.says(participant, "actually wait, make it six")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the settled words were never answered")
+	s.Equal(1, countOf[Interrupted](s.reported()),
+		"the settled words follow the stop, they do not interrupt again")
+}
+
+func (s *AgentSuite) TestAnAcknowledgementInProgressDoesNotStopTheAgent() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.voice.silent = true
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
+
+	s.mutters(participant, "okay")
+
+	s.eventually(func() bool { return len(s.flow.requests()) >= 2 }, "the overlap was never considered")
+	s.never(func() bool { return s.model.interrupted() > 0 || s.voice.interrupted() > 0 },
+		"an acknowledgement is not a reason to stop")
+	s.Len(s.model.requests(), 1, "the acknowledgement does not earn its own reply while the agent talks")
+}
+
+func (s *AgentSuite) TestTheControllerIsToldWhatTheAgentIsSaying() {
+	// A ruling on partial words overlapping the reply has to see the reply, or it cannot
+	// tell a correction from the caller's line echoing the agent back.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.voice.silent = true
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	turnA := s.model.requests()[0].ID
+	s.model.writes(turnA, "The menu has three courses")
+	s.eventually(func() bool { return countOf[ResponseDelta](s.reported()) >= 1 }, "the reply never streamed")
+	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
+
+	s.mutters(participant, "actually wait")
+
+	s.eventually(func() bool { return len(s.flow.requests()) >= 2 }, "the overlap was never considered")
+	overlap := s.flow.requests()[len(s.flow.requests())-1]
+	s.Contains(overlap.Input[0].Content, "The menu has three courses",
+		"the controller judges the overlap against what the agent has said so far")
 }
 
 func (s *AgentSuite) TestBargeInStopsTheModelAndTheVoice() {

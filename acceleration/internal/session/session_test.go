@@ -232,6 +232,7 @@ func stubConfig() routing.ModalityConfig {
 		}},
 		Aliases: map[string]routing.Alias{
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-flow":       {Languages: []string{"en"}, RequireRealtime: true},
 		},
 	}
 }

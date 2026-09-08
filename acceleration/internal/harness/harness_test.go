@@ -40,6 +40,9 @@ type stubLLM struct {
 	calls [][]llm.ToolCall
 	// failing makes every request report a provider failure before it settles.
 	failing bool
+	// holdCreate, if set, is waited on after the request is recorded and before a stream
+	// is returned, so a test can Cancel while Create has not come back.
+	holdCreate <-chan struct{}
 
 	// scripts are the responses handed out, so a test can settle one and see which were
 	// abandoned. order remembers which came first.
@@ -53,7 +56,20 @@ func newStubLLM() *stubLLM {
 
 func (s *stubLLM) Start(context.Context) error { return nil }
 
-func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	s.mu.Lock()
+	s.asked = append(s.asked, params)
+	hold := s.holdCreate
+	s.mu.Unlock()
+
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
 	script := llmtest.New(llm.StreamOptions{
 		ResponseID: params.ID,
 		Provider:   s.Provider(),
@@ -61,7 +77,6 @@ func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Str
 	})
 
 	s.mu.Lock()
-	s.asked = append(s.asked, params)
 	s.scripts[params.ID] = script
 	s.order = append(s.order, params.ID)
 	answer, queued := s.answers[params.ID]

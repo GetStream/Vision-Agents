@@ -42,6 +42,9 @@ const (
 	// conversation carries on without it: what is handed over is what the talking model
 	// could not answer itself.
 	defaultSubagentTarget = "llm-thinking"
+	// The model the flow controller runs on. A non-thinking fast model, since deciding who
+	// holds the floor is a small classification the caller waits through on every turn.
+	defaultControllerTarget = "llm-flow"
 )
 
 // daytonaProvider is the one sandbox a caller may ask for by name.
