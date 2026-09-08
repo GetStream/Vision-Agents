@@ -42,14 +42,14 @@ func (s *GemmaSuite) TestCredentialsComeFromTheEnvironmentWhenNotGiven() {
 }
 
 func (s *GemmaSuite) TestStatsUseTheRoutingNameNotTheQualifiedModelID() {
-	provider, err := New(Options{APIKey: "k", BaseURL: "http://x/v1", Model: "gemma-4-E2B-it"})
+	provider, err := New(Options{APIKey: "k", BaseURL: "http://x/v1", Model: "gemma-4-26B-A4B-it"})
 	s.Require().NoError(err)
 
-	s.Equal("gemma-4-E2B-it", provider.Model())
+	s.Equal("gemma-4-26B-A4B-it", provider.Model())
 }
 
 func (s *GemmaSuite) TestModelIsQualifiedWithItsOwnerForVLLM() {
-	s.Equal("google/gemma-4-E2B-it", upstreamModel("gemma-4-E2B-it"))
+	s.Equal("google/gemma-4-26B-A4B-it", upstreamModel("gemma-4-26B-A4B-it"))
 	s.Equal("google/gemma-4-31B-it", upstreamModel("google/gemma-4-31B-it"),
 		"an already-qualified id is left alone")
 }

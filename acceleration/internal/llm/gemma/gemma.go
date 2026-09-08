@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 )
 
@@ -30,7 +31,7 @@ const baseURLEnvVar = "GEMMA_BASE_URL"
 const modelOwner = "google/"
 
 // defaultModel is used when the caller names no model.
-const defaultModel = "gemma-4-E2B-it"
+const defaultModel = "gemma-4-26B-A4B-it"
 
 // Options configures the provider.
 type Options struct {
@@ -66,7 +67,15 @@ func New(options Options) (*openaicompat.LLM, error) {
 		StatsModel: options.Model,
 		APIKey:     options.APIKey,
 		BaseURL:    options.BaseURL,
-		Logger:     options.Logger,
+		// The live path wants the first word, not a think-then-speak turn. The deployment
+		// also defaults thinking off; this pins it on every request so a client cannot
+		// enable it by accident.
+		RequestFields: func(_ llm.ResponseParams, _ string) map[string]any {
+			return map[string]any{
+				"chat_template_kwargs": map[string]any{"enable_thinking": false},
+			}
+		},
+		Logger: options.Logger,
 	})
 }
 

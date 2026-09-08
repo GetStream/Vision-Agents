@@ -49,7 +49,7 @@ and billing as a direct API call.
 | `deploy/parakeet`    | The streaming Parakeet Truss deployed to Baseten                    |
 | `deploy/s2-pro`      | The streaming S2 Pro Truss, written and validated but not yet pushed |
 | `deploy/breeze-tts-2` | The streaming Breeze TTS 2 Truss, written but not yet pushed       |
-| `deploy/gemma-4`     | The Gemma 4 vLLM Truss, written and validated but not yet pushed    |
+| `deploy/gemma-4`     | The Gemma 4 26B-A4B vLLM Truss, thinking off, live on Baseten `qvmmvrrq` |
 
 Three providers are therefore unreachable until someone deploys them. `s2pro` is under the
 Fish Audio Research License and wants an H100, so both questions are worth settling before
@@ -122,7 +122,7 @@ to play audio, or `-out` to write a file instead.
 | `S2PRO_WS_URL`          | The S2 Pro WebSocket endpoint. Not yet deployed, see above |
 | `BREEZE_WS_URL`         | The Breeze TTS 2 WebSocket endpoint. Not yet deployed, see above |
 | `DEEPSEEK_BASE_URL`     | Optional; overrides Baseten's shared Model APIs endpoint    |
-| `GEMMA_BASE_URL`        | The Gemma 4 deployment endpoint. Not yet deployed, see above |
+| `GEMMA_BASE_URL`        | The Gemma 4 deployment endpoint, `https://model-qvmmvrrq.api.baseten.co/environments/production/sync/v1` |
 | `LIVEKIT_URL`           | LiveKit host, used by `cmd/transcribe`                     |
 | `LIVEKIT_API_KEY`       | LiveKit credentials                                        |
 | `LIVEKIT_API_SECRET`    | LiveKit credentials                                        |
@@ -243,13 +243,13 @@ Which models those shortcuts reach for LLM, and what each is billed at per milli
 | `deepseek/DeepSeek-V4-Flash-0731` | low-latency  | $0.13  | $0.028  | $0.26   |
 | `openai/gpt-5.6-luna`             | low-latency  | $0.20  | $0.02   | $1.20   |
 | `gemini/gemini-3.8-flash`         | low-latency  | $0.75  | $0.075  | $3.75   |
-| `gemma/gemma-4-E2B-it`            | low-latency  | $0.032 | -       | $0.16   |
+| `gemma/gemma-4-26B-A4B-it`        | low-latency  | $0.24  | -       | $1.20   |
 | `deepseek/DeepSeek-V4-Pro-0813`   | high-quality | $1.32  | $0.132  | $3.96   |
 | `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |
 | `openai/gpt-5.6-sol`              | high-quality | $5.00  | $0.50   | $30.00  |
 
 Gemma is self-hosted, so its rates are an estimate of what the deployment costs rather than
-a published price: Baseten's L4 rate divided by an assumed throughput. Cached prompt tokens
+a published price: Baseten's H100 rate divided by an assumed throughput. Cached prompt tokens
 are billed once, at the cached rate, not twice.
 
 DeepSeek's models reason by default, which spends the whole token budget and most of the
@@ -369,7 +369,7 @@ go run ./cmd/agent -call my-call
 go run ./cmd/agent -call my-call \
   -stt parakeet/parakeet-tdt-0.6b-v3 \
   -tts fish/s2-pro \
-  -llm gemma/gemma-4-E2B-it \
+  -llm gemma/gemma-4-26B-A4B-it \
   -subagent openai/gpt-5.6-sol
 
 # Label what a session costs, so spend can be broken down later

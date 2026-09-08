@@ -1,13 +1,14 @@
-model_name: gemma-4-e2b-it
+model_name: gemma-4-26b-a4b-it
 description: >
-  Google Gemma 4 E2B instruction-tuned, served by vLLM's OpenAI-compatible server so the
-  LLM router's gemma provider can reach it with the same client it uses for everything else.
+  Google Gemma 4 26B-A4B instruction-tuned (FP8, thinking off), served by vLLM's
+  OpenAI-compatible server so the LLM router's gemma provider can reach it with the
+  same client it uses for everything else.
 model_metadata:
-  repo_id: google/gemma-4-E2B-it
+  repo_id: RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic
   tags:
     - openai-compatible
   example_model_input:
-    model: google/gemma-4-E2B-it
+    model: google/gemma-4-26B-A4B-it
     messages:
       - role: system
         content: "You are a helpful assistant. Keep answers short."
@@ -21,40 +22,65 @@ model_metadata:
 # vLLM already serves /v1/chat/completions, so there is no model.py here: the container is
 # the server. This is the one deployment in deploy/ that needs no Python at all.
 base_image:
-  image: vllm/vllm-openai:v0.12.0
+  image: vllm/vllm-openai:v0.22.0-cu129
 
 docker_server:
-  # --served-model-name fixes the id callers send. It matches the Hugging Face repo rather
-  # than the mount path, so the provider's model id is the same whether it is talking to
-  # this deployment or to any other host of the same weights.
+  # 26B-A4B is an MoE with ~4B active parameters, so decode is closer to a 4B dense model
+  # than to 26B. FP8 plus EAGLE3 speculative decoding is the rest of the latency recipe.
+  # Thinking is pinned off: the live path wants the first word, not a think-then-speak turn.
+  # 12B/26B still emit empty thought tags when thinking is off, so the gemma4 reasoning
+  # parser stays to strip them.
+  #
+  # --served-model-name is the id callers send. It matches the Hugging Face repo rather
+  # than the quantized mount, so the provider's model id is the same whether it is talking
+  # to this deployment or to any other host of the same weights.
   #
   # Prefix caching earns its keep here: a conversation resends its whole history every turn,
   # so all but the newest message is a cache hit, which is also what the cached-input rate in
   # router.yaml is priced against.
   #
-  # Tool choice has to be turned on explicitly: without it vLLM accepts a tools array and
-  # answers in prose anyway, so the agent would never be able to transfer a call. Gemma emits
-  # calls as Python-style invocations rather than JSON blocks, which is what the pythonic
-  # parser reads.
+  # Image/audio limits are zero because this is a voice LLM. Skipping the vision encoder
+  # frees VRAM for KV cache.
   start_command: >
-    vllm serve /models/gemma-4-e2b-it
-    --served-model-name google/gemma-4-E2B-it
+    vllm serve /models/gemma-4-26b-a4b-it
+    --served-model-name google/gemma-4-26B-A4B-it
     --host 0.0.0.0 --port 8000
-    --enable-prefix-caching
-    --enable-auto-tool-choice
-    --tool-call-parser pythonic
+    --max-num-seqs 16
     --max-model-len 32768
+    --gpu-memory-utilization 0.9
+    --enable-prefix-caching
+    --async-scheduling
+    --trust-remote-code
+    --enable-auto-tool-choice
+    --tool-call-parser gemma4
+    --reasoning-parser gemma4
+    --default-chat-template-kwargs '{"enable_thinking": false}'
+    --speculative-config.model /models/gemma-4-26b-a4b-speculator
+    --speculative-config.num_speculative_tokens 3
+    --speculative-config.method eagle3
+    --limit-mm-per-prompt.image 0
+    --load-format runai_streamer
   readiness_endpoint: /health
   liveness_endpoint: /health
   predict_endpoint: /v1/chat/completions
   server_port: 8000
 
+environment_variables:
+  VLLM_LOGGING_LEVEL: WARNING
+  VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+
 # The Baseten Delivery Network mirrors the weights and mounts them before the container
-# starts, so a cold start is not waiting on Hugging Face. Gemma is Apache 2.0 but the repo is
-# gated behind Google's terms, so a token is needed to fetch it.
+# starts, so a cold start is not waiting on Hugging Face. The RedHat FP8 and EAGLE3
+# checkpoints are Apache 2.0; the token is still required because Google's source repo
+# is gated and some mirrors check the same terms.
 weights:
-  - source: "hf://google/gemma-4-E2B-it"
-    mount_location: "/models/gemma-4-e2b-it"
+  - source: "hf://RedHatAI/gemma-4-26B-A4B-it-FP8-dynamic@main"
+    mount_location: "/models/gemma-4-26b-a4b-it"
+    auth:
+      auth_method: CUSTOM_SECRET
+      auth_secret_name: "hf_access_token"
+  - source: "hf://RedHatAI/gemma-4-26B-A4B-it-speculator.eagle3@main"
+    mount_location: "/models/gemma-4-26b-a4b-speculator"
     auth:
       auth_method: CUSTOM_SECRET
       auth_secret_name: "hf_access_token"
@@ -63,14 +89,15 @@ secrets:
   hf_access_token: null
 
 resources:
-  # E2B is ~5 GB at bf16 including its per-layer embeddings, so an L4's 24 GB leaves most of
-  # the card for the KV cache. It is the cheapest GPU Baseten offers that fits, which is the
-  # point of routing to a small model in the first place.
-  accelerator: L4
+  # FP8 26B-A4B plus the 1B speculator fit an H100 with 32K context and no vision encoder.
+  # One GPU avoids tensor-parallel latency on the single-stream voice path. Bump to H100:2
+  # if a longer context is needed.
+  accelerator: H100
   use_gpu: true
 
 runtime:
-  predict_concurrency: 128
+  predict_concurrency: 8
   health_checks:
-    restart_threshold_seconds: 300
+    restart_check_delay_seconds: 1800
+    restart_threshold_seconds: 1200
     stop_traffic_threshold_seconds: 120

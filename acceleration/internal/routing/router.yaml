@@ -937,17 +937,18 @@ llm:
         per_million_output_tokens: 3.75
 
     # Self-hosted, so there is no per-token bill: the deployment is charged by the minute.
-    # The rates below convert Baseten's L4 rate of $0.01414/min at an assumed 1500 output
+    # The rates below convert Baseten's H100 rate of $0.10833/min at an assumed 1500 output
     # tokens per second across the batch, with prefill taken as five times cheaper than
     # decode. They are an estimate of what this deployment costs us, not a published price.
+    # Thinking stays off: the live path wants the first word, not a think-then-speak turn.
     - provider: gemma
-      model: gemma-4-E2B-it
+      model: gemma-4-26B-A4B-it
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
       price:
-        per_million_input_tokens: 0.032
-        per_million_output_tokens: 0.16
+        per_million_input_tokens: 0.24
+        per_million_output_tokens: 1.20
 
     # Gemma 4 31B on Cerebras' public inference API, around 1500 tokens a second. Reasoning
     # stays off: the live path wants the first word, not a think-then-speak turn.
@@ -1021,6 +1022,18 @@ llm:
     # conversation gets is the one this deployment chose. The rest of the tier is still here
     # to catch it being down.
     llm-fast:
+      require_realtime: true
+      tier: low-latency
+      prefer: gemini/gemini-3.8-flash
+
+    # What the flow controller runs on: it classifies every transcript revision into one
+    # small JSON object saying who holds the floor, and it is asked constantly, including
+    # while the caller is still talking. So it is pinned to a model that starts writing at
+    # once rather than one that thinks first -- thinking spends the whole tiny token budget
+    # before the JSON is closed, and adds a round trip of latency to every decision the
+    # caller waits through. Pinned to Gemini for now so a Cerebras RPM limit does not
+    # swallow barge-in follow-ups; prefer cerebras/gemma-4-31b again when the quota is back.
+    llm-flow:
       require_realtime: true
       tier: low-latency
       prefer: gemini/gemini-3.8-flash
