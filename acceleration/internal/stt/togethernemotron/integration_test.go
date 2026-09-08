@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/sttsuite"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testaudio"
 )
 
 // TogetherNemotronIntegrationSuite inherits what every provider owes a call from sttsuite,
@@ -108,6 +109,78 @@ func (s *TogetherNemotronIntegrationSuite) TestAShortTurnSettlesAsTheWholePhrase
 // shortTurnMs is how much of the fixture makes a turn short enough that the decoder's
 // flush lands inside it rather than after it.
 const shortTurnMs = 2500
+
+// TestASecondTurnDoesNotBeginWithTheEndOfTheFirst is the "boulder" report against the real
+// socket: a word ending one sentence opened the next one, which the caller never said
+// twice.
+//
+// It is the server's segmentation showing through. A segment does not end when the caller
+// stops talking - it runs on into whatever they say next, and its deltas restate it from
+// the beginning, so the tail of the finished turn is still on the front of every delta of
+// the new one. Two turns of different fixtures is what makes the leak legible: none of the
+// words of the first belong in the second.
+func (s *TogetherNemotronIntegrationSuite) TestASecondTurnDoesNotBeginWithTheEndOfTheFirst() {
+	second, err := testaudio.Load16kMono("saturday_seven_thirty.wav")
+	s.Require().NoError(err)
+
+	provider := s.Started()
+
+	collected := make(chan []stt.Transcript, 1)
+	go func() {
+		var finals []stt.Transcript
+		for event := range provider.Events() {
+			if transcript, ok := event.(stt.Transcript); ok && transcript.Final() {
+				finals = append(finals, transcript)
+			}
+		}
+		collected <- finals
+	}()
+
+	s.Speak(provider, 0)
+	s.Quiet(provider)
+	s.stream(provider, second)
+	s.Quiet(provider)
+	s.Hangup(provider)
+
+	var finals []stt.Transcript
+	select {
+	case finals = <-collected:
+	case <-time.After(90 * time.Second):
+		s.FailNow("the event channel was not closed")
+	}
+
+	s.Require().Len(finals, 2, "two turns separated by silence are two turns")
+	for i, final := range finals {
+		s.T().Logf("turn %d (utterance %d): %q", i+1, final.Utterance, final.Text)
+	}
+
+	s.NotEqual(finals[0].Utterance, finals[1].Utterance, "a second turn is a second utterance")
+	s.Contains(strings.ToLower(finals[0].Text), s.Opening())
+
+	// The leak, in the words it would arrive as. The reported symptom is the first turn's
+	// last word opening the second, so what the second begins with is the assertion; the
+	// distinctive words guard against more of the first turn than its tail coming over.
+	// Common words are no use here, since a booking says "a" and "the" too.
+	booking := strings.ToLower(finals[1].Text)
+	s.True(strings.HasPrefix(booking, "hi"),
+		"the second turn should begin with its own first word, not the last of the first")
+	for _, word := range []string{"village", "treasures", "gold"} {
+		s.NotContains(booking, word, "the second turn should hold none of the first")
+	}
+	s.Contains(booking, "book a table")
+}
+
+// stream sends audio the suite did not load, at the pace a call delivers it.
+func (s *TogetherNemotronIntegrationSuite) stream(provider stt.STT, audio stt.PcmData) {
+	chunks := testaudio.Chunks(audio, s.ChunkMs)
+	started := time.Now()
+	for i, chunk := range chunks {
+		if wait := time.Until(started.Add(time.Duration(i*s.ChunkMs) * time.Millisecond)); wait > 0 {
+			time.Sleep(wait)
+		}
+		s.Require().NoError(provider.ProcessAudio(chunk, stt.Participant{ID: "p", UserID: "u"}))
+	}
+}
 
 // TogetherNemotronMultilingualIntegrationSuite holds the multilingual model to the same
 // bar on the same English fixture. It is a second suite rather than a case in the one
