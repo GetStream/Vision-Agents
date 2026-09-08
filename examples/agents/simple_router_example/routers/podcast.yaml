@@ -1,0 +1,15 @@
+# Transcription for published audio: nobody is waiting for it, two people are talking, and
+# it is going in front of an audience.
+#
+# This is a recording config rather than a live one. Diarization and word timings are the
+# batch model's, and asking a streaming session for them would be refused - which is the
+# point of naming what you want instead of naming a model.
+tags:
+  team: content
+
+stt:
+  providers: [deepgram]
+  diarize: true
+  words: true
+  format: true
+  profanity_filter: true

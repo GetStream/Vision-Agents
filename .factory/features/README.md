@@ -1,6 +1,6 @@
 # Features
 
-Sprints 1 to 16 asked for things in the order they had to be built. This is the same work
+Sprints 1 to 17 asked for things in the order they had to be built. This is the same work
 arranged the other way, one document per feature, so a feature can be read without
 reconstructing it from four sprint files.
 
@@ -33,13 +33,13 @@ edits them.
 | [The Python SDK](sdk.md)                       | sprints 8, 13, 14    | Built; Daytona is the only sandbox      |
 | [The Go SDK](go-sdk.md)                        | sprint 10            | Built; no dispatch worker               |
 | [The dashboard](dashboard.md)                  | sprints 9, 15        | Built; the review score is a placeholder |
-
-One thing asked for has no document because nothing was built: sprint 9's Docker image for
-the Go API. The service is run from source.
+| [Authentication](auth.md)                      | sprint 17            | Built; nothing creates a key but a database call |
+| [Hosting](hosting.md)                          | sprints 9, 17        | Built in the chat repository; not deployed |
 
 Everything lives in [acceleration/](../../acceleration), a Go module beside the Python
 framework, apart from the two SDKs in [sdks/go/](../../sdks/go) and
-[plugins/stream/](../../plugins/stream) and the [dashboard/](../../dashboard).
+[plugins/stream/](../../plugins/stream), the [dashboard/](../../dashboard), and
+[hosting](hosting.md), which is in the chat repository because this one is public.
 [acceleration/README.md](../../acceleration/README.md) is the operator's view: how to run it,
 what to configure, what each table holds. These documents are the other half, why each
 feature is shaped the way it is.

@@ -203,6 +203,12 @@ func (s *Server) streamSTT(
 	request routing.Request,
 	held options.STT,
 ) error {
+	// A start frame is options the same way a stored config is, so it is held to the same
+	// standard: a mode nothing recognises is refused rather than ignored.
+	if err := held.Validate(); err != nil {
+		return err
+	}
+
 	session, err := s.streams.STT.Start(ctx, sttrouter.Request{
 		CustomerID:    request.CustomerID,
 		AgentID:       request.AgentID,

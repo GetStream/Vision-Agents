@@ -1,15 +1,21 @@
-// Package togetherparakeet implements the stt.STT contract on top of Parakeet TDT 0.6B v3
-// as Together AI serves it, over their realtime WebSocket.
+// Package togethernemotron implements the stt.STT contract on top of NVIDIA's Nemotron
+// ASR streaming models as Together AI serves them, over their realtime WebSocket.
 //
-// It is a separate provider from the parakeet package, which is the same weights on our own
-// Baseten deployment. The model is the same; who is billed and who is paged when it stops
-// answering are not, and that is what a provider name records.
+// Two models share the weights' architecture and this provider. Nemotron 3 ASR is
+// English-only and is what NVIDIA recommend for an English call; Nemotron 3.5 ASR adds
+// language-ID prompt conditioning and transcribes 40 language-locales, detecting the
+// language rather than being told it. Which one a session opens on is the Model option.
+//
+// It is a separate provider from togetherparakeet, which is the other NVIDIA speech model
+// on the same socket. The wire protocol is shared but the models are not, and a provider
+// name is what routing has to name to pick one.
 //
 // The wire protocol is the OpenAI realtime one rather than anything of Together's own, so
 // audio goes up base64-encoded inside a JSON frame. What comes back is a delta while the
-// caller is still talking and a completed transcript once they pause. Each delta restates
-// the utterance rather than adding to the last, which is why they are replacements.
-package togetherparakeet
+// caller is still talking and a completed transcript once they pause. Together document
+// that each delta can replace the one before it rather than adding to it, which is why
+// they are replacements.
+package togethernemotron
 
 import (
 	"context"
@@ -31,11 +37,16 @@ import (
 )
 
 // ProviderName is the stable name used in routing config and stats.
-const ProviderName = "together-parakeet"
+const ProviderName = "together-nemotron"
 
-// DefaultModel is the streaming deployment. The model without the suffix is the batch one
-// and cannot serve a call.
-const DefaultModel = "nvidia/parakeet-tdt-0.6b-v3-realtime"
+// DefaultModel is Nemotron 3 ASR, which is English-only. NVIDIA recommend it over the
+// multilingual model when the call is in English, so it is what a session opens on
+// unless asked for the other.
+const DefaultModel = "nvidia/nemotron-3-asr-streaming-0.6b"
+
+// MultilingualModel is Nemotron 3.5 ASR, which transcribes 40 language-locales from one
+// checkpoint and detects the language rather than being told it.
+const MultilingualModel = "nvidia/nemotron-3.5-asr-streaming-0.6b"
 
 // DefaultURL is Together's realtime socket.
 const DefaultURL = "wss://api.together.ai/v1/realtime"
@@ -70,8 +81,9 @@ const flushGrace = 1500 * time.Millisecond
 // Options configures the provider. APIKey falls back to TOGETHER_API_KEY.
 type Options struct {
 	APIKey string
-	Model  string
-	URL    string
+	// Model is DefaultModel or MultilingualModel; a dedicated endpoint may name its own.
+	Model string
+	URL   string
 	// HandshakeTimeout bounds the initial connect and the wait for the session to open.
 	HandshakeTimeout time.Duration
 	// FlushTimeout bounds how long Close waits for the transcript of whatever audio the
@@ -89,7 +101,7 @@ type clientMessage struct {
 // serverMessage is a frame sent by the server.
 type serverMessage struct {
 	Type string `json:"type"`
-	// Delta is the transcript so far. Each one restates the utterance rather than
+	// Delta is the transcript so far. Each one can restate the utterance rather than
 	// carrying only what is new.
 	Delta string `json:"delta"`
 	// Transcript is the settled utterance.
@@ -147,7 +159,7 @@ func New(options Options) (*STT, error) {
 		options.APIKey = os.Getenv(apiKeyEnvVar)
 	}
 	if options.APIKey == "" {
-		return nil, fmt.Errorf("togetherparakeet: api key is required (set %s)", apiKeyEnvVar)
+		return nil, fmt.Errorf("togethernemotron: api key is required (set %s)", apiKeyEnvVar)
 	}
 	if options.Model == "" {
 		options.Model = DefaultModel
@@ -156,7 +168,7 @@ func New(options Options) (*STT, error) {
 		options.URL = DefaultURL
 	}
 	if !strings.HasPrefix(options.URL, "ws://") && !strings.HasPrefix(options.URL, "wss://") {
-		return nil, fmt.Errorf("togetherparakeet: url must be ws:// or wss://, got %s", options.URL)
+		return nil, fmt.Errorf("togethernemotron: url must be ws:// or wss://, got %s", options.URL)
 	}
 	if options.HandshakeTimeout == 0 {
 		options.HandshakeTimeout = 30 * time.Second
@@ -182,7 +194,7 @@ func (s *STT) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
-		return errors.New("togetherparakeet: already started")
+		return errors.New("togethernemotron: already started")
 	}
 	s.started = true
 	s.mu.Unlock()
@@ -196,9 +208,9 @@ func (s *STT) Start(ctx context.Context) error {
 	conn, response, err := dialer.DialContext(ctx, s.endpoint(), header)
 	if err != nil {
 		if response != nil {
-			return fmt.Errorf("togetherparakeet: dial: %w (http %d)", err, response.StatusCode)
+			return fmt.Errorf("togethernemotron: dial: %w (http %d)", err, response.StatusCode)
 		}
-		return fmt.Errorf("togetherparakeet: dial: %w", err)
+		return fmt.Errorf("togethernemotron: dial: %w", err)
 	}
 	s.conn = conn
 
@@ -216,7 +228,7 @@ func (s *STT) Start(ctx context.Context) error {
 // results from it.
 func (s *STT) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
 	if err := pcm.Validate(stt.SampleRate); err != nil {
-		return fmt.Errorf("togetherparakeet: %w", err)
+		return fmt.Errorf("togethernemotron: %w", err)
 	}
 
 	s.mu.Lock()
@@ -226,10 +238,10 @@ func (s *STT) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
 	s.mu.Unlock()
 
 	if closed {
-		return errors.New("togetherparakeet: session closed")
+		return errors.New("togethernemotron: session closed")
 	}
 	if !started || s.conn == nil {
-		return errors.New("togetherparakeet: not started")
+		return errors.New("togethernemotron: not started")
 	}
 
 	frame := clientMessage{
@@ -237,7 +249,7 @@ func (s *STT) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
 		Audio: base64.StdEncoding.EncodeToString(pcm.Bytes()),
 	}
 	if err := s.send(frame); err != nil {
-		return fmt.Errorf("togetherparakeet: write audio: %w", err)
+		return fmt.Errorf("togethernemotron: write audio: %w", err)
 	}
 	return nil
 }
@@ -309,25 +321,25 @@ func (s *STT) endpoint() string {
 // server is not yet listening to.
 func (s *STT) handshake() error {
 	if err := s.conn.SetReadDeadline(time.Now().Add(s.options.HandshakeTimeout)); err != nil {
-		return fmt.Errorf("togetherparakeet: read handshake: %w", err)
+		return fmt.Errorf("togethernemotron: read handshake: %w", err)
 	}
 	_, raw, err := s.conn.ReadMessage()
 	if err != nil {
-		return fmt.Errorf("togetherparakeet: read handshake: %w", err)
+		return fmt.Errorf("togethernemotron: read handshake: %w", err)
 	}
 	if err := s.conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("togetherparakeet: read handshake: %w", err)
+		return fmt.Errorf("togethernemotron: read handshake: %w", err)
 	}
 
 	var message serverMessage
 	if err := json.Unmarshal(raw, &message); err != nil {
-		return fmt.Errorf("togetherparakeet: decode handshake: %w", err)
+		return fmt.Errorf("togethernemotron: decode handshake: %w", err)
 	}
 	if message.Type == eventError {
-		return fmt.Errorf("togetherparakeet: handshake rejected: %s", message.failure())
+		return fmt.Errorf("togethernemotron: handshake rejected: %s", message.failure())
 	}
 	if message.Type != eventSessionCreated {
-		return fmt.Errorf("togetherparakeet: expected %q, got %q", eventSessionCreated, message.Type)
+		return fmt.Errorf("togethernemotron: expected %q, got %q", eventSessionCreated, message.Type)
 	}
 	return nil
 }

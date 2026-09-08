@@ -1536,6 +1536,14 @@ export interface components {
              */
             target?: string;
             /**
+             * @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back; unlike a shortcut, this does not reorder on latency, because a caller who wrote an order meant it.
+             * @example [
+             *       "deepgram",
+             *       "en-low-latency"
+             *     ]
+             */
+            providers?: string[];
+            /**
              * @description ISO codes candidates must cover. Empty with detect_language lets the provider decide.
              * @example [
              *       "en"
@@ -1580,6 +1588,36 @@ export interface components {
             summary?: boolean;
             /** @description Extract named entities from the recording. Recording only. */
             entities?: boolean;
+            /** @description Mask offensive words rather than writing them down. Only some providers can be told to, so a request for it is routed to one of them or refused. */
+            profanity_filter?: boolean;
+            mode?: components["schemas"]["TranscriptionMode"];
+            data_policy?: components["schemas"]["DataPolicy"];
+            /**
+             * @description Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"deepgram": {"eot_threshold": 0.6}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
+             * @example {
+             *       "deepgram": {
+             *         "eot_threshold": 0.6
+             *       }
+             *     }
+             */
+            overwrites?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * @description How faithfully the transcript follows what was said. verbatim keeps the ums, the repetitions and the false starts; smart removes them, tidies the grammar and formats the result, which is why it cannot also diarize or time the words - they may no longer be the words that were spoken. Almost no provider offers both, so this narrows where a request can go.
+         * @enum {string}
+         */
+        TranscriptionMode: "verbatim" | "smart";
+        /** @description What a caller requires of what happens to their audio after it is transcribed. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not. */
+        DataPolicy: {
+            /** @description False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no. */
+            allow_training?: boolean;
+            /**
+             * @description The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
+             * @example none
+             */
+            retention?: string;
         };
         /**
          * @description What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.

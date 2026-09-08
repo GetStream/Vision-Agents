@@ -186,5 +186,5 @@ func (s *Suite) TestClosingSettlesTheTailOfTheCall() {
 		}
 	}
 	s.Require().NotEmpty(finals, "closing should settle the audio still being transcribed")
-	s.Contains(strings.ToLower(finals[0].Text), s.opening())
+	s.Contains(strings.ToLower(finals[0].Text), s.Opening())
 }

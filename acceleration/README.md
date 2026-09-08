@@ -117,7 +117,7 @@ to play audio, or `-out` to write a file instead.
 | `GOOGLE_API_KEY`        | Gemini credentials, from AI Studio; used by the LLM and the transcriber |
 | `BASETEN_API_KEY`       | Baseten credentials, for the Model APIs and both deployments |
 | `XAI_API_KEY`           | xAI credentials, used by the Grok transcriber              |
-| `TOGETHER_API_KEY`      | Together AI credentials, used by the Together-hosted Parakeet |
+| `TOGETHER_API_KEY`      | Together AI credentials, used by the Together-hosted Parakeet and both Nemotrons |
 | `PARAKEET_WS_URL`       | The Parakeet WebSocket endpoint                            |
 | `S2PRO_WS_URL`          | The S2 Pro WebSocket endpoint. Not yet deployed, see above |
 | `BREEZE_WS_URL`         | The Breeze TTS 2 WebSocket endpoint. Not yet deployed, see above |
@@ -270,20 +270,31 @@ Google reports it as a token count rather than streaming it, so there are no
 
 ### Transcribers, and what Gemini does differently
 
-| Model                                                    | Languages | Per audio hour |
-| -------------------------------------------------------- | --------- | -------------- |
-| `deepgram/flux-general-en`                               | en        | $0.276         |
-| `deepgram/flux-general-multi`                            | 12        | $0.276         |
-| `gemini/gemini-3.5-transcribe-live`                      | 85+       | ~$0.54         |
-| `grok/grok-stt`                                          | 25        | $0.20          |
-| `muse/muse-voice-transcribe-1.0`                         | 25        | $0.18          |
-| `parakeet/parakeet-tdt-0.6b-v3`                          | 25        | $0.079         |
-| `together-parakeet/nvidia/parakeet-tdt-0.6b-v3-realtime` | 25        | $0.21          |
+| Model                                                      | Languages | Per audio hour |
+| ---------------------------------------------------------- | --------- | -------------- |
+| `deepgram/flux-general-en`                                 | en        | $0.276         |
+| `deepgram/flux-general-multi`                              | 12        | $0.276         |
+| `gemini/gemini-3.5-transcribe-live`                        | 85+       | ~$0.54         |
+| `grok/grok-stt`                                            | 25        | $0.20          |
+| `muse/muse-voice-transcribe-1.0`                           | 25        | $0.18          |
+| `parakeet/parakeet-tdt-0.6b-v3`                            | 25        | $0.079         |
+| `together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b`   | en        | $0.09          |
+| `together-nemotron/nvidia/nemotron-3.5-asr-streaming-0.6b` | 28        | $0.27          |
+| `together-parakeet/nvidia/parakeet-tdt-0.6b-v3-realtime`   | 25        | $0.21          |
 
 The two Parakeets are the same weights in two places: `parakeet` is our own Baseten
 deployment and `together-parakeet` is Together's serverless endpoint. They are separate
 providers because the bill and the pager are not shared, so routing can pick between them
 and fail over from one to the other.
+
+The two Nemotrons share a provider instead, because they are two models on one endpoint
+rather than one model in two places. Nemotron 3 ASR is English-only and is what NVIDIA
+recommend for an English call; Nemotron 3.5 ASR is the multilingual extension of it,
+covering 40 language-locales from the same checkpoint and detecting which one is spoken
+rather than being told. The 28 codes it declares are NVIDIA's transcription-ready and
+broad-coverage tiers; their third tier needs fine-tuning before it transcribes, so a call
+in one of those languages is not routed here. Both speak the same realtime protocol as
+`together-parakeet`, and their deltas restate the utterance rather than adding to it.
 
 Muse Voice Transcribe is configured by its opening frame rather than by a header or a
 query string, credentials included, so a rejected key arrives as an error event on the
@@ -306,9 +317,10 @@ where `ENDPOINTING` takes about 770ms, and that second and a half is time the ca
 waiting. Both declare `diarize` and both honour it, so asking narrows an English call to
 those two rather than serving it unlabelled from one of the others.
 
-Deepgram, Grok, Muse and Parakeet are speech recognisers. Gemini 3.5 Transcribe is a Gemini model that
-happens to be listening, reached over the Live API's `BidiGenerateContent` socket with the
-talking half turned off, and that difference shows in three places.
+Deepgram, Grok, Muse, Parakeet and Nemotron are speech recognisers. Gemini 3.5 Transcribe
+is a Gemini model that happens to be listening, reached over the Live API's
+`BidiGenerateContent` socket with the talking half turned off, and that difference shows
+in three places.
 
 It writes down what you meant rather than what you emitted: filler words go, a
 self-correction resolves to the correction, and the text arrives punctuated. That is worth

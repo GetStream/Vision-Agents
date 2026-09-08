@@ -28,7 +28,6 @@ async def inbound_call(call: acceleration.CallContext):
         await agent.simple_response(
             "greet the user and let them know you're a friendly AI agent"
         )
-        await agent.finish()
 
 
 async def main() -> None:

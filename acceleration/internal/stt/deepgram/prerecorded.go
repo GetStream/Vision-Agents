@@ -36,7 +36,10 @@ type PrerecordedOptions struct {
 	Model  string
 	// BaseURL overrides the endpoint, for a proxy or a test server.
 	BaseURL string
-	Logger  *slog.Logger
+	// MipOptOut excludes the request from the Model Improvement Partnership Program,
+	// which is Deepgram's only route from an API call into a training set.
+	MipOptOut bool
+	Logger    *slog.Logger
 }
 
 // Prerecorded transcribes whole recordings through Deepgram's batch endpoint.
@@ -182,6 +185,18 @@ func (p *Prerecorded) query(recording stt.Recording) url.Values {
 	if recording.Channels > 1 {
 		query.Set("multichannel", "true")
 		query.Set("channels", strconv.Itoa(recording.Channels))
+	}
+	if recording.ProfanityFilter {
+		query.Set("profanity_filter", "true")
+	}
+	// Nova strips "uh" and "um" unless told otherwise, so a verbatim transcript is asked
+	// for rather than left alone. This is the batch endpoint's own query string, which is
+	// why it can be asked for here and not on the Flux socket.
+	if recording.FillerWords {
+		query.Set("filler_words", "true")
+	}
+	if p.options.MipOptOut {
+		query.Set("mip_opt_out", "true")
 	}
 	for _, term := range recording.Keyterms {
 		query.Add("keyterm", term)

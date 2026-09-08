@@ -1,0 +1,24 @@
+# Transcription for clinical audio, where where the audio goes matters more than which
+# model is best at transcribing it.
+tags:
+  team: clinical
+
+stt:
+  # List order is try order. Deepgram first because Flux is the better turn detector, then
+  # our own Parakeet, which is the one answer here that is structural rather than a
+  # promise: the weights run on our GPU, so there is no third party to keep anything.
+  providers: [deepgram, parakeet]
+
+  # A requirement rather than a description. A provider that has not said it trains on
+  # nothing and keeps nothing is not asked, which rules out five of the seven vendors the
+  # router knows. Ask for this where nothing offers it and the config is refused.
+  data_policy:
+    allow_training: false
+    retention: none
+
+  # Flux decides where a turn ended itself, and this is how sure it has to be before it
+  # does. Nobody else has the setting, which is why it is an overwrite rather than an
+  # option: there is no second provider to standardise it against.
+  overwrites:
+    deepgram:
+      eot_threshold: 0.6

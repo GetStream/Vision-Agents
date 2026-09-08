@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
@@ -51,6 +52,9 @@ func (s *Server) TranscribeRecording(ctx context.Context, request TranscribeReco
 		return TranscribeRecording400JSONResponse{badRequest(err.Error())}, nil
 	}
 	held := config.STT.Merge(sttOptionsOf(request.Body.Options))
+	if err := held.Validate(); err != nil {
+		return TranscribeRecording400JSONResponse{badRequest(err.Error())}, nil
+	}
 	if held.Target == "" {
 		held.Target = recordedTarget(held.Languages)
 	}
@@ -68,6 +72,9 @@ func (s *Server) TranscribeRecording(ctx context.Context, request TranscribeReco
 		Entities:    truthy(held.Entities),
 		Keyterms:    held.Keyterms,
 		Channels:    count(held.Channels),
+
+		ProfanityFilter: truthy(held.ProfanityFilter),
+		FillerWords:     held.Mode == options.ModeVerbatim,
 	}
 	if err := source.Validate(); err != nil {
 		return TranscribeRecording400JSONResponse{badRequest(err.Error())}, nil

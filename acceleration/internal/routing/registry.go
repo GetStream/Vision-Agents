@@ -1,6 +1,8 @@
 package routing
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,7 +28,30 @@ type Spec struct {
 	STT    options.STT
 	TTS    options.TTS
 	Search options.Search
-	Logger *slog.Logger
+	// Overwrites is this provider's own block from the request's overwrites, and nobody
+	// else's. A factory that has one decodes it into a struct of its own with Settings,
+	// which is what makes an unrecognised field an error rather than a setting that was
+	// accepted and never sent.
+	Overwrites json.RawMessage
+	Logger     *slog.Logger
+}
+
+// Settings decodes this provider's overwrites into a struct of its own.
+//
+// Unknown fields are rejected, which is the whole point: an escape hatch that silently
+// dropped a misspelt setting would be worse than not having one, because the caller would
+// believe they had changed something. A spec with no overwrites leaves the struct alone.
+func (s Spec) Settings(into any) error {
+	if len(s.Overwrites) == 0 {
+		return nil
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(s.Overwrites))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(into); err != nil {
+		return fmt.Errorf("routing: overwrites for %s: %w", s.Model, err)
+	}
+	return nil
 }
 
 // Factory builds an unstarted provider.

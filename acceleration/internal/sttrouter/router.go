@@ -19,6 +19,10 @@ import (
 // Registry is the set of speech-to-text providers a build can construct.
 type Registry = routing.Registry[stt.STT]
 
+// streaming is what this router's half of the provider list is, for a priority list that
+// names a vendor rather than one of their models. A socket wants the streaming model.
+var streaming = true
+
 // Options configures a Router. Store and Live are optional: without them the router still
 // routes, it just stops recording.
 type Options struct {
@@ -85,9 +89,12 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		CallID:        request.CallID,
 		Tags:          request.Tags,
 		Target:        request.Target,
+		Providers:     request.Options.Providers,
+		Realtime:      &streaming,
 		LanguageHints: request.LanguageHints,
 		Keyterms:      request.Keyterms,
 		Terms:         request.Options.Terms(),
+		DataPolicy:    request.Options.DataPolicy,
 		STT:           request.Options,
 	}
 	provider, config, err := r.Select(ctx, core)

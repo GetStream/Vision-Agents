@@ -707,6 +707,24 @@ func (e TranscriptFormat) Valid() bool {
 	}
 }
 
+// Defines values for TranscriptionMode.
+const (
+	Smart    TranscriptionMode = "smart"
+	Verbatim TranscriptionMode = "verbatim"
+)
+
+// Valid indicates whether the value is a known member of the TranscriptionMode enum.
+func (e TranscriptionMode) Valid() bool {
+	switch e {
+	case Smart:
+		return true
+	case Verbatim:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for VoiceBindingState.
 const (
 	VoiceBindingStateFailed  VoiceBindingState = "failed"
@@ -836,7 +854,7 @@ type AttachNumberRequest struct {
 	// CallId The call every caller joins. Omit to give each caller their own call, named after the number they rang.
 	CallId *string `json:"call_id,omitempty"`
 
-	// CallType The Stream call type. Omit for "default".
+	// CallType The Stream call type. Omit for "agent".
 	CallType *string `json:"call_type,omitempty"`
 }
 
@@ -1048,7 +1066,7 @@ type ChatToken struct {
 	// ChannelId The channel holding the conversation, which is the agent id.
 	ChannelId string `json:"channel_id"`
 
-	// ChannelType Always messaging, which is the type a conversation is written to.
+	// ChannelType Always agent, which is the type a conversation is written to.
 	ChannelType string    `json:"channel_type"`
 	ExpiresAt   time.Time `json:"expires_at"`
 	Token       string    `json:"token"`
@@ -1181,6 +1199,18 @@ type CreateSessionRequest struct {
 
 // CreateSessionRequestSandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 type CreateSessionRequestSandbox string
+
+// DataPolicy What a caller requires of what happens to their audio after it is transcribed. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+type DataPolicy struct {
+	// AllowTraining False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
+	AllowTraining *bool `json:"allow_training,omitempty"`
+
+	// Retention The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
+	//
+	//
+	// Example: none
+	Retention *string `json:"retention,omitempty"`
+}
 
 // DecisionKind What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.
 type DecisionKind string
@@ -1396,7 +1426,7 @@ type PlaceCallRequest struct {
 	// CallId The Stream call the answered leg joins, and so the one the agent has to be in. Omit to have one named after this call, since two calls from the same number are two conversations.
 	CallId *string `json:"call_id,omitempty"`
 
-	// CallType The Stream call type. Omit for "default".
+	// CallType The Stream call type. Omit for "agent".
 	CallType *string `json:"call_type,omitempty"`
 
 	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it.
@@ -2000,6 +2030,9 @@ type SttOptions struct {
 	// Channels Transcribe a multichannel recording per channel rather than mixed down.
 	Channels *int `json:"channels,omitempty"`
 
+	// DataPolicy What a caller requires of what happens to their audio after it is transcribed. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
+
 	// DetectLanguage Let the provider identify the language instead of being told it.
 	DetectLanguage *bool `json:"detect_language,omitempty"`
 
@@ -2032,8 +2065,26 @@ type SttOptions struct {
 	// MaxSpeakers A hard cap on the speakers diarization may find, not a hint. Providers differ in what they allow, so one asked for more than it supports refuses.
 	MaxSpeakers *int `json:"max_speakers,omitempty"`
 
+	// Mode How faithfully the transcript follows what was said. verbatim keeps the ums, the repetitions and the false starts; smart removes them, tidies the grammar and formats the result, which is why it cannot also diarize or time the words - they may no longer be the words that were spoken. Almost no provider offers both, so this narrows where a request can go.
+	Mode *TranscriptionMode `json:"mode,omitempty"`
+
 	// Output What a finished transcript is rendered as. json carries the words and speakers; srt and vtt are subtitle files. Recording only.
 	Output *TranscriptFormat `json:"output,omitempty"`
+
+	// Overwrites Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"deepgram": {"eot_threshold": 0.6}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
+	//
+	//
+	// Example: {"deepgram":{"eot_threshold":0.6}}
+	Overwrites *map[string]interface{} `json:"overwrites,omitempty"`
+
+	// ProfanityFilter Mask offensive words rather than writing them down. Only some providers can be told to, so a request for it is routed to one of them or refused.
+	ProfanityFilter *bool `json:"profanity_filter,omitempty"`
+
+	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back; unlike a shortcut, this does not reorder on latency, because a caller who wrote an order meant it.
+	//
+	//
+	// Example: ["deepgram","en-low-latency"]
+	Providers *[]string `json:"providers,omitempty"`
 
 	// Redact Remove personally identifying information from the transcript.
 	Redact *bool `json:"redact,omitempty"`
@@ -2199,6 +2250,9 @@ type Transcription struct {
 	Words *[]TranscriptWord `json:"words,omitempty"`
 }
 
+// TranscriptionMode How faithfully the transcript follows what was said. verbatim keeps the ums, the repetitions and the false starts; smart removes them, tidies the grammar and formats the result, which is why it cannot also diarize or time the words - they may no longer be the words that were spoken. Almost no provider offers both, so this narrows where a request can go.
+type TranscriptionMode string
+
 // TranscriptionRequest defines model for TranscriptionRequest.
 type TranscriptionRequest struct {
 	// Callback A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
@@ -2222,7 +2276,7 @@ type TransferCallRequest struct {
 	// CallId The Stream call the caller and the agent are already on.
 	CallId string `json:"call_id"`
 
-	// CallType The Stream call type. Omit for "default".
+	// CallType The Stream call type. Omit for "agent".
 	CallType *string `json:"call_type,omitempty"`
 
 	// From The customer's number the human is dialled from, which is what they see.
@@ -2822,7 +2876,7 @@ type ClientInterface interface {
 
 	// CreateChatTokenWithBody What a browser needs to read an agent's conversation
 	//
-	// An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
+	// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
 	// The secret stays here, the same as for a call token: the browser is handed something that expires.
 	//
 	// Takes any type of body and a specified content type.
@@ -2832,7 +2886,7 @@ type ClientInterface interface {
 
 	// CreateChatToken What a browser needs to read an agent's conversation
 	//
-	// An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
+	// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
 	// The secret stays here, the same as for a call token: the browser is handed something that expires.
 	//
 	// Takes a body of the `application/json` content type.
@@ -3950,7 +4004,7 @@ func (c *Client) StartCampaign(ctx context.Context, id ResourceID, reqEditors ..
 
 // CreateChatTokenWithBody What a browser needs to read an agent's conversation
 //
-// An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
+// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
 // The secret stays here, the same as for a call token: the browser is handed something that expires.
 //
 // Takes any type of body and a specified content type.
@@ -3970,7 +4024,7 @@ func (c *Client) CreateChatTokenWithBody(ctx context.Context, contentType string
 
 // CreateChatToken What a browser needs to read an agent's conversation
 //
-// An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
+// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
 // The secret stays here, the same as for a call token: the browser is handed something that expires.
 //
 // Takes a body of the `application/json` content type.
@@ -9765,7 +9819,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateChatTokenWithBodyWithResponse What a browser needs to read an agent's conversation
 	//
-	// An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
+	// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
 	// The secret stays here, the same as for a call token: the browser is handed something that expires.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -9775,7 +9829,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateChatTokenWithResponse What a browser needs to read an agent's conversation
 	//
-	// An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
+	// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
 	// The secret stays here, the same as for a call token: the browser is handed something that expires.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -16102,7 +16156,7 @@ func (c *ClientWithResponses) StartCampaignWithResponse(ctx context.Context, id 
 
 // CreateChatTokenWithBodyWithResponse What a browser needs to read an agent's conversation
 //
-// An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
+// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
 // The secret stays here, the same as for a call token: the browser is handed something that expires.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -16118,7 +16172,7 @@ func (c *ClientWithResponses) CreateChatTokenWithBodyWithResponse(ctx context.Co
 
 // CreateChatTokenWithResponse What a browser needs to read an agent's conversation
 //
-// An agent writes what was said into the Stream Chat channel messaging:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
+// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
 // The secret stays here, the same as for a call token: the browser is handed something that expires.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).

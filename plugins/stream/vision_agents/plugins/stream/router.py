@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional, TypeVar, Union
 
+import yaml
 from attrs import fields
 
 from ._backend import Backend
@@ -62,6 +63,9 @@ ORDER = (Modality.TTS, Modality.STT, Modality.LLM)
 # every second costs nothing next to that.
 POLL = 1.0
 
+# ROUTER_KEYS are the top-level keys a router config file may hold.
+ROUTER_KEYS = frozenset({"name", "stt", "tts", "llm", "search", "tags"})
+
 
 class Router:
     """Everything the acceleration backend routes, configured once.
@@ -109,6 +113,61 @@ class Router:
         self.stt = SpeechToText(self)
         self.tts = TextToSpeech(self)
         self.llm = Completions(self)
+
+    async def configure_stt(self, **options) -> RouterConfig:
+        """Store how this router transcribes.
+
+        `Router("healthcare")` reads a config; this writes one, so the setup and the use
+        of it are the same object rather than two names for it. The other three modalities
+        are left as they were stored, since configuring how something is heard is not a
+        statement about how it speaks.
+
+        ```python
+        await Router("healthcare").configure_stt(
+            providers=["deepgram", "parakeet"],
+            data_policy={"allow_training": False, "retention": "none"},
+            profanity_filter=True,
+        )
+        ```
+
+        Args:
+            **options: Any field of the stt block - `providers`, `target`, `languages`,
+                `mode`, `profanity_filter`, `data_policy`, `overwrites`, `diarize`,
+                `keyterms`, `endpointing`, `redact`.
+
+        Returns:
+            The stored config.
+
+        Raises:
+            ValueError: if this router was not named, or an option is not one
+                transcription takes.
+            RuntimeError: if the router refuses the config, which is what it does with a
+                provider it does not have or a data policy nothing it offers can meet.
+        """
+        if not self.config:
+            raise ValueError(
+                "configure_stt writes a named config, so the router needs a name: "
+                'Router("healthcare").configure_stt(...)'
+            )
+
+        client = self.client()
+        stored = await _named(client, self.config)
+
+        wanted = RouterConfigRequest(name=self.config, stt=_block(SttOptions, options))
+        # Carried forward rather than restated: a config is one row, and writing the
+        # speech half of it should not silently drop the voice half.
+        if stored is not None:
+            wanted.tts, wanted.llm, wanted.search = (
+                stored.tts,
+                stored.llm,
+                stored.search,
+            )
+            if not isinstance(stored.tags, Unset):
+                wanted.tags = RouterConfigRequestTags.from_dict(stored.tags.to_dict())
+        if self.tags:
+            wanted.tags = RouterConfigRequestTags.from_dict(self.tags)
+
+        return await _store(client, wanted, stored)
 
     async def search(self, query: str, **options) -> SearchAnswer:
         """Answer `query` out of what is true now.
@@ -218,14 +277,116 @@ async def define_router(
     if tags:
         wanted.tags = RouterConfigRequestTags.from_dict(tags)
 
+    return await _store(client, wanted, await _named(client, name))
+
+
+async def sync_routers(
+    directory: Union[str, Path],
+    url: Optional[str] = None,
+    customer_id: Optional[str] = None,
+) -> list[RouterConfig]:
+    """Store every router config a directory of YAML files describes.
+
+    The same bargain as `sync_agent`, for routing: a config that lives in the repository
+    is one that can be reviewed, and one written by hand at a call site is not. Each file
+    is one config, named by its `name` key or by its own filename, and each is written by
+    name, so running this twice edits rather than duplicates.
+
+    ```yaml
+    # routers/healthcare.yaml
+    tags:
+      team: clinical
+    stt:
+      providers: [deepgram, parakeet]
+      data_policy:
+        allow_training: false
+        retention: none
+    ```
+
+    Args:
+        directory: Where the `.yaml` files are.
+        url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
+        customer_id: Who the work is billed to. Defaults to
+            `STREAM_ACCELERATION_CUSTOMER_ID`.
+
+    Returns:
+        The stored configs, in the order the files were read.
+
+    Raises:
+        ValueError: if the directory holds no YAML, or a file names an option a modality
+            does not take.
+        RuntimeError: if the router refuses one of them.
+    """
+    folder = Path(directory)
+    files = await asyncio.to_thread(_router_files, folder)
+    if not files:
+        raise ValueError(f"{folder} holds no .yaml router configs")
+
+    stored = []
+    for path in files:
+        described = await asyncio.to_thread(_read_router, path)
+        stored.append(
+            await define_router(
+                described.pop("name", path.stem),
+                url=url,
+                customer_id=customer_id,
+                **described,
+            )
+        )
+    logger.info("synced %d router configs from %s", len(stored), folder)
+    return stored
+
+
+def _router_files(folder: Path) -> list[Path]:
+    """The YAML in a directory, in a fixed order so two runs do the same thing."""
+    if not folder.is_dir():
+        raise ValueError(f"{folder} is not a directory")
+    return sorted(
+        path
+        for path in folder.iterdir()
+        if path.is_file() and path.suffix in (".yaml", ".yml")
+    )
+
+
+def _read_router(path: Path) -> dict[str, Any]:
+    """One config file, as the keywords `define_router` takes.
+
+    A key that is not a modality is refused here rather than ignored, the same way an
+    unknown option inside a block is: a misspelt `sst:` would otherwise store a config
+    that transcribes at whatever the fallback happens to be.
+    """
+    described = yaml.safe_load(path.read_text()) or {}
+    if not isinstance(described, dict):
+        raise ValueError(f"{path} should describe one config, as a mapping")
+
+    unknown = sorted(set(described) - ROUTER_KEYS)
+    if unknown:
+        raise ValueError(
+            f"{path} names {', '.join(unknown)}, which is not "
+            f"{', '.join(sorted(ROUTER_KEYS))}"
+        )
+    return described
+
+
+async def _named(client: AuthenticatedClient, name: str) -> Optional[RouterConfig]:
+    """The stored config called `name`, if there is one."""
     for stored in _answer(await list_router_configs.asyncio(client=client)):
         if stored.name == name:
-            logger.info("updating router config %s", stored.id)
-            return _answer(
-                await update_router_config.asyncio(
-                    stored.id, client=client, body=wanted
-                )
-            )
+            return stored
+    return None
+
+
+async def _store(
+    client: AuthenticatedClient,
+    wanted: RouterConfigRequest,
+    stored: Optional[RouterConfig],
+) -> RouterConfig:
+    """Write a config, editing the one of that name rather than adding a second."""
+    if stored is not None:
+        logger.info("updating router config %s", stored.id)
+        return _answer(
+            await update_router_config.asyncio(stored.id, client=client, body=wanted)
+        )
     return _answer(await create_router_config.asyncio(client=client, body=wanted))
 
 

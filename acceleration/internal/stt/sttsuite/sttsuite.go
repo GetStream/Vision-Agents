@@ -236,9 +236,9 @@ func (s *Suite) stream(provider stt.STT, chunks []stt.PcmData) {
 	}
 }
 
-// opening is the first few words of the fixture, which is what a transcript of the tail
-// of a call that was cut off should still contain.
-func (s *Suite) opening() string {
+// Opening is the first few words of the fixture, which is what a transcript of part of a
+// turn should still begin with, however little of the turn it covers.
+func (s *Suite) Opening() string {
 	words := strings.Fields(strings.ToLower(s.Reference))
 	if len(words) > openingWords {
 		words = words[:openingWords]

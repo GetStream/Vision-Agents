@@ -15,15 +15,41 @@
 # that declares nothing serves every request that asks for nothing, which is most of them.
 # The list is what the code behind the model actually sends upstream, so adding a term here
 # is a claim about the provider package as much as about the vendor.
+#
+# data_policy is what happens to what a model is sent, and every speech model must declare
+# it. Like the price it is config rather than fact: what a vendor does with our audio
+# depends on which plan we are on, which flags we send and whether an admin switched zero
+# retention on, and none of that is in a vendor's documentation. trains_on_data is yes, no
+# or unknown, and retention is none, a duration such as 30d, unspecified for a provider
+# that stores something without saying for how long, or unknown for one that has published
+# nothing. A request naming a data policy is routed only to models that meet it, and
+# unknown and unspecified meet nothing - a vendor who has said nothing is not a vendor who
+# has said no.
 
 stt:
   providers:
+    # Deepgram do not store transcripts, and a request that asked not to be trained on
+    # carries mip_opt_out=true, which is what excludes it from the Model Improvement
+    # Partnership Program - their only route from an API request into a training set.
+    # Opted-out requests are "retained only for the duration necessary to process the
+    # request", and show as opted out in their own usage logs, so this is auditable
+    # rather than taken on trust.
+    #
+    # Neither Flux model declares profanity_filter or verbatim, and the reason is our own
+    # code rather than the vendor's. Deepgram's pages disagree three ways about whether
+    # Flux accepts profanity_filter and filler_words, but the question does not arise:
+    # FluxTranscriptionOptions in the Go SDK has neither field and there is no escape
+    # hatch for an extra query parameter, so this package cannot send them. supports is a
+    # promise about what the provider package really transmits, so it stays quiet.
     - provider: deepgram
       model: flux-general-en
       languages: [en]
       realtime: true
       tier: low-latency
       supports: [keyterms, endpointing]
+      data_policy:
+        trains_on_data: "no"
+        retention: none
       price:
         per_audio_hour: 0.276
 
@@ -33,6 +59,9 @@ stt:
       realtime: true
       tier: low-latency
       supports: [keyterms, endpointing]
+      data_policy:
+        trains_on_data: "no"
+        retention: none
       price:
         per_audio_hour: 0.276
 
@@ -82,7 +111,19 @@ stt:
         ]
       realtime: true
       tier: low-latency
-      supports: [keyterms]
+      # The only model here that can be asked for a smart transcript: mode SMART removes
+      # disfluencies, tidies the grammar, formats the result and resolves spoken
+      # self-corrections. VERBATIM is its default and what everything else does.
+      supports: [keyterms, verbatim, smart]
+      # The paid tier does not train: Google "doesn't use your prompts ... or responses to
+      # improve our products". Retention is the gap. They log prompts and responses "for a
+      # limited period of time" for abuse detection and publish no figure, and there is no
+      # zero-retention path on the Gemini Developer API at all - ZDR and a BAA exist only
+      # on Vertex. So this cannot serve a request that names a retention ceiling, which is
+      # the honest answer until the route moves to Vertex.
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
       price:
         per_audio_hour: 0.54
 
@@ -120,6 +161,12 @@ stt:
         ]
       realtime: true
       tier: low-latency
+      # The strongest data policy here, and the only one that is a fact about where the
+      # weights run rather than a promise by a vendor: CC-BY-4.0 weights on our own GPU,
+      # so no third party is sent the audio and there is nobody to keep it.
+      data_policy:
+        trains_on_data: "no"
+        retention: none
       price:
         per_audio_hour: 0.079
 
@@ -159,8 +206,93 @@ stt:
         ]
       realtime: true
       tier: low-latency
+      # Training is a separate opt-in and off by default. Retention is not: Together
+      # "stores the prompts you send and the responses models return" unless an org admin
+      # turns zero retention on in organisation settings, and it is not retroactive. Their
+      # transcription page claims ZDR is the default and their ZDR page and privacy policy
+      # both say it is not; the ZDR page wins. Unlike xAI's, this is not readable from an
+      # API response, and there is no TOGETHER_API_KEY in this deployment to read it with,
+      # so it stays unspecified: an admin has to look at organisation settings and set
+      # this to none. Until then this model serves no request that names a retention.
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
       price:
         per_audio_hour: 0.21
+
+    # NVIDIA's Nemotron 3 ASR, on Together's serverless endpoint and reached over the same
+    # realtime socket as the Parakeet above. A separate provider because it is a different
+    # model family rather than a different host, and routing names a provider to pick one.
+    #
+    # English only, and NVIDIA recommend it over the multilingual model below for an
+    # English call. Billed at $0.0015 a minute, which is the rate here.
+    - provider: together-nemotron
+      model: nvidia/nemotron-3-asr-streaming-0.6b
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      # Together's, and so the same unresolved question as the Parakeet above: training is
+      # opt-in and off, retention is on unless an org admin turns zero retention on. Set
+      # this to none once ZDR is confirmed for our org.
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_audio_hour: 0.09
+
+    # Nemotron 3.5 ASR, the multilingual extension of the model above: the same cache-aware
+    # architecture with language-ID prompt conditioning, so one checkpoint covers 40
+    # language-locales and detects which one is being spoken rather than being told.
+    #
+    # The languages are NVIDIA's transcription-ready and broad-coverage tiers, 32 locales
+    # collapsing to the 28 codes below. Their third tier - el, he, lt, lv, mt, nn, sl, th -
+    # is recognised by the tokenizer but needs fine-tuning before it transcribes, so it is
+    # left out: declaring it would route a call to a model that cannot serve it.
+    #
+    # Together price this at $0.0045 a minute on their pricing page and $0.0015 on their
+    # serverless catalogue. The rate below is the higher of the two, so a bill that comes
+    # in at the pricing page's number is one routing already expected.
+    - provider: together-nemotron
+      model: nvidia/nemotron-3.5-asr-streaming-0.6b
+      languages:
+        [
+          ar,
+          bg,
+          cs,
+          da,
+          de,
+          en,
+          es,
+          et,
+          fi,
+          fr,
+          hi,
+          hr,
+          hu,
+          it,
+          ja,
+          ko,
+          nb,
+          nl,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sv,
+          tr,
+          uk,
+          vi,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      # Together's, so the same unresolved org setting as the two models above.
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_audio_hour: 0.27
 
     # xAI's Speech to Text. The languages are the ones the `language` parameter accepts,
     # which is what turns on the written form of numbers and currencies; the model
@@ -198,7 +330,21 @@ stt:
         ]
       realtime: true
       tier: low-latency
-      supports: [keyterms, diarize]
+      # filler_words is documented identically on the batch endpoint and the streaming
+      # socket, and its default is the clean transcript, so asking for verbatim here is
+      # asking for something it does not do unless told. It is narrower than Gemini's
+      # SMART, which is why the other half of that pair is not declared: this keeps the
+      # ums, it does not rewrite the sentence.
+      supports: [keyterms, diarize, verbatim]
+      # xAI "never trains on your API inputs or outputs without your explicit
+      # permission". Requests are kept encrypted for 30 days for abuse auditing and then
+      # deleted. Team-wide zero retention is self-serve in their console and would make
+      # this none, and this is asserted rather than assumed: /v1/api-key answers
+      # x-zero-data-retention: false and x-data-retention: general for our team, which is
+      # the 30 days below. Switch ZDR on there and this becomes none.
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
       price:
         per_audio_hour: 0.20
 
@@ -240,6 +386,16 @@ stt:
       realtime: true
       tier: low-latency
       supports: [keyterms, diarize]
+      # The weakest disclosure of the six, and the reason unknown is a value this field
+      # can take. Meta's terms commit to purposes for retention and never to a clock: no
+      # duration, no deletion commitment, no page defining the zero-retention policy that
+      # the handshake's own zdrOverride field overrides. Nothing states that audio sent to
+      # Muse Voice Transcribe is not trained on either; that it is a Standard Service with
+      # no contributor variant implies it, and an implication is not a declaration. So
+      # this serves requests that ask nothing and no request that asks.
+      data_policy:
+        trains_on_data: unknown
+        retention: unknown
       price:
         per_audio_hour: 0.18
 
@@ -264,7 +420,17 @@ stt:
           entities,
           keyterms,
           channels,
+          profanity_filter,
         ]
+      # profanity_filter is the one Deepgram's own pages agree this model takes, and the
+      # batch path builds its own query string, so it can be sent. verbatim is not
+      # declared: filler_words is sent when asked, and an integration test confirms the
+      # request is accepted, but their comparison table says this model strips the ums
+      # whatever the parameter says. A term is declared once it is known to be honoured,
+      # not once it is known to be accepted.
+      data_policy:
+        trains_on_data: "no"
+        retention: none
       price:
         per_audio_hour: 0.258
 

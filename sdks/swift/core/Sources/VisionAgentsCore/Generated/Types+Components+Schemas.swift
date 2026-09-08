@@ -480,6 +480,11 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/SttOptions/target`.
             internal var target: Swift.String?
+            /// A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back; unlike a shortcut, this does not reorder on latency, because a caller who wrote an order meant it.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/providers`.
+            internal var providers: [Swift.String]?
             /// ISO codes candidates must cover. Empty with detect_language lets the provider decide.
             ///
             /// - Remark: Generated from `#/components/schemas/SttOptions/languages`.
@@ -551,10 +556,46 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/SttOptions/entities`.
             internal var entities: Swift.Bool?
+            /// Mask offensive words rather than writing them down. Only some providers can be told to, so a request for it is routed to one of them or refused.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/profanity_filter`.
+            internal var profanityFilter: Swift.Bool?
+            /// - Remark: Generated from `#/components/schemas/SttOptions/mode`.
+            internal var mode: Components.Schemas.TranscriptionMode?
+            /// - Remark: Generated from `#/components/schemas/SttOptions/data_policy`.
+            internal var dataPolicy: Components.Schemas.DataPolicy?
+            /// Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"deepgram": {"eot_threshold": 0.6}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/overwrites`.
+            internal struct OverwritesPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                /// Creates a new `OverwritesPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"deepgram": {"eot_threshold": 0.6}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SttOptions/overwrites`.
+            internal var overwrites: Components.Schemas.SttOptions.OverwritesPayload?
             /// Creates a new `SttOptions`.
             ///
             /// - Parameters:
             ///   - target: A provider/model or a capability shortcut such as en-low-latency for the live path or en-recorded for a recording.
+            ///   - providers: A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back; unlike a shortcut, this does not reorder on latency, because a caller who wrote an order meant it.
             ///   - languages: ISO codes candidates must cover. Empty with detect_language lets the provider decide.
             ///   - detectLanguage: Let the provider identify the language instead of being told it.
             ///   - sampleRate: Rate of the PCM sent on the socket. Zero means 16 kHz. Live only.
@@ -573,8 +614,13 @@ extension Components {
             ///   - output:
             ///   - summary: Summarise the recording, where the provider offers audio intelligence. Recording only.
             ///   - entities: Extract named entities from the recording. Recording only.
+            ///   - profanityFilter: Mask offensive words rather than writing them down. Only some providers can be told to, so a request for it is routed to one of them or refused.
+            ///   - mode:
+            ///   - dataPolicy:
+            ///   - overwrites: Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"deepgram": {"eot_threshold": 0.6}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
             internal init(
                 target: Swift.String? = nil,
+                providers: [Swift.String]? = nil,
                 languages: [Swift.String]? = nil,
                 detectLanguage: Swift.Bool? = nil,
                 sampleRate: Swift.Int? = nil,
@@ -592,9 +638,14 @@ extension Components {
                 words: Swift.Bool? = nil,
                 output: Components.Schemas.TranscriptFormat? = nil,
                 summary: Swift.Bool? = nil,
-                entities: Swift.Bool? = nil
+                entities: Swift.Bool? = nil,
+                profanityFilter: Swift.Bool? = nil,
+                mode: Components.Schemas.TranscriptionMode? = nil,
+                dataPolicy: Components.Schemas.DataPolicy? = nil,
+                overwrites: Components.Schemas.SttOptions.OverwritesPayload? = nil
             ) {
                 self.target = target
+                self.providers = providers
                 self.languages = languages
                 self.detectLanguage = detectLanguage
                 self.sampleRate = sampleRate
@@ -613,9 +664,14 @@ extension Components {
                 self.output = output
                 self.summary = summary
                 self.entities = entities
+                self.profanityFilter = profanityFilter
+                self.mode = mode
+                self.dataPolicy = dataPolicy
+                self.overwrites = overwrites
             }
             internal enum CodingKeys: String, CodingKey {
                 case target
+                case providers
                 case languages
                 case detectLanguage = "detect_language"
                 case sampleRate = "sample_rate"
@@ -634,6 +690,50 @@ extension Components {
                 case output
                 case summary
                 case entities
+                case profanityFilter = "profanity_filter"
+                case mode
+                case dataPolicy = "data_policy"
+                case overwrites
+            }
+        }
+        /// How faithfully the transcript follows what was said. verbatim keeps the ums, the repetitions and the false starts; smart removes them, tidies the grammar and formats the result, which is why it cannot also diarize or time the words - they may no longer be the words that were spoken. Almost no provider offers both, so this narrows where a request can go.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/TranscriptionMode`.
+        internal enum TranscriptionMode: String, Codable, Hashable, Sendable, CaseIterable {
+            case verbatim = "verbatim"
+            case smart = "smart"
+        }
+        /// What a caller requires of what happens to their audio after it is transcribed. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/DataPolicy`.
+        internal struct DataPolicy: Codable, Hashable, Sendable {
+            /// False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/DataPolicy/allow_training`.
+            internal var allowTraining: Swift.Bool?
+            /// The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/DataPolicy/retention`.
+            internal var retention: Swift.String?
+            /// Creates a new `DataPolicy`.
+            ///
+            /// - Parameters:
+            ///   - allowTraining: False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
+            ///   - retention: The longest a provider may keep this audio - none, or a duration such as 30d or 24h. Omitting it asks nothing.
+            internal init(
+                allowTraining: Swift.Bool? = nil,
+                retention: Swift.String? = nil
+            ) {
+                self.allowTraining = allowTraining
+                self.retention = retention
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case allowTraining = "allow_training"
+                case retention
             }
         }
         /// What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.

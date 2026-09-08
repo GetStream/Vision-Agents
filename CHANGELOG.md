@@ -62,6 +62,40 @@ refused now, rather than falling back to a default nobody asked for.
 
 ## New Features
 
+### Speech-to-text routing: a priority list, a data policy, and configs from YAML
+
+`SttOptions` now says more about where a transcript may come from than which model to ask.
+
+`providers` is an ordered list rather than a single `target`. Each entry is a vendor, one of
+their models or a capability shortcut, and each is expanded where it stands, so the order
+written is the order tried. Health only moves a provider that is down to the back — unlike a
+shortcut, a priority list is not reordered on latency, because a caller who wrote an order
+meant it.
+
+`data_policy` is a requirement rather than a description. `allow_training: false` routes only
+to a provider that has said it does not train on what it is sent, and `retention` is a ceiling
+— `none`, or a duration such as `30d`. Every speech model in the router config now declares
+what it does with audio, and a vendor who has published nothing counts as not having said no,
+so a request nothing can serve is refused rather than sent somewhere that does not comply.
+
+`mode` is `verbatim` or `smart`, `profanity_filter` masks offensive words, and `overwrites`
+carries per-provider settings this vocabulary has no word for. All four narrow the candidates:
+a provider that cannot express one is not offered the request, and an overwrite naming a field
+a provider does not have is reported rather than dropped.
+
+```python
+await Router("healthcare").configure_stt(
+    providers=["deepgram", "parakeet"],
+    data_policy={"allow_training": False, "retention": "none"},
+    profanity_filter=True,
+    overwrites={"deepgram": {"eot_threshold": 0.6}},
+)
+```
+
+`sync_routers("routers/")` stores a directory of YAML configs the way `sync_agent` stores an
+agent directory, so routing that matters can live in the repository and be reviewed. Go gains
+`DefineRouter`, `Router.ConfigureSTT` and `SyncRouters`, which it did not have at all.
+
 ### Call pipeline shows the model routing picked
 
 A call that asked for a capability shortcut such as `en-low-latency` now also reports the
@@ -292,6 +326,18 @@ Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and
 The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). Sessions use the SDK's direct API-key path and default `video_quality="high"`; the plugin API is unchanged.
 
 ## Bug Fixes
+
+### Together's speech models: a question no longer settles as its last word
+
+"Can you hear me" came back as "me". Together's realtime socket flushes its decoder on its
+own schedule rather than when the caller stops talking — mid-sentence, and even mid-word,
+splitting "patio" into "pat" and "io." — and the deltas after a flush start again from
+nothing, carrying only the words since. Both `together-parakeet` and `together-nemotron`
+published each flush as a finished turn, so the tail of a question arrived as a turn of its
+own and was the one the agent answered.
+
+A flush is now folded into the utterance in progress rather than ending it, and a turn ends
+where the words read as a finished sentence, which is the only boundary the protocol offers.
 
 ### Acceleration: say what a tool found, and talk through a cough
 

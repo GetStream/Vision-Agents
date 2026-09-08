@@ -43,6 +43,11 @@ type Recording struct {
 	Keyterms []string
 	// Channels transcribes a multichannel recording per channel rather than mixed down.
 	Channels int
+	// ProfanityFilter masks offensive words rather than writing them down.
+	ProfanityFilter bool
+	// FillerWords keeps the uhs and ums, which the batch models strip by default. It is
+	// what a request for a verbatim transcript amounts to here.
+	FillerWords bool
 }
 
 // Validate reports whether there is anything to transcribe.

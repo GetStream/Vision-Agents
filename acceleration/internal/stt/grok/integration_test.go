@@ -70,6 +70,20 @@ func (s *GrokIntegrationSuite) TestDiarizationNamesTheVoiceWithoutChangingTheTra
 	s.NotEmpty(final.Speaker, "one voice is still a voice, and the fixture has one")
 }
 
+// TestAskingForFillerWordsStillTranscribesTheSentence is what this model declares the
+// verbatim half of Mode on. The fixture has no ums in it, so what a real call proves here
+// is that asking to keep them is accepted and does not cost the words around them - the
+// half of the claim that could quietly be wrong, since the API strips fillers by default
+// and takes the parameter on the socket's own query string.
+func (s *GrokIntegrationSuite) TestAskingForFillerWordsStillTranscribesTheSentence() {
+	provider, err := New(Options{FillerWords: true})
+	s.Require().NoError(err)
+	s.Start(provider)
+	defer s.Hangup(provider)
+
+	s.RequireAccurate(s.SettledText(provider))
+}
+
 // TestSmartTurnHoldsOffOnAPauseMidSentence is the option worth having on a call. Without
 // it, 400ms of silence ends the turn, so a caller thinking between clauses gets answered
 // mid-sentence. The turn should still settle, and it should still settle promptly.

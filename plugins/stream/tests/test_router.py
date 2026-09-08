@@ -342,3 +342,108 @@ class TestRouter:
                 url=backend.url,
                 customer_id="acme",
             )
+
+    async def test_configure_stt_stores_a_priority_list_and_a_data_policy(
+        self, router: stream.Router, backend: Router
+    ):
+        stored = await router.configure_stt(
+            providers=["deepgram", "parakeet"],
+            data_policy={"allow_training": False, "retention": "none"},
+            profanity_filter=True,
+            mode="verbatim",
+        )
+
+        assert stored.stt.providers == ["deepgram", "parakeet"]
+        assert stored.stt.data_policy.allow_training is False
+        assert stored.stt.data_policy.retention == "none"
+        assert stored.stt.profanity_filter is True
+        assert stored.stt.mode == "verbatim"
+
+    async def test_configure_stt_carries_the_other_modalities_forward(
+        self, router: stream.Router, backend: Router
+    ):
+        await stream.define_router(
+            "healthcare",
+            tts={"voice": "sonic"},
+            search={"depth": "standard"},
+            url=backend.url,
+            customer_id="acme",
+        )
+
+        stored = await router.configure_stt(providers=["deepgram"])
+
+        assert stored.stt.providers == ["deepgram"]
+        assert stored.tts.voice == "sonic", (
+            "writing how a config hears should not drop how it speaks"
+        )
+        assert stored.search.depth == "standard"
+        assert len(backend.configs) == 1
+
+    async def test_configure_stt_needs_a_named_router(self, backend: Router):
+        unnamed = stream.Router(url=backend.url, customer_id="acme")
+
+        with pytest.raises(ValueError, match="needs a name"):
+            await unnamed.configure_stt(providers=["deepgram"])
+
+    async def test_configure_stt_refuses_an_option_transcription_does_not_take(
+        self, router: stream.Router
+    ):
+        with pytest.raises(ValueError, match="retention"):
+            await router.configure_stt(retention="none")
+
+    async def test_a_directory_of_yaml_becomes_one_config_each(
+        self, backend: Router, tmp_path
+    ):
+        (tmp_path / "healthcare.yaml").write_text(
+            "tags:\n"
+            "  team: clinical\n"
+            "stt:\n"
+            "  providers: [deepgram, parakeet]\n"
+            "  data_policy:\n"
+            "    allow_training: false\n"
+            "    retention: none\n"
+        )
+        (tmp_path / "support.yaml").write_text(
+            "name: support-desk\nstt:\n  providers: [grok]\n"
+        )
+
+        stored = await stream.sync_routers(
+            tmp_path, url=backend.url, customer_id="acme"
+        )
+
+        assert [config.name for config in stored] == ["healthcare", "support-desk"], (
+            "a file names its config, and its own filename does when it does not"
+        )
+        assert stored[0].stt.providers == ["deepgram", "parakeet"]
+        assert stored[0].stt.data_policy.retention == "none"
+        assert stored[0].tags.additional_properties == {"team": "clinical"}
+        assert stored[1].stt.providers == ["grok"]
+
+    async def test_syncing_the_same_directory_twice_edits_what_is_stored(
+        self, backend: Router, tmp_path
+    ):
+        (tmp_path / "healthcare.yaml").write_text("stt:\n  providers: [deepgram]\n")
+        first = await stream.sync_routers(tmp_path, url=backend.url, customer_id="acme")
+
+        (tmp_path / "healthcare.yaml").write_text("stt:\n  providers: [grok]\n")
+        again = await stream.sync_routers(tmp_path, url=backend.url, customer_id="acme")
+
+        assert again[0].id == first[0].id
+        assert len(backend.configs) == 1
+        assert again[0].stt.providers == ["grok"]
+
+    async def test_a_misspelt_modality_in_a_file_is_refused(
+        self, backend: Router, tmp_path
+    ):
+        (tmp_path / "healthcare.yaml").write_text("sst:\n  providers: [deepgram]\n")
+
+        with pytest.raises(ValueError, match="sst"):
+            await stream.sync_routers(tmp_path, url=backend.url, customer_id="acme")
+
+    async def test_a_directory_with_no_yaml_in_it_is_refused(
+        self, backend: Router, tmp_path
+    ):
+        (tmp_path / "notes.txt").write_text("nothing to route")
+
+        with pytest.raises(ValueError, match="no .yaml"):
+            await stream.sync_routers(tmp_path, url=backend.url, customer_id="acme")

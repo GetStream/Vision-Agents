@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
 // stubProvider stands in for a real provider so routing decisions can be tested without
@@ -42,14 +43,23 @@ func (s *RoutingSuite) SetupTest() {
 	s.ctx = context.Background()
 }
 
+// keeps, trains and silent are the data policies the four test providers declare, chosen
+// so a policy assertion can tell one from another.
+var (
+	keeps   = options.DataHandling{TrainsOnData: options.ClaimNo, Retention: "30d"}
+	discard = options.DataHandling{TrainsOnData: options.ClaimNo, Retention: options.RetentionNone}
+	trains  = options.DataHandling{TrainsOnData: options.ClaimYes, Retention: options.RetentionUnspecified}
+	silent  = options.DataHandling{TrainsOnData: options.ClaimUnknown, Retention: options.RetentionUnknown}
+)
+
 // config is a small capability set that keeps the routing assertions readable.
 func (s *RoutingSuite) config() ModalityConfig {
 	return ModalityConfig{
 		Providers: []ProviderConfig{
-			{Provider: "quick", Model: "en", Languages: []string{"en"}, Realtime: true, Tier: LowLatency},
-			{Provider: "quick", Model: "multi", Languages: []string{"en", "es"}, Realtime: true, Tier: LowLatency},
-			{Provider: "lush", Model: "multi", Languages: []string{"en", "es", "de"}, Realtime: true, Tier: HighQuality},
-			{Provider: "batchy", Model: "offline-en", Languages: []string{"en"}},
+			{Provider: "quick", Model: "en", Languages: []string{"en"}, Realtime: true, Tier: LowLatency, DataPolicy: discard},
+			{Provider: "quick", Model: "multi", Languages: []string{"en", "es"}, Realtime: true, Tier: LowLatency, DataPolicy: keeps},
+			{Provider: "lush", Model: "multi", Languages: []string{"en", "es", "de"}, Realtime: true, Tier: HighQuality, DataPolicy: trains},
+			{Provider: "batchy", Model: "offline-en", Languages: []string{"en"}, DataPolicy: silent},
 		},
 		Aliases: map[string]Alias{
 			"en-low-latency":           {Languages: []string{"en"}, RequireRealtime: true, Tier: LowLatency},
@@ -197,6 +207,38 @@ func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
 				modality, provider.Name())
 		}
 	}
+}
+
+func (s *RoutingSuite) TestDefaultConfigDeclaresADataPolicyForEverySpeechModel() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	for _, provider := range config[STT].Providers {
+		s.Truef(provider.DataPolicy.Declared(),
+			"%s declares no data policy, so it would serve a request that asked about one",
+			provider.Name())
+		s.Truef(provider.DataPolicy.Valid(),
+			"%s declares a data policy nothing can be compared against", provider.Name())
+	}
+}
+
+func (s *RoutingSuite) TestConfigRejectsASpeechModelWithoutADataPolicy() {
+	config := Config{STT: ModalityConfig{Providers: []ProviderConfig{
+		{Provider: "quick", Model: "en", Languages: []string{"en"}},
+	}}}
+
+	s.ErrorContains(config.Validate(), "quick/en declares no data_policy")
+}
+
+func (s *RoutingSuite) TestConfigRejectsADataPolicyItCannotCompare() {
+	config := Config{STT: ModalityConfig{Providers: []ProviderConfig{{
+		Provider:   "quick",
+		Model:      "en",
+		Languages:  []string{"en"},
+		DataPolicy: options.DataHandling{TrainsOnData: options.ClaimNo, Retention: "a while"},
+	}}}}
+
+	s.ErrorContains(config.Validate(), "which a request cannot be compared against")
 }
 
 func (s *RoutingSuite) TestConfigRejectsDuplicateProviders() {
@@ -457,6 +499,93 @@ func (s *RoutingSuite) TestSelectReportsEveryFailureWhenNoCandidateStarts() {
 	s.ErrorContains(err, "quick/multi: upstream is down")
 }
 
+func (s *RoutingSuite) TestAPriorityListIsTriedInTheOrderItWasWritten() {
+	_, config, err := s.newRouter().Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"lush", "quick"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("lush/multi", config.Name(),
+		"the vendor the caller put first serves, whatever the ranking would have said")
+}
+
+func (s *RoutingSuite) TestAPriorityListWinsOverATarget() {
+	_, config, err := s.newRouter().Select(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "en-low-latency",
+		Providers:  []string{"lush"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("lush/multi", config.Name())
+}
+
+func (s *RoutingSuite) TestAPriorityListNamingAVendorMeansEveryModelTheyHave() {
+	candidates, err := s.newRouter().resolveChain(s.ctx, Request{Providers: []string{"quick"}})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"quick/en", "quick/multi"}, names(candidates))
+}
+
+func (s *RoutingSuite) TestAPriorityListKeepsAModelWhereItWasFirstNamed() {
+	candidates, err := s.newRouter().resolveChain(s.ctx, Request{
+		Providers: []string{"lush", "en-low-latency"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"lush/multi", "quick/en", "quick/multi"}, names(candidates),
+		"naming a vendor and then a shortcut they are in keeps them where the caller put them")
+}
+
+func (s *RoutingSuite) TestAPriorityListFallsOverToTheNextEntry() {
+	router := s.newRouterWith(func(spec Spec) (*stubProvider, error) {
+		if spec.Model == "multi" {
+			return &stubProvider{model: spec.Model, startErr: errors.New("upstream is down")}, nil
+		}
+		return &stubProvider{model: spec.Model}, nil
+	})
+
+	_, config, err := router.Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"lush", "quick/en"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("quick/en", config.Name())
+}
+
+func (s *RoutingSuite) TestAPriorityListReportsWhatItCouldNotResolve() {
+	_, err := s.newRouter().resolveChain(s.ctx, Request{Providers: []string{"nobody", "nothing"}})
+
+	s.ErrorContains(err, "nothing in the priority list nobody, nothing")
+	s.ErrorContains(err, `unknown target "nobody"`)
+	s.ErrorContains(err, `unknown target "nothing"`)
+}
+
+func (s *RoutingSuite) TestAPriorityListKeepsABatchModelOffTheLivePath() {
+	// "batchy" is the only vendor here that is not realtime, so a socket asking for them
+	// by name has to be told rather than handed a model that cannot stream.
+	live := true
+	_, err := s.newRouter().resolveChain(s.ctx, Request{
+		Providers: []string{"batchy"},
+		Realtime:  &live,
+	})
+
+	s.ErrorContains(err, "nothing in the priority list batchy")
+}
+
+func (s *RoutingSuite) TestAPriorityListKeepsALiveModelOffTheRecordedPath() {
+	batch := false
+	candidates, err := s.newRouter().resolveChain(s.ctx, Request{
+		Providers: []string{"quick", "batchy"},
+		Realtime:  &batch,
+	})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"batchy/offline-en"}, names(candidates))
+}
+
 func (s *RoutingSuite) TestSelectFailsWhenNoCandidateCanBeBuilt() {
 	// "batchy" has capabilities declared but no factory, so it can never serve a request.
 	router, err := New(Options[*stubProvider]{
@@ -535,6 +664,96 @@ func (s *RoutingSuite) TestProvidersListsEveryConfiguredModelInOrder() {
 
 	s.Equal([]string{"quick/en", "quick/multi", "lush/multi", "batchy/offline-en"}, names(providers))
 	s.True(providers[0].Health.Available, "an unmeasured provider is available")
+}
+
+func (s *RoutingSuite) TestDemoteMovesUnavailableProvidersToTheBack() {
+	candidates := []Candidate{
+		{Config: ProviderConfig{Provider: "down", Model: "m"}, Health: live.Health{Requests: 10, Errors: 10, Available: false}},
+		{Config: ProviderConfig{Provider: "up", Model: "m"}, Health: live.Health{Requests: 10, Available: true}},
+	}
+
+	demote(candidates)
+
+	s.Equal([]string{"up/m", "down/m"}, names(candidates))
+}
+
+func (s *RoutingSuite) TestDemoteLeavesASlowerProviderWhereTheCallerPutIt() {
+	candidates := []Candidate{
+		{Config: ProviderConfig{Provider: "chosen", Model: "m"}, Health: live.Health{Requests: 10, LatencyMsAvg: 500, Available: true}},
+		{Config: ProviderConfig{Provider: "faster", Model: "m"}, Health: live.Health{Requests: 10, LatencyMsAvg: 20, Available: true}},
+	}
+
+	demote(candidates)
+
+	s.Equal([]string{"chosen/m", "faster/m"}, names(candidates),
+		"a priority list means the order is the point; only being down costs a place")
+}
+
+func (s *RoutingSuite) TestADataPolicyNarrowsToTheProvidersThatMeetIt() {
+	no := false
+	candidates, err := permitted(s.newRouter().Providers(s.ctx), options.DataPolicy{AllowTraining: &no})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"quick/en", "quick/multi"}, names(candidates),
+		"the vendor that trains and the one that has said nothing are both out")
+}
+
+func (s *RoutingSuite) TestARetentionCeilingKeepsProvidersWithinIt() {
+	candidates, err := permitted(s.newRouter().Providers(s.ctx), options.DataPolicy{Retention: "30d"})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"quick/en", "quick/multi"}, names(candidates))
+}
+
+func (s *RoutingSuite) TestAskingForNoRetentionExcludesAProviderThatKeepsAnything() {
+	candidates, err := permitted(s.newRouter().Providers(s.ctx), options.DataPolicy{
+		Retention: options.RetentionNone,
+	})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"quick/en"}, names(candidates))
+}
+
+func (s *RoutingSuite) TestADataPolicyNothingMeetsNamesWhatWentUnmet() {
+	no := false
+	_, err := permitted(
+		[]Candidate{{Config: ProviderConfig{Provider: "lush", Model: "multi", DataPolicy: trains}}},
+		options.DataPolicy{AllowTraining: &no, Retention: "1h"},
+	)
+
+	s.ErrorContains(err, "no provider meets your data policy")
+	s.ErrorContains(err, "not training on what it is sent")
+	s.ErrorContains(err, "a retention of 1h or less")
+}
+
+func (s *RoutingSuite) TestADataPolicyReportsOnlyTheHalfNothingOffered() {
+	no := false
+	_, err := permitted(
+		[]Candidate{{Config: ProviderConfig{Provider: "quick", Model: "multi", DataPolicy: keeps}}},
+		options.DataPolicy{AllowTraining: &no, Retention: options.RetentionNone},
+	)
+
+	s.ErrorContains(err, "keeping nothing at all")
+	s.NotContains(err.Error(), "not training",
+		"this provider does not train, so saying nothing offers that would be wrong")
+}
+
+func (s *RoutingSuite) TestSelectRefusesADataPolicyNoProviderMeets() {
+	no := false
+	_, _, err := s.newRouter().Select(s.ctx, Request{
+		CustomerID: "acme",
+		Providers:  []string{"lush"},
+		DataPolicy: options.DataPolicy{AllowTraining: &no},
+	})
+
+	s.ErrorContains(err, "no provider meets your data policy")
+}
+
+func (s *RoutingSuite) TestADataPolicyAskingNothingRulesNothingOut() {
+	candidates, err := permitted(s.newRouter().Providers(s.ctx), options.DataPolicy{})
+	s.Require().NoError(err)
+
+	s.Len(candidates, 4)
 }
 
 func (s *RoutingSuite) TestRankPrefersAvailableProviders() {

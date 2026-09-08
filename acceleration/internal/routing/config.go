@@ -164,12 +164,26 @@ type ProviderConfig struct {
 	// speed, a domain filter. A request asking for one is only routed here if it is
 	// declared, so a term is either honoured or the request is refused.
 	Terms []options.Term `yaml:"supports"`
-	Price Price          `yaml:"price"`
+	// DataPolicy is what happens to what this model is sent: whether the provider trains
+	// on it and how long they keep it. Like the price, it is what this deployment's
+	// contract and account settings amount to rather than what a vendor's documentation
+	// says, because a retention window depends on which plan we are on and whether an
+	// admin switched zero retention on. A request naming a data policy is only routed to
+	// a model that meets it.
+	DataPolicy options.DataHandling `yaml:"data_policy"`
+	Price      Price                `yaml:"price"`
 }
 
 // Supports reports whether this model can express every term a request named.
 func (p ProviderConfig) Supports(terms []options.Term) bool {
 	return options.Expressible(p.Terms, terms)
+}
+
+// Permits reports whether this model may serve a request asking for that data policy. A
+// model that has declared nothing permits nothing, since the alternative is answering a
+// request that asked to stay away from providers whose policy is unknown.
+func (p ProviderConfig) Permits(policy options.DataPolicy) bool {
+	return policy.SatisfiedBy(p.DataPolicy)
 }
 
 // Name is the registry key, for example "deepgram/flux-general-en".
@@ -260,6 +274,49 @@ func (c ModalityConfig) Provider(name string) (ProviderConfig, bool) {
 	return ProviderConfig{}, false
 }
 
+// Declares reports whether a vendor is configured here at all, whichever of their models
+// it is. It is what tells a priority list naming a vendor from one with a typo in it.
+func (c ModalityConfig) Declares(vendor string) bool {
+	return slices.ContainsFunc(c.Providers, func(provider ProviderConfig) bool {
+		return provider.Provider == vendor
+	})
+}
+
+// Names reports whether this is something a priority list may hold: a vendor, one of
+// their models, or a capability shortcut.
+func (c ModalityConfig) Names(target string) bool {
+	if _, ok := c.Aliases[target]; ok {
+		return true
+	}
+	if _, ok := c.Provider(target); ok {
+		return true
+	}
+	return c.Declares(target)
+}
+
+// Meets reports whether any model here could serve a request asking for that data policy.
+// A policy nothing meets is worth refusing when it is written down, since every request
+// made under it afterwards would be refused anyway.
+func (c ModalityConfig) Meets(policy options.DataPolicy) bool {
+	if !policy.Asks() {
+		return true
+	}
+	return slices.ContainsFunc(c.Providers, func(provider ProviderConfig) bool {
+		return provider.Permits(policy)
+	})
+}
+
+// Expresses reports whether any model here can express every one of those terms, which is
+// the same question serving() asks of a request's candidates.
+func (c ModalityConfig) Expresses(terms []options.Term) bool {
+	if len(terms) == 0 {
+		return true
+	}
+	return slices.ContainsFunc(c.Providers, func(provider ProviderConfig) bool {
+		return provider.Supports(terms)
+	})
+}
+
 // Validate reports the first problem that would make routing decisions meaningless.
 func (c ModalityConfig) Validate() error {
 	if err := c.validate(); err != nil {
@@ -283,6 +340,10 @@ func (c ModalityConfig) validate() error {
 		}
 		if provider.Tier != "" && provider.Tier != LowLatency && provider.Tier != HighQuality {
 			return fmt.Errorf("%s declares unknown tier %q", provider.Name(), provider.Tier)
+		}
+		if provider.DataPolicy != (options.DataHandling{}) && !provider.DataPolicy.Valid() {
+			return fmt.Errorf("%s declares a data policy of %q and %q, which a request cannot be compared against",
+				provider.Name(), provider.DataPolicy.TrainsOnData, provider.DataPolicy.Retention)
 		}
 		if _, duplicate := seen[provider.Name()]; duplicate {
 			return fmt.Errorf("%s is declared twice", provider.Name())
@@ -368,6 +429,18 @@ func (c Config) Validate() error {
 	for _, modality := range slices.Sorted(maps.Keys(c)) {
 		if err := c[modality].validate(); err != nil {
 			return fmt.Errorf("routing: %s: %w", modality, err)
+		}
+		// Speech is the modality a data policy can be asked of, so it is the one where
+		// every model has to have said what happens to what it is sent. An undeclared
+		// model would not answer such a request anyway; failing here is how that is
+		// found out when the provider is added rather than when a customer asks.
+		if modality != STT {
+			continue
+		}
+		for _, provider := range c[modality].Providers {
+			if !provider.DataPolicy.Declared() {
+				return fmt.Errorf("routing: %s: %s declares no data_policy", modality, provider.Name())
+			}
 		}
 	}
 	return nil

@@ -1,4 +1,4 @@
-package togetherparakeet
+package togethernemotron
 
 import (
 	"testing"
@@ -8,17 +8,17 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-type TogetherParakeetSuite struct {
+type TogetherNemotronSuite struct {
 	suite.Suite
 }
 
-func TestTogetherParakeetSuite(t *testing.T) {
-	suite.Run(t, new(TogetherParakeetSuite))
+func TestTogetherNemotronSuite(t *testing.T) {
+	suite.Run(t, new(TogetherNemotronSuite))
 }
 
 // newSTT returns a provider that is wired up but never connected, so the event mapping
 // can be exercised without touching the network.
-func (s *TogetherParakeetSuite) newSTT(options Options) *STT {
+func (s *TogetherNemotronSuite) newSTT(options Options) *STT {
 	if options.APIKey == "" {
 		options.APIKey = "test-key"
 	}
@@ -28,7 +28,7 @@ func (s *TogetherParakeetSuite) newSTT(options Options) *STT {
 }
 
 // drain collects the events emitted so far without blocking on an empty channel.
-func (s *TogetherParakeetSuite) drain(provider *STT) []stt.Event {
+func (s *TogetherNemotronSuite) drain(provider *STT) []stt.Event {
 	var events []stt.Event
 	for {
 		select {
@@ -41,7 +41,7 @@ func (s *TogetherParakeetSuite) drain(provider *STT) []stt.Event {
 }
 
 // transcripts is the drained events as transcripts, which is what most of these are about.
-func (s *TogetherParakeetSuite) transcripts(provider *STT) []stt.Transcript {
+func (s *TogetherNemotronSuite) transcripts(provider *STT) []stt.Transcript {
 	var found []stt.Transcript
 	for _, event := range s.drain(provider) {
 		transcript, ok := event.(stt.Transcript)
@@ -61,14 +61,14 @@ func completed(text string) serverMessage {
 	return serverMessage{Type: eventCompleted, Transcript: text}
 }
 
-func (s *TogetherParakeetSuite) TestNewRequiresAPIKey() {
+func (s *TogetherNemotronSuite) TestNewRequiresAPIKey() {
 	s.T().Setenv(apiKeyEnvVar, "")
 
 	_, err := New(Options{})
 	s.ErrorContains(err, "api key is required")
 }
 
-func (s *TogetherParakeetSuite) TestNewFallsBackToEnvAPIKey() {
+func (s *TogetherNemotronSuite) TestNewFallsBackToEnvAPIKey() {
 	s.T().Setenv(apiKeyEnvVar, "from-env")
 
 	provider, err := New(Options{})
@@ -76,24 +76,40 @@ func (s *TogetherParakeetSuite) TestNewFallsBackToEnvAPIKey() {
 	s.Equal("from-env", provider.options.APIKey)
 }
 
-func (s *TogetherParakeetSuite) TestNewRejectsNonWebSocketURL() {
+func (s *TogetherNemotronSuite) TestNewRejectsNonWebSocketURL() {
 	_, err := New(Options{APIKey: "k", URL: "https://api.together.ai/v1/realtime"})
 	s.ErrorContains(err, "url must be ws:// or wss://")
 }
 
-func (s *TogetherParakeetSuite) TestProviderAndModelAreReported() {
+func (s *TogetherNemotronSuite) TestProviderAndModelAreReported() {
 	provider := s.newSTT(Options{})
 	s.Equal(ProviderName, provider.Provider())
 	s.Equal(DefaultModel, provider.Model())
 }
 
-func (s *TogetherParakeetSuite) TestTheProviderIsNamedApartFromTheSelfHostedParakeet() {
-	// The same weights on our own deployment are a different provider: the bill and the
-	// pager are not shared, and routing has to be able to pick between them.
-	s.NotEqual("parakeet", ProviderName)
+func (s *TogetherNemotronSuite) TestAnEnglishCallGetsTheEnglishModelUnlessAskedOtherwise() {
+	// NVIDIA recommend the English model over the multilingual one for English, so the
+	// default is the narrower of the two rather than the one that covers everything.
+	s.Equal(DefaultModel, s.newSTT(Options{}).Model())
+	s.NotEqual(MultilingualModel, DefaultModel)
 }
 
-func (s *TogetherParakeetSuite) TestADeltaProducesAReplacementTranscript() {
+func (s *TogetherNemotronSuite) TestTheMultilingualModelIsServedByTheSameProvider() {
+	// Both models are one socket and one protocol, so asking for the multilingual one is
+	// a model choice rather than a second provider.
+	provider := s.newSTT(Options{Model: MultilingualModel})
+
+	s.Equal(ProviderName, provider.Provider())
+	s.Equal(MultilingualModel, provider.Model())
+}
+
+func (s *TogetherNemotronSuite) TestTheProviderIsNamedApartFromTheOtherModelOnTheSameSocket() {
+	// Together's Parakeet is the same vendor and the same realtime endpoint, but a
+	// different model family, and routing names a provider to pick between them.
+	s.NotEqual("together-parakeet", ProviderName)
+}
+
+func (s *TogetherNemotronSuite) TestADeltaProducesAReplacementTranscript() {
 	provider := s.newSTT(Options{})
 	speaker := stt.Participant{ID: "p1", UserID: "u1"}
 	provider.participant = speaker
@@ -112,7 +128,7 @@ func (s *TogetherParakeetSuite) TestADeltaProducesAReplacementTranscript() {
 
 // texts is the transcripts as their text, for the sequences below where the wording is
 // the whole point.
-func (s *TogetherParakeetSuite) texts(provider *STT) []string {
+func (s *TogetherNemotronSuite) texts(provider *STT) []string {
 	var said []string
 	for _, transcript := range s.transcripts(provider) {
 		said = append(said, transcript.Text)
@@ -121,7 +137,7 @@ func (s *TogetherParakeetSuite) texts(provider *STT) []string {
 }
 
 // finals is the settled transcripts only, which is what a caller acting on the turn reads.
-func (s *TogetherParakeetSuite) finals(provider *STT) []stt.Transcript {
+func (s *TogetherNemotronSuite) finals(provider *STT) []stt.Transcript {
 	var settled []stt.Transcript
 	for _, transcript := range s.transcripts(provider) {
 		if transcript.Final() {
@@ -131,11 +147,11 @@ func (s *TogetherParakeetSuite) finals(provider *STT) []stt.Transcript {
 	return settled
 }
 
-// TestTheWholeQuestionSettlesAndNotItsLastWord is the "can you hear me" report, as this
-// socket actually sends it: it flushes its decoder after "Can you hear", then the deltas
+// TestTheWholeQuestionSettlesAndNotItsLastWord is the "can you hear me" report, as the
+// server actually sends it: it flushes its decoder after "Can you hear", then the deltas
 // begin again from nothing and only carry " me". Publishing that flush as a finished turn
 // left the last word standing alone as the whole of what the caller had asked.
-func (s *TogetherParakeetSuite) TestTheWholeQuestionSettlesAndNotItsLastWord() {
+func (s *TogetherNemotronSuite) TestTheWholeQuestionSettlesAndNotItsLastWord() {
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(delta("Can"))
@@ -158,7 +174,7 @@ func (s *TogetherParakeetSuite) TestTheWholeQuestionSettlesAndNotItsLastWord() {
 // TestASegmentFlushKeepsTheWordsAlreadyHeard is the same defect on the hypotheses rather
 // than the finals. A delta after a flush carries only the new words, so reporting it on
 // its own would blank the sentence the caller had been watching build up.
-func (s *TogetherParakeetSuite) TestASegmentFlushKeepsTheWordsAlreadyHeard() {
+func (s *TogetherNemotronSuite) TestASegmentFlushKeepsTheWordsAlreadyHeard() {
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(delta("Can you hear"))
@@ -172,7 +188,7 @@ func (s *TogetherParakeetSuite) TestASegmentFlushKeepsTheWordsAlreadyHeard() {
 // TestAFlushInTheMiddleOfAWordDoesNotSplitIt is the sequence recorded off the wire: the
 // server settled "…seven thirty pat" and the deltas resumed at "io". The join has to be
 // exactly what it sent, so trimming either side would spell the word "pat io".
-func (s *TogetherParakeetSuite) TestAFlushInTheMiddleOfAWordDoesNotSplitIt() {
+func (s *TogetherNemotronSuite) TestAFlushInTheMiddleOfAWordDoesNotSplitIt() {
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(delta("this Saturday at seven thirty patio"))
@@ -185,9 +201,22 @@ func (s *TogetherParakeetSuite) TestAFlushInTheMiddleOfAWordDoesNotSplitIt() {
 	s.Equal("this Saturday at seven thirty patio.", settled[len(settled)-1].Text)
 }
 
+// TestAFlushMidSentenceKeepsTheSpacingTheServerChose is the other half of the join. Here
+// the continuation carries the space, so adding one would double it.
+func (s *TogetherNemotronSuite) TestAFlushMidSentenceKeepsTheSpacingTheServerChose() {
+	provider := s.newSTT(Options{})
+
+	provider.handleMessage(completed("Hi, I'd like to book a table for"))
+	provider.handleMessage(completed(" four."))
+
+	settled := s.finals(provider)
+	s.Require().NotEmpty(settled)
+	s.Equal("Hi, I'd like to book a table for four.", settled[len(settled)-1].Text)
+}
+
 // TestSegmentsOfOneSentenceAreOneUtterance is what stops the router treating the tail of a
 // question as a new turn: the flush that split it was the decoder's, not the caller's.
-func (s *TogetherParakeetSuite) TestSegmentsOfOneSentenceAreOneUtterance() {
+func (s *TogetherNemotronSuite) TestSegmentsOfOneSentenceAreOneUtterance() {
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(completed("Can you hear"))
@@ -202,7 +231,7 @@ func (s *TogetherParakeetSuite) TestSegmentsOfOneSentenceAreOneUtterance() {
 
 // TestAFinishedSentenceEndsTheUtterance is the boundary that does exist, and the reason
 // the accumulation does not run for the length of the call.
-func (s *TogetherParakeetSuite) TestAFinishedSentenceEndsTheUtterance() {
+func (s *TogetherNemotronSuite) TestAFinishedSentenceEndsTheUtterance() {
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(completed("In a quiet village."))
@@ -216,7 +245,35 @@ func (s *TogetherParakeetSuite) TestAFinishedSentenceEndsTheUtterance() {
 		"the sentence that ended should not be carried into the one that follows")
 }
 
-func (s *TogetherParakeetSuite) TestACompletedTranscriptSettlesTheTurn() {
+// TestAQuestionAndAnExclamationEndAnUtteranceToo guards the other two ways the server ends
+// a sentence, since only a full stop is obvious.
+func (s *TogetherNemotronSuite) TestAQuestionAndAnExclamationEndAnUtteranceToo() {
+	for _, sentence := range []string{"Can you hear me?", "Hello there!"} {
+		provider := s.newSTT(Options{})
+
+		provider.handleMessage(completed(sentence))
+		provider.handleMessage(delta("Something else"))
+
+		heard := s.transcripts(provider)
+		s.Require().Len(heard, 2, sentence)
+		s.Equal("Something else", heard[1].Text, sentence)
+		s.Equal(int64(2), heard[1].Utterance, sentence)
+	}
+}
+
+func (s *TogetherNemotronSuite) TestTranscriptsNameTheModelThatHeardThem() {
+	// Two models serve this provider, so a transcript that only named the provider would
+	// not say which of them produced it.
+	provider := s.newSTT(Options{Model: MultilingualModel})
+
+	provider.handleMessage(completed("In a quiet village."))
+
+	heard := s.transcripts(provider)
+	s.Require().Len(heard, 1)
+	s.Equal(MultilingualModel, heard[0].Model)
+}
+
+func (s *TogetherNemotronSuite) TestACompletedTranscriptSettlesTheTurn() {
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(completed("In a quiet village."))
@@ -227,7 +284,7 @@ func (s *TogetherParakeetSuite) TestACompletedTranscriptSettlesTheTurn() {
 	s.True(heard[0].Final())
 }
 
-func (s *TogetherParakeetSuite) TestDeltasShareTheUtteranceOfTheFinalTheyBecome() {
+func (s *TogetherNemotronSuite) TestDeltasShareTheUtteranceOfTheFinalTheyBecome() {
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(delta("in a quiet"))
@@ -243,7 +300,7 @@ func (s *TogetherParakeetSuite) TestDeltasShareTheUtteranceOfTheFinalTheyBecome(
 	s.Equal(int64(2), heard[3].Utterance)
 }
 
-func (s *TogetherParakeetSuite) TestEmptyTranscriptsAreNotEmitted() {
+func (s *TogetherNemotronSuite) TestEmptyTranscriptsAreNotEmitted() {
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(delta("   "))
@@ -252,7 +309,7 @@ func (s *TogetherParakeetSuite) TestEmptyTranscriptsAreNotEmitted() {
 	s.Empty(s.drain(provider), "whitespace-only transcripts carry no information")
 }
 
-func (s *TogetherParakeetSuite) TestASettledUtteranceReleasesAWaitingClose() {
+func (s *TogetherNemotronSuite) TestASettledUtteranceReleasesAWaitingClose() {
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(completed("In a quiet village."))
@@ -264,7 +321,7 @@ func (s *TogetherParakeetSuite) TestASettledUtteranceReleasesAWaitingClose() {
 	}
 }
 
-func (s *TogetherParakeetSuite) TestAnEmptyCommitStillReleasesAWaitingClose() {
+func (s *TogetherNemotronSuite) TestAnEmptyCommitStillReleasesAWaitingClose() {
 	// There was nothing left to transcribe. Close has its answer all the same, and waiting
 	// out the timeout would spend it on every hangup.
 	provider := s.newSTT(Options{})
@@ -278,7 +335,7 @@ func (s *TogetherParakeetSuite) TestAnEmptyCommitStillReleasesAWaitingClose() {
 	}
 }
 
-func (s *TogetherParakeetSuite) TestAFailedUtteranceIsNotFatal() {
+func (s *TogetherNemotronSuite) TestAFailedUtteranceIsNotFatal() {
 	// Together's protocol says the session carries on, so tearing it down would end a call
 	// over one utterance that could not be transcribed.
 	provider := s.newSTT(Options{})
@@ -293,7 +350,7 @@ func (s *TogetherParakeetSuite) TestAFailedUtteranceIsNotFatal() {
 	s.ErrorContains(failure, "decode failed")
 }
 
-func (s *TogetherParakeetSuite) TestAFailedUtteranceReleasesAWaitingClose() {
+func (s *TogetherNemotronSuite) TestAFailedUtteranceReleasesAWaitingClose() {
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(serverMessage{Type: eventFailed, Message: "decode failed"})
@@ -305,7 +362,7 @@ func (s *TogetherParakeetSuite) TestAFailedUtteranceReleasesAWaitingClose() {
 	}
 }
 
-func (s *TogetherParakeetSuite) TestServerErrorIsFatal() {
+func (s *TogetherNemotronSuite) TestServerErrorIsFatal() {
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(serverMessage{Type: eventError, Message: "model not available"})
@@ -318,7 +375,7 @@ func (s *TogetherParakeetSuite) TestServerErrorIsFatal() {
 	s.ErrorContains(failure, "model not available")
 }
 
-func (s *TogetherParakeetSuite) TestAnErrorNestedTheRealtimeWayIsStillReported() {
+func (s *TogetherNemotronSuite) TestAnErrorNestedTheRealtimeWayIsStillReported() {
 	// Together documents the message at the top level; the realtime protocol they mirror
 	// nests it. A failure nobody can read is worse than either.
 	provider := s.newSTT(Options{})
@@ -333,7 +390,7 @@ func (s *TogetherParakeetSuite) TestAnErrorNestedTheRealtimeWayIsStillReported()
 	s.ErrorContains(events[0].(stt.Error), "invalid api key")
 }
 
-func (s *TogetherParakeetSuite) TestTheSessionCreatedFrameIsNotAnSTTEvent() {
+func (s *TogetherNemotronSuite) TestTheSessionCreatedFrameIsNotAnSTTEvent() {
 	// The handshake already reported the session as connected.
 	provider := s.newSTT(Options{})
 
@@ -342,29 +399,35 @@ func (s *TogetherParakeetSuite) TestTheSessionCreatedFrameIsNotAnSTTEvent() {
 	s.Empty(s.drain(provider))
 }
 
-func (s *TogetherParakeetSuite) TestTheEndpointNamesTheModelAndAsksToTranscribe() {
+func (s *TogetherNemotronSuite) TestTheEndpointNamesTheModelAndAsksToTranscribe() {
 	endpoint := s.newSTT(Options{}).endpoint()
 
 	s.Contains(endpoint, "intent=transcription")
-	s.Contains(endpoint, "model=nvidia%2Fparakeet-tdt-0.6b-v3-realtime")
+	s.Contains(endpoint, "model=nvidia%2Fnemotron-3-asr-streaming-0.6b")
 	s.Contains(endpoint, "input_audio_format=pcm_s16le_16000")
 }
 
-func (s *TogetherParakeetSuite) TestProcessAudioRejectsWrongAudioFormat() {
+func (s *TogetherNemotronSuite) TestTheEndpointNamesTheMultilingualModelWhenAskedForIt() {
+	endpoint := s.newSTT(Options{Model: MultilingualModel}).endpoint()
+
+	s.Contains(endpoint, "model=nvidia%2Fnemotron-3.5-asr-streaming-0.6b")
+}
+
+func (s *TogetherNemotronSuite) TestProcessAudioRejectsWrongAudioFormat() {
 	provider := s.newSTT(Options{})
 
 	err := provider.ProcessAudio(stt.PcmData{SampleRate: 48000, Channels: 1}, stt.Participant{})
 	s.ErrorContains(err, "sample rate must be 16000")
 }
 
-func (s *TogetherParakeetSuite) TestProcessAudioFailsBeforeStart() {
+func (s *TogetherNemotronSuite) TestProcessAudioFailsBeforeStart() {
 	provider := s.newSTT(Options{})
 
 	err := provider.ProcessAudio(stt.PcmData{SampleRate: stt.SampleRate, Channels: 1}, stt.Participant{})
 	s.ErrorContains(err, "not started")
 }
 
-func (s *TogetherParakeetSuite) TestProcessAudioFailsAfterClose() {
+func (s *TogetherNemotronSuite) TestProcessAudioFailsAfterClose() {
 	provider := s.newSTT(Options{})
 	s.Require().NoError(provider.Close())
 
@@ -372,7 +435,7 @@ func (s *TogetherParakeetSuite) TestProcessAudioFailsAfterClose() {
 	s.ErrorContains(err, "session closed")
 }
 
-func (s *TogetherParakeetSuite) TestCloseIsIdempotentAndClosesEvents() {
+func (s *TogetherNemotronSuite) TestCloseIsIdempotentAndClosesEvents() {
 	provider := s.newSTT(Options{})
 
 	s.Require().NoError(provider.Close())
@@ -382,6 +445,6 @@ func (s *TogetherParakeetSuite) TestCloseIsIdempotentAndClosesEvents() {
 	s.False(open, "closing the session should close the event channel")
 }
 
-func (s *TogetherParakeetSuite) TestSatisfiesSTTInterface() {
+func (s *TogetherNemotronSuite) TestSatisfiesSTTInterface() {
 	var _ stt.STT = s.newSTT(Options{})
 }

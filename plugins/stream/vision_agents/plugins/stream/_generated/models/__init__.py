@@ -32,6 +32,7 @@ from .contacts_request_contacts_item import ContactsRequestContactsItem
 from .create_session_request import CreateSessionRequest
 from .create_session_request_sandbox import CreateSessionRequestSandbox
 from .create_session_request_tags import CreateSessionRequestTags
+from .data_policy import DataPolicy
 from .decision_kind import DecisionKind
 from .endpointing import Endpointing
 from .error import Error
@@ -119,6 +120,7 @@ from .speech_request import SpeechRequest
 from .speech_request_tags import SpeechRequestTags
 from .stats_bucket import StatsBucket
 from .stt_options import SttOptions
+from .stt_options_overwrites import SttOptionsOverwrites
 from .sync_agent_request import SyncAgentRequest
 from .sync_agent_result import SyncAgentResult
 from .tag_stats_bucket import TagStatsBucket
@@ -129,6 +131,7 @@ from .transcript_format import TranscriptFormat
 from .transcript_message import TranscriptMessage
 from .transcript_word import TranscriptWord
 from .transcription import Transcription
+from .transcription_mode import TranscriptionMode
 from .transcription_request import TranscriptionRequest
 from .transcription_request_tags import TranscriptionRequestTags
 from .transfer_call_request import TransferCallRequest
@@ -176,6 +179,7 @@ __all__ = (
     "CreateSessionRequest",
     "CreateSessionRequestSandbox",
     "CreateSessionRequestTags",
+    "DataPolicy",
     "DecisionKind",
     "Endpointing",
     "Error",
@@ -263,6 +267,7 @@ __all__ = (
     "SpeechRequestTags",
     "StatsBucket",
     "SttOptions",
+    "SttOptionsOverwrites",
     "SyncAgentRequest",
     "SyncAgentResult",
     "TagStatsBucket",
@@ -273,6 +278,7 @@ __all__ = (
     "TranscriptMessage",
     "TranscriptWord",
     "Transcription",
+    "TranscriptionMode",
     "TranscriptionRequest",
     "TranscriptionRequestTags",
     "TransferCallRequest",

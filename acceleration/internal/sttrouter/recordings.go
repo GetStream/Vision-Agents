@@ -13,6 +13,11 @@ import (
 // Transcribers is the set of batch transcription providers a build can construct.
 type Transcribers = routing.Registry[stt.Transcriber]
 
+// batch is what this router's half of the provider list is, for a priority list that
+// names a vendor rather than one of their models. A whole recording wants the batch model,
+// which is both cheaper per hour and more accurate than the same vendor's streaming one.
+var batch = false
+
 // NewTranscriberRegistry returns an empty registry.
 func NewTranscriberRegistry() *Transcribers { return routing.NewRegistry[stt.Transcriber]() }
 
@@ -28,8 +33,9 @@ func DefaultTranscriberRegistry() *Transcribers {
 
 	registry.Register(deepgram.ProviderName, func(spec routing.Spec) (stt.Transcriber, error) {
 		return deepgram.NewPrerecorded(deepgram.PrerecordedOptions{
-			Model:  spec.Model,
-			Logger: spec.Logger,
+			Model:     spec.Model,
+			MipOptOut: trainingRefused(spec),
+			Logger:    spec.Logger,
 		})
 	})
 
@@ -82,9 +88,12 @@ func (r *Recordings) Transcribe(
 		CustomerID:    recording.CustomerID,
 		Tags:          recording.Tags,
 		Target:        recording.Options.Target,
+		Providers:     recording.Options.Providers,
+		Realtime:      &batch,
 		LanguageHints: recording.Options.Languages,
 		Keyterms:      recording.Options.Keyterms,
 		Terms:         recording.Options.Terms(),
+		DataPolicy:    recording.Options.DataPolicy,
 		STT:           recording.Options,
 	}
 

@@ -75,6 +75,10 @@ type Options struct {
 	// person at the same microphone from the caller. Off leaves every transcript
 	// unattributed, which is the right answer when one track carries one person.
 	Diarize bool
+	// FillerWords keeps the uhs and ums. The API strips them by default, from the words
+	// as well as the text, so a verbatim transcript is something to ask for rather than
+	// something to turn off.
+	FillerWords bool
 	// EndpointingMs is the silence that ends an utterance. Zero leaves the server's own
 	// 400ms in place.
 	EndpointingMs int
@@ -294,6 +298,9 @@ func (s *STT) endpoint() string {
 	}
 	if s.options.Diarize {
 		query.Set("diarize", "true")
+	}
+	if s.options.FillerWords {
+		query.Set("filler_words", "true")
 	}
 	if s.options.EndpointingMs > 0 {
 		query.Set("endpointing", strconv.Itoa(s.options.EndpointingMs))

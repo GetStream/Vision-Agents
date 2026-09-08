@@ -52,7 +52,7 @@ func (s *Server) CreateRouterConfig(ctx context.Context, request CreateRouterCon
 	if request.Body == nil {
 		return CreateRouterConfig400JSONResponse{badRequest("a request body is required")}, nil
 	}
-	if message, ok := routerConfigComplaint(*request.Body); !ok {
+	if message, ok := s.routerConfigComplaint(*request.Body); !ok {
 		return CreateRouterConfig400JSONResponse{badRequest(message)}, nil
 	}
 
@@ -92,7 +92,7 @@ func (s *Server) UpdateRouterConfig(ctx context.Context, request UpdateRouterCon
 	if request.Body == nil {
 		return UpdateRouterConfig400JSONResponse{badRequest("a request body is required")}, nil
 	}
-	if message, ok := routerConfigComplaint(*request.Body); !ok {
+	if message, ok := s.routerConfigComplaint(*request.Body); !ok {
 		return UpdateRouterConfig400JSONResponse{badRequest(message)}, nil
 	}
 
@@ -130,7 +130,7 @@ func (s *Server) DeleteRouterConfig(ctx context.Context, request DeleteRouterCon
 // and the keyterms are checked here rather than left to the request that uses the config,
 // because a config nothing can be routed under is worth hearing about while it is being
 // written and not once a socket is open.
-func routerConfigComplaint(request RouterConfigRequest) (string, bool) {
+func (s *Server) routerConfigComplaint(request RouterConfigRequest) (string, bool) {
 	if strings.TrimSpace(request.Name) == "" {
 		return "a router config needs a name", false
 	}
@@ -141,6 +141,53 @@ func routerConfigComplaint(request RouterConfigRequest) (string, bool) {
 	}
 	if request.Stt != nil && request.Stt.Keyterms != nil && len(*request.Stt.Keyterms) > stt.MaxKeyterms {
 		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false
+	}
+
+	held := sttOptionsOf(request.Stt)
+	if err := held.Validate(); err != nil {
+		return err.Error(), false
+	}
+	if message, ok := s.sttComplaint(held); !ok {
+		return message, false
+	}
+	return "", true
+}
+
+// sttComplaint reports what this deployment could never route, which is the half of a
+// config's validity that only the router knows.
+//
+// The same reasoning as the keyterm limit, one step further: a config naming a provider
+// this build has never heard of, or a data policy none of its models meet, would fail
+// every request made under it. Saying so once, while it is being written, beats saying it
+// on every call afterwards.
+func (s *Server) sttComplaint(held options.STT) (string, bool) {
+	speech, ok := s.routerFor(Modality(routing.STT))
+	if !ok {
+		return "", true
+	}
+	config := speech.Config()
+
+	for _, target := range held.Providers {
+		if !config.Names(target) {
+			return fmt.Sprintf(
+				"%q is not a provider, a provider/model or a capability shortcut this deployment offers", target), false
+		}
+	}
+	if !config.Meets(held.DataPolicy) {
+		return "no provider this deployment offers meets that data policy", false
+	}
+	if !config.Expresses(held.Terms()) {
+		return "no provider this deployment offers can serve every option in this config", false
+	}
+	// An overwrite for a vendor that does not exist is a typo, and the alternative to
+	// reporting it is a setting that was stored, sent nowhere and never mentioned again.
+	// Being a candidate for one particular request is not asked: which provider a call
+	// lands on is the router's business, and a config that prepares for several is doing
+	// the right thing.
+	for vendor := range held.Overwrites {
+		if !config.Declares(vendor) {
+			return fmt.Sprintf("there are overwrites for %q, which this deployment has no provider for", vendor), false
+		}
 	}
 	return "", true
 }

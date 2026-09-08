@@ -2,6 +2,7 @@ package sttrouter
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -9,6 +10,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/gemini"
 )
 
 type STTRouterSuite struct {
@@ -175,6 +177,61 @@ func (s *STTRouterSuite) TestRegistryBuildsTheTogetherHostedParakeet() {
 	s.Equal("nvidia/parakeet-tdt-0.6b-v3-realtime", built.Model())
 	s.Equal("together-parakeet", built.Provider(),
 		"the self-hosted deployment of the same weights is a different provider")
+}
+
+func (s *STTRouterSuite) TestRegistryReadsTheFluxTurnThresholdsFromOverwrites() {
+	var settings deepgramSettings
+	spec := routing.Spec{
+		Model:      "flux-general-en",
+		Overwrites: json.RawMessage(`{"eot_threshold":0.6,"eot_timeout_ms":800}`),
+	}
+
+	s.Require().NoError(spec.Settings(&settings))
+
+	s.InDelta(0.6, settings.EotThreshold, 0.001)
+	s.Equal(800, settings.EotTimeoutMs)
+	s.Zero(settings.EagerEotThreshold, "what was not named keeps Flux's own default")
+}
+
+func (s *STTRouterSuite) TestRegistryRefusesAnOverwriteTheProviderHasNoFieldFor() {
+	registry := DefaultRegistry()
+	s.T().Setenv("DEEPGRAM_API_KEY", "test-key")
+
+	_, err := registry.Build("deepgram", routing.Spec{
+		Model:      "flux-general-en",
+		Overwrites: json.RawMessage(`{"eot_treshold":0.6}`),
+	})
+
+	s.ErrorContains(err, "eot_treshold",
+		"a misspelt setting has to be reported, since the alternative is silently not sending it")
+}
+
+func (s *STTRouterSuite) TestRegistryBuildsWithoutOverwrites() {
+	registry := DefaultRegistry()
+	s.T().Setenv("DEEPGRAM_API_KEY", "test-key")
+
+	built, err := registry.Build("deepgram", routing.Spec{Model: "flux-general-en"})
+	s.Require().NoError(err)
+
+	s.Equal("flux-general-en", built.Model())
+}
+
+func (s *STTRouterSuite) TestDeepgramOptsOutOfTrainingOnlyWhenAsked() {
+	no, yes := false, true
+
+	s.True(trainingRefused(routing.Spec{
+		STT: options.STT{DataPolicy: options.DataPolicy{AllowTraining: &no}},
+	}))
+	s.False(trainingRefused(routing.Spec{
+		STT: options.STT{DataPolicy: options.DataPolicy{AllowTraining: &yes}},
+	}))
+	s.False(trainingRefused(routing.Spec{}), "a request that asked nothing is not a request to opt out")
+}
+
+func (s *STTRouterSuite) TestGeminiIsAskedForTheModeTheRequestNamed() {
+	s.Equal(gemini.ModeVerbatim, transcriptionMode(options.ModeVerbatim))
+	s.Equal(gemini.ModeSmart, transcriptionMode(options.ModeSmart))
+	s.Empty(transcriptionMode(""), "saying nothing leaves the server its own default")
 }
 
 func (s *STTRouterSuite) TestStartRequiresACustomer() {

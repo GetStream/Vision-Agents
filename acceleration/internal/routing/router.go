@@ -100,6 +100,16 @@ type Request struct {
 	Tags Tags
 	// Target is a "provider/model" name or a capability shortcut.
 	Target string
+	// Providers is a priority list of where to try, in the order given, and it wins over
+	// Target when it holds anything. Each entry is a bare provider name, a
+	// "provider/model" or a capability shortcut, and each is expanded where it stands, so
+	// the caller's order is the order candidates are tried in. Health only demotes what
+	// is unavailable rather than reordering the list.
+	Providers []string
+	// Realtime restricts a priority list to one half of a vendor's models: a socket must
+	// not be served by a batch model, and a recording should not be streamed at a live
+	// one. Nil does not filter, which is what a concrete target has always done.
+	Realtime *bool
 	// LanguageHints narrow multilingual models.
 	LanguageHints []string
 	// Voice selects the speaker for modalities that produce audio.
@@ -110,6 +120,10 @@ type Request struct {
 	// A candidate that has not declared one of them is not a candidate, so a term is
 	// either honoured or the request fails saying nothing can serve it.
 	Terms []options.Term
+	// DataPolicy is what the caller requires of what happens to their data afterwards.
+	// It narrows candidates the same way a term does, and for the same reason: being
+	// refused is better than being served by a provider who keeps what they were sent.
+	DataPolicy options.DataPolicy
 	// STT, TTS and Search are the per-modality options, handed to the factory of
 	// whichever modality this router serves.
 	STT    options.STT
@@ -234,11 +248,15 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		return zero, ProviderConfig{}, err
 	}
 
-	candidates, err := r.Resolve(ctx, request.Target, request.LanguageHints)
+	candidates, err := r.candidates(ctx, request)
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
 	candidates, err = serving(candidates, request.Terms)
+	if err != nil {
+		return zero, ProviderConfig{}, err
+	}
+	candidates, err = permitted(candidates, request.DataPolicy)
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
@@ -264,6 +282,82 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		request.Target, errors.Join(failures...))
 }
 
+// candidates is where a request may go, best first: a priority list where one was given,
+// and the ranked resolution of a single target otherwise.
+func (r *Router[P]) candidates(ctx context.Context, request Request) ([]Candidate, error) {
+	if len(request.Providers) == 0 {
+		return r.Resolve(ctx, request.Target, request.LanguageHints)
+	}
+	return r.resolveChain(ctx, request)
+}
+
+// resolveChain expands a priority list in the order it was written.
+//
+// Each entry is expanded where it stands and the results are concatenated, so a caller
+// who said one vendor comes first is asked about the second only once the first is out.
+// Within a single entry the old rules still apply: a shortcut ranks its own members by
+// health, because naming a shortcut is declining to choose between them.
+//
+// Health does not reorder the list itself. A caller who wanted the fastest available
+// model has a shortcut for that; a priority list means the order is the point, and the
+// most an unavailable provider earns is a place at the back.
+func (r *Router[P]) resolveChain(ctx context.Context, request Request) ([]Candidate, error) {
+	var chain []Candidate
+	var refusals []error
+
+	for _, target := range request.Providers {
+		found, err := r.resolveEntry(ctx, target, request.LanguageHints)
+		if err != nil {
+			refusals = append(refusals, err)
+			continue
+		}
+		for _, candidate := range found {
+			if request.Realtime != nil && candidate.Config.Realtime != *request.Realtime {
+				continue
+			}
+			// First position wins, so naming a vendor and then a shortcut they are in
+			// keeps them where the caller put them.
+			if slices.ContainsFunc(chain, func(held Candidate) bool {
+				return held.Config.Name() == candidate.Config.Name()
+			}) {
+				continue
+			}
+			chain = append(chain, candidate)
+		}
+	}
+
+	if len(chain) == 0 {
+		return nil, fmt.Errorf("routing: nothing in the priority list %s can serve this request: %w",
+			strings.Join(request.Providers, ", "), errors.Join(refusals...))
+	}
+
+	demote(chain)
+	return chain, nil
+}
+
+// resolveEntry is Resolve, plus the bare vendor name only a priority list may hold.
+//
+// The vendor name is tried last, so a name that is somehow both an alias and a provider
+// still means the alias, which is what it means everywhere else.
+func (r *Router[P]) resolveEntry(ctx context.Context, target string, languageHints []string) ([]Candidate, error) {
+	candidates, err := r.Resolve(ctx, target, languageHints)
+	if err == nil {
+		return candidates, nil
+	}
+
+	var named []Candidate
+	for _, provider := range r.config.Providers {
+		if provider.Provider != target || !provider.Speaks(languageHints) {
+			continue
+		}
+		named = append(named, Candidate{Config: provider, Health: r.health(ctx, provider)})
+	}
+	if len(named) == 0 {
+		return nil, err
+	}
+	return named, nil
+}
+
 func (r *Router[P]) startCandidate(ctx context.Context, request Request, candidate Candidate) (P, error) {
 	var zero P
 
@@ -280,6 +374,7 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 		STT:           request.STT,
 		TTS:           request.TTS,
 		Search:        request.Search,
+		Overwrites:    request.STT.Overwrites[candidate.Config.Provider],
 		Logger:        r.logger,
 	}
 
@@ -369,6 +464,74 @@ func serving(candidates []Candidate, terms []options.Term) ([]Candidate, error) 
 		unserved = []string{"that combination of terms"}
 	}
 	return nil, fmt.Errorf("routing: no provider can express %s", strings.Join(unserved, ", "))
+}
+
+// permitted narrows candidates to the ones allowed to do this work at all.
+//
+// It reads like serving and fails like it, but it is a different kind of no. A term is
+// something a provider cannot express; a data policy is something they are not permitted
+// to be asked. Both end in a refusal naming what went unmet, because a request that said
+// "not somewhere that trains on this" and was answered anyway has been answered wrongly
+// in a way nothing about the transcript would show.
+func permitted(candidates []Candidate, policy options.DataPolicy) ([]Candidate, error) {
+	if !policy.Asks() {
+		return candidates, nil
+	}
+
+	kept := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Config.Permits(policy) {
+			kept = append(kept, candidate)
+		}
+	}
+	if len(kept) > 0 {
+		return kept, nil
+	}
+
+	// Which half to name is the half nothing met, since a request refused for asking two
+	// things of which one is available should say which one is not.
+	var unmet []string
+	if policy.AllowTraining != nil && !*policy.AllowTraining {
+		if !slices.ContainsFunc(candidates, func(candidate Candidate) bool {
+			return candidate.Config.DataPolicy.TrainsOnData == options.ClaimNo
+		}) {
+			unmet = append(unmet, "not training on what it is sent")
+		}
+	}
+	if policy.Retention != "" {
+		ceiling := options.DataPolicy{Retention: policy.Retention}
+		if !slices.ContainsFunc(candidates, func(candidate Candidate) bool {
+			return candidate.Config.Permits(ceiling)
+		}) {
+			unmet = append(unmet, retentionUnmet(policy.Retention))
+		}
+	}
+	if len(unmet) == 0 {
+		unmet = []string{"that combination of data policy requirements"}
+	}
+	return nil, fmt.Errorf("routing: no provider meets your data policy: none offers %s",
+		strings.Join(unmet, " and "))
+}
+
+// retentionUnmet names a retention requirement nothing offered, in the words it was asked
+// in: asking for none is asking to be kept by nobody, not for a window of length zero.
+func retentionUnmet(required options.Retention) string {
+	if required == options.RetentionNone {
+		return "keeping nothing at all"
+	}
+	return fmt.Sprintf("a retention of %s or less", required)
+}
+
+// demote moves unavailable candidates to the back of a priority list without disturbing
+// the order of the rest.
+//
+// It is the whole of what health is allowed to do to a list the caller ordered by hand.
+// A provider that is down should be tried last rather than first, and a provider that is
+// merely slower than the next one down the list is still the one that was asked for.
+func demote(candidates []Candidate) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].Health.Available && !candidates[j].Health.Available
+	})
 }
 
 // rank orders candidates best first. The sort is stable, so equally-ranked candidates keep

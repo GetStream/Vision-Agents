@@ -7,7 +7,7 @@ from .dispatch import StreamDispatch
 from .folder import Folder, load
 from .llm import LLM
 from .phone import Phone
-from .router import Router, define_router
+from .router import Router, define_router, sync_routers
 from .stt import STT
 from .text import TextEvent, TextSession
 from .tts import TTS
@@ -31,4 +31,5 @@ __all__ = [
     "define_skills",
     "load",
     "sync_agent",
+    "sync_routers",
 ]

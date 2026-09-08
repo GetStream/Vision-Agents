@@ -18,48 +18,73 @@ func sttOptionsOf(sent *SttOptions) options.STT {
 	if sent == nil {
 		return options.STT{}
 	}
-	return options.STT{
-		Target:         value(sent.Target),
-		Languages:      value(sent.Languages),
-		DetectLanguage: sent.DetectLanguage,
-		SampleRate:     sent.SampleRate,
-		Interim:        sent.Interim,
-		Endpointing:    string(value(sent.Endpointing)),
-		SilenceMs:      sent.SilenceMs,
-		UtteranceEndMs: sent.UtteranceEndMs,
-		Diarize:        sent.Diarize,
-		MaxSpeakers:    sent.MaxSpeakers,
-		Keyterms:       value(sent.Keyterms),
-		Format:         sent.Format,
-		Redact:         sent.Redact,
-		Events:         sent.Events,
-		Channels:       sent.Channels,
-		Words:          sent.Words,
-		Output:         string(value(sent.Output)),
-		Summary:        sent.Summary,
-		Entities:       sent.Entities,
+	held := options.STT{
+		Target:          value(sent.Target),
+		Providers:       value(sent.Providers),
+		Languages:       value(sent.Languages),
+		DetectLanguage:  sent.DetectLanguage,
+		SampleRate:      sent.SampleRate,
+		Interim:         sent.Interim,
+		Endpointing:     string(value(sent.Endpointing)),
+		SilenceMs:       sent.SilenceMs,
+		UtteranceEndMs:  sent.UtteranceEndMs,
+		Diarize:         sent.Diarize,
+		MaxSpeakers:     sent.MaxSpeakers,
+		Keyterms:        value(sent.Keyterms),
+		Format:          sent.Format,
+		Redact:          sent.Redact,
+		Events:          sent.Events,
+		Channels:        sent.Channels,
+		Words:           sent.Words,
+		Output:          string(value(sent.Output)),
+		Summary:         sent.Summary,
+		Entities:        sent.Entities,
+		ProfanityFilter: sent.ProfanityFilter,
+		Mode:            string(value(sent.Mode)),
 	}
+	if sent.DataPolicy != nil {
+		held.DataPolicy = options.DataPolicy{
+			AllowTraining: sent.DataPolicy.AllowTraining,
+			Retention:     options.Retention(value(sent.DataPolicy.Retention)),
+		}
+	}
+	// An overwrite is carried as text rather than as a decoded object because nothing
+	// here reads inside it: it is handed to whichever provider it names, which is the
+	// only thing that knows what its own settings are called.
+	for provider, block := range value(sent.Overwrites) {
+		encoded, err := json.Marshal(block)
+		if err != nil {
+			continue
+		}
+		if held.Overwrites == nil {
+			held.Overwrites = make(map[string]json.RawMessage, len(value(sent.Overwrites)))
+		}
+		held.Overwrites[provider] = encoded
+	}
+	return held
 }
 
 func sttOptionsFor(held options.STT) *SttOptions {
 	sent := &SttOptions{
-		Target:         optional(held.Target),
-		Languages:      list(held.Languages),
-		DetectLanguage: held.DetectLanguage,
-		SampleRate:     held.SampleRate,
-		Interim:        held.Interim,
-		SilenceMs:      held.SilenceMs,
-		UtteranceEndMs: held.UtteranceEndMs,
-		Diarize:        held.Diarize,
-		MaxSpeakers:    held.MaxSpeakers,
-		Keyterms:       list(held.Keyterms),
-		Format:         held.Format,
-		Redact:         held.Redact,
-		Events:         held.Events,
-		Channels:       held.Channels,
-		Words:          held.Words,
-		Summary:        held.Summary,
-		Entities:       held.Entities,
+		Target:          optional(held.Target),
+		Providers:       list(held.Providers),
+		Languages:       list(held.Languages),
+		DetectLanguage:  held.DetectLanguage,
+		SampleRate:      held.SampleRate,
+		Interim:         held.Interim,
+		SilenceMs:       held.SilenceMs,
+		UtteranceEndMs:  held.UtteranceEndMs,
+		Diarize:         held.Diarize,
+		MaxSpeakers:     held.MaxSpeakers,
+		Keyterms:        list(held.Keyterms),
+		Format:          held.Format,
+		Redact:          held.Redact,
+		Events:          held.Events,
+		Channels:        held.Channels,
+		Words:           held.Words,
+		Summary:         held.Summary,
+		Entities:        held.Entities,
+		ProfanityFilter: held.ProfanityFilter,
 	}
 	if held.Endpointing != "" {
 		endpointing := Endpointing(held.Endpointing)
@@ -68,6 +93,27 @@ func sttOptionsFor(held options.STT) *SttOptions {
 	if held.Output != "" {
 		output := TranscriptFormat(held.Output)
 		sent.Output = &output
+	}
+	if held.Mode != "" {
+		mode := TranscriptionMode(held.Mode)
+		sent.Mode = &mode
+	}
+	if held.DataPolicy.Asks() {
+		sent.DataPolicy = &DataPolicy{
+			AllowTraining: held.DataPolicy.AllowTraining,
+			Retention:     optional(string(held.DataPolicy.Retention)),
+		}
+	}
+	if len(held.Overwrites) > 0 {
+		overwrites := make(map[string]any, len(held.Overwrites))
+		for provider, block := range held.Overwrites {
+			var decoded any
+			if err := json.Unmarshal(block, &decoded); err != nil {
+				continue
+			}
+			overwrites[provider] = decoded
+		}
+		sent.Overwrites = &overwrites
 	}
 	return sent
 }
