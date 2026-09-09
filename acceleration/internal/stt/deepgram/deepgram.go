@@ -96,6 +96,11 @@ func New(options Options) (*STT, error) {
 	if options.Model == "" {
 		options.Model = DefaultModel
 	}
+	if options.EotThreshold == 0 {
+		// Flux's own default is 0.7, which ended turns on kitchen-noise dips: one ask
+		// arrived as Alvarez, then five five five. 0.8 is the one lever against that.
+		options.EotThreshold = 0.8
+	}
 	if len(options.LanguageHints) > 0 && options.Model != MultilingualModel {
 		return nil, fmt.Errorf("deepgram: language hints require model %s, got %s", MultilingualModel, options.Model)
 	}

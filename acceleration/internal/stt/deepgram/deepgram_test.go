@@ -115,6 +115,11 @@ func (s *DeepgramSuite) TestNewDefaultsToEnglishFluxModel() {
 	s.Equal(DefaultModel, s.newSTT(Options{}).Model())
 }
 
+func (s *DeepgramSuite) TestNewDefaultsEotThresholdSoNoiseDoesNotEndATurn() {
+	s.InDelta(0.8, s.newSTT(Options{}).options.EotThreshold, 0.001)
+	s.InDelta(0.6, s.newSTT(Options{EotThreshold: 0.6}).options.EotThreshold, 0.001)
+}
+
 func (s *DeepgramSuite) TestNewRejectsLanguageHintsOnEnglishModel() {
 	_, err := New(Options{APIKey: "k", LanguageHints: []string{"en", "es"}})
 	s.ErrorContains(err, "language hints require model flux-general-multi")
