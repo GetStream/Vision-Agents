@@ -33,7 +33,7 @@ turns:
     text: "Still four adults plus the high chair, not six. Please keep party size at four with the peanut note."
     trigger: {kind: after_agent_turn, delay_ms: 500}
   - id: readback
-    text: "Can you read back name, Saturday 7:30 patio, party of four, high chair, and peanut allergy one more time?"
+    text: "Can you read back name, Saturday 7:30 patio, party of four, high chair, and peanut allergy one more time? And the callback again, five one two, five five five, zero one four two."
     trigger: {kind: after_agent_turn, delay_ms: 500}
   - id: thanks
     text: "Perfect, we will see you Saturday at 7:30. Thanks for staying with me through all that."
