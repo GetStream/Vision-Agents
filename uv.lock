@@ -7543,6 +7543,7 @@ dependencies = [
     { name = "aiohttp" },
     { name = "attrs" },
     { name = "httpx" },
+    { name = "pyyaml" },
     { name = "vision-agents" },
 ]
 
@@ -7557,6 +7558,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
     { name = "attrs", specifier = ">=23.2" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "vision-agents", editable = "sdks/python" },
 ]
 

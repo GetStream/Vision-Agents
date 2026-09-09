@@ -38,6 +38,22 @@ func (s *PoolSuite) received(worker *Worker) []string {
 	}
 }
 
+// answered drains the messages a worker was handed, the way received drains its calls.
+func (s *PoolSuite) answered(worker *Worker) []string {
+	var texts []string
+	for {
+		select {
+		case message, open := <-worker.Messages():
+			if !open {
+				return texts
+			}
+			texts = append(texts, message.Text)
+		default:
+			return texts
+		}
+	}
+}
+
 func (s *PoolSuite) TestTwoWorkersSplitTheCallsBetweenThem() {
 	first, _ := s.pool.Register("acme", 10)
 	second, _ := s.pool.Register("acme", 10)
@@ -141,6 +157,92 @@ func (s *PoolSuite) TestACallHasToNameTheCallItIs() {
 	_, err := s.pool.Assign("acme", Call{CalledNumber: "+15125551234"})
 
 	s.ErrorContains(err, "needs an id")
+}
+
+func (s *PoolSuite) TestTwoWorkersSplitTheMessagesBetweenThem() {
+	first, _ := s.pool.Register("acme", 10)
+	second, _ := s.pool.Register("acme", 10)
+
+	for _, text := range []string{"one", "two", "three", "four"} {
+		_, err := s.pool.AssignMessage("acme", Message{ChannelID: "call-1", Text: text})
+		s.Require().NoError(err)
+	}
+
+	s.Equal([]string{"one", "three"}, s.answered(first))
+	s.Equal([]string{"two", "four"}, s.answered(second))
+}
+
+func (s *PoolSuite) TestAWorkerHoldingItsCapacityInCallsCanStillBeWrittenTo() {
+	// The two queues are separate on purpose. Answering a message costs a model call
+	// rather than a call's worth of audio, so making somebody wait for a phone line to
+	// free up before their message is read would be the wrong queue entirely.
+	worker, _ := s.pool.Register("acme", 1)
+	_, err := s.pool.Assign("acme", Call{CallID: "call-1"})
+	s.Require().NoError(err)
+
+	assigned, err := s.pool.AssignMessage("acme", Message{ChannelID: "call-2", Text: "hello"})
+
+	s.Require().NoError(err)
+	s.Equal(worker.ID, assigned.ID)
+	s.Equal([]string{"hello"}, s.answered(worker))
+}
+
+func (s *PoolSuite) TestAFullWorkerIsPassedOverForMessagesToo() {
+	full, _ := s.pool.Register("acme", 1)
+	free, _ := s.pool.Register("acme", 5)
+
+	first, err := s.pool.AssignMessage("acme", Message{ChannelID: "call-1", Text: "one"})
+	s.Require().NoError(err)
+	s.Equal(full.ID, first.ID)
+
+	for _, text := range []string{"two", "three"} {
+		assigned, err := s.pool.AssignMessage("acme", Message{ChannelID: "call-1", Text: text})
+		s.Require().NoError(err)
+		s.Equal(free.ID, assigned.ID)
+	}
+
+	s.Equal([]string{"one"}, s.answered(full))
+	s.Equal([]string{"two", "three"}, s.answered(free))
+}
+
+func (s *PoolSuite) TestAMessageWithNowhereToGoIsRefused() {
+	_, err := s.pool.AssignMessage("acme", Message{ChannelID: "call-1", Text: "hello"})
+
+	s.Require().Error(err)
+	s.True(errors.Is(err, ErrNoWorkers))
+}
+
+func (s *PoolSuite) TestAMessageHasToNameTheChannelItWasWrittenIn() {
+	// Answering anywhere else would be a reply nobody asked for in a conversation nobody
+	// is reading.
+	s.pool.Register("acme", 10)
+
+	_, err := s.pool.AssignMessage("acme", Message{Text: "hello"})
+
+	s.ErrorContains(err, "needs a channel")
+}
+
+func (s *PoolSuite) TestOneCustomersMessagesNeverReachAnothersWorkers() {
+	ours, _ := s.pool.Register("acme", 10)
+	theirs, _ := s.pool.Register("globex", 10)
+
+	_, err := s.pool.AssignMessage("acme", Message{ChannelID: "call-1", Text: "ours"})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"ours"}, s.answered(ours))
+	s.Empty(s.answered(theirs))
+}
+
+func (s *PoolSuite) TestAWorkerThatLeftIsNotOfferedMessages() {
+	first, _ := s.pool.Register("acme", 10)
+	second, release := s.pool.Register("acme", 10)
+
+	release()
+	_, err := s.pool.AssignMessage("acme", Message{ChannelID: "call-1", Text: "hello"})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"hello"}, s.answered(first))
+	s.Empty(s.answered(second), "a released worker's channels are closed, not written to")
 }
 
 func (s *PoolSuite) TestAWorkersLoadIsWhatItLastReported() {

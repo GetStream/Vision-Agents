@@ -5,6 +5,7 @@ from typing import Any, AsyncIterator, Optional
 import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestServer
+from vision_agents.core.messaging import InboundMessage
 from vision_agents.core.telephony import InboundCall
 from vision_agents.plugins import stream
 
@@ -91,6 +92,19 @@ CALL = {
     "caller_number": "+15550001111",
     "custom": {"line": "support"},
     "at": "2026-08-27T12:00:00Z",
+}
+
+MESSAGE = {
+    "type": "message",
+    "channel_type": "agent",
+    "channel_id": "call-1",
+    "agent_id": "call-1",
+    "config_id": "chat_support",
+    "text": "is my invoice reissuable?",
+    "message_id": "message-1",
+    "user_id": "sam",
+    "user_name": "Sam",
+    "at": "2026-09-08T12:00:00Z",
 }
 
 
@@ -306,6 +320,14 @@ class TestStreamDispatch:
         with pytest.raises(RuntimeError, match="wait_for_call"):
             await worker.run()
 
+    async def test_the_refusal_says_a_message_handler_would_also_do(
+        self, router: Router
+    ):
+        worker = stream.StreamDispatch(url=router.url, customer_id="acme")
+
+        with pytest.raises(RuntimeError, match="wait_for_message"):
+            await worker.run()
+
     async def test_a_worker_that_can_hold_no_calls_is_refused(self, router: Router):
         with pytest.raises(ValueError, match="cannot answer"):
             stream.StreamDispatch(url=router.url, customer_id="acme", capacity=0)
@@ -370,3 +392,137 @@ class TestStreamDispatch:
         call = await asyncio.wait_for(answered.get(), SETTLE)
 
         assert call.call_id == "phone-+15125551234"
+
+    async def test_an_arriving_message_reaches_the_message_handler(
+        self, router: Router, dispatch: stream.StreamDispatch
+    ):
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(MESSAGE)
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.channel_id == "call-1"
+        assert message.channel_type == "agent"
+        assert message.config_id == "chat_support"
+        assert message.text == "is my invoice reissuable?"
+        assert message.message_id == "message-1"
+        assert message.user_id == "sam"
+        assert message.user_name == "Sam"
+        assert message.at is not None
+        assert message.at.year == 2026
+
+    async def test_the_channel_a_message_arrived_on_is_the_agent_to_answer_as(
+        self, router: Router, dispatch: stream.StreamDispatch
+    ):
+        # Passing this to a new session is what puts the answer back in the conversation
+        # the question was asked in.
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(MESSAGE)
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.agent_id == "call-1"
+
+    async def test_a_message_is_ignored_by_a_worker_that_only_answers_calls(
+        self, router: Router, waiting: stream.StreamDispatch, answered: asyncio.Queue
+    ):
+        # Nothing is reported back: there is no line anybody is waiting on, unlike a call.
+        await router.hand_over(MESSAGE)
+        await router.hand_over(CALL)
+
+        call = await asyncio.wait_for(answered.get(), SETTLE)
+
+        assert call.call_id == "phone-+15125551234"
+
+    async def test_a_message_handler_that_failed_does_not_stop_the_next_one(
+        self, router: Router, dispatch: stream.StreamDispatch
+    ):
+        seen: list[str] = []
+        both = asyncio.Event()
+
+        @dispatch.wait_for_message()
+        async def sometimes(message: InboundMessage) -> None:
+            seen.append(message.text)
+            if len(seen) == 2:
+                both.set()
+            if message.text == "first":
+                raise RuntimeError("that one went wrong")
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over({**MESSAGE, "text": "first"})
+            await router.hand_over({**MESSAGE, "text": "second"})
+            await asyncio.wait_for(both.wait(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert seen == ["first", "second"]
+
+    async def test_a_worker_can_wait_for_messages_without_answering_calls(
+        self, router: Router
+    ):
+        # An agent that only answers in writing has no reason to be handed a phone call.
+        worker = stream.StreamDispatch(
+            url=router.url, customer_id="acme", report_every=0.05
+        )
+        written: asyncio.Queue = asyncio.Queue()
+
+        @worker.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(worker.run())
+        try:
+            await router.hand_over(MESSAGE)
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.text == "is my invoice reissuable?"
+
+    async def test_a_message_still_being_answered_is_waited_for(
+        self, router: Router, dispatch: stream.StreamDispatch
+    ):
+        finished = asyncio.Event()
+        release = asyncio.Event()
+
+        @dispatch.wait_for_message()
+        async def hold(message: InboundMessage) -> None:
+            await release.wait()
+            finished.set()
+
+        running = asyncio.create_task(dispatch.run())
+        await router.hand_over(MESSAGE)
+
+        async def answering() -> None:
+            while dispatch.active == 0:
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(answering(), SETTLE)
+        await router.hang_up()
+        await asyncio.sleep(0.05)
+        assert not running.done(), "the wait should not end mid-answer"
+
+        release.set()
+        await asyncio.wait_for(running, SETTLE)
+        assert finished.is_set()

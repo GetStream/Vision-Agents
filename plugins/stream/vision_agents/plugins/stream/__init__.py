@@ -1,3 +1,4 @@
+from vision_agents.core.messaging import InboundMessage, MessageContext
 from vision_agents.core.telephony import CallContext, InboundCall
 
 from ._backend import Backend
@@ -18,7 +19,9 @@ __all__ = [
     "CallContext",
     "Folder",
     "InboundCall",
+    "InboundMessage",
     "LLM",
+    "MessageContext",
     "Phone",
     "Router",
     "STT",

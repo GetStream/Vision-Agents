@@ -78,8 +78,9 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("a dispatch worker stopped waiting", "worker", worker.ID)
 }
 
-// writeCalls pushes calls to the worker until it goes away, is released, or the socket
-// breaks.
+// writeCalls pushes calls and messages to the worker until it goes away, is released, or
+// the socket breaks. Both queues close together, so either arm reporting a closed channel
+// means the worker was released.
 func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan struct{}) {
 	connection.SetWriteDeadline(time.Now().Add(writeWait))
 	ready := frame{"type": "ready", "worker_id": worker.ID}
@@ -106,6 +107,20 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 				// given to. Losing it is worth an error rather than a debug line.
 				s.logger.Error("could not hand a call to a worker",
 					"worker", worker.ID, "call", call.CallID, "error", err)
+				return
+			}
+
+		case message, open := <-worker.Messages():
+			if !open {
+				connection.SetWriteDeadline(time.Now().Add(writeWait))
+				connection.WriteMessage(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "dispatch stopped"))
+				return
+			}
+			connection.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := connection.WriteJSON(messageFrame(message)); err != nil {
+				s.logger.Error("could not hand a message to a worker",
+					"worker", worker.ID, "channel", message.ChannelID, "error", err)
 				return
 			}
 
@@ -209,5 +224,22 @@ func callFrame(call dispatch.Call) frame {
 		"caller_number": call.CallerNumber,
 		"custom":        custom,
 		"at":            call.At,
+	}
+}
+
+// messageFrame renders one arriving message for the wire, spelled out for the same reason
+// callFrame is.
+func messageFrame(message dispatch.Message) frame {
+	return frame{
+		"type":         "message",
+		"channel_type": message.ChannelType,
+		"channel_id":   message.ChannelID,
+		"agent_id":     message.AgentID,
+		"config_id":    message.ConfigID,
+		"text":         message.Text,
+		"message_id":   message.MessageID,
+		"user_id":      message.UserID,
+		"user_name":    message.UserName,
+		"at":           message.At,
 	}
 }

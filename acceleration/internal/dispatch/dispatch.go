@@ -16,9 +16,9 @@ import (
 	"time"
 )
 
-// ErrNoWorkers means nobody is waiting for a call. It is a distinct error because it is the
-// one failure a caller can do nothing about: the call arrived, and there is no agent to
-// answer it.
+// ErrNoWorkers means nobody is waiting. It is a distinct error because it is the one
+// failure a caller can do nothing about: the call arrived, and there is no agent to answer
+// it.
 var ErrNoWorkers = errors.New("dispatch: no worker is waiting for a call")
 
 // Call is an arriving call, described in the terms a worker needs to join it.
@@ -36,6 +36,34 @@ type Call struct {
 	Custom map[string]string
 	// At is when the call started, so a worker can tell a call it has just been handed
 	// from one that waited in a queue.
+	At time.Time
+}
+
+// Message is something written to an agent that no session is running for.
+//
+// It arrives the same way a call does and for the same reason: the channel is reachable from
+// here and the agent is not. Unlike a call it names no call to join, because there is
+// nothing to join — the conversation is the channel.
+type Message struct {
+	// ChannelType and ChannelID name where it was written. Answering anywhere else would
+	// be a reply nobody asked for in a conversation nobody is reading.
+	ChannelType string
+	ChannelID   string
+	// AgentID is the agent the channel belongs to, which is also what a session started to
+	// answer this should be given so its own replies land back here.
+	AgentID string
+	// ConfigID names the agent config the last conversation here ran under, so a worker
+	// knows which agent is being written to rather than having to guess from the channel.
+	ConfigID string
+	// Text is what was written.
+	Text string
+	// MessageID is the message in the channel, so a worker can reply in its thread or
+	// react to it rather than only after it.
+	MessageID string
+	// UserID and UserName are who wrote it.
+	UserID   string
+	UserName string
+	// At is when it was written.
 	At time.Time
 }
 
@@ -69,6 +97,11 @@ type Worker struct {
 	// calls is buffered to the worker's declared capacity, so a worker with nothing free
 	// is passed over rather than blocking the call that arrived.
 	calls chan Call
+	// messages is a queue of its own, so a worker holding its capacity in calls can still
+	// be written to. Answering a message costs a model call rather than a call's worth of
+	// audio, and making somebody wait for a phone line to free up before their message is
+	// read would be the wrong queue entirely.
+	messages chan Message
 
 	mu   sync.Mutex
 	load Load
@@ -77,6 +110,10 @@ type Worker struct {
 // Calls is what the worker's connection reads from. It is closed when the worker is
 // released, which is what tells the connection to stop.
 func (w *Worker) Calls() <-chan Call { return w.calls }
+
+// Messages is the other thing the worker's connection reads from. It is closed with the
+// calls, when the worker is released.
+func (w *Worker) Messages() <-chan Message { return w.messages }
 
 // Load returns what the worker last reported.
 func (w *Worker) Load() Load {
@@ -128,6 +165,7 @@ func (p *Pool) Register(customerID string, capacity int) (*Worker, func()) {
 		ID:         fmt.Sprintf("worker-%d", p.next),
 		CustomerID: customerID,
 		calls:      make(chan Call, capacity),
+		messages:   make(chan Message, capacity),
 	}
 	p.workers[customerID] = append(p.workers[customerID], worker)
 	p.mu.Unlock()
@@ -154,11 +192,28 @@ func (p *Pool) Assign(customerID string, call Call) (*Worker, error) {
 	if call.CallID == "" {
 		return nil, errors.New("dispatch: a call needs an id")
 	}
+	return assign(p, customerID, call, func(worker *Worker) chan Call { return worker.calls })
+}
 
-	// The whole of this is under the lock, including the sends. They cannot block, because
-	// the buffer is the worker's capacity and a full one is skipped, and holding the lock
-	// is what stops a worker being released between being chosen and being sent to: a send
-	// on the channel release closed would panic.
+// AssignMessage gives a message to the next worker whose turn it is, the same way a call is
+// given.
+//
+// It rotates on the same cursor as calls: the rotation is over workers, and which kind of
+// work last went to one is not a reason to send the next of the other kind somewhere else.
+func (p *Pool) AssignMessage(customerID string, message Message) (*Worker, error) {
+	if message.ChannelID == "" {
+		return nil, errors.New("dispatch: a message needs a channel")
+	}
+	return assign(p, customerID, message, func(worker *Worker) chan Message { return worker.messages })
+}
+
+// assign hands one piece of work to the next worker with room for it.
+//
+// The whole of this is under the lock, including the sends. They cannot block, because the
+// buffer is the worker's capacity and a full one is skipped, and holding the lock is what
+// stops a worker being released between being chosen and being sent to: a send on the
+// channel release closed would panic.
+func assign[T any](p *Pool, customerID string, work T, queue func(*Worker) chan T) (*Worker, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -172,7 +227,7 @@ func (p *Pool) Assign(customerID string, call Call) (*Worker, error) {
 	for offset := range waiting {
 		worker := waiting[(start+offset)%len(waiting)]
 		select {
-		case worker.calls <- call:
+		case queue(worker) <- work:
 			return worker, nil
 		default:
 			// Full. Try the next one.
@@ -181,7 +236,7 @@ func (p *Pool) Assign(customerID string, call Call) (*Worker, error) {
 	return nil, fmt.Errorf("dispatch: every worker for %s is at capacity", customerID)
 }
 
-// release takes a worker out of the rotation and closes its channel.
+// release takes a worker out of the rotation and closes its channels.
 func (p *Pool) release(worker *Worker) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -193,6 +248,7 @@ func (p *Pool) release(worker *Worker) {
 		}
 		p.workers[worker.CustomerID] = append(waiting[:index:index], waiting[index+1:]...)
 		close(worker.calls)
+		close(worker.messages)
 		break
 	}
 	if len(p.workers[worker.CustomerID]) == 0 {

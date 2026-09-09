@@ -35,6 +35,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
@@ -483,8 +484,13 @@ func list(ctx context.Context, arguments []string) error {
 	return out.Flush()
 }
 
-// hooks shows or sets where Stream delivers call events, which is what makes an inbound
-// call reach an agent at all: nothing knows a caller has arrived until one of these lands.
+// hooks shows or sets where Stream delivers its events, which is what makes an arriving
+// call or message reach an agent at all: nothing knows a caller has arrived, or that
+// somebody has written to an agent, until one of these lands.
+//
+// Both are pointed at once. They are two hooks so they can be moved independently, but a
+// router reachable for one is reachable for the other, and setting only one leaves half the
+// ways in dead with nothing saying so.
 //
 // With no url it only reads, because event hooks are one setting on the whole app and
 // looking before writing is how you find out what else is using them.
@@ -502,9 +508,15 @@ func hooks(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
+	messages, err := chat.NewStream(chat.StreamOptions{})
+	if err != nil {
+		return err
+	}
 
 	if *remove != "" {
-		hookURL := strings.TrimSuffix(*remove, "/") + phone.CallHookPath
+		base := strings.TrimSuffix(*remove, "/")
+
+		hookURL := base + phone.CallHookPath
 		removed, err := stream.RemoveCallHook(ctx, hookURL)
 		if err != nil {
 			return err
@@ -514,10 +526,23 @@ func hooks(ctx context.Context, arguments []string) error {
 		} else {
 			fmt.Printf("nothing was delivering to %s\n", hookURL)
 		}
+
+		messageURL := base + chat.MessageHookPath
+		removed, err = messages.RemoveMessageHook(ctx, messageURL)
+		if err != nil {
+			return err
+		}
+		if removed {
+			fmt.Printf("messages no longer go to %s\n", messageURL)
+		} else {
+			fmt.Printf("nothing was delivering to %s\n", messageURL)
+		}
 	}
 
 	if *url != "" {
-		hookURL := strings.TrimSuffix(*url, "/") + phone.CallHookPath
+		base := strings.TrimSuffix(*url, "/")
+
+		hookURL := base + phone.CallHookPath
 		updated, err := stream.PointCallHook(ctx, hookURL)
 		if err != nil {
 			return err
@@ -527,6 +552,17 @@ func hooks(ctx context.Context, arguments []string) error {
 		} else {
 			fmt.Printf("call events now go to %s\n", hookURL)
 		}
+
+		messageURL := base + chat.MessageHookPath
+		updated, err = messages.PointMessageHook(ctx, messageURL)
+		if err != nil {
+			return err
+		}
+		if updated {
+			fmt.Printf("messages already went to %s, now asking for the right ones\n", messageURL)
+		} else {
+			fmt.Printf("messages now go to %s\n", messageURL)
+		}
 	}
 
 	configured, err := stream.CallHooks(ctx)
@@ -534,7 +570,7 @@ func hooks(ctx context.Context, arguments []string) error {
 		return err
 	}
 	if len(configured) == 0 {
-		fmt.Println("no event hooks; inbound calls will not reach an agent until one is set")
+		fmt.Println("no event hooks; nothing arriving will reach an agent until one is set")
 		return nil
 	}
 

@@ -51,6 +51,20 @@ const streamInterval = 200 * time.Millisecond
 // Python agent writes the same field, so a client can watch either.
 const generatingField = "generating"
 
+// SourceField says where a message came from, so a message the agent has already dealt with
+// is not mistaken for one addressed to it. Everything this package writes carries it, and a
+// message without it is one a person typed.
+const SourceField = "source"
+
+// What SourceField holds.
+const (
+	// SourceSpeech is a participant's turn, transcribed. The agent answered it as it was
+	// said, so it is here as a record rather than as a question.
+	SourceSpeech = "speech"
+	// SourceAgent is anything the agent wrote.
+	SourceAgent = "agent"
+)
+
 // kind says how a queued message relates to the reply it belongs to.
 type kind int
 
@@ -111,6 +125,8 @@ type message struct {
 	// turnID names the reply a piece belongs to. Empty for anything said in full.
 	turnID string
 	kind   kind
+	// source is what the message is written as, one of the SourceField values.
+	source string
 }
 
 // New validates the options and returns a Log. It writes nothing; Start does that.
@@ -178,16 +194,16 @@ func (l *Log) Record(event agent.Event) {
 	case agent.Heard:
 		l.Say(participantUser(typed.Participant), typed.Text)
 	case agent.ResponseDelta:
-		l.enqueue(message{author: l.agent, text: typed.Text, turnID: typed.TurnID, kind: piece})
+		l.enqueue(message{author: l.agent, text: typed.Text, turnID: typed.TurnID, kind: piece, source: SourceAgent})
 	case agent.Responded:
 		if typed.Text == "" {
 			return
 		}
-		l.enqueue(message{author: l.agent, text: typed.Text, turnID: typed.TurnID, kind: end})
+		l.enqueue(message{author: l.agent, text: typed.Text, turnID: typed.TurnID, kind: end, source: SourceAgent})
 	case agent.Interrupted:
 		// A reply nobody finished still has to stop saying it is being written, and what
 		// the caller heard of it is worth keeping.
-		l.enqueue(message{author: l.agent, turnID: typed.TurnID, kind: end})
+		l.enqueue(message{author: l.agent, turnID: typed.TurnID, kind: end, source: SourceAgent})
 	}
 }
 
@@ -196,7 +212,19 @@ func (l *Log) Say(author User, text string) {
 	if author.ID == "" || text == "" {
 		return
 	}
-	l.enqueue(message{author: author, text: text, kind: whole})
+	l.enqueue(message{author: author, text: text, kind: whole, source: SourceSpeech})
+}
+
+// Reply queues something the agent wrote rather than said.
+//
+// It is separate from Record because a written answer is not an agent event: nothing was
+// spoken, so no turn was started and no reply streamed. It is marked as the agent's all the
+// same, so answering a message in the channel does not read as a new message to answer.
+func (l *Log) Reply(text string) {
+	if text == "" {
+		return
+	}
+	l.enqueue(message{author: l.agent, text: text, kind: whole, source: SourceAgent})
 }
 
 // enqueue hands one message to the writer, dropping it if the writer is too far behind. A
@@ -293,7 +321,7 @@ func (w *writer) handle(queued message) {
 	case end:
 		w.settle(queued.turnID, queued.text)
 	case whole:
-		w.store(queued.author, queued.text)
+		w.store(queued.author, queued.text, queued.source)
 	}
 }
 
@@ -309,12 +337,14 @@ func (w *writer) show() {
 		ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 		var err error
 		if writing.messageID == "" {
-			writing.messageID, err = w.send(ctx, writing.author, writing.text, true)
+			writing.messageID, err = w.send(ctx, writing.author, writing.text, true, SourceAgent)
 		} else {
 			_, err = w.log.client.Chat().EphemeralMessageUpdate(ctx, writing.messageID,
 				&getstream.EphemeralMessageUpdateRequest{
 					UserID: &writing.author.ID,
-					Set:    map[string]any{"text": writing.text, generatingField: true},
+					Set: map[string]any{
+						"text": writing.text, generatingField: true, SourceField: SourceAgent,
+					},
 				})
 		}
 		cancel()
@@ -334,7 +364,7 @@ func (w *writer) settle(turnID, text string) {
 	writing, streamed := w.writing[turnID]
 	if !streamed {
 		// A reply that never streamed is just a line of the conversation.
-		w.store(w.log.agent, text)
+		w.store(w.log.agent, text, SourceAgent)
 		return
 	}
 	delete(w.writing, turnID)
@@ -344,7 +374,7 @@ func (w *writer) settle(turnID, text string) {
 	}
 	if writing.messageID == "" {
 		// It finished before the first tick, so there is nothing to correct.
-		w.store(writing.author, text)
+		w.store(writing.author, text, SourceAgent)
 		return
 	}
 
@@ -355,7 +385,9 @@ func (w *writer) settle(turnID, text string) {
 	_, err := w.log.client.Chat().UpdateMessagePartial(ctx, writing.messageID,
 		&getstream.UpdateMessagePartialRequest{
 			UserID: &writing.author.ID,
-			Set:    map[string]any{"text": text, generatingField: false},
+			Set: map[string]any{
+				"text": text, generatingField: false, SourceField: SourceAgent,
+			},
 		})
 	if err != nil {
 		w.log.logger.Error("could not store a finished reply", "turn", turnID, "error", err)
@@ -371,7 +403,7 @@ func (w *writer) closeOut() {
 }
 
 // store writes one whole line of the conversation.
-func (w *writer) store(author User, text string) {
+func (w *writer) store(author User, text, source string) {
 	if author.ID == "" || text == "" {
 		return
 	}
@@ -379,14 +411,14 @@ func (w *writer) store(author User, text string) {
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 
-	if _, err := w.send(ctx, author, text, false); err != nil {
+	if _, err := w.send(ctx, author, text, false, source); err != nil {
 		w.log.logger.Error("could not store a message", "user", author.ID, "error", err)
 	}
 }
 
 // send stores one message and returns its id, creating its author first if the app has
 // never seen them.
-func (w *writer) send(ctx context.Context, author User, text string, generating bool) (string, error) {
+func (w *writer) send(ctx context.Context, author User, text string, generating bool, source string) (string, error) {
 	if _, seen := w.known[author.ID]; !seen {
 		if err := w.log.upsert(ctx, author); err != nil {
 			return "", fmt.Errorf("storing the speaker: %w", err)
@@ -399,7 +431,7 @@ func (w *writer) send(ctx context.Context, author User, text string, generating 
 			Message: getstream.MessageRequest{
 				Text:   &text,
 				UserID: &author.ID,
-				Custom: map[string]any{generatingField: generating},
+				Custom: map[string]any{generatingField: generating, SourceField: source},
 			},
 		})
 	if err != nil {

@@ -592,6 +592,57 @@ func (a *Agent) SimpleResponse(ctx context.Context, text string) error {
 	return a.respond(stt.Participant{ID: "caller"}, text, heard{at: time.Now()})
 }
 
+// Ask answers a piece of text in writing and says none of it.
+//
+// It is how a message written to the agent is answered while a call is going on. Speaking
+// the answer would interrupt whoever is on the phone with a reply to something they never
+// said, and the person who wrote it is not listening to the call anyway.
+//
+// The reply is drained here rather than pumped into the speaking goroutine, which is the
+// whole of what keeps it quiet: only a reply the agent pumps reaches the voice. Nothing
+// about the turn in progress is touched, so a caller mid-sentence is not interrupted and an
+// interruption has nothing new to abandon.
+//
+// The exchange is kept, so what was asked in writing can be referred to out loud. No tools
+// are offered: a written aside must not press a keypad or transfer a call that the person
+// writing cannot see.
+func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
+	if strings.TrimSpace(text) == "" {
+		return "", errors.New("agent: there is nothing to answer")
+	}
+
+	a.mu.Lock()
+	if a.closed || a.llm == nil {
+		a.mu.Unlock()
+		return "", errors.New("agent: not joined")
+	}
+	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
+	history := append([]llm.Message(nil), a.history...)
+	instructions := a.instructions()
+	model := a.llm
+	a.mu.Unlock()
+
+	stream, err := model.Create(ctx, llm.ResponseParams{
+		ID:              writtenPrefix + turnStamp(),
+		Instructions:    instructions,
+		Input:           history,
+		MaxOutputTokens: a.options.MaxTokens,
+		PromptCacheKey:  a.options.ConfigID,
+	})
+	if err != nil {
+		return "", err
+	}
+	response, err := llm.Collect(stream)
+	if err != nil {
+		return "", err
+	}
+
+	a.mu.Lock()
+	a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: response.OutputText})
+	a.mu.Unlock()
+	return response.OutputText, nil
+}
+
 // Say speaks a piece of text without asking the model. A greeting is exactly this: the
 // agent already knows what it wants to say, so a model would only add latency and cost.
 func (a *Agent) Say(ctx context.Context, text string) error {

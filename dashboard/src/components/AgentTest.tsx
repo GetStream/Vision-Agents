@@ -95,7 +95,7 @@ export function AgentTest({ config }: { config: AgentConfig }) {
       {startCall.error ? <Failure error={startCall.error} /> : null}
 
       {chatting ? (
-        <AgentChat agentID={chatAgentID(config.id)} sessionID={chatting} />
+        <AgentChat agentID={chatAgentID(config.id)} />
       ) : (
         <p className="text-sm text-muted">
           Start a chat to talk to this agent in writing, or call it to hear it. Either one

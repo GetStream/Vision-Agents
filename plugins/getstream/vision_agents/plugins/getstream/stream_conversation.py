@@ -14,6 +14,17 @@ from vision_agents.core.agents.conversation import (
 
 logger = logging.getLogger(__name__)
 
+# Where a message came from, so a message the agent has already dealt with is not mistaken
+# for one addressed to it. The Go agent writes the same field, and a message without it is
+# one a person typed.
+SOURCE_SPEECH = "speech"
+SOURCE_AGENT = "agent"
+
+
+def _source_of(message: Message) -> str:
+    """What a message is written as, from the role it was recorded under."""
+    return SOURCE_AGENT if message.role == "assistant" else SOURCE_SPEECH
+
 
 class StreamConversation(Conversation):
     """Persists the message history to a Stream channel with automatic chunking.
@@ -121,6 +132,7 @@ class StreamConversation(Conversation):
                     "chunk_group": message.id,
                     "chunk_index": i,
                     "total_chunks": len(chunks),
+                    "source": _source_of(message),
                 },
             )
 
@@ -177,6 +189,7 @@ class StreamConversation(Conversation):
                             "chunk_group": message.id,
                             "chunk_index": i,
                             "total_chunks": new_chunk_count,
+                            "source": _source_of(message),
                         },
                     )
                     logger.debug(
@@ -194,6 +207,7 @@ class StreamConversation(Conversation):
                             "chunk_group": message.id,
                             "chunk_index": i,
                             "total_chunks": new_chunk_count,
+                            "source": _source_of(message),
                         },
                     )
                     logger.debug(
@@ -217,6 +231,7 @@ class StreamConversation(Conversation):
                         "chunk_group": message.id,
                         "chunk_index": i,
                         "total_chunks": new_chunk_count,
+                        "source": _source_of(message),
                     },
                 )
 

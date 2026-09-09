@@ -123,6 +123,33 @@ func (s *Store) Call(ctx context.Context, customerID, id string) (Call, error) {
 	return call, nil
 }
 
+// CallByAgent returns the most recent call that wrote to an agent id, whoever ran it.
+//
+// No customer is asked for, unlike Call, because the caller that needs this has none to ask
+// with: a message arriving on a channel names the agent and nothing else, and this row is
+// what says whose channel it is and what the agent was configured as. Most recent, because
+// an agent id outlives the call that made it and the last conversation there is the one
+// somebody writing to it is continuing.
+func (s *Store) CallByAgent(ctx context.Context, agentID string) (Call, error) {
+	if agentID == "" {
+		return Call{}, errors.New("store: an agent id is required")
+	}
+
+	var call Call
+	err := s.db.NewSelect().Model(&call).
+		Where("agent_id = ?", agentID).
+		Order("started_at DESC").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Call{}, unknownCall(agentID)
+	}
+	if err != nil {
+		return Call{}, fmt.Errorf("store: call by agent: %w", err)
+	}
+	return call, nil
+}
+
 // CustomerCalls returns a customer's calls, newest first.
 func (s *Store) CustomerCalls(ctx context.Context, customerID string, filter CallFilter) ([]Call, error) {
 	if customerID == "" {

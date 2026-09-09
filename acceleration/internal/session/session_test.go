@@ -221,6 +221,36 @@ func (m *stubMemory) scopedTo() memory.Scope {
 	return m.scope
 }
 
+// stubTranscript is somewhere for a conversation to be stored, so a test can read back what
+// would have been written into the channel.
+type stubTranscript struct {
+	mu      sync.Mutex
+	spoken  []agent.Event
+	written []string
+}
+
+func (t *stubTranscript) Start(context.Context) error { return nil }
+
+func (t *stubTranscript) Record(event agent.Event) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.spoken = append(t.spoken, event)
+}
+
+func (t *stubTranscript) Reply(text string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.written = append(t.written, text)
+}
+
+func (t *stubTranscript) Close() {}
+
+func (t *stubTranscript) replies() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.written...)
+}
+
 // stubConfig is one provider per modality, which is all these tests need from routing.
 func stubConfig() routing.ModalityConfig {
 	return routing.ModalityConfig{
@@ -247,6 +277,9 @@ type SessionSuite struct {
 	voice   *stubTTS
 	// remembers is the memory store the manager was built with, when a test wants one.
 	remembers *stubMemory
+	// records is where a session's conversation is stored, when a test wants to read it
+	// back. Nil leaves the conversation unkept, which is what most tests need.
+	records *stubTranscript
 	// thinks routes the target a session defaults its thinking model to, for a test that
 	// wants delegation without naming anything.
 	thinks bool
@@ -260,6 +293,7 @@ func (s *SessionSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.edges = nil
 	s.remembers = nil
+	s.records = nil
 	s.thinks = false
 }
 
@@ -324,12 +358,18 @@ func (s *SessionSuite) manages() {
 		remembering = s.remembers
 	}
 
+	var storing TranscriptFactory
+	if s.records != nil {
+		storing = func(Spec, *slog.Logger) (Transcript, error) { return s.records, nil }
+	}
+
 	manager, err := NewManager(ManagerOptions{
-		LLM:    reasoner,
-		STT:    transcriber,
-		TTS:    speaker,
-		Memory: remembering,
-		Logger: logger,
+		LLM:        reasoner,
+		STT:        transcriber,
+		TTS:        speaker,
+		Memory:     remembering,
+		Transcript: storing,
+		Logger:     logger,
 		Edge: func(Spec, *slog.Logger) (agent.Edge, error) {
 			edge := newQuietEdge()
 			s.edges = append(s.edges, edge)
@@ -377,6 +417,81 @@ func (s *SessionSuite) TestASessionIsListedAndFoundByTheCustomerRunningIt() {
 	s.Require().True(ok)
 	s.Same(created, found)
 	s.Len(s.manager.List("acme"), 1)
+}
+
+func (s *SessionSuite) TestASessionIsFoundByTheAgentItWritesTo() {
+	// A message names a channel and nothing else, so the agent id has to be enough to find
+	// the session on the other end of it.
+	s.manages()
+	created := s.joins(Spec{CallID: "call-7"})
+
+	found, running := s.manager.ByAgent("call-7")
+
+	s.Require().True(running)
+	s.Same(created, found)
+}
+
+func (s *SessionSuite) TestNoSessionIsFoundForAnAgentNobodyIsRunning() {
+	// This is the case that starts one instead, so it must be told apart from finding one.
+	s.manages()
+	s.joins(Spec{CallID: "call-7"})
+
+	_, running := s.manager.ByAgent("a-call-that-ended")
+
+	s.False(running)
+}
+
+func (s *SessionSuite) TestSomethingWrittenIsAnsweredWithoutBeingSpoken() {
+	// Whoever is on the call did not ask, so reading them the answer would interrupt them
+	// with a reply to somebody else's question.
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1"})
+
+	answer, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Equal("Hello.", answer)
+	s.Empty(s.voice.spoken(), "a written answer must not reach the voice")
+}
+
+func (s *SessionSuite) TestAWrittenAnswerIsStoredInTheConversation() {
+	// The person who asked is reading the channel, not holding the HTTP response.
+	s.records = &stubTranscript{}
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1"})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Equal([]string{"Hello."}, s.records.replies())
+}
+
+func (s *SessionSuite) TestWhatWasAskedInWritingIsRememberedForTheRestOfTheCall() {
+	// Otherwise the caller cannot refer to it out loud, and the agent answers as though it
+	// had never been asked.
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1"})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+	s.Require().NoError(err)
+	_, err = created.Ask(s.ctx, "and to another address?")
+	s.Require().NoError(err)
+
+	asked := s.model.requests()
+	s.Require().Len(asked, 2)
+	s.Require().Len(asked[1].Input, 3, "the question, the answer, and the follow-up")
+	s.Equal("is my invoice reissuable?", asked[1].Input[0].Content)
+	s.Equal("Hello.", asked[1].Input[1].Content)
+	s.Equal("and to another address?", asked[1].Input[2].Content)
+}
+
+func (s *SessionSuite) TestThereIsNothingToAnswerInAnEmptyMessage() {
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1"})
+
+	_, err := created.Ask(s.ctx, "   ")
+
+	s.ErrorContains(err, "nothing to answer")
 }
 
 func (s *SessionSuite) TestRejoiningACallEndsTheSessionTheAgentLeftBehind() {

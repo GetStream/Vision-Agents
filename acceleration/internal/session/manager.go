@@ -39,6 +39,10 @@ type EdgeFactory func(spec Spec, logger *slog.Logger) (agent.Edge, error)
 type Transcript interface {
 	Start(ctx context.Context) error
 	Record(event agent.Event)
+	// Reply stores something the agent wrote rather than said. It is separate from Record
+	// because a written answer is not an agent event: nothing was spoken, so no turn was
+	// started and no reply streamed.
+	Reply(text string)
 	// Close reports nothing, because a transcript that failed to flush its last line is
 	// not something the caller who ended the call can do anything about.
 	Close()
@@ -365,6 +369,34 @@ func (m *Manager) Get(id, customerID string) (*Session, bool) {
 		return nil, false
 	}
 	return found, true
+}
+
+// ByAgent returns the session writing to an agent id, whoever it belongs to.
+//
+// No customer is asked for, unlike Get, because the callers that need this have no customer
+// to ask with: an arriving message names a channel and nothing else, and the session running
+// on it is what says whose it is. An agent id names one session at a time, because a second
+// session on the same one would be two agents writing into one conversation.
+//
+// The newest wins if that ever happens, which is the one a person writing there is watching.
+func (m *Manager) ByAgent(agentID string) (*Session, bool) {
+	if agentID == "" {
+		return nil, false
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var newest *Session
+	for _, found := range m.sessions {
+		if found.spec.AgentID != agentID {
+			continue
+		}
+		if newest == nil || found.created.After(newest.created) {
+			newest = found
+		}
+	}
+	return newest, newest != nil
 }
 
 // List returns a customer's sessions, newest first.
