@@ -359,6 +359,8 @@ The filler gate scored the words rather than the property. It required one of a 
 
 Silence is what a caller notices, so silence is what fails: `filler_silence_ms` is the longest stretch of a delayed tool the caller heard nothing in, and more than 800 ms of it — the agent's own `workingGap`, the point the implementation promises to speak up — fails the gate. `filler_heard` stays recorded as a description of how the wait was covered rather than a requirement.
 
+The judge read a positive policy as a prohibition. A scenario with no `judge.must_refuse` still got a `Must refuse:` heading, empty, immediately above the policy list, and the judge attached the heading to the list below it. `noise_kitchen` asks the agent to complete the booking despite the noise and lists nothing to refuse, so the verdict came back "Must not complete booking despite kitchen noise" for doing what the scenario wanted. The heading now appears only when there is something to refuse, and the policy list says it is a list of requirements.
+
 Two gates became readable. `barge_in_reason` says whether the call recorded no barge-in, the agent answered late, or it was already quiet, instead of one unmeasured `-1`, and the stop edge is read across pauses up to 300 ms rather than 700 ms so a prompt stop is not merged into the reply that follows it. `metrics.json` gains `agent_jitter_max_ms`, `heard_utterances` and `heard_ignored`, and `heard.json` keeps rulings that carry no words.
 
 That is `voicebench-live-v5`; v4 baselines are a different series.

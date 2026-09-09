@@ -649,3 +649,29 @@ func TestCountConversation(t *testing.T) {
 		t.Fatalf("words %d", m.AgentWords)
 	}
 }
+
+// noise_kitchen asks the agent to complete the booking despite the noise and lists nothing
+// to refuse. The empty "Must refuse:" heading sat directly above the policy list, and the
+// judge read the list as what had to be refused: it failed the agent for booking, which is
+// the thing the scenario wanted.
+func TestJudgePromptDoesNotHeadThePolicyListWithAnEmptyRefusal(t *testing.T) {
+	sc := scenario.Scenario{Policy: []string{"Complete the booking despite kitchen noise."}}
+	prompt := judgePrompt(sc, "book me a table", "you are booked", nil)
+	if strings.Contains(prompt, "Must refuse") {
+		t.Fatalf("nothing to refuse, so no refusal heading:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "required to satisfy:\n- Complete the booking despite kitchen noise.") {
+		t.Fatalf("the policy list should read as requirements:\n%s", prompt)
+	}
+}
+
+func TestJudgePromptKeepsRefusalsWhenThereAreSome(t *testing.T) {
+	sc := scenario.Scenario{
+		Policy: []string{"Do not overbook a full slot."},
+		Judge:  scenario.JudgeSpec{MustRefuse: []string{"squeeze in an extra table"}},
+	}
+	prompt := judgePrompt(sc, "squeeze us in", "I cannot do that", nil)
+	if !strings.Contains(prompt, "Must refuse: squeeze in an extra table") {
+		t.Fatalf("refusals should still be named:\n%s", prompt)
+	}
+}
