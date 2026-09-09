@@ -69,7 +69,9 @@ func (s *MuseSuite) TestNewRejectsAModeTheServerDoesNotKnow() {
 
 func (s *MuseSuite) TestNewListensForTurnBoundariesUnlessToldOtherwise() {
 	// Push to talk leaves the turn boundaries to the caller, which on a call means
-	// nothing ever settles.
+	// nothing ever settles. Diarization finds them and names the voice too, but takes
+	// about a second and a half longer to settle a turn, so it is asked for rather than
+	// assumed.
 	provider := s.newSTT()
 	s.Equal(ModeEndpointing, provider.options.Mode)
 }
@@ -131,22 +133,74 @@ func (s *MuseSuite) TestSpeechCompleteSettlesTheTurn() {
 	s.Equal("How is the weather?", heard[1].Text)
 }
 
-func (s *MuseSuite) TestATurnSettlesOnceEvenWhenBothFramesSayItHas() {
-	// The server flags the last transcript final and then repeats the settled turn in
-	// speechComplete. Emitting both would tell the call the caller said it twice.
+func (s *MuseSuite) TestTheTurnSettlesOnTheTextTheModelWentBackOver() {
+	// A transcript flagged final is still only a partial where the server finds the turn
+	// boundaries itself: speechComplete follows with the same turn read back, punctuated
+	// and capitalised. Settling on the flag would throw that away.
 	provider := s.newSTT()
 
 	provider.handleMessage(serverMessage{Type: messageSpeechStart, TurnID: 1})
 	provider.handleMessage(serverMessage{
-		Type: messageTranscript, Transcript: "How is the weather?", Final: true,
+		Type: messageTranscript, Transcript: "how is the weather", Final: true,
 	})
 	provider.handleMessage(serverMessage{
 		Type: messageSpeechComplete, TurnID: 1, Transcript: "How is the weather?",
 	})
 
 	heard := s.transcripts(provider)
-	s.Require().Len(heard, 1)
-	s.True(heard[0].Final())
+	s.Require().Len(heard, 2)
+	s.False(heard[0].Final())
+	s.True(heard[1].Final())
+	s.Equal("How is the weather?", heard[1].Text)
+}
+
+func (s *MuseSuite) TestPushToTalkSettlesOnTheFlagBecauseNothingElseWill() {
+	// The caller delimits the turn, so the server announces no boundaries and sends no
+	// speechComplete. A turn that waited for one would never settle.
+	provider, err := New(Options{APIKey: "k", Mode: ModePushToTalk})
+	s.Require().NoError(err)
+
+	provider.handleMessage(serverMessage{Type: messageTranscript, Transcript: "how is the"})
+	provider.handleMessage(serverMessage{
+		Type: messageTranscript, Transcript: "How is the weather?", Final: true,
+	})
+
+	heard := s.transcripts(provider)
+	s.Require().Len(heard, 2)
+	s.False(heard[0].Final())
+	s.True(heard[1].Final())
+	s.Equal(int64(1), heard[1].Utterance)
+}
+
+func (s *MuseSuite) TestOverlappingTurnsEachSettleOnTheirOwn() {
+	// A later turn can open before an earlier one settles, so the frames do not arrive in
+	// turn order. Numbering them by the order they arrive in files the first turn's text
+	// under the second, and the second turn's own final is then dropped as a repeat.
+	provider := s.newSTT()
+
+	provider.handleMessage(serverMessage{Type: messageSpeechStart, TurnID: 1, AudioProcessedMs: 1000})
+	provider.handleMessage(serverMessage{Type: messageTranscript, Transcript: "hello"})
+	provider.handleMessage(serverMessage{Type: messageSpeechStart, TurnID: 2, AudioProcessedMs: 6000})
+	provider.handleMessage(serverMessage{Type: messageTranscript, Transcript: "goodbye"})
+	provider.handleMessage(serverMessage{
+		Type: messageSpeechComplete, TurnID: 1, Transcript: "Hello.", AudioProcessedMs: 5000,
+	})
+	provider.handleMessage(serverMessage{
+		Type: messageSpeechComplete, TurnID: 2, Transcript: "Goodbye.", AudioProcessedMs: 9000,
+	})
+
+	heard := s.transcripts(provider)
+	s.Require().Len(heard, 4)
+	s.Equal([]int64{1, 2, 1, 2}, []int64{
+		heard[0].Utterance, heard[1].Utterance, heard[2].Utterance, heard[3].Utterance,
+	})
+	s.Equal("Hello.", heard[2].Text)
+	s.True(heard[2].Final())
+	s.Equal("Goodbye.", heard[3].Text)
+	s.True(heard[3].Final())
+	// Each turn is measured from its own start rather than from whichever one opened last.
+	s.Equal(float64(4000), heard[2].AudioDurationMs)
+	s.Equal(float64(3000), heard[3].AudioDurationMs)
 }
 
 func (s *MuseSuite) TestEachRunOfSpeechIsNumberedOnce() {
@@ -218,14 +272,38 @@ func (s *MuseSuite) TestAServerErrorEndsTheSession() {
 	s.True(failure.Fatal)
 }
 
-func (s *MuseSuite) TestDiarisedSpeakersDoNotEnterTheSharedContract() {
-	// The router already knows who is speaking from the track it fed the audio in on.
+func (s *MuseSuite) TestTheSettledTurnSaysWhichVoiceItWasIn() {
+	// The label lands part way through the turn, so the partials ahead of it go out
+	// without one. What matters is that the settled turn carries it, since that is the
+	// one the rest of the call decides on.
+	provider, err := New(Options{APIKey: "k", Mode: ModeDiarization})
+	s.Require().NoError(err)
+
+	provider.handleMessage(serverMessage{Type: messageSpeechStart, TurnID: 1})
+	provider.handleMessage(serverMessage{Type: messageTranscript, Transcript: "thanks for calling"})
+	provider.handleMessage(serverMessage{Type: messageSpeaker, Label: "B"})
+	provider.handleMessage(serverMessage{
+		Type: messageSpeechComplete, TurnID: 1, Transcript: "Thanks for calling.",
+	})
+
+	heard := s.transcripts(provider)
+	s.Require().Len(heard, 2)
+	s.Empty(heard[0].Speaker)
+	s.Equal("B", heard[1].Speaker)
+}
+
+func (s *MuseSuite) TestATranscriptNamesNoVoiceUntilTheServerDoes() {
+	// The other two modes never send a label, and a made-up one would have the agent
+	// believe it could tell two people at one microphone apart when it cannot.
 	provider := s.newSTT()
 
-	provider.handleMessage(serverMessage{Type: messageSpeaker, Label: "B"})
+	provider.handleMessage(serverMessage{Type: messageSpeechStart, TurnID: 1})
+	provider.handleMessage(serverMessage{Type: messageSpeechComplete, TurnID: 1, Transcript: "Hello."})
 	provider.handleMessage(serverMessage{Type: messageAudioProgress, AudioProcessedMs: 2400})
 
-	s.Empty(s.transcripts(provider))
+	heard := s.transcripts(provider)
+	s.Require().Len(heard, 1)
+	s.Empty(heard[0].Speaker)
 }
 
 func (s *MuseSuite) TestAudioBeforeStartIsRefused() {

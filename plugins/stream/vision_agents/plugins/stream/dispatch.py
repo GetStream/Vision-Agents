@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from typing import Awaitable, Callable, Optional
 
+from vision_agents.core.messaging import InboundMessage
 from vision_agents.core.telephony import InboundCall
 
 from ._backend import Backend
@@ -15,17 +16,22 @@ logger = logging.getLogger(__name__)
 DISPATCH_PATH = "/v1/dispatch"
 
 Handler = Callable[[InboundCall], Awaitable[None]]
+MessageHandler = Callable[[InboundMessage], Awaitable[None]]
 
 
 class StreamDispatch:
-    """Waits for inbound calls and runs a handler for each one.
+    """Waits for inbound calls and messages, and runs a handler for each one.
 
-    An inbound call arrives at the router, not here: the caller reached a Stream call over
-    SIP and the router found out by webhook. The agent, though, runs in this process. So this
-    connects out and waits, and the router pushes a call down the connection when one
+    Neither arrives here first: a caller reached a Stream call over SIP, or somebody wrote in
+    a channel, and the router found out by webhook. The agent, though, runs in this process.
+    So this connects out and waits, and the router pushes work down the connection when it
     arrives. Nothing has to be publicly reachable for it to work.
 
-    Several workers can wait at once, in which case calls are shared between them.
+    A message only arrives here when no agent is running on its channel. One written to an
+    agent that is already running is answered by the router from that session, because that
+    agent is the one that knows what has been said so far.
+
+    Several workers can wait at once, in which case the work is shared between them.
 
     Example:
         ```python
@@ -78,6 +84,7 @@ class StreamDispatch:
         self.report_every = report_every
 
         self._handler: Optional[Handler] = None
+        self._message_handler: Optional[MessageHandler] = None
         self._socket: Optional[Socket] = None
         self._running: set[asyncio.Task[None]] = set()
         # worker_id is what the router calls this connection, for matching a log line here
@@ -109,19 +116,49 @@ class StreamDispatch:
 
         return register
 
-    async def run(self) -> None:
-        """Wait for calls until cancelled.
+    def wait_for_message(self) -> Callable[[MessageHandler], MessageHandler]:
+        """Register what to do with a message written to an agent that is not running.
 
-        Returns when the router closes the connection. Calls still being handled are waited
-        for, because dropping them would hang up on whoever is talking.
+        The handler is given the message and runs as its own task, the way a call's does.
+
+        Example:
+            ```python
+            @dispatch.wait_for_message()
+            async def written(message: InboundMessage):
+                async with stream.TextSession(
+                    config_id=message.config_id, agent_id=message.agent_id
+                ) as session:
+                    async for event in session.ask(message.text):
+                        pass
+            ```
+
+            Nothing is done with the events because the answer is written into the channel
+            by the backend as it is generated: the person who wrote is already reading it.
+
+        Returns:
+            A decorator that keeps the function it is given.
+        """
+
+        def register(handler: MessageHandler) -> MessageHandler:
+            self._message_handler = handler
+            return handler
+
+        return register
+
+    async def run(self) -> None:
+        """Wait for calls and messages until cancelled.
+
+        Returns when the router closes the connection. Work still being handled is waited
+        for, because dropping a call would hang up on whoever is talking.
 
         Raises:
-            RuntimeError: If no handler has been registered, since a call would then arrive
-                with nothing to answer it.
+            RuntimeError: If neither handler has been registered, since work would then
+                arrive with nothing to do it.
         """
-        if self._handler is None:
+        if self._handler is None and self._message_handler is None:
             raise RuntimeError(
-                "register a handler with @dispatch.wait_for_call() before running"
+                "register a handler with @dispatch.wait_for_call() or "
+                "@dispatch.wait_for_message() before running"
             )
 
         socket = Socket(
@@ -151,6 +188,8 @@ class StreamDispatch:
             kind = frame.get("type")
             if kind == "call":
                 self._answer(_call_of(frame))
+            elif kind == "message":
+                self._reply(_message_of(frame))
             elif kind == "ready":
                 self.worker_id = str(frame.get("worker_id", ""))
                 logger.info("the router calls this worker %s", self.worker_id)
@@ -181,6 +220,24 @@ class StreamDispatch:
         self._running.add(task)
         task.add_done_callback(self._running.discard)
 
+    def _reply(self, message: InboundMessage) -> None:
+        """Start handling one message, as its own task for the same reason a call is."""
+        if self._message_handler is None:
+            logger.debug(
+                "ignoring a message on %s: no handler is registered for one",
+                message.channel_id,
+            )
+            return
+
+        logger.info(
+            "answering a message from %s on %s",
+            message.user_id or "?",
+            message.channel_id,
+        )
+        task = asyncio.create_task(self._handle_message(self._message_handler, message))
+        self._running.add(task)
+        task.add_done_callback(self._running.discard)
+
     async def _handle(self, handler: Handler, call: InboundCall) -> None:
         """Run the handler for one call and tell the router how it went.
 
@@ -199,6 +256,22 @@ class StreamDispatch:
             )
             return
         await self._tell({"type": "accepted", "call_id": call.call_id})
+
+    async def _handle_message(
+        self, handler: MessageHandler, message: InboundMessage
+    ) -> None:
+        """Run the handler for one message, catching what it raises for the same reason.
+
+        Nothing is reported back to the router. Accepting and rejecting are about a caller
+        waiting on a line, and there is no line here: a message nobody answered is a log
+        line, not a silence somebody is sitting in.
+        """
+        try:
+            await handler(message)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("a message could not be answered")
 
     async def _report(self) -> None:
         """Tell the router how this process is doing, on a timer.
@@ -250,11 +323,11 @@ class StreamDispatch:
             logger.debug("could not reach the router: %s", exc)
 
     async def _drain(self) -> None:
-        """Wait for the calls still being handled."""
+        """Wait for the work still being handled."""
         running = list(self._running)
         if not running:
             return
-        logger.info("waiting for %d call(s) already being answered", len(running))
+        logger.info("waiting for %d already being answered", len(running))
         await asyncio.gather(*running, return_exceptions=True)
 
 
@@ -270,6 +343,21 @@ def _call_of(frame: dict[str, object]) -> InboundCall:
         custom={str(key): str(value) for key, value in custom.items()}
         if isinstance(custom, dict)
         else {},
+        at=_time_of(at) if isinstance(at, str) else None,
+    )
+
+
+def _message_of(frame: dict[str, object]) -> InboundMessage:
+    """Read a message frame off the wire."""
+    at = frame.get("at")
+    return InboundMessage(
+        channel_id=str(frame.get("channel_id", "")),
+        channel_type=str(frame.get("channel_type") or "agent"),
+        config_id=str(frame.get("config_id", "")),
+        text=str(frame.get("text", "")),
+        message_id=str(frame.get("message_id", "")),
+        user_id=str(frame.get("user_id", "")),
+        user_name=str(frame.get("user_name", "")),
         at=_time_of(at) if isinstance(at, str) else None,
     )
 

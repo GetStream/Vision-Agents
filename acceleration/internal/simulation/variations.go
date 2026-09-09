@@ -61,22 +61,22 @@ func expand(
 	defer session.Close()
 
 	asked := fmt.Sprintf("Give %d rewrites of this scenario.\n\nThe scenario:\n\n%s", count, scenario)
-	err = session.Respond(llm.Request{
-		ID:           id,
-		Instructions: expandInstructions,
-		Messages:     []llm.Message{{Role: llm.User, Content: asked}},
-		MaxTokens:    expandTokens,
-		JSON:         true,
+	stream, err := session.Create(ctx, llm.ResponseParams{
+		ID:              id,
+		Instructions:    expandInstructions,
+		Input:           []llm.Message{{Role: llm.User, Content: asked}},
+		MaxOutputTokens: expandTokens,
+		Text:            llm.TextParams{Format: llm.FormatJSONObject},
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	answer, err := llmrouter.Await(ctx, session, id)
+	response, err := llm.Collect(stream)
 	if err != nil {
 		return nil, err
 	}
-	return parseVariations(answer, count)
+	return parseVariations(response.OutputText, count)
 }
 
 func parseVariations(answer string, count int) ([]string, error) {

@@ -31,13 +31,20 @@ const watcherBuffer = 256
 // Defaults a caller can leave out. They are the same ones cmd/agent's flags carry, so a
 // session started with an almost empty spec behaves like the demo.
 const (
-	defaultCallType     = "default"
+	defaultCallType     = "agent"
 	defaultUserID       = "vision-agent"
 	defaultUserName     = "Vision Agent"
 	defaultLLMTarget    = "llm-fast"
 	defaultSTTTarget    = "en-low-latency"
 	defaultTTSTarget    = "en-low-latency"
 	defaultSearchTarget = "search-fast"
+	// The model the skills run on. A quality tier rather than a fast one, since the
+	// conversation carries on without it: what is handed over is what the talking model
+	// could not answer itself.
+	defaultSubagentTarget = "llm-thinking"
+	// The model the flow controller runs on. A non-thinking fast model, since deciding who
+	// holds the floor is a small classification the caller waits through on every turn.
+	defaultControllerTarget = "llm-flow"
 )
 
 // daytonaProvider is the one sandbox a caller may ask for by name.
@@ -129,13 +136,29 @@ func (s *Session) State() State {
 // Provider names the model answering and the voice speaking, which are only known once the
 // routers have picked them.
 func (s *Session) Provider() (llm string, tts string) {
+	_, llm, tts, _ = s.Resolved()
+	return llm, tts
+}
+
+// Resolved names the providers routing picked for this call. Transcription is empty until
+// somebody has been heard, because a listener is opened per speaker rather than up front.
+func (s *Session) Resolved() (stt, llm, tts, subagent string) {
+	if s.voiceAgent == nil {
+		return
+	}
+	if ears := s.voiceAgent.STT(); ears != nil {
+		stt = ears.Provider() + "/" + ears.Model()
+	}
 	if model := s.voiceAgent.LLM(); model != nil {
 		llm = model.Provider() + "/" + model.Model()
 	}
 	if voice := s.voiceAgent.TTS(); voice != nil {
 		tts = voice.Provider() + "/" + voice.Model()
 	}
-	return llm, tts
+	if think := s.voiceAgent.Subagent(); think != nil {
+		subagent = think.Provider() + "/" + think.Model()
+	}
+	return stt, llm, tts, subagent
 }
 
 // watcher is one attached consumer.
@@ -197,6 +220,23 @@ func (s *Session) Say(ctx context.Context, text string) error {
 // Respond answers a piece of text through the model, as though a participant had said it.
 func (s *Session) Respond(ctx context.Context, text string) error {
 	return s.voiceAgent.SimpleResponse(ctx, text)
+}
+
+// Ask answers a piece of text in writing, without speaking any of it, and writes the answer
+// into the conversation.
+//
+// The answer is stored here rather than by the caller because the transcript is the
+// session's: a caller holding a session has no channel to write to, and an answer that only
+// went back over HTTP would be missing from the conversation it belongs to.
+func (s *Session) Ask(ctx context.Context, text string) (string, error) {
+	answer, err := s.voiceAgent.Ask(ctx, text)
+	if err != nil {
+		return "", err
+	}
+	if s.transcript != nil {
+		s.transcript.Reply(answer)
+	}
+	return answer, nil
 }
 
 // Interrupt abandons the reply being spoken.
@@ -347,6 +387,24 @@ func (s *Session) askTool(call ToolCall) error {
 		return fmt.Errorf("session: %s could not be asked for, the connection is behind", call.Name)
 	}
 	return nil
+}
+
+// think names the model the skills run on when the spec did not, so that an agent written
+// down as instructions alone can hand the hard parts over rather than guess at them.
+//
+// It is the one target looked up before it is asked for. A target a caller named and this
+// deployment cannot route is a refusal, but a deployment routing no thinking model should
+// still take calls: that agent answers everything itself, the way it goes without search.
+func (m *Manager) think(ctx context.Context, spec *Spec) {
+	if spec.SubagentTarget != "" {
+		return
+	}
+	if _, err := m.options.LLM.Resolve(ctx, defaultSubagentTarget, spec.LanguageHints); err != nil {
+		m.logger.Debug("this agent has nothing to hand the hard parts to",
+			"target", defaultSubagentTarget, "error", err)
+		return
+	}
+	spec.SubagentTarget = defaultSubagentTarget
 }
 
 // skills are what the voice model may hand over, which is nothing without a subagent to

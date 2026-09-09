@@ -1,12 +1,14 @@
-# Gemma 4 E2B on Baseten
+# Gemma 4 26B-A4B on Baseten
 
-Google Gemma 4 E2B instruction-tuned, served by vLLM's OpenAI-compatible server so it can
-back the self-hosted tier of the LLM router.
+Google Gemma 4 26B-A4B instruction-tuned, thinking disabled, served by vLLM's
+OpenAI-compatible server so it can back the self-hosted tier of the LLM router.
 
-**Not yet pushed.** The recipe is written and reviewed but nobody has deployed it, so
-`GEMMA_BASE_URL` is unset and the `gemma` provider fails to build. Routing moves to the next
-candidate, so `llm-fast` and the capability shortcuts keep working. This is the same position
-`deploy/s2-pro` is in.
+Live on Baseten as `gemma-4-26b-a4b-it` (`qvmmvrrq`), one H100, thinking off. Point
+`GEMMA_BASE_URL` at the production OpenAI-compatible root:
+
+```bash
+GEMMA_BASE_URL=https://model-qvmmvrrq.api.baseten.co/environments/production/sync/v1
+```
 
 ## Why this one needs deploying at all
 
@@ -14,12 +16,24 @@ DeepSeek reaches us through Baseten's shared Model APIs, which host a fixed set 
 models behind one endpoint and need no deployment. Gemma is not on that list, so serving it
 means renting a GPU. That is the whole difference between the two providers.
 
+## Why 26B-A4B, not E2B or 12B
+
+The live path wants the first word, not a think-then-speak turn. 26B-A4B is a Mixture-of-Experts
+checkpoint: 26B total parameters, 4B active per token, so it decodes like a small dense model
+while answering like a mid-size one. EAGLE3 speculative decoding on top of that is Baseten's
+latency recipe. 12B dense would run every parameter on every token, which is slower to decode
+than 4B-active MoE. E2B is cheaper to host and worse at the transfer/press tools the agent
+actually needs.
+
+Thinking stays off. For 26B that still emits an empty thought block, which the `gemma4`
+reasoning parser strips so those tags never reach TTS.
+
 ## Licence
 
 Gemma 4 is **Apache 2.0**, so there is no commercial-use question to settle the way there is
-for S2 Pro next door. The Hugging Face repo is still gated behind Google's terms, though, so
-fetching the weights needs an `hf_access_token` secret with the terms accepted on the account
-that owns it.
+for S2 Pro next door. Google's Hugging Face repo is still gated behind their terms. This
+recipe serves Red Hat's public FP8 checkpoint of the same instruct model, and fetching it
+still needs an `hf_access_token` secret.
 
 ## Deploy
 
@@ -28,7 +42,8 @@ truss push --promote
 ```
 
 `truss push` alone creates a published deployment but leaves the `production` environment
-pointing at the previous one, so `--promote` matters. To promote a deployment after the fact:
+pointing at the previous one, so `--promote` matters. To promote a deployment after the
+fact:
 
 ```bash
 curl -X POST -H "Authorization: Api-Key $BASETEN_API_KEY" \
@@ -54,14 +69,10 @@ the protocol the container speaks.
 
 ## GPU sizing
 
-E2B is about 5 GB at bf16 including its per-layer embeddings, so it fits an L4 with most of
-the 24 GB left for the KV cache. `--max-model-len 32768` caps context well below the model's
-128K to keep that cache affordable; a conversation never needs 128K, and reserving it would
-cost throughput. Raise it if a use case actually wants long context.
-
-The larger variants want more card: E4B roughly doubles the weights, and 26B A4B and 31B want
-an H100. E2B is the deliberate choice here — routing to a small self-hosted model only pays
-off if the GPU is cheap.
+26B-A4B FP8 plus a 32K context cap fit a single H100, which is also the latency choice:
+tensor parallel across two H100s is what Baseten's 256K preset uses, and a conversation never
+needs that. `--max-model-len 32768` keeps the KV cache affordable. Raise it if a use case
+actually wants long context.
 
 ## Prefix caching
 
@@ -73,14 +84,11 @@ prompt, which is exactly what prefix caching is for. It is also what the
 
 ## Tool calling
 
-`--enable-auto-tool-choice --tool-call-parser pythonic` is what lets this deployment answer
+`--enable-auto-tool-choice --tool-call-parser gemma4` is what lets this deployment answer
 with a tool call. vLLM otherwise accepts a `tools` array and ignores it, replying in prose,
 which looks like a model that decided not to call anything rather than a server that was
 never able to. The agent's `transfer` and `press` tools go through this path, so a call the
 model wants to hand to a human depends on both flags being set.
-
-`pythonic` is the parser Gemma wants: it writes calls as `[transfer(to="+15551234567")]`
-rather than the JSON block the Hermes and Mistral parsers read.
 
 ## Test it
 
@@ -93,5 +101,5 @@ cd ../../ && go test -tags integration ./internal/llm/gemma/
 Or by hand once `GEMMA_BASE_URL` is set:
 
 ```bash
-cd ../../ && go run ./cmd/chat -target gemma/gemma-4-E2B-it -text "Say hello."
+cd ../../ && go run ./cmd/chat -target gemma/gemma-4-26B-A4B-it -text "Say hello."
 ```

@@ -121,6 +121,25 @@ func (s *CadenceSuite) TestWordsAddedToAnAnsweredUtteranceAreStillHeard() {
 	s.Equal("order 1 2 3 4", s.ready().Text)
 }
 
+func (s *CadenceSuite) TestAFinalThatGrowsAnAnsweredIdentifierIsStillHeard() {
+	// Healthcare golden lost the last digit of ABC123456 because Gemini's final of the
+	// same utterance was dropped as a restatement.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Utterance: 1,
+		Text: "Maya Chen member ID ABC12345",
+	})
+	answered := s.ready()
+	s.Require().True(s.cadence.Resolve(answered.ID, false))
+
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeFinal, Utterance: 1,
+		Text: "Maya Chen member ID ABC123456",
+	})
+
+	s.Equal("Maya Chen member ID ABC123456", s.ready().Text)
+}
+
 func (s *CadenceSuite) TestSayingTheSameThingAgainLaterIsHeardAgain() {
 	// Repeating yourself is a normal thing to do in a conversation, so only the
 	// transcriber's immediate restatement is discarded.
@@ -216,6 +235,50 @@ func (s *CadenceSuite) TestNewWordsSupersedeAControllerDecision() {
 	s.Equal("book a table for four", s.ready().Text)
 }
 
+func (s *CadenceSuite) TestAClockTimeSplitAcrossUtterancesIsHeardAsOneTurn() {
+	// Gemini endpointing invents a period after "7:00" and emits "thirty patio..." as a
+	// new utterance. Answering only the tail is how the agent booked a party of one.
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice,
+		Mode:        stt.ModeReplacement,
+		Utterance:   1,
+		Text:        "Hi, I'd like to book the table for four this Saturday at 7:00.",
+	})
+	first := s.ready()
+
+	superseded, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice,
+		Mode:        stt.ModeReplacement,
+		Utterance:   2,
+		Text:        "thirty patio if you have it, a high chair, and one of us has a peanut allergy",
+	})
+
+	s.Equal(first.ID, superseded)
+	s.Contains(saying, "table for four")
+	s.Contains(saying, "thirty patio")
+	s.Equal(saying, s.ready().Text)
+}
+
+func (s *CadenceSuite) TestASameUtteranceCorrectionReplacesRatherThanConcatenates() {
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice,
+		Mode:        stt.ModeReplacement,
+		Utterance:   1,
+		Text:        "Saturday at 7:00",
+	})
+	s.ready()
+
+	_, saying := s.cadence.Observe(stt.Transcript{
+		Participant: alice,
+		Mode:        stt.ModeReplacement,
+		Utterance:   1,
+		Text:        "Saturday at 7:30 patio",
+	})
+	s.Equal("Saturday at 7:30 patio", saying)
+}
+
 func (s *CadenceSuite) TestAFinalCopyDoesNotDriveOrDelayCadence() {
 	alice := stt.Participant{ID: "alice"}
 	s.cadence.Observe(stt.Transcript{
@@ -246,6 +309,55 @@ func (s *CadenceSuite) TestWaitingRetriesUnchangedWords() {
 	retried := s.ready()
 	s.NotEqual(first.ID, retried.ID)
 	s.Equal(first.Text, retried.Text)
+}
+
+func (s *CadenceSuite) TestAnIncompleteIdentifierWaitsTheRetryGap() {
+	alice := stt.Participant{ID: "alice"}
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice,
+		Mode:        stt.ModeReplacement,
+		Text:        "member ID ABC12345",
+	})
+	select {
+	case ready := <-s.cadence.Ready():
+		s.FailNowf("an incomplete identifier became ready on the short gap", "got %q", ready.Text)
+	case <-time.After(7 * time.Millisecond):
+	}
+	s.Equal("member ID ABC12345", s.ready().Text)
+}
+
+func (s *CadenceSuite) TestIncompleteIdentifiersAreTheOnesThatStillHaveADigitTail() {
+	s.True(incompleteIdentifier("member ID ABC12345"))
+	s.True(incompleteIdentifier("Saturday at 7:30"))
+	s.True(incompleteIdentifier("callback 512-555-0142"))
+	s.True(incompleteIdentifier("PIN 4471"))
+	s.False(incompleteIdentifier("book a table"))
+	s.False(incompleteIdentifier("party of 4"))
+}
+
+func (s *CadenceSuite) TestGraceGivesOneTurnLongerToHoldStill() {
+	// The turn after an overlap waits longer, because the line is running late and the rest
+	// of the sentence is still on its way. The call is not slow for having had one
+	// collision in it, so the next turn is settled at the usual pace.
+	alice := stt.Participant{ID: "alice"}
+	grace := 60 * time.Millisecond
+	s.cadence.Grace(grace)
+
+	started := time.Now()
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Text: "book a table",
+	})
+	first := s.ready()
+	s.GreaterOrEqual(time.Since(started), grace)
+	s.Require().True(s.cadence.Resolve(first.ID, false))
+
+	started = time.Now()
+	s.cadence.Observe(stt.Transcript{
+		Participant: alice, Mode: stt.ModeReplacement, Text: "for four people",
+	})
+	s.ready()
+
+	s.Less(time.Since(started), grace, "the grace was for one turn, not for the rest of the call")
 }
 
 func (s *CadenceSuite) TestDeltasAreAccumulated() {

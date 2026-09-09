@@ -1,6 +1,170 @@
 # Unreleased
 
+## Breaking Changes
+
+### Calls and transcripts default to the `agent` type
+
+A call type or channel type that is not named is now `agent` rather than `default` and
+`messaging`, across the Python SDK, the CLI, the Go SDK, the backend and the transcript
+channel an agent writes to. A Stream app needs both types before an agent can join:
+
+```bash
+getstream api CreateCallType --request '{"name":"agent"}'
+getstream api CreateChannelType --request '{"name":"agent","automod":"disabled","automod_behavior":"flag","max_message_length":5000}'
+```
+
+Passing `call_type="default"` or `channel_type="messaging"` keeps the old behaviour, and a
+transcript written before this change stays in `messaging:{agent_id}`.
+
+### `Agent.join`: leaving the block waits for the call to end
+
+`join`, `answer` and `outbound_call` now wait for the call to end on the way out, so an agent
+no longer ends with `await agent.finish()`:
+
+```python
+async with agent.join(call):
+    await agent.simple_response("greet the user in one short sentence")
+```
+
+`finish()` is unchanged and still safe to call. Leaving a call that is still live is
+`wait_for_end=False`.
+
+### `GET /v1/llm/stream`: responses are streamed one at a time
+
+The socket used to answer every `respond` frame on one shared event stream, so a caller had
+to correlate frames itself and abandon a reply by naming the completion. A response is now
+its own stream, which changes the frames:
+
+- `interrupt` takes `response_ids` rather than `completion_ids`.
+- `complete` carries `status` (`completed`, `incomplete`, `failed` or `cancelled`) and
+  `cache_write_tokens`. A response that was interrupted settles as `cancelled` and still
+  reports what it produced and was billed for.
+
+The Go `llm.LLM` interface behind it changed to match, which matters for an out-of-tree
+provider: `Respond(request) error` plus `Events()` becomes
+`Create(ctx, ResponseParams) (*llm.Stream, error)`, `Interrupt(ids...)` becomes
+`stream.Close()`, and `Reasoning() bool` folds into `Capabilities()`. The OpenAI provider now
+calls `/v1/responses` rather than `/v1/chat/completions`, so it can cache a prompt prefix
+under `PromptCacheKey` and continue from a stored response.
+
+### `stream.Router` is a config, not a one-shot resolver
+
+`Router("sonic_36")` used to ask the backend which modality a name was and return the plugin
+for it. `Router` is now the config-driven router, and resolving a bare name is a method on it:
+
+```python
+router = Router("healthcare")          # a stored router config
+tts = router.resolve("sonic_36")       # what Router("sonic_36") used to be
+```
+
+A `start` frame on `/v1/{modality}/stream` with neither `target` nor `config_id` is also
+refused now, rather than falling back to a default nobody asked for.
+
 ## New Features
+
+### Speech-to-text routing: a priority list, a data policy, and configs from YAML
+
+`SttOptions` now says more about where a transcript may come from than which model to ask.
+
+`providers` is an ordered list rather than a single `target`. Each entry is a vendor, one of
+their models or a capability shortcut, and each is expanded where it stands, so the order
+written is the order tried. Health only moves a provider that is down to the back — unlike a
+shortcut, a priority list is not reordered on latency, because a caller who wrote an order
+meant it.
+
+`data_policy` is a requirement rather than a description. `allow_training: false` routes only
+to a provider that has said it does not train on what it is sent, and `retention` is a ceiling
+— `none`, or a duration such as `30d`. Every speech model in the router config now declares
+what it does with audio, and a vendor who has published nothing counts as not having said no,
+so a request nothing can serve is refused rather than sent somewhere that does not comply.
+
+`mode` is `verbatim` or `smart`, `profanity_filter` masks offensive words, and `overwrites`
+carries per-provider settings this vocabulary has no word for. All four narrow the candidates:
+a provider that cannot express one is not offered the request, and an overwrite naming a field
+a provider does not have is reported rather than dropped.
+
+```python
+await Router("healthcare").configure_stt(
+    providers=["deepgram", "parakeet"],
+    data_policy={"allow_training": False, "retention": "none"},
+    profanity_filter=True,
+    overwrites={"deepgram": {"eot_threshold": 0.6}},
+)
+```
+
+`sync_routers("routers/")` stores a directory of YAML configs the way `sync_agent` stores an
+agent directory, so routing that matters can live in the repository and be reviewed. Go gains
+`DefineRouter`, `Router.ConfigureSTT` and `SyncRouters`, which it did not have at all.
+
+### Call pipeline shows the model routing picked
+
+A call that asked for a capability shortcut such as `en-low-latency` now also reports the
+`provider/model` that served it (`stt_used`, `tts_used`, `llm_used`, `subagent_used`), so the
+dashboard pipeline is not only the request.
+
+### A router config, four modalities, live and recorded
+
+`RouterConfig` says the routing options once, for speech-to-text, text-to-speech, completions
+and search, and `/v1/router/configs` stores it. Every option is a default that a per-call
+option overrides, and each of the three streaming modalities now has a non-realtime form
+beside the socket:
+
+- `POST /v1/stt/recordings` transcribes a whole recording — a URL, a path or the bytes — with
+  diarization, word timings, SRT or VTT subtitles, redaction, summaries and entities. It routes
+  to the batch models rather than the streaming ones, which are cheaper per hour and more
+  accurate, under the new `en-recorded` and `multilingual-recorded` aliases.
+- `POST /v1/tts/recordings` speaks a whole text into one file, which is what lets a codec and a
+  bitrate be chosen instead of raw PCM.
+- `POST /v1/search` answers one question without a socket, which is the fourth routed modality
+  finally having a client.
+
+Both jobs take a `callback` so a caller need not poll, and both are addressed by
+`GET .../{id}` in the meantime.
+
+```python
+router = Router("healthcare")
+
+async with router.stt.realtime() as stt:
+    ...
+
+transcript = await router.stt.recording("interview.mp4", diarize=True, words=True)
+audiobook = await router.tts.recording(chapter, format="mp3_44100_128")
+hits = await router.search("perioperative antibiotic guidance", results=5)
+```
+
+`stream.Router` in Go and `Router` in `VisionAgentsCore` are the same four namespaces.
+
+An option the modality does not have is refused rather than sent and ignored, and so is one no
+provider behind that target can express: each model declares in `router.yaml` which optional
+terms it can serve, and a request naming one only routes to a model that declared it. A
+transcript that was quietly not diarized is worse than being told. The `router-stt`,
+`router-tts`, `router-llm` and `router-search` skills record what each vendor calls the same
+option and what the router will not fake.
+
+### `Agent.join` can create the call it joins
+
+A call type and an id are enough, so an agent that makes its own call no longer says it
+twice:
+
+```python
+async with agent.join(call_type, call_id):
+    await agent.simple_response("greet the user in one short sentence")
+```
+
+`join(call)` with a call of your own is unchanged, and `create_call` is still there for
+anything that needs the call before joining it.
+
+### A session is given a thinking model it did not ask for
+
+A session that names no `subagent` is now given one, so an agent written down as
+instructions alone can hand the hard parts over instead of guessing at them: the target is
+`llm-thinking`, a new shortcut for the high-quality tier that prefers `openai/gpt-5.6-sol`
+and keeps the rest of the tier behind it as failover. With it come the built-in `think`,
+`recall` and `explain` skills. Naming a `subagent` still decides it.
+
+It is the one target looked up before it is asked for. A deployment whose `router.yaml`
+routes no high-quality model keeps taking calls, and those agents answer everything
+themselves, the way an agent goes without search when nothing routes it.
 
 ### Swift SDKs: chat and voice from an iOS app
 
@@ -161,7 +325,59 @@ Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and
 
 The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). Sessions use the SDK's direct API-key path and default `video_quality="high"`; the plugin API is unchanged.
 
+### A VM on the agent config
+
+`define_agent(vm=Daytona)` says where the subagent may run the code it writes, and every
+session created from that config gets it without asking. Which sandbox an agent is allowed
+is a property of the agent rather than of one conversation, so it no longer has to be
+repeated per session — `AgentConfig.sandbox` carries it, a directory sync leaves it alone,
+and a session request still overrides it. Daytona is the only provider, and a config naming
+anything else is refused when it is written rather than once a call is running.
+
+```python
+await stream.define_agent(
+    name="analyst", llm="llm-fast", subagent="llm-thinking", vm=Daytona,
+)
+```
+
+### `add_knowledge_url`: filling a knowledge base from a page
+
+Python can now subscribe a knowledge base to a page it does not host. The page is read
+straight away, cut into the same passages a document becomes and kept under the url, so
+reading it again replaces what it wrote rather than duplicating it.
+
+```python
+await stream.add_knowledge_url("docs_agent", "https://visionagents.ai/introduction/quickstart")
+```
+
+### `examples/text_agents`: agents that answer in writing
+
+Two runnable examples of a conversation held in writing rather than on a call. `docs_agent`
+answers out of a knowledge directory and a page on the docs site, both under one namespace.
+`analyst` hands arithmetic to a subagent with a VM. `sync_agent(name)` now finds an agent
+directory anywhere under `examples/`, not only in `examples/agents/`.
+
 ## Bug Fixes
+
+### Together's speech models: a question no longer settles as its last word
+
+"Can you hear me" came back as "me". Together's realtime socket flushes its decoder on its
+own schedule rather than when the caller stops talking — mid-sentence, and even mid-word,
+splitting "patio" into "pat" and "io." — and the deltas after a flush start again from
+nothing, carrying only the words since. Both `together-parakeet` and `together-nemotron`
+published each flush as a finished turn, so the tail of a question arrived as a turn of its
+own and was the one the agent answered.
+
+A flush is now folded into the utterance in progress rather than ending it, and a turn ends
+where the words read as a finished sentence, which is the only boundary the protocol offers.
+
+### Acceleration: say what a tool found, and talk through a cough
+
+Two tools in one reply each started a generate, and the second stole the floor so the first result was never spoken. Overlapping coughs and similar non-speech were answered as new turns. The agent now waits for every tool in the turn, speaks once, and keeps talking through a cough. Complete identifiers are answered by the fast model instead of a multi-second colleague round-trip.
+
+### Voicebench: compare against a stored baseline by target name
+
+`voicebench compare --baseline accelerated` resolves `baselines/accelerated/<commit>/`. `--store-baseline` on a run copies (and merges per-pack) `summary.json` and `manifest.json` there.
 
 ### `nvidia` plugin: default VLM model is now `meta/llama-3.2-11b-vision-instruct` (#625)
 

@@ -115,6 +115,30 @@ class TestTextSession:
         assert router.created["config_id"] == "docs-agent"
         assert router.created["skill_names"] == ["explain"]
 
+    async def test_a_conversation_has_an_agent_id_of_its_own_unless_told_otherwise(
+        self, session: stream.TextSession, router: Router
+    ):
+        assert router.created is not None
+        assert "agent_id" not in router.created
+
+    async def test_naming_an_agent_id_answers_in_that_conversation(
+        self, router: Router
+    ):
+        # It names the channel the exchange is written into, so answering a message means
+        # passing the channel it was written in.
+        held = stream.TextSession(
+            config_id="docs-agent",
+            agent_id="call-1",
+            url=router.url,
+            customer_id="acme",
+        )
+        await held.start()
+        try:
+            assert router.created is not None
+            assert router.created["agent_id"] == "call-1"
+        finally:
+            await held.close()
+
     async def test_an_answer_arrives_as_it_is_written(
         self, session: stream.TextSession, router: Router
     ):

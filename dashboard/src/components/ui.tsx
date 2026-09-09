@@ -184,6 +184,30 @@ export function Failure({ error }: { error: unknown }) {
   );
 }
 
+/**
+ * Stale says the page is older than it looks.
+ *
+ * A poll that fails still leaves whatever was last read, and a page thrown away over one
+ * missed request tells the reader less than the page it replaced.
+ */
+export function Stale({
+  error,
+  className = "",
+}: {
+  error: unknown;
+  className?: string;
+}) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-2 text-xs text-muted ${className}`}
+    >
+      <span aria-hidden className="size-1.5 rounded-full bg-amber-500" />
+      Cannot reach the router ({message}). Showing the last data that arrived.
+    </div>
+  );
+}
+
 export function Button({
   children,
   onClick,

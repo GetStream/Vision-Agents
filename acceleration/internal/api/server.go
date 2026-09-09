@@ -22,6 +22,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -229,6 +230,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
+	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	handler := HandlerFromMux(NewStrictHandler(s, nil), mux)
 	return withCORS(s.corsOrigins, s.withCustomer(s.withRequestLog(s.withServerSide(handler))))

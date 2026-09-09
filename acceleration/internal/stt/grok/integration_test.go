@@ -49,6 +49,41 @@ func (s *GrokIntegrationSuite) TestTheFinalReportsTheAudioItCovered() {
 	s.Positive(final.AudioDurationMs, "final transcripts should report the audio window")
 }
 
+// TestDiarizationNamesTheVoiceWithoutChangingTheTranscript covers the labels the router
+// asks for on every session. The server puts them on the words rather than on the turn, so
+// what is checked here is that a real response still yields one, and that asking for it
+// leaves the words themselves alone.
+func (s *GrokIntegrationSuite) TestDiarizationNamesTheVoiceWithoutChangingTheTranscript() {
+	provider, err := New(Options{Diarize: true})
+	s.Require().NoError(err)
+	s.Start(provider)
+	defer s.Hangup(provider)
+
+	var final stt.Transcript
+	for _, event := range s.Collect(provider) {
+		if transcript, ok := event.(stt.Transcript); ok && transcript.Final() {
+			final = transcript
+		}
+	}
+
+	s.RequireAccurate(final.Text)
+	s.NotEmpty(final.Speaker, "one voice is still a voice, and the fixture has one")
+}
+
+// TestAskingForFillerWordsStillTranscribesTheSentence is what this model declares the
+// verbatim half of Mode on. The fixture has no ums in it, so what a real call proves here
+// is that asking to keep them is accepted and does not cost the words around them - the
+// half of the claim that could quietly be wrong, since the API strips fillers by default
+// and takes the parameter on the socket's own query string.
+func (s *GrokIntegrationSuite) TestAskingForFillerWordsStillTranscribesTheSentence() {
+	provider, err := New(Options{FillerWords: true})
+	s.Require().NoError(err)
+	s.Start(provider)
+	defer s.Hangup(provider)
+
+	s.RequireAccurate(s.SettledText(provider))
+}
+
 // TestSmartTurnHoldsOffOnAPauseMidSentence is the option worth having on a call. Without
 // it, 400ms of silence ends the turn, so a caller thinking between clauses gets answered
 // mid-sentence. The turn should still settle, and it should still settle promptly.

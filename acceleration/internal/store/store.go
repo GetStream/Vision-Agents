@@ -607,7 +607,7 @@ func (s *Store) NumberByCall(ctx context.Context, callType, callID string) (Phon
 		return PhoneNumber{}, errors.New("store: a call id is required")
 	}
 	if callType == "" {
-		callType = "default"
+		callType = "agent"
 	}
 
 	var number PhoneNumber

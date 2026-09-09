@@ -145,3 +145,44 @@ func (s *ChatLogSuite) TestSilenceIsNotStored() {
 
 	s.Empty(s.queued())
 }
+
+func (s *ChatLogSuite) TestSpeechIsStoredAsSpeech() {
+	// The channel is a way in as well as a record, so what the agent answered as it was
+	// said has to be tellable from a question somebody has just written.
+	s.log.Record(agent.Heard{
+		Participant: stt.Participant{ID: "session-9", UserID: "alice"},
+		Text:        "hello",
+	})
+
+	waiting := s.queued()
+	s.Require().Len(waiting, 1)
+	s.Equal(SourceSpeech, waiting[0].source)
+}
+
+func (s *ChatLogSuite) TestEverythingTheAgentSaysIsStoredAsTheAgents() {
+	s.log.Record(agent.ResponseDelta{TurnID: "turn-1", Text: "hi"})
+	s.log.Record(agent.Responded{TurnID: "turn-1", Text: "hi there"})
+	s.log.Record(agent.Interrupted{TurnID: "turn-2"})
+
+	waiting := s.queued()
+	s.Require().Len(waiting, 3)
+	for _, queued := range waiting {
+		s.Equal(SourceAgent, queued.source, "otherwise the agent answers its own reply")
+	}
+}
+
+func (s *ChatLogSuite) TestSomethingTheAgentWroteRatherThanSaidIsStillTheAgents() {
+	s.log.Reply("reissuing to another company is not possible")
+
+	waiting := s.queued()
+	s.Require().Len(waiting, 1)
+	s.Equal(whole, waiting[0].kind, "nothing streamed, so there is no turn to close out")
+	s.Equal("vision-agent", waiting[0].author.ID)
+	s.Equal(SourceAgent, waiting[0].source)
+}
+
+func (s *ChatLogSuite) TestAnEmptyWrittenReplyIsNotStored() {
+	s.log.Reply("")
+
+	s.Empty(s.queued())
+}

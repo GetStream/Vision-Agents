@@ -17,6 +17,9 @@ const (
 	backchannelPrefix = "back-"
 	handoffPrefix     = "hand-"
 	toolPrefix        = "tool-"
+	// writtenPrefix is an answer nobody hears, so it names a request rather than a turn:
+	// no audio is gated on it because none is produced.
+	writtenPrefix = "text-"
 )
 
 // Defaults for listening while someone else is talking.

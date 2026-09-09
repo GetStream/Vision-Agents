@@ -38,6 +38,54 @@ func TestMarkdownAndSummary(t *testing.T) {
 	}
 }
 
+func TestMarkdownSurfacesAssertionFailures(t *testing.T) {
+	sum := BuildSummary("accelerated", "run1", 1, []CallResult{{
+		ScenarioID: "healthcare.golden", Pack: "healthcare", Category: "golden", Trial: 1,
+		Outcome: OutcomeFail, Passed: false,
+		Metrics: score.Metrics{
+			EndStateFail:     []string{"identity_verified want true got false"},
+			ExpectedToolFail: []string{"verify_identity.member_id want ABC123456 got XYZ987654", "lookup_appointment not called", "reschedule_appointment not called"},
+			GateNotes:        []string{"end_state", "expected_tools"},
+		},
+	}})
+	md := Markdown(sum)
+	if !strings.Contains(md, "identity_verified want true got false") {
+		t.Fatalf("end-state detail missing:\n%s", md)
+	}
+	if !strings.Contains(md, "verify_identity.member_id want ABC123456 got XYZ987654") {
+		t.Fatalf("root tool failure missing:\n%s", md)
+	}
+	if !strings.Contains(md, "lookup_appointment not called") {
+		t.Fatalf("cascade detail missing:\n%s", md)
+	}
+	if strings.Contains(md, "| expected_tools | lookup_appointment not called |") {
+		t.Fatalf("cascade counted as a root failure:\n%s", md)
+	}
+	if !strings.Contains(md, "## Failed trials") {
+		t.Fatalf("failed trials section missing:\n%s", md)
+	}
+}
+
+func TestMarkdownSurfacesHoldAndBargeIn(t *testing.T) {
+	sum := BuildSummary("accelerated", "run1", 1, []CallResult{{
+		ScenarioID: "restaurant.selectivity", Pack: "restaurant", Category: "checklist", Trial: 1,
+		Outcome: OutcomeFail, Passed: false,
+		Metrics: score.Metrics{
+			SelectivityHold:    false,
+			HoldThroughOverlap: false,
+			BargeInStopMS:      940,
+			GateNotes:          []string{"selectivity", "hold", "barge_in"},
+		},
+	}})
+	md := Markdown(sum)
+	if !strings.Contains(md, "agent started a turn on non-directed overlap") {
+		t.Fatalf("selectivity detail missing:\n%s", md)
+	}
+	if !strings.Contains(md, "stop 940 ms exceeds") {
+		t.Fatalf("barge-in detail missing:\n%s", md)
+	}
+}
+
 func TestScorecardTargetVsOurs(t *testing.T) {
 	sum := BuildSummary("vision-agents", "run1", 2, []CallResult{
 		{ScenarioID: "restaurant.golden", Pack: "restaurant", Category: "golden", Trial: 1, Passed: true, Metrics: score.Metrics{V2V: []score.Timing{{TurnID: "a", V2VMS: 420}, {TurnID: "b", V2VMS: 450, Tool: true}}}},

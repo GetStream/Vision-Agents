@@ -79,3 +79,12 @@ class TestFolder:
         monkeypatch.chdir(tmp_path)
 
         assert resolve("support") == agent.resolve()
+
+    def test_resolve_finds_an_agent_filed_under_another_kind_of_example(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        agent = tmp_path / "examples" / "text_agents" / "docs_agent"
+        write(agent, "instructions.md", "Answer from the docs.\n")
+        monkeypatch.chdir(tmp_path)
+
+        assert resolve("docs_agent") == agent.resolve()

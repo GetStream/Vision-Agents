@@ -24,6 +24,24 @@ type Query struct {
 	Text string
 	// Limit caps how many results come back. Zero leaves the provider's default.
 	Limit int
+	// IncludeDomains and ExcludeDomains narrow where the answer may come from, which is
+	// what a business that trusts three sources and no others needs.
+	IncludeDomains []string
+	ExcludeDomains []string
+	// Category is the kind of source to prefer - news, papers, company - for the
+	// providers that classify their index.
+	Category string
+	// MaxAgeHours is how stale a cached page may be. Zero leaves the provider's own
+	// freshness alone rather than forcing a crawl.
+	MaxAgeHours int
+	// Location is the country or region to answer from, for questions whose answer
+	// depends on where they were asked.
+	Location string
+	// Contents is what to return alongside each hit: text, highlights, summary. Empty
+	// leaves the provider's default, which for a voice agent is the excerpt.
+	Contents []string
+	// OutputSchema is a JSON schema the answer must fit, as JSON.
+	OutputSchema string
 }
 
 // Validate reports whether the query names something to find out.

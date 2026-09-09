@@ -48,15 +48,16 @@ credentials and the extra fields they send.
 
 ## Targets and prices
 
-`llm-fast` means whichever model answers quickest, in whatever language: the shorthand for
-when the only thing that matters is that the answer starts arriving. The four capability
-shortcuts work here too, with `en-high-accuracy` reaching the quality tier.
+`llm-fast` means a fast answer, in whatever language: the shorthand for when the only thing
+that matters is that the answer starts arriving. It prefers `gemini/gemini-3.8-flash` and
+falls through to the rest of the low-latency tier only when that model is down. The four
+capability shortcuts work here too, with `en-high-accuracy` reaching the quality tier.
 
 | Model                             | Tier         | In     | Cached  | Out     |
 | --------------------------------- | ------------ | ------ | ------- | ------- |
 | `deepseek/DeepSeek-V4-Flash-0731` | low-latency  | $0.13  | $0.028  | $0.26   |
 | `openai/gpt-5.6-luna`             | low-latency  | $0.20  | $0.02   | $1.20   |
-| `gemini/gemini-3.5-flash-lite`    | low-latency  | $0.30  | $0.03   | $2.50   |
+| `gemini/gemini-3.8-flash`         | low-latency  | $0.75  | $0.075  | $3.75   |
 | `gemma/gemma-4-E2B-it`            | low-latency  | $0.032 | -       | $0.16   |
 | `deepseek/DeepSeek-V4-Pro-0813`   | high-quality | $1.32  | $0.132  | $3.96   |
 | `openai/gpt-5.6-terra`            | high-quality | $2.00  | $0.20   | $12.00  |

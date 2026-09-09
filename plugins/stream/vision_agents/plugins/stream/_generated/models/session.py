@@ -28,6 +28,8 @@ class Session:
         text (bool | Unset): The conversation is held in writing rather than on a call.
         llm (str | Unset): The provider and model answering, once routing has picked one.
         tts (str | Unset): The provider and model speaking.
+        stt (str | Unset): The provider and model transcribing, once somebody has been heard.
+        subagent (str | Unset): The provider and model delegated work runs on.
         instructions (str | Unset):
     """
 
@@ -41,6 +43,8 @@ class Session:
     text: bool | Unset = UNSET
     llm: str | Unset = UNSET
     tts: str | Unset = UNSET
+    stt: str | Unset = UNSET
+    subagent: str | Unset = UNSET
     instructions: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -65,6 +69,10 @@ class Session:
 
         tts = self.tts
 
+        stt = self.stt
+
+        subagent = self.subagent
+
         instructions = self.instructions
 
         field_dict: dict[str, Any] = {}
@@ -86,6 +94,10 @@ class Session:
             field_dict["llm"] = llm
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if stt is not UNSET:
+            field_dict["stt"] = stt
+        if subagent is not UNSET:
+            field_dict["subagent"] = subagent
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
 
@@ -114,6 +126,10 @@ class Session:
 
         tts = d.pop("tts", UNSET)
 
+        stt = d.pop("stt", UNSET)
+
+        subagent = d.pop("subagent", UNSET)
+
         instructions = d.pop("instructions", UNSET)
 
         session = cls(
@@ -127,6 +143,8 @@ class Session:
             text=text,
             llm=llm,
             tts=tts,
+            stt=stt,
+            subagent=subagent,
             instructions=instructions,
         )
 

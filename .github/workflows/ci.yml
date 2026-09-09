@@ -63,7 +63,7 @@ jobs:
           go-version-file: acceleration/go.mod
           cache-dependency-path: |
             acceleration/go.sum
-            agents-core-go/go.sum
+            sdks/go/go.sum
 
       # cmd/transcribe and cmd/agent decode and encode Opus through cgo, so the codecs have
       # to be present before the acceleration module will build at all.
@@ -75,8 +75,8 @@ jobs:
       - name: Check the generated code is in step with the spec
         run: |
           (cd acceleration && go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml)
-          (cd agents-core-go && go generate ./...)
-          git diff --exit-code -- acceleration/internal/api/generated.go agents-core-go/acceleration/generated.go
+          (cd sdks/go && go generate ./...)
+          git diff --exit-code -- acceleration/internal/api/generated.go sdks/go/acceleration/generated.go
 
       - name: Vet the backend
         run: go vet ./...
@@ -88,11 +88,11 @@ jobs:
 
       - name: Vet the SDK
         run: go vet ./...
-        working-directory: agents-core-go
+        working-directory: sdks/go
 
       - name: Test the SDK
         run: go test -race ./...
-        working-directory: agents-core-go
+        working-directory: sdks/go
 
   dashboard:
     runs-on: ubuntu-latest

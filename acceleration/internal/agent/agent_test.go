@@ -16,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -154,16 +155,10 @@ func (s *stubSTT) transcribed() []audio.PcmData {
 
 // stubLLM answers with whatever deltas the test has queued.
 type stubLLM struct {
-	emitter *llm.Emitter
-
-	mu         sync.Mutex
-	asked      []llm.Request
-	interrupts int
-	// abandoned is every completion id an interrupt named, so a test can tell a targeted
-	// interrupt from one that stopped everything.
-	abandoned []string
-	// reply is streamed one delta per element for each request, unless the test drives the
-	// emitter itself.
+	mu    sync.Mutex
+	asked []llm.ResponseParams
+	// reply is streamed one delta per element for each request, unless the test writes the
+	// response itself.
 	reply []string
 	// then replaces reply from the second request onward, so a model that asked for help
 	// on the first turn does not ask for it again once the answer has come back.
@@ -174,15 +169,44 @@ type stubLLM struct {
 	// keepCalling asks for them on every reply instead, which is the model that answers
 	// a tool that failed by reaching for it again.
 	keepCalling bool
+
+	// holdCreate, if set, is waited on after the request is recorded and before a stream
+	// is returned, so a test can interrupt while Create has not come back.
+	holdCreate <-chan struct{}
+
+	// scripts are the responses handed out, keyed by the id the caller correlates on, so
+	// a test can write one as it goes and see which were abandoned.
+	scripts map[string]*llmtest.Script
+	order   []string
 }
 
-func newStubLLM() *stubLLM { return &stubLLM{emitter: llm.NewEmitter(64)} }
+func newStubLLM() *stubLLM { return &stubLLM{scripts: map[string]*llmtest.Script{}} }
 
 func (s *stubLLM) Start(context.Context) error { return nil }
 
-func (s *stubLLM) Respond(request llm.Request) error {
+func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
-	s.asked = append(s.asked, request)
+	s.asked = append(s.asked, params)
+	hold := s.holdCreate
+	s.mu.Unlock()
+
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   s.Provider(),
+		Model:      s.Model(),
+	})
+
+	s.mu.Lock()
+	s.scripts[params.ID] = script
+	s.order = append(s.order, params.ID)
 	reply := append([]string(nil), s.reply...)
 	first := len(s.asked) == 1
 	if !first && s.then != nil {
@@ -194,64 +218,75 @@ func (s *stubLLM) Respond(request llm.Request) error {
 	}
 	s.mu.Unlock()
 
+	// A response with nothing queued stays in flight until the test writes it, which is
+	// what lets a reply be caught mid-sentence.
 	if len(reply) == 0 && len(calls) == 0 {
-		return nil
+		return script.Stream(), nil
 	}
 
-	go func() {
-		s.emitter.Send(llm.CompletionStarted{CompletionID: request.ID, At: time.Now()})
-		var whole string
-		for index, delta := range reply {
-			whole += delta
-			s.emitter.Send(llm.TextDelta{CompletionID: request.ID, Index: index, Text: delta})
-		}
-		s.emitter.Send(llm.CompletionComplete{
-			CompletionID:       request.ID,
-			Text:               whole,
-			ToolCalls:          calls,
-			InputTokens:        12,
-			OutputTokens:       8,
-			TimeToFirstTokenMs: 42,
-		})
-	}()
-	return nil
-}
-
-func (s *stubLLM) Interrupt(completionIDs ...string) error {
-	s.mu.Lock()
-	s.interrupts++
-	s.abandoned = append(s.abandoned, completionIDs...)
-	s.mu.Unlock()
-
-	// A real provider settles an abandoned completion rather than dropping it, because
-	// the tokens it had already generated were still billed.
-	for _, id := range completionIDs {
-		s.emitter.Send(llm.CompletionComplete{CompletionID: id, Interrupted: true})
+	for _, delta := range reply {
+		script.OutputText(delta)
 	}
-	return nil
+	if len(calls) > 0 {
+		script.ToolCalls(calls...)
+	}
+	script.Usage(llm.Usage{InputTokens: 12, OutputTokens: 8})
+	script.Done()
+	return script.Stream(), nil
 }
 
-func (s *stubLLM) Events() <-chan llm.Event { return s.emitter.Events() }
-
-func (s *stubLLM) Close() error {
-	s.emitter.Close()
-	return nil
+// writes streams a piece of a response the test is writing itself.
+func (s *stubLLM) writes(responseID, delta string) {
+	s.script(responseID).OutputText(delta)
 }
 
-func (s *stubLLM) Provider() string { return "stub" }
-func (s *stubLLM) Model() string    { return "stub-llm" }
-func (s *stubLLM) Reasoning() bool  { return false }
+// finishes settles a response the test was writing itself.
+func (s *stubLLM) finishes(responseID string) {
+	s.script(responseID).Done()
+}
 
-func (s *stubLLM) requests() []llm.Request {
+func (s *stubLLM) script(responseID string) *llmtest.Script {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]llm.Request(nil), s.asked...)
+	return s.scripts[responseID]
 }
 
+func (s *stubLLM) Close() error {
+	s.mu.Lock()
+	scripts := make([]*llmtest.Script, 0, len(s.scripts))
+	for _, script := range s.scripts {
+		scripts = append(scripts, script)
+	}
+	s.mu.Unlock()
+
+	for _, script := range scripts {
+		script.Done()
+	}
+	return nil
+}
+
+func (s *stubLLM) Provider() string               { return "stub" }
+func (s *stubLLM) Model() string                  { return "stub-llm" }
+func (s *stubLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+
+func (s *stubLLM) requests() []llm.ResponseParams {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]llm.ResponseParams(nil), s.asked...)
+}
+
+// interrupted is how many responses the agent closed part-way through.
 func (s *stubLLM) interrupted() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.interrupts
+
+	var abandoned int
+	for _, id := range s.order {
+		if s.scripts[id].Abandoned() {
+			abandoned++
+		}
+	}
+	return abandoned
 }
 
 // stubTTS produces one chunk of audio per piece of text it is given.
@@ -502,13 +537,13 @@ func (s *AgentSuite) delegates() {
 // reasoner is the model router the agent answers through. The agent opens the voice
 // model, the flow controller and the optional subagent from it, in that order.
 func (s *AgentSuite) reasoner(logger *slog.Logger) *llmrouter.Router {
-	models := []llm.LLM{s.model, s.flow}
+	models := []llmrouter.Provider{s.model, s.flow}
 	if s.subagent != nil {
 		models = append(models, s.subagent)
 	}
 	var opened int
 	reasoning := llmrouter.NewRegistry()
-	reasoning.Register("stub", func(routing.Spec) (llm.LLM, error) {
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
 		provider := models[min(opened, len(models)-1)]
 		opened++
 		return provider, nil
@@ -726,6 +761,19 @@ func (s *AgentSuite) mutters(participant stt.Participant, text string) {
 	})
 }
 
+// saysInVoice reports a settled turn the transcriber could tell the voice of, which is
+// what a microphone with more than one person at it sounds like.
+func (s *AgentSuite) saysInVoice(participant stt.Participant, text, voice string) {
+	s.ears.emitter.Send(stt.Transcript{
+		Participant: participant,
+		Mode:        stt.ModeFinal,
+		Speaker:     voice,
+		Text:        text,
+		Language:    "en",
+		Confidence:  1,
+	})
+}
+
 // eventually waits for a condition, which is how a test asserts on a flow that crosses
 // goroutines without sleeping for a fixed time.
 func (s *AgentSuite) eventually(condition func() bool, message string) {
@@ -852,9 +900,9 @@ func (s *AgentSuite) TestASettledTurnIsAnsweredAndSpoken() {
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
 	request := s.model.requests()[0]
 	s.Equal("be brief", request.Instructions)
-	s.Require().Len(request.Messages, 1)
-	s.Equal("hello", request.Messages[0].Content)
-	s.Equal(llm.User, request.Messages[0].Role)
+	s.Require().Len(request.Input, 1)
+	s.Equal("hello", request.Input[0].Content)
+	s.Equal(llm.User, request.Input[0].Role)
 
 	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
 		"the reply was never published to the call")
@@ -869,7 +917,7 @@ func (s *AgentSuite) TestARevisionReplacesTheWordsBeforeCadenceActs() {
 	s.says(participant, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("hello", s.model.requests()[0].Messages[0].Content)
+	s.Equal("hello", s.model.requests()[0].Input[0].Content)
 }
 
 func (s *AgentSuite) TestStablePartialSpeechIsAnsweredWithoutAFinalEvent() {
@@ -881,7 +929,7 @@ func (s *AgentSuite) TestStablePartialSpeechIsAnsweredWithoutAFinalEvent() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 },
 		"cadence should act without waiting for a provider final event")
-	s.Equal("can you help me", s.model.requests()[0].Messages[0].Content)
+	s.Equal("can you help me", s.model.requests()[0].Input[0].Content)
 }
 
 func (s *AgentSuite) TestSettlingOnAnAnsweredUtteranceDoesNotAnswerItTwice() {
@@ -919,6 +967,46 @@ func (s *AgentSuite) TestBackgroundSpeechIsIgnored() {
 	s.Empty(s.model.requests(), "speech addressed to somebody else should stay in the background")
 	s.Empty(s.agent.History())
 	s.Zero(countOf[Heard](s.reported()))
+}
+
+func (s *AgentSuite) TestASecondVoiceAtTheSameMicrophoneIsNotTakenForTheCaller() {
+	// One track, two people in the room. The track says who joined the call, so it names
+	// the caller for both of them, and only a transcriber that hears the difference can
+	// say that the second turn came from somebody else.
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"respond","floor":"continue"}`}
+	s.flow.then = []string{`{"disposition":"ignore","floor":"continue"}`}
+	participant := stt.Participant{ID: "alice", Name: "Alice"}
+	s.speak(participant)
+
+	s.saysInVoice(participant, "what time is my flight", "A")
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 },
+		"the caller's own turn was never considered")
+
+	s.saysInVoice(participant, "mom where is my backpack", "B")
+	s.eventually(func() bool { return len(s.flow.requests()) == 2 },
+		"the second voice was never considered")
+
+	asked := s.flow.requests()
+	s.NotContains(asked[0].Input[0].Content, "different voice",
+		"the first voice heard on a track is the caller's")
+	s.Contains(asked[1].Input[0].Content, "different voice")
+	s.Len(s.model.requests(), 1, "only the caller was answered")
+}
+
+func (s *AgentSuite) TestATranscriberThatCannotHearVoicesLeavesTheCallerAlone() {
+	// Most transcribers say nothing about who is talking. A turn with no voice on it is
+	// the caller's as far as anybody can tell, and calling it somebody else's would have
+	// the agent stop answering the person it is on a call with.
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"respond","floor":"continue"}`}
+	participant := stt.Participant{ID: "alice", Name: "Alice"}
+	s.speak(participant)
+
+	s.says(participant, "what time is my flight")
+
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the turn was never considered")
+	s.NotContains(s.flow.requests()[0].Input[0].Content, "different voice")
 }
 
 func (s *AgentSuite) TestAmbiguousSpeechAsksAClarifyingQuestion() {
@@ -1013,10 +1101,10 @@ func (s *AgentSuite) TestASecondTurnCarriesTheWholeConversation() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the second turn was never asked")
 	second := s.model.requests()[1]
-	s.Require().Len(second.Messages, 3)
-	s.Equal("hello", second.Messages[0].Content)
-	s.Equal(llm.Assistant, second.Messages[1].Role)
-	s.Equal("and again", second.Messages[2].Content)
+	s.Require().Len(second.Input, 3)
+	s.Equal("hello", second.Input[0].Content)
+	s.Equal(llm.Assistant, second.Input[1].Role)
+	s.Equal("and again", second.Input[2].Content)
 }
 
 func (s *AgentSuite) TestCompactionKeepsNewerTurnsVerbatim() {
@@ -1082,7 +1170,7 @@ func (s *AgentSuite) TestAFinishedTurnReportsWhatTheParticipantWaitedFor() {
 	s.Equal(participant, turn.Participant)
 	s.False(turn.Interrupted)
 	s.Equal(float64(30), turn.STTLatencyMs)
-	s.Equal(float64(42), turn.LLMTTFTMs, "the model's own time to first token")
+	s.Positive(turn.LLMTTFTMs, "the model's own time to first token")
 	s.Equal(float64(5), turn.TTSTTFBMs, "the voice's own time to first byte")
 	s.Positive(turn.RoundtripMs, "the settled transcript to the first audio published")
 	s.InDelta(turn.RoundtripMs+30, turn.SpeechEndToAudioMs, 0.001,
@@ -1365,24 +1453,18 @@ func (s *AgentSuite) TestAnAnswerComingBackDoesNotCutOffTheReplyBeingSpoken() {
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
 	turnA := s.model.requests()[0].ID
 
-	s.model.emitter.Send(llm.CompletionStarted{CompletionID: turnA, At: time.Now()})
-	s.model.emitter.Send(llm.TextDelta{
-		CompletionID: turnA, Index: 0, Text: `<ask skill="think">15% of 84.20</ask>`,
-	})
+	s.model.writes(turnA, `<ask skill="think">15% of 84.20</ask>`)
 	s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "nothing was handed over")
 
 	taskID := s.subagent.requests()[0].ID
-	s.subagent.emitter.Send(llm.CompletionStarted{CompletionID: taskID, At: time.Now()})
-	s.subagent.emitter.Send(llm.TextDelta{CompletionID: taskID, Index: 0, Text: "It is 12.63."})
-	s.subagent.emitter.Send(llm.CompletionComplete{CompletionID: taskID, Text: "It is 12.63."})
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
 	s.eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, "the task never settled")
 	s.Equal(1, len(s.model.requests()),
 		"an answer coming back must not take the floor from a reply still being written")
 
-	s.model.emitter.Send(llm.TextDelta{
-		CompletionID: turnA, Index: 1, Text: "Let me check. Won't be a moment.",
-	})
-	s.model.emitter.Send(llm.CompletionComplete{CompletionID: turnA, Text: "Let me check. Won't be a moment."})
+	s.model.writes(turnA, "Let me check. Won't be a moment.")
+	s.model.finishes(turnA)
 	s.eventually(func() bool { return countOf[Responded](s.reported()) >= 1 }, "the live reply was cut off")
 	responded, _ := firstOf[Responded](s.reported())
 	s.Equal("Let me check. Won't be a moment.", responded.Text)
@@ -1663,6 +1745,42 @@ func (s *AgentSuite) TestWithoutDuplexNothingIsMurmured() {
 	s.Empty(s.voice.spoken())
 }
 
+func (s *AgentSuite) TestAReplyWaitingOnHeadersDoesNotBlockTheFloor() {
+	s.join(true)
+	s.model.reply = nil
+	hold := make(chan struct{})
+	s.model.holdCreate = hold
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
+
+	s.mutters(participant, "okay")
+
+	s.eventually(func() bool { return len(s.flow.requests()) >= 2 },
+		"the overlap must be asked about while the reply is still waiting for headers")
+	close(hold)
+}
+
+func (s *AgentSuite) TestBargeInCancelsAReplyThatIsStillOpening() {
+	s.join(true)
+	s.model.reply = nil
+	hold := make(chan struct{})
+	s.model.holdCreate = hold
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+
+	s.mutters(participant, "wait stop")
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"the hung create must not keep the floor")
+	s.Empty(s.voice.spoken(), "nothing was spoken from a create that never returned")
+}
+
 func (s *AgentSuite) TestRelatedOverlapShortensThenAnswersTheAddition() {
 	s.join(true)
 	s.model.reply = nil
@@ -1702,14 +1820,82 @@ func (s *AgentSuite) TestAcknowledgementOverlapLetsTheCurrentReplyContinue() {
 	s.Zero(s.model.interrupted())
 	s.Len(s.model.requests(), 1, "the acknowledgement waits behind the current reply")
 
-	s.model.emitter.Send(llm.CompletionComplete{CompletionID: first})
+	s.model.finishes(first)
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the queued turn was not answered after the current reply")
+}
+
+func (s *AgentSuite) TestTalkingOverTheAgentStopsItBeforeTheWordsSettle() {
+	// The caller talks over a long reply and changes direction. The agent stops on the
+	// in-progress words rather than waiting for them to settle first.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.voice.silent = true
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "no turn was started")
+
+	s.mutters(participant, "actually wait")
+
+	s.eventually(func() bool { return s.voice.interrupted() == 1 && s.model.interrupted() == 1 },
+		"talking over the agent should stop it before the words settle")
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"the interruption was never reported")
+
+	s.says(participant, "actually wait, make it six")
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the settled words were never answered")
+	s.Equal(1, countOf[Interrupted](s.reported()),
+		"the settled words follow the stop, they do not interrupt again")
+}
+
+func (s *AgentSuite) TestAnAcknowledgementInProgressDoesNotStopTheAgent() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.voice.silent = true
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
+
+	s.mutters(participant, "okay")
+
+	s.eventually(func() bool { return len(s.flow.requests()) >= 2 }, "the overlap was never considered")
+	s.never(func() bool { return s.model.interrupted() > 0 || s.voice.interrupted() > 0 },
+		"an acknowledgement is not a reason to stop")
+	s.Len(s.model.requests(), 1, "the acknowledgement does not earn its own reply while the agent talks")
+}
+
+func (s *AgentSuite) TestTheControllerIsToldWhatTheAgentIsSaying() {
+	// A ruling on partial words overlapping the reply has to see the reply, or it cannot
+	// tell a correction from the caller's line echoing the agent back.
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.voice.silent = true
+	s.speak(participant)
+	s.says(participant, "explain the menu")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	turnA := s.model.requests()[0].ID
+	s.model.writes(turnA, "The menu has three courses")
+	s.eventually(func() bool { return countOf[ResponseDelta](s.reported()) >= 1 }, "the reply never streamed")
+	s.flow.then = []string{`{"disposition":"wait","floor":"continue"}`}
+
+	s.mutters(participant, "actually wait")
+
+	s.eventually(func() bool { return len(s.flow.requests()) >= 2 }, "the overlap was never considered")
+	overlap := s.flow.requests()[len(s.flow.requests())-1]
+	s.Contains(overlap.Input[0].Content, "The menu has three courses",
+		"the controller judges the overlap against what the agent has said so far")
 }
 
 func (s *AgentSuite) TestBargeInStopsTheModelAndTheVoice() {
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
+	// A reply that is still being written is the only one there is anything to stop.
+	s.model.reply = nil
 	s.voice.silent = true
 	s.speak(participant)
 	s.says(participant, "hello")
@@ -1783,6 +1969,28 @@ func (s *AgentSuite) TestAudioFromAnAbandonedTurnIsNotPublished() {
 	s.Equal(before, len(s.edge.heard()), "audio from the abandoned turn stays unheard")
 }
 
+func (s *AgentSuite) TestASecondToolDoesNotStartACompetingReply() {
+	// Two tools in one reply each used to call respondAfterTool. The second stole
+	// speakingTurn, so the first result's generate was dropped unspoken.
+	s.ownsTools("both orders found")
+	s.join(false)
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"Both came back."}
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"1"}`},
+		{ID: "call-2", Name: "lookup_order", Arguments: `{"order":"2"}`},
+	}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where are my orders")
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 2 }, "both tools should run")
+	s.eventually(func() bool { return s.spokenText("Both came back") },
+		"the caller was left in silence after the second tool stole the floor")
+	s.Len(s.model.requests(), 2, "a second tool must not start a competing generate")
+}
+
 func (s *AgentSuite) TestAToolResultDoesNotCutOffTheReplyAlreadyBeingSpoken() {
 	// Only a caller talking over the agent abandons a turn. The agent starting one for
 	// itself, to say what a tool came back with, does not: the reply that promised to go
@@ -1849,7 +2057,7 @@ func (s *AgentSuite) TestSimpleResponseAsksTheModel() {
 	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "what is the time"))
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
-	s.Equal("what is the time", s.model.requests()[0].Messages[0].Content)
+	s.Equal("what is the time", s.model.requests()[0].Input[0].Content)
 }
 
 func (s *AgentSuite) TestEachParticipantIsTranscribedSeparately() {
@@ -1933,7 +2141,7 @@ func (s *AgentSuite) TestTheModelsLatencyIsReported() {
 
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
 	responded, _ := firstOf[Responded](s.reported())
-	s.Equal(float64(42), responded.TimeToFirstTokenMs,
+	s.Positive(responded.TimeToFirstTokenMs,
 		"time to first token is what the participant waited for")
 }
 

@@ -139,22 +139,23 @@ func (r *reviewer) review(ctx context.Context, call store.Call, target string, s
 	}
 	defer session.Close()
 
-	if err := session.Respond(llm.Request{
-		ID:           call.ID,
-		Instructions: reviewInstructions,
-		Messages:     []llm.Message{{Role: llm.User, Content: conversation(said)}},
-		MaxTokens:    reviewTokens,
-		JSON:         true,
-	}); err != nil {
-		return err
-	}
-
-	answer, err := llmrouter.Await(ctx, session, call.ID)
+	stream, err := session.Create(ctx, llm.ResponseParams{
+		ID:              call.ID,
+		Instructions:    reviewInstructions,
+		Input:           []llm.Message{{Role: llm.User, Content: conversation(said)}},
+		MaxOutputTokens: reviewTokens,
+		Text:            llm.TextParams{Format: llm.FormatJSONObject},
+	})
 	if err != nil {
 		return err
 	}
 
-	verdict, err := parseJudgement(answer)
+	response, err := llm.Collect(stream)
+	if err != nil {
+		return err
+	}
+
+	verdict, err := parseJudgement(response.OutputText)
 	if err != nil {
 		return err
 	}

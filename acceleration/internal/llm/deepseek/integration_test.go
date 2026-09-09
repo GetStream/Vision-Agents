@@ -33,66 +33,50 @@ func (s *DeepSeekIntegrationSuite) SetupSuite() {
 func (s *DeepSeekIntegrationSuite) start(options Options) *openaicompat.LLM {
 	provider, err := New(options)
 	s.Require().NoError(err)
-
-	s.Require().NoError(provider.Start(context.Background()))
 	s.T().Cleanup(func() { provider.Close() })
 	return provider
 }
 
-// collect reads events until the completion settles. A provider error fails the test
-// straight away, so a rejected request reports what went wrong instead of timing out.
-func (s *DeepSeekIntegrationSuite) collect(provider *openaicompat.LLM) (
-	llm.CompletionComplete, []llm.Event,
-) {
-	var events []llm.Event
-	deadline := time.After(90 * time.Second)
+// ask runs one request to the end. A provider failure ends the stream, so a rejected request reports what went wrong rather than timing out.
+func (s *DeepSeekIntegrationSuite) ask(provider *openaicompat.LLM, params llm.ResponseParams) (llm.Response, []llm.Event) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
 
-	for {
-		select {
-		case event, open := <-provider.Events():
-			if !open {
-				s.FailNow("the provider closed before the completion settled")
-				return llm.CompletionComplete{}, events
-			}
-			events = append(events, event)
-			if failure, failed := event.(llm.Error); failed {
-				s.FailNowf("provider error", "%v", failure.Err)
-			}
-			if complete, done := event.(llm.CompletionComplete); done {
-				return complete, events
-			}
-		case <-deadline:
-			s.FailNow("timed out waiting for a completion")
-			return llm.CompletionComplete{}, events
-		}
+	stream, err := provider.Create(ctx, params)
+	s.Require().NoError(err)
+	defer stream.Close()
+
+	var events []llm.Event
+	for stream.Next() {
+		events = append(events, stream.Current())
 	}
+	s.Require().NoError(stream.Err())
+	return stream.Response(), events
 }
 
 func (s *DeepSeekIntegrationSuite) TestAnswersAndReportsWhatItCost() {
 	provider := s.start(Options{})
 
-	s.Require().NoError(provider.Respond(llm.Request{
+	complete, events := s.ask(provider, llm.ResponseParams{
 		ID:           "c1",
 		Instructions: "Answer with a single word and no punctuation.",
-		Messages: []llm.Message{
+		Input: []llm.Message{
 			{Role: llm.User, Content: "What is the capital of France?"},
 		},
-		MaxTokens: 32,
-	}))
+		MaxOutputTokens: 32,
+	})
 
-	complete, events := s.collect(provider)
-
-	s.Contains(strings.ToLower(complete.Text), "paris")
-	s.Equal("c1", complete.CompletionID)
-	s.Positive(complete.InputTokens, "there is nothing to bill without a token count")
-	s.Positive(complete.OutputTokens)
+	s.Contains(strings.ToLower(complete.OutputText), "paris")
+	s.Equal("c1", complete.ID)
+	s.Positive(complete.Usage.InputTokens, "there is nothing to bill without a token count")
+	s.Positive(complete.Usage.OutputTokens)
 	s.Positive(complete.TimeToFirstTokenMs)
-	s.LessOrEqual(complete.TimeToFirstTokenMs, complete.CompletionTimeMs)
-	s.False(complete.Interrupted)
+	s.LessOrEqual(complete.TimeToFirstTokenMs, complete.DurationMs)
+	s.Equal(llm.StatusCompleted, complete.Status)
 
 	var deltas int
 	for _, event := range events {
-		if _, ok := event.(llm.TextDelta); ok {
+		if _, ok := event.(llm.OutputTextDelta); ok {
 			deltas++
 		}
 	}
@@ -104,18 +88,16 @@ func (s *DeepSeekIntegrationSuite) TestThinkingIsOffByDefaultSoTheAnswerArrivesF
 	// never appears. That is exactly the failure the default is there to avoid.
 	provider := s.start(Options{})
 
-	s.Require().NoError(provider.Respond(llm.Request{
-		Messages:  []llm.Message{{Role: llm.User, Content: "Say hello in five words."}},
-		MaxTokens: 64,
-	}))
+	complete, events := s.ask(provider, llm.ResponseParams{
+		Input:           []llm.Message{{Role: llm.User, Content: "Say hello in five words."}},
+		MaxOutputTokens: 64,
+	})
 
-	complete, events := s.collect(provider)
-
-	s.NotEmpty(complete.Text)
-	s.Zero(complete.ReasoningTokens, "the chat template argument really does disable thinking")
+	s.NotEmpty(complete.OutputText)
+	s.Zero(complete.Usage.OutputTokensDetails.ReasoningTokens, "the chat template argument really does disable thinking")
 
 	for _, event := range events {
-		_, thinking := event.(llm.ReasoningDelta)
+		_, thinking := event.(llm.ReasoningTextDelta)
 		s.False(thinking, "a non-thinking request must not stream reasoning")
 	}
 }
@@ -123,68 +105,68 @@ func (s *DeepSeekIntegrationSuite) TestThinkingIsOffByDefaultSoTheAnswerArrivesF
 func (s *DeepSeekIntegrationSuite) TestThinkingStreamsReasoningWhenTurnedOn() {
 	provider := s.start(Options{Thinking: true, ReasoningEffort: "low"})
 
-	s.Require().NoError(provider.Respond(llm.Request{
-		Messages:  []llm.Message{{Role: llm.User, Content: "Is 91 prime? Answer yes or no."}},
-		MaxTokens: 2048,
-	}))
-
-	complete, events := s.collect(provider)
+	complete, events := s.ask(provider, llm.ResponseParams{
+		Input:           []llm.Message{{Role: llm.User, Content: "Is 91 prime? Answer yes or no."}},
+		MaxOutputTokens: 2048,
+	})
 
 	var thinking strings.Builder
 	for _, event := range events {
-		if delta, ok := event.(llm.ReasoningDelta); ok {
-			thinking.WriteString(delta.Text)
+		if delta, ok := event.(llm.ReasoningTextDelta); ok {
+			thinking.WriteString(delta.Delta)
 		}
 	}
 
 	s.NotEmpty(thinking.String(), "a reasoning model should show its working")
-	s.Positive(complete.ReasoningTokens)
-	s.LessOrEqual(complete.ReasoningTokens, complete.OutputTokens,
+	s.Positive(complete.Usage.OutputTokensDetails.ReasoningTokens)
+	s.LessOrEqual(complete.Usage.OutputTokensDetails.ReasoningTokens, complete.Usage.OutputTokens,
 		"reasoning is part of the output, not an extra charge on top of it")
-	s.NotContains(complete.Text, thinking.String(), "thinking is not part of the answer")
+	s.NotContains(complete.OutputText, thinking.String(), "thinking is not part of the answer")
 }
 
 func (s *DeepSeekIntegrationSuite) TestConversationHistoryIsHonoured() {
 	provider := s.start(Options{})
 
-	s.Require().NoError(provider.Respond(llm.Request{
+	complete, _ := s.ask(provider, llm.ResponseParams{
 		Instructions: "Answer with a single number and nothing else.",
-		Messages: []llm.Message{
+		Input: []llm.Message{
 			{Role: llm.User, Content: "My favourite number is 7. Remember it."},
 			{Role: llm.Assistant, Content: "Noted."},
 			{Role: llm.User, Content: "What is my favourite number?"},
 		},
-		MaxTokens: 32,
-	}))
+		MaxOutputTokens: 32,
+	})
 
-	complete, _ := s.collect(provider)
-
-	s.Contains(complete.Text, "7", "the whole conversation travels with the request")
+	s.Contains(complete.OutputText, "7", "the whole conversation travels with the request")
 }
 
-func (s *DeepSeekIntegrationSuite) TestInterruptStopsTheAnswerMidStream() {
+func (s *DeepSeekIntegrationSuite) TestClosingStopsTheAnswerMidStream() {
 	provider := s.start(Options{})
 
-	s.Require().NoError(provider.Respond(llm.Request{
-		Messages:  []llm.Message{{Role: llm.User, Content: "Count slowly from 1 to 200."}},
-		MaxTokens: 2048,
-	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
 
-	// Wait for the model to start talking, then cut it off the way barge-in would.
-	deadline := time.After(60 * time.Second)
-	for talking := false; !talking; {
-		select {
-		case event := <-provider.Events():
-			_, talking = event.(llm.TextDelta)
-		case <-deadline:
-			s.FailNow("the model never started answering")
+	stream, err := provider.Create(ctx, llm.ResponseParams{
+		Input:           []llm.Message{{Role: llm.User, Content: "Count slowly from 1 to 200."}},
+		MaxOutputTokens: 2048,
+	})
+	s.Require().NoError(err)
+
+	// Wait for the model to start talking, then cut it off the way barge-in would. The
+	// stream is drained to the end afterwards: what it generated before being closed was
+	// generated all the same, and it is the last event that reports it.
+	for stream.Next() {
+		if _, talking := stream.Current().(llm.OutputTextDelta); talking {
+			s.Require().NoError(stream.Close())
+			break
 		}
 	}
-	s.Require().NoError(provider.Interrupt())
+	for stream.Next() {
+	}
+	s.Require().NoError(stream.Err())
 
-	complete, _ := s.collect(provider)
-
-	s.True(complete.Interrupted)
-	s.NotEmpty(complete.Text, "what was already said still counts")
-	s.NotContains(complete.Text, "200", "the answer was cut short")
+	complete := stream.Response()
+	s.Equal(llm.StatusCancelled, complete.Status)
+	s.NotEmpty(complete.OutputText, "what was already said still counts")
+	s.NotContains(complete.OutputText, "200", "the answer was cut short")
 }

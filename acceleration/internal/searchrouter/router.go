@@ -10,6 +10,7 @@ import (
 	"log/slog"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -42,6 +43,10 @@ type Request struct {
 	Target string
 	// LanguageHints narrow the candidates to providers that cover them.
 	LanguageHints []string
+	// Options is the rest of what the caller asked for: a domain filter, a category, how
+	// fresh the answer has to be. A term named here narrows the candidates to the
+	// providers that declared it, so it is either honoured or the request is refused.
+	Options options.Search
 }
 
 // Router selects a search provider and opens sessions.
@@ -75,6 +80,8 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		Tags:          request.Tags,
 		Target:        request.Target,
 		LanguageHints: request.LanguageHints,
+		Terms:         request.Options.Terms(),
+		Search:        request.Options,
 	}
 	provider, config, err := r.Select(ctx, core)
 	if err != nil {

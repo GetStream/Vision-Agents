@@ -1,0 +1,15 @@
+{
+  "filename": "saturday_seven_thirty.wav",
+  "duration": 8.02,
+  "sample_rate": 16000,
+  "channels": 1,
+  "format": "wav",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 8.02,
+      "text": "Hi, I'd like to book a table for four this Saturday at 7:30 patio if you have it, a high chair, and one of us has a peanut allergy."
+    }
+  ],
+  "transcript": "Hi, I'd like to book a table for four this Saturday at 7:30 patio if you have it, a high chair, and one of us has a peanut allergy."
+}

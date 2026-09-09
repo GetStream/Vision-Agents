@@ -67,22 +67,22 @@ func rule(
 	defer session.Close()
 
 	asked := "The question:\n\n" + assertion + "\n\n" + heard(so)
-	err = session.Respond(llm.Request{
-		ID:           id,
-		Instructions: judgeInstructions,
-		Messages:     []llm.Message{{Role: llm.User, Content: asked}},
-		MaxTokens:    judgeTokens,
-		JSON:         true,
+	stream, err := session.Create(ctx, llm.ResponseParams{
+		ID:              id,
+		Instructions:    judgeInstructions,
+		Input:           []llm.Message{{Role: llm.User, Content: asked}},
+		MaxOutputTokens: judgeTokens,
+		Text:            llm.TextParams{Format: llm.FormatJSONObject},
 	})
 	if err != nil {
 		return verdict{}, err
 	}
 
-	answer, err := llmrouter.Await(ctx, session, id)
+	response, err := llm.Collect(stream)
 	if err != nil {
 		return verdict{}, err
 	}
-	return parseVerdict(answer)
+	return parseVerdict(response.OutputText)
 }
 
 // heard is the conversation as the judge reads it, which names the two sides rather than

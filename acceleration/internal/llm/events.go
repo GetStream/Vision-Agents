@@ -1,144 +1,88 @@
 package llm
 
-import (
-	"time"
+import "time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
-)
-
-// Event is emitted on the channel returned by LLM.Events.
+// Event is pulled from a Stream. The names follow the Responses API's own stream events.
 type Event interface {
 	isLLMEvent()
 }
 
-// CompletionStarted means the provider accepted a request and is working on it.
-type CompletionStarted struct {
-	CompletionID string
-	Provider     string
-	Model        string
-	At           time.Time
+// ResponseCreated means the provider accepted a request and is working on it. It is the
+// first event of every stream.
+type ResponseCreated struct {
+	ResponseID string
+	Provider   string
+	Model      string
+	At         time.Time
 }
 
-func (CompletionStarted) isLLMEvent() {}
+func (ResponseCreated) isLLMEvent() {}
 
-// TextDelta is a piece of the answer. Index counts deltas within one completion, so a
+// OutputTextDelta is a piece of the answer. Index counts deltas within one response, so a
 // consumer can tell order from arrival order.
 //
 // A delta does not say whether it is the last one, for the same reason a TTS audio chunk
 // does not: waiting to find out would cost the latency the design is for.
-// CompletionComplete is what ends a completion.
-type TextDelta struct {
-	CompletionID string
-	Index        int
-	Text         string
+// ResponseCompleted is what ends a response.
+type OutputTextDelta struct {
+	ResponseID string
+	Index      int
+	Delta      string
 }
 
-func (TextDelta) isLLMEvent() {}
+func (OutputTextDelta) isLLMEvent() {}
 
-// ReasoningDelta is a piece of the model's thinking, which reasoning models stream before
-// the answer itself. It is kept separate from TextDelta because it must never be spoken or
-// shown as the reply, but it is billed as output all the same.
-type ReasoningDelta struct {
-	CompletionID string
-	Index        int
-	Text         string
+// ReasoningTextDelta is a piece of the model's thinking, which reasoning models stream
+// before the answer itself. It is kept separate from OutputTextDelta because it must never
+// be spoken or shown as the reply, but it is billed as output all the same.
+type ReasoningTextDelta struct {
+	ResponseID string
+	Index      int
+	Delta      string
 }
 
-func (ReasoningDelta) isLLMEvent() {}
+func (ReasoningTextDelta) isLLMEvent() {}
 
-// ToolCallDelta is a piece of a call the model is asking for. Index identifies which call
-// within the completion the piece belongs to, since a model may ask for several at once and
-// providers interleave their fragments.
+// FunctionCallArgumentsDelta is a piece of a call the model is asking for. Index identifies
+// which call within the response the piece belongs to, since a model may ask for several at
+// once and providers interleave their fragments.
 //
 // Arguments arrive as JSON text a few characters at a time, so a delta is rarely parseable
-// on its own. CompletionComplete carries the assembled calls, which is what a caller that
+// on its own. ResponseCompleted carries the assembled calls, which is what a caller that
 // means to run one should wait for.
-type ToolCallDelta struct {
-	CompletionID string
-	Index        int64
-	// ToolCallID and Name arrive on the first fragment of a call and are empty on the
-	// rest.
-	ToolCallID string
-	Name       string
-	Arguments  string
+type FunctionCallArgumentsDelta struct {
+	ResponseID string
+	Index      int64
+	// CallID and Name arrive on the first fragment of a call and are empty on the rest.
+	CallID string
+	Name   string
+	Delta  string
 }
 
-func (ToolCallDelta) isLLMEvent() {}
+func (FunctionCallArgumentsDelta) isLLMEvent() {}
 
-// CompletionComplete settles one completion. It carries everything a stat row needs, since
-// this is the natural unit of billable work.
-type CompletionComplete struct {
-	CompletionID string
-	Provider     string
-	Model        string
-	// Text is the whole answer, reasoning excluded, so a caller that ignored the deltas
-	// still has the reply.
-	Text string
-	// ToolCalls are the assembled calls the model asked for, in the order it asked. A
-	// completion may carry both these and text: a model told to keep the caller company
-	// while it acts will say something and call a tool in the same breath.
-	ToolCalls []ToolCall
-	// InputTokens is the whole prompt the model read, cached part included.
-	InputTokens int64
-	// CachedInputTokens is the part of the prompt the provider served from its cache.
-	CachedInputTokens int64
-	// OutputTokens is everything generated, reasoning included.
-	OutputTokens int64
-	// ReasoningTokens is the part of the output spent thinking. It is a subset of
-	// OutputTokens, reported because it explains a slow turn.
-	ReasoningTokens int64
-	// TimeToFirstTokenMs is how long the caller waited for anything at all, which is the
-	// number that decides whether a conversation feels alive.
-	TimeToFirstTokenMs float64
-	// CompletionTimeMs is the whole completion, request to last delta.
-	CompletionTimeMs float64
-	// FinishReason is why the model stopped, e.g. "stop" or "length".
-	FinishReason string
-	// Interrupted is true when barge-in cut the completion short.
-	Interrupted bool
+// ResponseCompleted settles the stream and is always its last event, whatever ended it.
+type ResponseCompleted struct {
+	Response Response
 }
 
-func (CompletionComplete) isLLMEvent() {}
+func (ResponseCompleted) isLLMEvent() {}
 
-// Connected means the provider is ready to take requests.
-type Connected struct {
-	Provider string
-	Model    string
-	At       time.Time
+// ResponseFailed reports a provider failure. It is followed by a ResponseCompleted with a
+// failed status, so a caller counting responses still sees one end.
+//
+// Fatal means the provider cannot be used again.
+type ResponseFailed struct {
+	ResponseID string
+	Provider   string
+	Model      string
+	Err        error
+	Context    string
+	Fatal      bool
 }
 
-func (Connected) isLLMEvent() {}
+func (f ResponseFailed) Error() string { return f.Err.Error() }
 
-// Disconnected means the provider is no longer usable. Clean is false for failures.
-type Disconnected struct {
-	Provider string
-	Model    string
-	Reason   string
-	Clean    bool
-	At       time.Time
-}
+func (f ResponseFailed) Unwrap() error { return f.Err }
 
-func (Disconnected) isLLMEvent() {}
-
-// Error reports a provider failure. Fatal means the session cannot continue.
-type Error struct {
-	Provider     string
-	Model        string
-	CompletionID string
-	Err          error
-	Context      string
-	Fatal        bool
-}
-
-func (e Error) Error() string { return e.Err.Error() }
-
-func (e Error) Unwrap() error { return e.Err }
-
-func (Error) isLLMEvent() {}
-
-// Emitter fans provider events out to a single consumer channel. Providers hold one
-// rather than managing the channel and its close semantics themselves.
-type Emitter = emit.Emitter[Event]
-
-// NewEmitter returns an Emitter with the given channel buffer.
-func NewEmitter(buffer int) *Emitter { return emit.New[Event](buffer) }
+func (ResponseFailed) isLLMEvent() {}

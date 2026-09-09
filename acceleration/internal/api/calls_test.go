@@ -90,6 +90,33 @@ func (s *CallsSuite) TestWhatWasSaidAfterTheLastExchangeStillBelongsToIt() {
 	s.Equal("goodbye.", *timeline[0].Said)
 }
 
+func (s *CallsSuite) TestAShortcutPicksTheUsedModelThatStillSatisfiesIt() {
+	used := []string{"openai/gpt-5.6-sol", "gemini/gemini-3.5-flash-lite"}
+
+	s.Equal("gemini/gemini-3.5-flash-lite", matchUsed("llm-fast", used, []string{
+		"gemini/gemini-3.5-flash-lite", "deepseek/DeepSeek-V4-Flash-0731",
+	}))
+	s.Equal("openai/gpt-5.6-sol", matchUsed("multilingual-high-accuracy", used, []string{
+		"openai/gpt-5.6-sol", "deepseek/DeepSeek-V4-Pro-0813",
+	}))
+}
+
+func (s *CallsSuite) TestAConcreteTargetIsShownOnlyWhenItWasUsed() {
+	s.Equal("deepgram/flux-general-en", matchUsed(
+		"deepgram/flux-general-en", []string{"deepgram/flux-general-en"}, nil))
+	s.Empty(matchUsed("deepgram/flux-general-en", []string{"parakeet/parakeet-tdt-0.6b-v3"}, nil))
+}
+
+func (s *CallsSuite) TestAShortcutWithNoCandidatesFallsBackToTheLastUsed() {
+	s.Equal("deepgram/flux-general-en", matchUsed(
+		"en-low-latency", []string{"deepgram/flux-general-en", "grok/grok-stt"}, nil))
+}
+
+func (s *CallsSuite) TestNothingIsShownWhenNothingWasAskedOrUsed() {
+	s.Empty(matchUsed("", []string{"deepgram/flux-general-en"}, nil))
+	s.Empty(matchUsed("en-low-latency", nil, []string{"deepgram/flux-general-en"}))
+}
+
 func (s *CallsSuite) TestALineSaidBeforeTheFirstExchangeIsNotPartOfIt() {
 	// A greeting is spoken on joining, before anybody has said anything to answer, so it
 	// belongs to no exchange at all.

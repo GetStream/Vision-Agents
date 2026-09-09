@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	getstream "github.com/GetStream/getstream-go/v5"
 )
@@ -26,7 +27,7 @@ const listenerTokenValidity = time.Hour
 
 // defaultCallType is what a call is joined as when nothing said otherwise. It matches the
 // session default, which is what created the call in the first place.
-const defaultCallType = "default"
+const defaultCallType = "agent"
 
 // ListCalls returns the calling customer's calls, newest first.
 func (s *Server) ListCalls(ctx context.Context, request ListCallsRequestObject) (ListCallsResponseObject, error) {
@@ -77,7 +78,9 @@ func (s *Server) GetCall(ctx context.Context, request GetCallRequestObject) (Get
 	if err != nil {
 		return GetCall404JSONResponse{NotFoundJSONResponse{Error: unknownCall}}, nil
 	}
-	return GetCall200JSONResponse(callOf(call)), nil
+	rendered := callOf(call)
+	s.attachUsed(ctx, customerID, call, &rendered)
+	return GetCall200JSONResponse(rendered), nil
 }
 
 // CreateCallToken mints what a browser needs to join a call and talk to the agent.
@@ -405,4 +408,108 @@ func callOf(call store.Call) Call {
 		rendered.Tags = &tags
 	}
 	return rendered
+}
+
+// attachUsed fills in the provider/models routing picked, which a shortcut does not name.
+//
+// A live session knows the current selection before any request row has been written. A
+// finished call has only the request rows, and those also cover a live call after the
+// first turn. Failover can leave more than one model per modality; the one that still
+// satisfies the target is the one shown.
+func (s *Server) attachUsed(ctx context.Context, customerID string, call store.Call, rendered *Call) {
+	if s.sessions != nil {
+		if found, ok := s.sessions.Get(call.ID, customerID); ok {
+			stt, llm, tts, subagent := found.Resolved()
+			rendered.SttUsed = optional(stt)
+			rendered.LlmUsed = optional(llm)
+			rendered.TtsUsed = optional(tts)
+			rendered.SubagentUsed = optional(subagent)
+		}
+	}
+
+	if filledUsed(rendered) || s.store == nil {
+		return
+	}
+
+	used, err := s.store.CallUsedModels(ctx, customerID, call.AgentID, call.StartedAt, call.EndedAt)
+	if err != nil {
+		s.logger.Error("could not read the models a call used", "call", call.ID, "error", err)
+		return
+	}
+
+	rendered.SttUsed = firstUsed(rendered.SttUsed, matchUsed(value(rendered.Stt), namesOf(used, "stt"), s.candidateNames(ctx, routing.STT, value(rendered.Stt))))
+	rendered.TtsUsed = firstUsed(rendered.TtsUsed, matchUsed(value(rendered.Tts), namesOf(used, "tts"), s.candidateNames(ctx, routing.TTS, value(rendered.Tts))))
+	rendered.LlmUsed = firstUsed(rendered.LlmUsed, matchUsed(value(rendered.Llm), namesOf(used, "llm"), s.candidateNames(ctx, routing.LLM, value(rendered.Llm))))
+	rendered.SubagentUsed = firstUsed(rendered.SubagentUsed, matchUsed(value(rendered.Subagent), namesOf(used, "llm"), s.candidateNames(ctx, routing.LLM, value(rendered.Subagent))))
+}
+
+func filledUsed(call *Call) bool {
+	return call.SttUsed != nil && call.TtsUsed != nil && call.LlmUsed != nil && call.SubagentUsed != nil
+}
+
+func firstUsed(existing *string, used string) *string {
+	if existing != nil {
+		return existing
+	}
+	return optional(used)
+}
+
+func namesOf(used []store.UsedModel, modality string) []string {
+	var names []string
+	for _, model := range used {
+		if model.Modality == modality {
+			names = append(names, model.Provider+"/"+model.Model)
+		}
+	}
+	return names
+}
+
+// matchUsed picks which of the used provider/models served a target. used is most-recent
+// first. candidates are the names that target can resolve to; when they are known only a
+// used model that is still a candidate is returned, which is how the voice model and the
+// thinking model are told apart when both wrote llm rows.
+func matchUsed(asked string, used []string, candidates []string) string {
+	if asked == "" || len(used) == 0 {
+		return ""
+	}
+	if len(candidates) > 0 {
+		allowed := make(map[string]struct{}, len(candidates))
+		for _, name := range candidates {
+			allowed[name] = struct{}{}
+		}
+		for _, name := range used {
+			if _, ok := allowed[name]; ok {
+				return name
+			}
+		}
+		return ""
+	}
+	for _, name := range used {
+		if name == asked {
+			return name
+		}
+	}
+	if strings.Contains(asked, "/") {
+		return ""
+	}
+	return used[0]
+}
+
+func (s *Server) candidateNames(ctx context.Context, modality routing.Modality, target string) []string {
+	if target == "" {
+		return nil
+	}
+	router, ok := s.routers[modality]
+	if !ok {
+		return nil
+	}
+	candidates, err := router.Resolve(ctx, target, nil)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		names = append(names, candidate.Config.Name())
+	}
+	return names
 }

@@ -68,22 +68,22 @@ func (c *caller) next(ctx context.Context, so said) (utterance, error) {
 	c.asked++
 	id := fmt.Sprintf("caller-%d", c.asked)
 
-	err := c.session.Respond(llm.Request{
-		ID:           id,
-		Instructions: callerInstructions + "\n\nWhat you called about:\n\n" + c.brief,
-		Messages:     []llm.Message{{Role: llm.User, Content: so.render()}},
-		MaxTokens:    callerTokens,
-		JSON:         true,
+	stream, err := c.session.Create(ctx, llm.ResponseParams{
+		ID:              id,
+		Instructions:    callerInstructions + "\n\nWhat you called about:\n\n" + c.brief,
+		Input:           []llm.Message{{Role: llm.User, Content: so.render()}},
+		MaxOutputTokens: callerTokens,
+		Text:            llm.TextParams{Format: llm.FormatJSONObject},
 	})
 	if err != nil {
 		return utterance{}, err
 	}
 
-	answer, err := llmrouter.Await(ctx, c.session, id)
+	response, err := llm.Collect(stream)
 	if err != nil {
 		return utterance{}, err
 	}
-	return parseUtterance(answer)
+	return parseUtterance(response.OutputText)
 }
 
 func (c *caller) Close() error { return c.session.Close() }

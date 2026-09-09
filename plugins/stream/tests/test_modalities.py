@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import pytest
@@ -56,6 +57,8 @@ class TestModalityStreams:
         assert answers[-1].text
 
     async def test_a_name_routes_to_the_modality_that_serves_it(self):
-        routed = stream.Router(TTS_TARGET)
+        # resolve asks the router which modality serves the name and blocks on the answer,
+        # since it is what builds an agent rather than something a call waits on.
+        routed = await asyncio.to_thread(stream.Router().resolve, TTS_TARGET)
 
         assert isinstance(routed, stream.TTS)

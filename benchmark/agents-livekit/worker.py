@@ -1,7 +1,8 @@
 """LiveKit reference worker for Voicebench.
 
 Reads the contract Voicebench puts in the dispatch metadata, exposes those tools
-against the world server, and answers with Gemini Live.
+against the world server, and answers on a STT/LLM/TTS pipeline through LiveKit
+Inference. Set VOICEBENCH_LIVEKIT_PIPELINE=realtime for OpenAI Realtime.
 """
 
 import asyncio
@@ -19,14 +20,13 @@ from livekit.agents import (
     JobContext,
     cli,
     function_tool,
+    inference,
 )
 from livekit.plugins import openai
 
 load_dotenv()
 
-# Matches the Vision Agents reference agents, which use openai.Realtime() defaults.
-MODEL = os.environ.get("VOICEBENCH_LIVEKIT_MODEL", "gpt-realtime-2")
-VOICE = os.environ.get("VOICEBENCH_LIVEKIT_VOICE", "marin")
+PIPELINE = os.environ.get("VOICEBENCH_LIVEKIT_PIPELINE", "inference").strip() or "inference"
 
 server = AgentServer(
     host="127.0.0.1",
@@ -74,6 +74,37 @@ def build_tool(world_url: str, schema: dict[str, Any]):
     return tool
 
 
+def _env(name: str, default: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+    return default
+
+
+def build_session() -> AgentSession:
+    """Build the LiveKit session: Inference STT/LLM/TTS, or OpenAI Realtime."""
+    if PIPELINE == "realtime":
+        return AgentSession(
+            llm=openai.realtime.RealtimeModel(
+                model=_env("VOICEBENCH_LIVEKIT_MODEL", "gpt-realtime-2"),
+                voice=_env("VOICEBENCH_LIVEKIT_VOICE", "marin"),
+            )
+        )
+    if PIPELINE != "inference":
+        raise RuntimeError(f"voicebench: unknown LIVEKIT pipeline {PIPELINE!r}")
+    tts_model = _env("VOICEBENCH_LIVEKIT_TTS", "inworld/inworld-tts-2-flash")
+    voice = _env("VOICEBENCH_LIVEKIT_VOICE", "Ashley")
+    tts = inference.TTS(model=tts_model, voice=voice) if voice else inference.TTS(model=tts_model)
+    return AgentSession(
+        stt=inference.STT(
+            model=_env("VOICEBENCH_LIVEKIT_STT", "google/gemini-3.5-transcribe-live"),
+            language="en",
+        ),
+        llm=inference.LLM(model=_env("VOICEBENCH_LIVEKIT_MODEL", "google/gemini-3.5-flash-lite")),
+        tts=tts,
+    )
+
+
 @server.rtc_session(agent_name=os.environ.get("LIVEKIT_AGENT_NAME", "voicebench"))
 async def entrypoint(ctx: JobContext) -> None:
     if not ctx.job.metadata:
@@ -86,7 +117,7 @@ async def entrypoint(ctx: JobContext) -> None:
         instructions=metadata["instructions"],
         tools=[build_tool(world_url, schema) for schema in metadata["tools"]],
     )
-    session = AgentSession(llm=openai.realtime.RealtimeModel(model=MODEL, voice=VOICE))
+    session = build_session()
     await session.start(agent, room=ctx.room)
     await session.generate_reply(instructions="Greet the caller briefly and wait.")
 

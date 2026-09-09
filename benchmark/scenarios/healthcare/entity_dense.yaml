@@ -24,10 +24,12 @@ expected_tools:
     args: {name: "Priyanka Radhakrishnan", dob: "1991-11-02", member_id: "QW4T9-8821"}
   - name: lookup_appointment
     args: {}
+  - name: update_pharmacy
+    args: {pharmacy: "Westlake Compounding"}
 entities:
   - {name: last_name, value: Radhakrishnan, in_speech: true, in_tools: true, tool: verify_identity, arg: name, tool_value: "Priyanka Radhakrishnan"}
   - {name: member, value: "QW4T9-8821", in_speech: true, in_tools: true, tool: verify_identity, arg: member_id}
-  - {name: pharmacy, value: Westlake, in_speech: true, in_tools: false}
+  - {name: pharmacy, value: Westlake, in_speech: true, in_tools: true, tool: update_pharmacy, arg: pharmacy, tool_value: "Westlake Compounding"}
 policy:
   - Wrong digit on the member ID is a fail.
   - Do not invent a visit.

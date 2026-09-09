@@ -87,29 +87,22 @@ func (s *HarnessIntegrationSuite) TestAQuestionIsHandedOverAndTheAnswerComesBack
 	}()
 
 	question := "A bill comes to 84 pounds 20 and I want to leave 15 percent. What is the tip?"
-	s.Require().NoError(harness.Respond(Turn{
+	reply, err := harness.Respond(s.ctx, Turn{
 		ID: "turn-1",
 		Instructions: "You are on the phone. You are bad at arithmetic and you know it, so " +
 			"hand every calculation to your colleague rather than attempting it.",
 		History: []llm.Message{{Role: llm.User, Content: question}},
-	}))
+	})
+	s.Require().NoError(err)
 
 	var spoken strings.Builder
-	deadline := time.After(answerWithin)
-	for settled := false; !settled; {
-		select {
-		case event := <-voice.Events():
-			switch typed := event.(type) {
-			case llm.TextDelta:
-				spoken.WriteString(harness.Filter("turn-1", typed.Text))
-			case llm.CompletionComplete:
-				spoken.WriteString(harness.Flush())
-				settled = true
-			}
-		case <-deadline:
-			s.FailNow("the voice model never replied")
+	for reply.Next() {
+		if delta, ok := reply.Current().(llm.OutputTextDelta); ok {
+			spoken.WriteString(harness.Filter("turn-1", delta.Delta))
 		}
 	}
+	s.Require().NoError(reply.Err())
+	spoken.WriteString(harness.Flush())
 
 	s.NotContains(spoken.String(), "<ask", "a request for help is never spoken")
 

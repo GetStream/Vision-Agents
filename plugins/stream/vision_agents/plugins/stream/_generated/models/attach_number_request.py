@@ -18,7 +18,7 @@ class AttachNumberRequest:
     Attributes:
         call_id (str | Unset): The call every caller joins. Omit to give each caller their own call, named after the
             number they rang.
-        call_type (str | Unset): The Stream call type. Omit for "default".
+        call_type (str | Unset): The Stream call type. Omit for "agent".
         allowed_ips (list[str] | Unset): The vendor's signalling addresses, as IPs or CIDR blocks.
     """
 

@@ -18,6 +18,9 @@ const (
 	testGap    = 10 * time.Millisecond
 	testRetry  = 20 * time.Millisecond
 	testWithin = time.Second
+	// testPatience is shorter than one retry, so the second ruling about words nobody has
+	// added to is the one that gives up on waiting for them.
+	testPatience = 5 * time.Millisecond
 )
 
 var caller = stt.Participant{ID: "caller", UserID: "caller", Name: "Alex"}
@@ -45,12 +48,17 @@ func (s *ConverseSuite) SetupTest() {
 // build starts a conversation with the given listening options and watches everything it
 // reports, which is how the decision trail is asserted on.
 func (s *ConverseSuite) build(options DuplexOptions) {
+	s.start(options, testPatience)
+}
+
+// start is build, for the tests that also care how long an unfinished thought is waited on.
+func (s *ConverseSuite) start(options DuplexOptions, patience time.Duration) {
 	s.teardown()
 
 	logger := slog.New(slog.DiscardHandler)
 	s.settling = newCadence(testGap, testRetry, time.Hour, logger)
 	s.emitter = NewEmitter(eventBuffer)
-	s.converse = newConverse(s.settling, newDuplex(options), s.emitter, nil, logger)
+	s.converse = newConverse(s.settling, newDuplex(options), s.emitter, nil, patience, logger)
 
 	s.mu.Lock()
 	s.events = nil
@@ -80,19 +88,27 @@ func (s *ConverseSuite) teardown() {
 }
 
 // settle says something and waits for the words to hold still, which is the state every
-// ruling is made against.
+// ruling is made against. The words are observed as a quiet floor so a test of a settled
+// ruling does not also occupy the controller with a provisional overlap ask; tests that
+// want that ask use overhears.
 func (s *ConverseSuite) settle(text string, state floor) candidate {
 	s.converse.Observe(stt.Transcript{
 		Participant: caller,
 		Mode:        stt.ModeReplacement,
 		Text:        text,
-	}, state)
+	}, s.quiet())
 
+	return s.converse.Settled(s.held(), state).Candidate
+}
+
+// held is the next turn whose words have stopped changing, whether they are being put for
+// the first time or put again after the conversation decided to wait on them.
+func (s *ConverseSuite) held() candidate {
 	select {
 	case ready := <-s.settling.Ready():
-		return s.converse.Settled(ready, state).Candidate
+		return ready
 	case <-time.After(testWithin):
-		s.FailNow("the words never held still", "text %q", text)
+		s.FailNow("the words never held still")
 		return candidate{}
 	}
 }
@@ -136,6 +152,230 @@ func (s *ConverseSuite) heard() []Heard {
 	return kept
 }
 
+// overheard plays an in-progress revision over the agent and returns the provisional asks
+// it produced.
+func (s *ConverseSuite) overheard(text string, state floor) []candidate {
+	var asks []candidate
+	for _, action := range s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Text: text,
+	}, state) {
+		if action.Kind == ActAsk {
+			asks = append(asks, action.Candidate)
+		}
+	}
+	return asks
+}
+
+// overhears is overheard for a revision that must produce exactly one ask.
+func (s *ConverseSuite) overhears(text string, state floor) candidate {
+	asks := s.overheard(text, state)
+	s.Require().Len(asks, 1, "no provisional ask was made about the overlap")
+	return asks[0]
+}
+
+func (s *ConverseSuite) holds() int {
+	var kept int
+	for _, decision := range s.decisions() {
+		if decision.Kind == string(ActHold) {
+			kept++
+		}
+	}
+	return kept
+}
+
+func (s *ConverseSuite) TestWhatAProvisionalRulingDoesAboutTheFloor() {
+	// A ruling made while the caller is still talking decides only the floor: it never
+	// answers, because the words have not settled.
+	cases := []struct {
+		name        string
+		disposition harness.Disposition
+		floor       harness.Floor
+		expected    []ActionKind
+	}{
+		{"a correction takes the floor", harness.Wait, harness.Stop, []ActionKind{ActInterrupt}},
+		{"a related addition shortens the reply", harness.Wait, harness.Shorten, []ActionKind{ActShorten}},
+		{"an acknowledgement lets it keep talking", harness.Wait, harness.Continue, []ActionKind{}},
+		{"background speech does not stop it", harness.Ignore, harness.Stop, []ActionKind{}},
+	}
+
+	for _, test := range cases {
+		s.Run(test.name, func() {
+			s.build(DuplexOptions{})
+			asked := s.overhears("actually wait", s.talking())
+
+			actions := s.converse.Ruled(harness.Decided{
+				CandidateID: asked.ID,
+				Disposition: test.disposition,
+				Floor:       test.floor,
+			}, s.talking())
+
+			s.Equal(test.expected, kinds(actions))
+			for _, action := range actions {
+				if action.Kind == ActInterrupt || action.Kind == ActShorten {
+					s.Equal("turn-1", action.TurnID, "the reply in flight is what is cut")
+				}
+			}
+		})
+	}
+}
+
+func (s *ConverseSuite) TestAProvisionalRulingThatArrivedTooLateIsDropped() {
+	stop := func(id string, state floor) []Action {
+		return s.converse.Ruled(harness.Decided{
+			CandidateID: id, Disposition: harness.Wait, Floor: harness.Stop,
+		}, state)
+	}
+
+	s.Run("the floor went quiet", func() {
+		s.build(DuplexOptions{})
+		asked := s.overhears("actually wait", s.talking())
+		s.Empty(kinds(stop(asked.ID, s.quiet())))
+	})
+
+	s.Run("the reply moved on", func() {
+		s.build(DuplexOptions{})
+		asked := s.overhears("actually wait", s.talking())
+		s.Empty(kinds(stop(asked.ID, floor{Speaking: "turn-2", LastParticipant: caller})))
+	})
+
+	s.Run("a new utterance replaced the words", func() {
+		s.build(DuplexOptions{})
+		asked := s.overhears("actually wait", s.talking())
+		s.converse.Observe(stt.Transcript{
+			Participant: caller, Mode: stt.ModeReplacement, Text: "something else entirely",
+		}, s.talking())
+		s.Empty(kinds(stop(asked.ID, s.talking())))
+	})
+}
+
+func (s *ConverseSuite) TestHowOftenAnOverlapIsAskedAbout() {
+	s.build(DuplexOptions{})
+
+	// Each ask is ruled continue so the next revision is not blocked by one in flight.
+	ask := func(text string) int {
+		asks := s.overheard(text, s.talking())
+		for _, asked := range asks {
+			s.converse.Ruled(harness.Decided{
+				CandidateID: asked.ID, Disposition: harness.Wait, Floor: harness.Continue,
+			}, s.talking())
+		}
+		return len(asks)
+	}
+
+	s.Equal(1, ask("one"), "the first revision is asked about")
+	s.Equal(0, ask("one two"), "one more word is not enough to ask again")
+	s.Equal(1, ask("one two three four"), "three more words asks again")
+	s.Equal(1, ask("one two three four five six seven"), "and again")
+	s.Equal(0, ask("one two three four five six seven eight nine ten"),
+		"a fourth ask on the same utterance is not made")
+	s.Equal(1, ask("something completely different now"),
+		"a new utterance starts the count again")
+}
+
+func (s *ConverseSuite) TestSomeThingsOverTheAgentAreNeverAskedAbout() {
+	s.Run("a cough", func() {
+		s.build(DuplexOptions{})
+		s.Zero(len(s.overheard("cough", s.talking())), "a cough is not a reason to stop")
+	})
+
+	s.Run("speech over a murmur", func() {
+		s.build(DuplexOptions{})
+		s.Zero(len(s.overheard("go on then", floor{Speaking: "back-1", LastParticipant: caller})),
+			"a murmur is meant to overlap, so there is nothing to abandon")
+	})
+}
+
+func (s *ConverseSuite) TestAGrowingOverlapReplacesTheAskInFlight() {
+	s.build(DuplexOptions{})
+	first := s.overhears("okay", s.talking())
+
+	var superseded, asked Action
+	for _, action := range s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Text: "okay wait make it six",
+	}, s.talking()) {
+		switch action.Kind {
+		case ActSupersede:
+			superseded = action
+		case ActAsk:
+			asked = action
+		}
+	}
+
+	s.Equal(first.ID, superseded.TurnID, "the first ask is about words that have changed")
+	s.NotEqual(first.ID, asked.Candidate.ID)
+	s.Equal("okay wait make it six", asked.Text)
+	s.True(asked.Candidate.Unfinished)
+
+	s.Empty(kinds(s.converse.Ruled(harness.Decided{
+		CandidateID: first.ID, Disposition: harness.Wait, Floor: harness.Continue,
+	}, s.talking())), "the superseded ruling is dropped")
+
+	stopped := s.converse.Ruled(harness.Decided{
+		CandidateID: asked.Candidate.ID, Disposition: harness.Wait, Floor: harness.Stop,
+	}, s.talking())
+	s.Equal([]ActionKind{ActInterrupt}, kinds(stopped),
+		"the later words take the floor while the agent is still talking")
+}
+
+func (s *ConverseSuite) TestASettledTurnWaitsOnAnOverlapAskInFlight() {
+	s.build(DuplexOptions{})
+	s.overhears("okay wait make it six", s.talking())
+
+	ready := s.held()
+	action := s.converse.Settled(ready, s.talking())
+	s.Equal(ActQueue, action.Kind,
+		"retrying cadence would re-Settle every gap until the overlap Create returned")
+	s.Equal(ready.ID, action.Candidate.ID)
+
+	action, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal(ActAnswer, action.Kind)
+	s.Equal(ready.ID, action.Candidate.ID)
+}
+
+func (s *ConverseSuite) TestAfterAProvisionalStopTheSettledWordsAreAnsweredOnce() {
+	asked := s.overhears("actually wait", s.talking())
+	stopped := s.converse.Ruled(harness.Decided{
+		CandidateID: asked.ID, Disposition: harness.Wait, Floor: harness.Stop,
+	}, s.talking())
+	s.Require().Equal([]ActionKind{ActInterrupt}, kinds(stopped))
+
+	ready := s.settle("actually wait, make it six", s.quiet())
+	answered := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.quiet())
+
+	s.Equal([]ActionKind{ActAnswer}, kinds(answered),
+		"the settled words are answered with no second interruption")
+}
+
+func (s *ConverseSuite) TestAQueuedTurnWaitsWhileTheCallerIsStillTalking() {
+	// A turn queued behind a reply is owed to the caller, but not while they are talking:
+	// answering then would be the agent taking the floor from somebody who has it.
+	ready := s.settle("and make it eight", s.talking())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Respond, Floor: harness.Continue,
+	}, s.talking())
+
+	// The caller starts talking again, so their words are younger than callerHold.
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Text: "wait one more thing",
+	}, s.quiet())
+
+	_, waiting := s.converse.Waiting(s.quiet())
+	s.False(waiting, "the caller is talking, so the queued turn waits")
+	s.converse.Waiting(s.quiet())
+	s.converse.Waiting(s.quiet())
+	s.eventually(func() bool { return s.holds() == 1 }, "the hold was never reported")
+	s.Equal(1, s.holds(), "a wait spanning several retries is one hold, not one per retry")
+
+	// Once the caller's words age out, the turn is handed back.
+	s.settling.Forget(caller)
+	action, waiting := s.converse.Waiting(s.quiet())
+	s.Require().True(waiting)
+	s.Equal("and make it eight", action.Candidate.Text)
+}
+
 func (s *ConverseSuite) overlaps() []OverlapDecided {
 	var kept []OverlapDecided
 	for _, event := range s.seen() {
@@ -173,7 +413,7 @@ func (s *ConverseSuite) TestWhatIsDecidedAboutATurnAndWhoHasTheFloor() {
 		floor       harness.Floor
 		speaking    bool
 		expected    []ActionKind
-		clarify     bool
+		clarify     string
 	}{
 		{
 			name:        "an unfinished thought is left alone",
@@ -198,7 +438,7 @@ func (s *ConverseSuite) TestWhatIsDecidedAboutATurnAndWhoHasTheFloor() {
 			disposition: harness.Clarify,
 			floor:       harness.Continue,
 			expected:    []ActionKind{ActAnswer},
-			clarify:     true,
+			clarify:     ambiguousNote,
 		},
 		{
 			name:        "a correction takes the floor from the agent",
@@ -261,6 +501,20 @@ func (s *ConverseSuite) TestWhatIsDecidedAboutATurnAndWhoHasTheFloor() {
 	}
 }
 
+func (s *ConverseSuite) TestACoughOverlappingAReplyIsIgnoredEvenIfTheControllerWouldAnswer() {
+	s.build(DuplexOptions{})
+	state := s.talking()
+	ready := s.settle("cough", state)
+
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Stop,
+	}, state)
+
+	s.Equal([]ActionKind{ActIgnore}, kinds(actions))
+}
+
 func (s *ConverseSuite) TestOnlyAnAcceptedTurnCountsAsSomethingTheCallerSaid() {
 	// A turn the agent decided not to answer was still heard by the transcriber, and
 	// reporting it as heard would put words in the conversation nobody acted on.
@@ -301,6 +555,107 @@ func (s *ConverseSuite) TestAnUnfinishedThoughtIsPutAgainOnceTheCallerStops() {
 	case <-time.After(testWithin):
 		s.Fail("the caller lost their turn to a controller that wanted to wait")
 	}
+}
+
+func (s *ConverseSuite) TestACallerWhoGoesQuietOnAnUnfinishedThoughtIsAskedWhatTheyMeant() {
+	// Waiting is a loop only the caller can end, so a thought that never arrives leaves the
+	// agent listening to silence for the rest of the call. It is also as likely to be
+	// something the transcriber mangled as something the caller gave up on.
+	ready := s.settle("book a", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	again := s.held()
+	s.converse.Settled(again, s.quiet())
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: again.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	s.Require().Equal([]ActionKind{ActAnswer}, kinds(actions))
+	s.Equal(unfinishedNote, actions[0].Clarify)
+	s.Equal("book a", actions[0].Candidate.Text)
+}
+
+func (s *ConverseSuite) TestWordsThatKeepChangingAreStillWaitedOn() {
+	// Only silence runs the patience out. Somebody who is still talking is finishing their
+	// thought, and asking them what they meant is interrupting them to do it.
+	first := s.settle("could you", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: first.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	time.Sleep(2 * testPatience)
+	second := s.settle("could you book", s.quiet())
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: second.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	s.Equal([]ActionKind{ActWait}, kinds(actions))
+}
+
+func (s *ConverseSuite) TestWordsThatHaveNotChangedAreOnlyWrittenDownOnce() {
+	// The retry puts the same words to the controller for as long as the caller says
+	// nothing more, and each lap decides exactly what the last one did. A trail with all of
+	// them in it is one nobody can read.
+	s.start(DuplexOptions{}, time.Hour)
+
+	ready := s.settle("book a", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+	s.eventually(func() bool { return len(s.decisions()) == 2 },
+		"the first ask and wait were never reported")
+
+	again := s.held()
+	s.converse.Settled(again, s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: again.ID,
+		Disposition: harness.Wait,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	s.Len(s.decisions(), 2, "the same judgement about the same words was written down twice")
+
+	added := s.settle("book a table", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: added.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Continue,
+	}, s.quiet())
+
+	s.eventually(func() bool { return len(s.decisions()) > 2 },
+		"the caller said something new and nobody wrote it down")
+}
+
+func (s *ConverseSuite) TestTheTurnAfterAnOverlapIsGivenLongerToSettle() {
+	// Two people talking at once is as often a line running late as a change of mind, so
+	// the next thing said is given longer to arrive in full before it is answered.
+	ready := s.settle("actually", s.talking())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Disposition: harness.Respond,
+		Floor:       harness.Stop,
+	}, s.talking())
+
+	started := time.Now()
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Text: "make it nine",
+	}, s.quiet())
+	s.held()
+
+	s.GreaterOrEqual(time.Since(started), interruptGrace,
+		"the turn after an overlap was settled at the usual pace")
 }
 
 func (s *ConverseSuite) TestARulingAboutWordsThatHaveChangedIsNotActedOn() {
@@ -435,9 +790,9 @@ func (s *ConverseSuite) TestAMurmurNeedsSomethingWorthAcknowledgingAndAQuietAgen
 func (s *ConverseSuite) TestTheAgentDoesNotMurmurOverItself() {
 	s.build(DuplexOptions{Backchannel: true, BackchannelWords: 2})
 
-	s.Empty(kinds(s.converse.Observe(stt.Transcript{
+	s.NotContains(kinds(s.converse.Observe(stt.Transcript{
 		Participant: caller, Mode: stt.ModeReplacement, Text: "so I was wondering whether",
-	}, s.talking())))
+	}, s.talking())), ActBackchannel, "a murmur over the agent's own reply is not made")
 }
 
 func (s *ConverseSuite) TestALongSilenceWhileWorkRunsIsFilled() {

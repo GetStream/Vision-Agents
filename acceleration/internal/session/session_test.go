@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -107,19 +108,17 @@ func (s *stubSTT) Close() error {
 
 // stubLLM answers with a fixed reply and, on the first turn, whatever tool the test wants.
 type stubLLM struct {
-	emitter *llm.Emitter
-
 	mu    sync.Mutex
-	asked []llm.Request
+	asked []llm.ResponseParams
 	reply string
 	calls []llm.ToolCall
 }
 
 func (s *stubLLM) Start(context.Context) error { return nil }
 
-func (s *stubLLM) Respond(request llm.Request) error {
+func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
-	s.asked = append(s.asked, request)
+	s.asked = append(s.asked, params)
 	first := len(s.asked) == 1
 	reply := s.reply
 	var calls []llm.ToolCall
@@ -128,44 +127,28 @@ func (s *stubLLM) Respond(request llm.Request) error {
 	}
 	s.mu.Unlock()
 
-	if reply == "" && len(calls) == 0 {
-		return nil
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   s.Provider(),
+		Model:      s.Model(),
+	})
+	script.OutputText(reply)
+	if len(calls) > 0 {
+		script.ToolCalls(calls...)
 	}
-	go func() {
-		s.emitter.Send(llm.CompletionStarted{CompletionID: request.ID, At: time.Now()})
-		if reply != "" {
-			s.emitter.Send(llm.TextDelta{CompletionID: request.ID, Text: reply})
-		}
-		s.emitter.Send(llm.CompletionComplete{
-			CompletionID: request.ID,
-			Text:         reply,
-			ToolCalls:    calls,
-		})
-	}()
-	return nil
+	script.Done()
+	return script.Stream(), nil
 }
 
-func (s *stubLLM) Interrupt(completionIDs ...string) error {
-	for _, id := range completionIDs {
-		s.emitter.Send(llm.CompletionComplete{CompletionID: id, Interrupted: true})
-	}
-	return nil
-}
+func (s *stubLLM) Provider() string               { return "stub" }
+func (s *stubLLM) Model() string                  { return "stub-llm" }
+func (s *stubLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (s *stubLLM) Close() error                   { return nil }
 
-func (s *stubLLM) Events() <-chan llm.Event { return s.emitter.Events() }
-func (s *stubLLM) Provider() string         { return "stub" }
-func (s *stubLLM) Model() string            { return "stub-llm" }
-func (s *stubLLM) Reasoning() bool          { return false }
-
-func (s *stubLLM) Close() error {
-	s.emitter.Close()
-	return nil
-}
-
-func (s *stubLLM) requests() []llm.Request {
+func (s *stubLLM) requests() []llm.ResponseParams {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]llm.Request(nil), s.asked...)
+	return append([]llm.ResponseParams(nil), s.asked...)
 }
 
 // stubTTS produces one chunk of audio per piece of text.
@@ -238,6 +221,36 @@ func (m *stubMemory) scopedTo() memory.Scope {
 	return m.scope
 }
 
+// stubTranscript is somewhere for a conversation to be stored, so a test can read back what
+// would have been written into the channel.
+type stubTranscript struct {
+	mu      sync.Mutex
+	spoken  []agent.Event
+	written []string
+}
+
+func (t *stubTranscript) Start(context.Context) error { return nil }
+
+func (t *stubTranscript) Record(event agent.Event) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.spoken = append(t.spoken, event)
+}
+
+func (t *stubTranscript) Reply(text string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.written = append(t.written, text)
+}
+
+func (t *stubTranscript) Close() {}
+
+func (t *stubTranscript) replies() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.written...)
+}
+
 // stubConfig is one provider per modality, which is all these tests need from routing.
 func stubConfig() routing.ModalityConfig {
 	return routing.ModalityConfig{
@@ -249,6 +262,7 @@ func stubConfig() routing.ModalityConfig {
 		}},
 		Aliases: map[string]routing.Alias{
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-flow":       {Languages: []string{"en"}, RequireRealtime: true},
 		},
 	}
 }
@@ -263,6 +277,12 @@ type SessionSuite struct {
 	voice   *stubTTS
 	// remembers is the memory store the manager was built with, when a test wants one.
 	remembers *stubMemory
+	// records is where a session's conversation is stored, when a test wants to read it
+	// back. Nil leaves the conversation unkept, which is what most tests need.
+	records *stubTranscript
+	// thinks routes the target a session defaults its thinking model to, for a test that
+	// wants delegation without naming anything.
+	thinks bool
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -273,6 +293,21 @@ func (s *SessionSuite) SetupTest() {
 	s.ctx = context.Background()
 	s.edges = nil
 	s.remembers = nil
+	s.records = nil
+	s.thinks = false
+}
+
+// thinking is what the LLM router routes. A deployment that routes no high-quality model
+// hands a session no thinking model either, so a test that wants one says so.
+func (s *SessionSuite) thinking() routing.ModalityConfig {
+	config := stubConfig()
+	if s.thinks {
+		config.Aliases[defaultSubagentTarget] = routing.Alias{
+			Languages:       []string{"en"},
+			RequireRealtime: true,
+		}
+	}
+	return config
 }
 
 // manages builds a manager over stub providers. It is called by each test rather than in
@@ -291,18 +326,18 @@ func (s *SessionSuite) manages() {
 
 	// The agent opens a voice model and a flow controller, in that order, and each needs
 	// its own emitter: two sessions on one channel would each consume the other's events.
-	s.model = &stubLLM{emitter: llm.NewEmitter(64), reply: "Hello."}
+	s.model = &stubLLM{reply: "Hello."}
 	var opened int
 	reasoning := llmrouter.NewRegistry()
-	reasoning.Register("stub", func(routing.Spec) (llm.LLM, error) {
+	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
 		defer func() { opened++ }()
 		if opened == 0 {
 			return s.model, nil
 		}
-		return &stubLLM{emitter: llm.NewEmitter(64)}, nil
+		return &stubLLM{}, nil
 	})
 	reasoner, err := llmrouter.New(llmrouter.Options{
-		Config: stubConfig(), Registry: reasoning, Logger: logger,
+		Config: s.thinking(), Registry: reasoning, Logger: logger,
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
@@ -323,12 +358,18 @@ func (s *SessionSuite) manages() {
 		remembering = s.remembers
 	}
 
+	var storing TranscriptFactory
+	if s.records != nil {
+		storing = func(Spec, *slog.Logger) (Transcript, error) { return s.records, nil }
+	}
+
 	manager, err := NewManager(ManagerOptions{
-		LLM:    reasoner,
-		STT:    transcriber,
-		TTS:    speaker,
-		Memory: remembering,
-		Logger: logger,
+		LLM:        reasoner,
+		STT:        transcriber,
+		TTS:        speaker,
+		Memory:     remembering,
+		Transcript: storing,
+		Logger:     logger,
 		Edge: func(Spec, *slog.Logger) (agent.Edge, error) {
 			edge := newQuietEdge()
 			s.edges = append(s.edges, edge)
@@ -376,6 +417,81 @@ func (s *SessionSuite) TestASessionIsListedAndFoundByTheCustomerRunningIt() {
 	s.Require().True(ok)
 	s.Same(created, found)
 	s.Len(s.manager.List("acme"), 1)
+}
+
+func (s *SessionSuite) TestASessionIsFoundByTheAgentItWritesTo() {
+	// A message names a channel and nothing else, so the agent id has to be enough to find
+	// the session on the other end of it.
+	s.manages()
+	created := s.joins(Spec{CallID: "call-7"})
+
+	found, running := s.manager.ByAgent("call-7")
+
+	s.Require().True(running)
+	s.Same(created, found)
+}
+
+func (s *SessionSuite) TestNoSessionIsFoundForAnAgentNobodyIsRunning() {
+	// This is the case that starts one instead, so it must be told apart from finding one.
+	s.manages()
+	s.joins(Spec{CallID: "call-7"})
+
+	_, running := s.manager.ByAgent("a-call-that-ended")
+
+	s.False(running)
+}
+
+func (s *SessionSuite) TestSomethingWrittenIsAnsweredWithoutBeingSpoken() {
+	// Whoever is on the call did not ask, so reading them the answer would interrupt them
+	// with a reply to somebody else's question.
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1"})
+
+	answer, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Equal("Hello.", answer)
+	s.Empty(s.voice.spoken(), "a written answer must not reach the voice")
+}
+
+func (s *SessionSuite) TestAWrittenAnswerIsStoredInTheConversation() {
+	// The person who asked is reading the channel, not holding the HTTP response.
+	s.records = &stubTranscript{}
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1"})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+
+	s.Require().NoError(err)
+	s.Equal([]string{"Hello."}, s.records.replies())
+}
+
+func (s *SessionSuite) TestWhatWasAskedInWritingIsRememberedForTheRestOfTheCall() {
+	// Otherwise the caller cannot refer to it out loud, and the agent answers as though it
+	// had never been asked.
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1"})
+
+	_, err := created.Ask(s.ctx, "is my invoice reissuable?")
+	s.Require().NoError(err)
+	_, err = created.Ask(s.ctx, "and to another address?")
+	s.Require().NoError(err)
+
+	asked := s.model.requests()
+	s.Require().Len(asked, 2)
+	s.Require().Len(asked[1].Input, 3, "the question, the answer, and the follow-up")
+	s.Equal("is my invoice reissuable?", asked[1].Input[0].Content)
+	s.Equal("Hello.", asked[1].Input[1].Content)
+	s.Equal("and to another address?", asked[1].Input[2].Content)
+}
+
+func (s *SessionSuite) TestThereIsNothingToAnswerInAnEmptyMessage() {
+	s.manages()
+	created := s.joins(Spec{CallID: "call-1"})
+
+	_, err := created.Ask(s.ctx, "   ")
+
+	s.ErrorContains(err, "nothing to answer")
 }
 
 func (s *SessionSuite) TestRejoiningACallEndsTheSessionTheAgentLeftBehind() {
@@ -443,8 +559,9 @@ func (s *SessionSuite) TestTheRecordedCallSaysWhatItWasRunWith() {
 }
 
 func (s *SessionSuite) TestACallThatDelegatesNothingRecordsNoSkills() {
-	// Without a subagent there is nobody to hand work to, so listing skills on the row
-	// would claim the call could do something it could not.
+	// This deployment routes no thinking model, so the default finds nothing and there is
+	// nobody to hand work to: listing skills on the row would claim the call could do
+	// something it could not.
 	s.manages()
 
 	created := s.joins(Spec{CallID: "call-10"})
@@ -453,6 +570,19 @@ func (s *SessionSuite) TestACallThatDelegatesNothingRecordsNoSkills() {
 
 	s.Empty(recorded.Subagent)
 	s.Empty(recorded.Skills)
+}
+
+func (s *SessionSuite) TestACallNamingNoThinkingModelIsGivenOneItCanRoute() {
+	// What lets an agent written down as instructions alone hand the hard parts over.
+	s.thinks = true
+	s.manages()
+
+	created := s.joins(Spec{CallID: "call-12"})
+
+	recorded := row(created)
+
+	s.Equal(defaultSubagentTarget, recorded.Subagent)
+	s.Contains(recorded.Skills, "think")
 }
 
 func (s *SessionSuite) TestACallThatNamesNoSkillsRecordsTheBuiltInSet() {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testaudio"
 )
 
 // TestAlmostEveryWordComesBackTheWayItWasSaid is the one that says the provider works at
@@ -86,6 +87,69 @@ func (s *Suite) TestTheTranscriptSaysWhoSpokeAndWhichModelHeardIt() {
 	s.Equal(provider.Model(), final.Model)
 }
 
+// TestAMidUtteranceClockTimeSettlesAsOneTranscript is the 7:30 split: a provider that
+// invents a sentence boundary in the middle of a clock time must still return every word
+// of the turn, because cadence concatenates the fragments and the LLM answers all of them.
+func (s *Suite) TestAMidUtteranceClockTimeSettlesAsOneTranscript() {
+	if s.ClockFixture == "" {
+		s.T().Skip("no clock fixture")
+	}
+	audio, err := testaudio.Load16kMono(s.ClockFixture)
+	s.Require().NoError(err)
+	reference, err := testaudio.Reference(s.ClockFixture)
+	s.Require().NoError(err)
+
+	provider := s.Started()
+
+	savedAudio, savedRef := s.Audio, s.Reference
+	s.Audio, s.Reference = audio, reference
+	defer func() { s.Audio, s.Reference = savedAudio, savedRef }()
+
+	collected := make(chan []stt.Event, 1)
+	go func() {
+		var events []stt.Event
+		for event := range provider.Events() {
+			events = append(events, event)
+		}
+		collected <- events
+	}()
+
+	s.Speak(provider, 0)
+	s.Quiet(provider)
+	s.Hangup(provider)
+
+	var events []stt.Event
+	select {
+	case events = <-collected:
+	case <-time.After(patience):
+		s.FailNow("the event channel was not closed")
+	}
+
+	var finals []stt.Transcript
+	for _, event := range events {
+		transcript, ok := event.(stt.Transcript)
+		if ok && transcript.Final() {
+			finals = append(finals, transcript)
+		}
+	}
+	s.NotEmpty(finals, "the clock-time clip never settled")
+	var heard strings.Builder
+	for i, final := range finals {
+		if i > 0 {
+			heard.WriteByte(' ')
+		}
+		heard.WriteString(final.Text)
+	}
+	text := strings.ToLower(heard.String())
+	s.Contains(text, "four")
+	s.True(strings.Contains(text, "30") || strings.Contains(text, "thirty"),
+		"the minutes of 7:30 must survive: %q", heard.String())
+	s.Contains(text, "patio")
+	if len(finals) > 1 {
+		s.T().Logf("provider split the clock time across %d finals: %q", len(finals), heard.String())
+	}
+}
+
 // TestClosingSettlesTheTailOfTheCall is about the caller who is cut off mid-sentence.
 // There is no trailing silence to end the turn, so only ending the audio stream can
 // settle what the server is still holding.
@@ -122,5 +186,5 @@ func (s *Suite) TestClosingSettlesTheTailOfTheCall() {
 		}
 	}
 	s.Require().NotEmpty(finals, "closing should settle the audio still being transcribed")
-	s.Contains(strings.ToLower(finals[0].Text), s.opening())
+	s.Contains(strings.ToLower(finals[0].Text), s.Opening())
 }

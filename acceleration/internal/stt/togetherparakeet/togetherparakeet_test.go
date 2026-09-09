@@ -2,6 +2,7 @@ package togetherparakeet
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -27,12 +28,17 @@ func (s *TogetherParakeetSuite) newSTT(options Options) *STT {
 	return provider
 }
 
-// drain collects the events emitted so far without blocking on an empty channel.
+// drain collects the events emitted so far without blocking on an empty channel. A closed
+// channel reads forever, so a session that has been hung up ends the drain rather than
+// filling the slice with nothing.
 func (s *TogetherParakeetSuite) drain(provider *STT) []stt.Event {
 	var events []stt.Event
 	for {
 		select {
-		case event := <-provider.Events():
+		case event, open := <-provider.Events():
+			if !open {
+				return events
+			}
 			events = append(events, event)
 		default:
 			return events
@@ -110,7 +116,182 @@ func (s *TogetherParakeetSuite) TestADeltaProducesAReplacementTranscript() {
 	s.Equal(DefaultModel, heard[0].Model)
 }
 
-func (s *TogetherParakeetSuite) TestACompletedTranscriptSettlesTheTurn() {
+// texts is the transcripts as their text, for the sequences below where the wording is
+// the whole point.
+func (s *TogetherParakeetSuite) texts(provider *STT) []string {
+	var said []string
+	for _, transcript := range s.transcripts(provider) {
+		said = append(said, transcript.Text)
+	}
+	return said
+}
+
+// finals is the settled transcripts only, which is what a caller acting on the turn reads.
+func (s *TogetherParakeetSuite) finals(provider *STT) []stt.Transcript {
+	var settled []stt.Transcript
+	for _, transcript := range s.transcripts(provider) {
+		if transcript.Final() {
+			settled = append(settled, transcript)
+		}
+	}
+	return settled
+}
+
+// TestTheWholeQuestionSettlesAndNotItsLastWord is the "can you hear me" report, as this
+// socket actually sends it: it flushes its decoder after "Can you hear", then the deltas
+// begin again from nothing and only carry " me". Publishing that flush as a finished turn
+// left the last word standing alone as the whole of what the caller had asked.
+func (s *TogetherParakeetSuite) TestTheWholeQuestionSettlesAndNotItsLastWord() {
+	provider := s.newSTT(Options{})
+
+	provider.handleMessage(delta("Can"))
+	provider.handleMessage(delta("Can you"))
+	provider.handleMessage(delta("Can you hear"))
+	provider.handleMessage(completed("Can you hear"))
+	provider.handleMessage(delta(" me"))
+	provider.handleMessage(delta(" me?"))
+	s.quiet(provider)
+
+	settled := s.finals(provider)
+	s.Require().Len(settled, 1)
+	s.Equal("Can you hear me?", settled[0].Text,
+		"the turn should settle on the whole question, not the fragment the last flush carried")
+	for _, final := range settled {
+		s.NotEqual("me?", final.Text, "no turn is only the last word of the question")
+	}
+}
+
+// TestASegmentFlushKeepsTheWordsAlreadyHeard is the same defect on the hypotheses rather
+// than the finals. A delta after a flush carries only the new words, so reporting it on
+// its own would blank the sentence the caller had been watching build up.
+func (s *TogetherParakeetSuite) TestASegmentFlushKeepsTheWordsAlreadyHeard() {
+	provider := s.newSTT(Options{})
+
+	provider.handleMessage(delta("Can you hear"))
+	provider.handleMessage(completed("Can you hear"))
+	provider.handleMessage(delta(" me"))
+
+	s.Equal([]string{"Can you hear", "Can you hear", "Can you hear me"}, s.texts(provider),
+		"a hypothesis after a flush should still be the whole utterance")
+}
+
+// TestAFlushInTheMiddleOfAWordDoesNotSplitIt is the sequence recorded off the wire: the
+// server settled "…seven thirty pat" and the deltas resumed at "io". The join has to be
+// exactly what it sent, so trimming either side would spell the word "pat io".
+func (s *TogetherParakeetSuite) TestAFlushInTheMiddleOfAWordDoesNotSplitIt() {
+	provider := s.newSTT(Options{})
+
+	provider.handleMessage(delta("this Saturday at seven thirty patio"))
+	provider.handleMessage(completed("this Saturday at seven thirty pat"))
+	provider.handleMessage(delta("io"))
+	provider.handleMessage(delta("io."))
+	s.quiet(provider)
+
+	settled := s.finals(provider)
+	s.Require().Len(settled, 1)
+	s.Equal("this Saturday at seven thirty patio.", settled[0].Text)
+}
+
+// TestSegmentsOfOneSentenceAreOneUtterance is what stops the router treating the tail of a
+// question as a new turn: the flush that split it was the decoder's, not the caller's.
+func (s *TogetherParakeetSuite) TestSegmentsOfOneSentenceAreOneUtterance() {
+	provider := s.newSTT(Options{})
+
+	provider.handleMessage(completed("Can you hear"))
+	provider.handleMessage(delta(" me"))
+	provider.handleMessage(completed(" me?"))
+
+	for _, transcript := range s.transcripts(provider) {
+		s.Equal(int64(1), transcript.Utterance,
+			"one question split by a buffer flush is still one utterance")
+	}
+}
+
+// quiet is the caller falling silent for long enough that the turn is over, which is the
+// only end of turn this protocol has.
+func (s *TogetherParakeetSuite) quiet(provider *STT) {
+	provider.turnOver()
+}
+
+// TestATurnDoesNotBeginWithTheEndOfTheOneBefore is the "boulder" report, replayed off the
+// wire. The server's segment does not end when the caller stops talking: it settles
+// "…the big bould" and its next deltas carry "er." forward into the following turn. Left
+// on, the caller's last word opens a sentence they never started it with.
+func (s *TogetherParakeetSuite) TestATurnDoesNotBeginWithTheEndOfTheOneBefore() {
+	provider := s.newSTT(Options{})
+
+	provider.handleMessage(delta("Let us meet by the big"))
+	provider.handleMessage(completed("Let us meet by the big bould"))
+	provider.handleMessage(delta("er"))
+	provider.handleMessage(delta("er."))
+	s.quiet(provider)
+
+	provider.handleMessage(delta("er. What"))
+	provider.handleMessage(delta("er. What time"))
+	s.quiet(provider)
+
+	settled := s.finals(provider)
+	s.Require().Len(settled, 2)
+	s.Equal("Let us meet by the big boulder.", settled[0].Text)
+	s.Equal("What time", settled[1].Text,
+		"the word the last turn ended on should not open this one")
+}
+
+// TestAWholeTurnIsNotRepeatedIntoTheNext is the same leak at segment scale, which is what
+// a turn ending on a word the server did not punctuate used to produce: everything the
+// caller had already said, prepended to everything they said next.
+func (s *TogetherParakeetSuite) TestAWholeTurnIsNotRepeatedIntoTheNext() {
+	provider := s.newSTT(Options{})
+
+	provider.handleMessage(completed("In a quiet village"))
+	provider.handleMessage(delta("."))
+	s.quiet(provider)
+
+	provider.handleMessage(delta(". Hi"))
+	provider.handleMessage(delta(". Hi, I'd like a table"))
+	s.quiet(provider)
+
+	settled := s.finals(provider)
+	s.Require().Len(settled, 2)
+	s.Equal("In a quiet village.", settled[0].Text)
+	s.Equal("Hi, I'd like a table", settled[1].Text)
+	s.NotContains(settled[1].Text, "quiet village",
+		"a turn that settled without a full stop is still over")
+}
+
+// TestATurnEndsWhenTheWordsStopRatherThanWhenTheServerPunctuates is the boundary itself.
+// The server never says a turn ended and its full stop arrives a flush late, so the only
+// thing left to read is the caller having gone quiet.
+func (s *TogetherParakeetSuite) TestATurnEndsWhenTheWordsStopRatherThanWhenTheServerPunctuates() {
+	provider := s.newSTT(Options{TurnGrace: 20 * time.Millisecond})
+
+	provider.handleMessage(completed("Can you hear me."))
+	s.Empty(s.finals(provider), "a full stop is not the caller stopping")
+
+	s.Eventually(func() bool { return len(s.finals(provider)) == 1 },
+		time.Second, 10*time.Millisecond, "silence should end the turn")
+}
+
+// TestSilenceIsWhatMovesTheUtteranceOn pairs with it: a turn nothing ended is still the
+// same turn, however many times the decoder flushed inside it.
+func (s *TogetherParakeetSuite) TestSilenceIsWhatMovesTheUtteranceOn() {
+	provider := s.newSTT(Options{})
+
+	provider.handleMessage(completed("In a quiet village."))
+	provider.handleMessage(delta("Young Mia"))
+	s.quiet(provider)
+	provider.handleMessage(delta("found a map"))
+
+	heard := s.transcripts(provider)
+	s.Require().NotEmpty(heard)
+	s.Equal(int64(1), heard[0].Utterance)
+	s.Equal(int64(2), heard[len(heard)-1].Utterance, "the turn after a silence is a new one")
+	s.Equal("found a map", heard[len(heard)-1].Text)
+}
+
+func (s *TogetherParakeetSuite) TestACompletedTranscriptRevisesTheTurnRatherThanEndingIt() {
+	// A completed frame is the decoder flushing, which it does mid-word. Publishing it as
+	// settled hands a caller half a sentence to act on.
 	provider := s.newSTT(Options{})
 
 	provider.handleMessage(completed("In a quiet village."))
@@ -118,7 +299,7 @@ func (s *TogetherParakeetSuite) TestACompletedTranscriptSettlesTheTurn() {
 	heard := s.transcripts(provider)
 	s.Require().Len(heard, 1)
 	s.Equal("In a quiet village.", heard[0].Text)
-	s.True(heard[0].Final())
+	s.False(heard[0].Final())
 }
 
 func (s *TogetherParakeetSuite) TestDeltasShareTheUtteranceOfTheFinalTheyBecome() {
@@ -127,14 +308,30 @@ func (s *TogetherParakeetSuite) TestDeltasShareTheUtteranceOfTheFinalTheyBecome(
 	provider.handleMessage(delta("in a quiet"))
 	provider.handleMessage(delta("in a quiet village"))
 	provider.handleMessage(completed("In a quiet village."))
+	s.quiet(provider)
 	provider.handleMessage(delta("forgotten"))
 
 	heard := s.transcripts(provider)
-	s.Require().Len(heard, 4)
+	s.Require().Len(heard, 5)
 	s.Equal(int64(1), heard[0].Utterance)
 	s.Equal(int64(1), heard[1].Utterance)
-	s.Equal(int64(1), heard[2].Utterance, "the end of a run belongs to the run it ends")
-	s.Equal(int64(2), heard[3].Utterance)
+	s.Equal(int64(1), heard[2].Utterance)
+	s.Equal(int64(1), heard[3].Utterance, "the end of a run belongs to the run it ends")
+	s.True(heard[3].Final())
+	s.Equal(int64(2), heard[4].Utterance)
+}
+
+func (s *TogetherParakeetSuite) TestHangingUpSettlesWhatTheCallerHadJustSaid() {
+	// The grace period has not run out when somebody hangs up mid-sentence, and the words
+	// they got out are still owed to whoever was listening.
+	provider := s.newSTT(Options{})
+
+	provider.handleMessage(delta("Can you hear"))
+	s.Require().NoError(provider.Close())
+
+	settled := s.finals(provider)
+	s.Require().Len(settled, 1)
+	s.Equal("Can you hear", settled[0].Text)
 }
 
 func (s *TogetherParakeetSuite) TestEmptyTranscriptsAreNotEmitted() {

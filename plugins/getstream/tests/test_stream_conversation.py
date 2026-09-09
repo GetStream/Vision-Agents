@@ -84,6 +84,48 @@ class TestStreamConversation:
         assert request.custom.get("generating") is False  # completed=True by default
 
     @pytest.mark.asyncio
+    async def test_a_participants_turn_is_stored_as_speech(
+        self, stream_conversation, mock_channel
+    ):
+        # The channel is a way to reach the agent as well as a record of it, so speech it
+        # answered as it was said must be tellable from a question somebody typed.
+        await stream_conversation.send_message(
+            role="user", user_id="user123", content="Hello"
+        )
+        await stream_conversation.wait_for_pending_syncs()
+
+        request = mock_channel.send_message.call_args[0][0]
+        assert request.custom.get("source") == "speech"
+
+    @pytest.mark.asyncio
+    async def test_the_agents_own_reply_is_stored_as_the_agents(
+        self, stream_conversation, mock_channel
+    ):
+        # Otherwise every answer is a new question and the agent talks to itself forever.
+        await stream_conversation.send_message(
+            role="assistant", user_id="agent", content="Hi there"
+        )
+        await stream_conversation.wait_for_pending_syncs()
+
+        request = mock_channel.send_message.call_args[0][0]
+        assert request.custom.get("source") == "agent"
+
+    @pytest.mark.asyncio
+    async def test_a_reply_still_being_written_is_already_marked_as_the_agents(
+        self, stream_conversation, mock_channel
+    ):
+        # The first delta is stored before the model has finished, so a reply that is not
+        # marked until it settles would arrive back as a question in the meantime.
+        await stream_conversation.upsert_message(
+            role="assistant", user_id="agent", content="Hi", completed=False
+        )
+        await stream_conversation.wait_for_pending_syncs()
+
+        request = mock_channel.send_message.call_args[0][0]
+        assert request.custom.get("generating") is True
+        assert request.custom.get("source") == "agent"
+
+    @pytest.mark.asyncio
     async def test_upsert_simple_message(self, stream_conversation, mock_channel):
         """Test adding a simple non-streaming message with upsert."""
         await stream_conversation.upsert_message(

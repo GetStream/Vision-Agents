@@ -43,7 +43,7 @@ jobs:
       - name: Run Ruff formatter
         run: uv run ruff format --check .
       # Validate extras are defined in pyproject.toml
-      - name: Validate extra dependencies in "agents-core/pyproject.toml"
+      - name: Validate extra dependencies in "sdks/python/pyproject.toml"
         run: uv run dev.py validate-extras
       # Run mypy
       - name: Restore mypy cache

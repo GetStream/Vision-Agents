@@ -57,7 +57,7 @@ cache-dir = ".uv-cache"
 
 [tool.uv.workspace]
 members = [
-    "agents-core",
+    "sdks/python",
     "plugins/anthropic",
     "plugins/aws",
     "plugins/cartesia",
@@ -141,7 +141,7 @@ dev = [
 
 [tool.mypy]
 python_version = "3.12"
-mypy_path = ["agents-core"]
+mypy_path = ["sdks/python"]
 # Gradual typing → can tighten over time
 ignore_missing_imports = true
 check_untyped_defs = true

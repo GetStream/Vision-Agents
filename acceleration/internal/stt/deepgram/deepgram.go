@@ -49,7 +49,12 @@ type Options struct {
 	EotThreshold      float64
 	EotTimeoutMs      int
 	Keyterms          []string
-	Logger            *slog.Logger
+	// MipOptOut excludes the request from the Model Improvement Partnership Program,
+	// which is Deepgram's only route from an API call into a training set. It is also
+	// what makes their retention promise apply: an opted-out request is kept "only for
+	// the duration necessary to process" it.
+	MipOptOut bool
+	Logger    *slog.Logger
 }
 
 // STT is a Deepgram Flux speech-to-text session.
@@ -126,6 +131,7 @@ func (s *STT) Start(ctx context.Context) error {
 		EotTimeoutMs:      s.options.EotTimeoutMs,
 		Keyterm:           s.options.Keyterms,
 		LanguageHint:      s.options.LanguageHints,
+		MipOptOut:         s.options.MipOptOut,
 	}
 
 	client, err := listenv2.NewWSUsingCallback(

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/benchmark/internal/scenario"
+	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 )
 
 func TestLoadRestaurantPack(t *testing.T) {
@@ -65,11 +66,105 @@ func TestBuildManifestRecordsComparableInputs(t *testing.T) {
 	}
 }
 
+func TestBuildManifestAcceleratedDefaults(t *testing.T) {
+	t.Setenv("VOICEBENCH_MODEL", "")
+	t.Setenv("VOICEBENCH_STT", "")
+	t.Setenv("VOICEBENCH_TTS", "")
+	t.Setenv("VOICEBENCH_SUBAGENT", "")
+	manifest := buildManifest(Config{
+		Root:        findTestRoot(t),
+		Pack:        "restaurant",
+		TargetName:  "accelerated",
+		SpawnTarget: true,
+	}, []scenario.Scenario{{ID: "restaurant.golden", Pack: "restaurant", Category: scenario.Golden}})
+	if manifest.TargetSTT != "gemini/gemini-3.5-transcribe-live" {
+		t.Fatalf("stt %q", manifest.TargetSTT)
+	}
+	if manifest.TargetTTS != "inworld/inworld-tts-2-flash" {
+		t.Fatalf("tts %q", manifest.TargetTTS)
+	}
+	if manifest.TargetModel != "gemini/gemini-3.8-flash" || manifest.TargetLLM != "gemini/gemini-3.8-flash" {
+		t.Fatalf("model %q llm %q", manifest.TargetModel, manifest.TargetLLM)
+	}
+	if manifest.TargetSubagent != "openai/gpt-5.6-sol" {
+		t.Fatalf("subagent %q", manifest.TargetSubagent)
+	}
+}
+
+func TestBuildManifestRecordsTheScoringASRAndNormalizer(t *testing.T) {
+	cfg := Config{
+		Root:       findTestRoot(t),
+		Pack:       "restaurant",
+		TargetName: "accelerated",
+	}
+	scenarios := []scenario.Scenario{{ID: "restaurant.golden", Pack: "restaurant", Category: scenario.Golden}}
+
+	scored := buildManifest(cfg, scenarios)
+	if scored.ScoringASR != score.ScoringASR || scored.NormalizerVersion != score.NormalizerVersion {
+		t.Fatalf("asr %q normalizer %q", scored.ScoringASR, scored.NormalizerVersion)
+	}
+
+	cfg.SkipSTT = true
+	skipped := buildManifest(cfg, scenarios)
+	if skipped.ScoringASR != "" || skipped.NormalizerVersion != "" {
+		t.Fatalf("no transcript was scored, so both fields must be absent: asr %q normalizer %q",
+			skipped.ScoringASR, skipped.NormalizerVersion)
+	}
+}
+
+func TestBuildManifestLiveKitDefaultsToRealtime(t *testing.T) {
+	t.Setenv("VOICEBENCH_LIVEKIT_PIPELINE", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_MODEL", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_STT", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_TTS", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_VOICE", "")
+	t.Setenv("VOICEBENCH_MODEL", "")
+	manifest := buildManifest(Config{
+		Root:        findTestRoot(t),
+		Pack:        "healthcare",
+		TargetName:  "livekit",
+		SpawnTarget: true,
+	}, []scenario.Scenario{{ID: "healthcare.golden", Pack: "healthcare", Category: scenario.Golden}})
+	if manifest.TargetModel != "gpt-realtime-2" || manifest.TargetVoice != "marin" {
+		t.Fatalf("model %q voice %q", manifest.TargetModel, manifest.TargetVoice)
+	}
+	if manifest.TargetSTT != "" || manifest.TargetTTS != "" {
+		t.Fatalf("realtime carries no separate stt/tts: stt %q tts %q", manifest.TargetSTT, manifest.TargetTTS)
+	}
+}
+
+func TestBuildManifestLiveKitInferenceDefaults(t *testing.T) {
+	t.Setenv("VOICEBENCH_LIVEKIT_PIPELINE", "inference")
+	t.Setenv("VOICEBENCH_LIVEKIT_MODEL", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_STT", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_TTS", "")
+	t.Setenv("VOICEBENCH_LIVEKIT_VOICE", "")
+	t.Setenv("VOICEBENCH_MODEL", "gemini/gemini-3.5-flash-lite")
+	manifest := buildManifest(Config{
+		Root:        findTestRoot(t),
+		Pack:        "healthcare",
+		TargetName:  "livekit",
+		SpawnTarget: true,
+	}, []scenario.Scenario{{ID: "healthcare.golden", Pack: "healthcare", Category: scenario.Golden}})
+	if manifest.TargetSTT != "google/gemini-3.5-transcribe-live" {
+		t.Fatalf("stt %q", manifest.TargetSTT)
+	}
+	if manifest.TargetTTS != "inworld/inworld-tts-2-flash" {
+		t.Fatalf("tts %q", manifest.TargetTTS)
+	}
+	if manifest.TargetModel != "google/gemini-3.5-flash-lite" || manifest.TargetLLM != "google/gemini-3.5-flash-lite" {
+		t.Fatalf("model %q llm %q", manifest.TargetModel, manifest.TargetLLM)
+	}
+	if manifest.TargetVoice != "Ashley" {
+		t.Fatalf("voice %q", manifest.TargetVoice)
+	}
+}
+
 func TestWebRTCJoinFailsWithoutCredentials(t *testing.T) {
 	t.Setenv("STREAM_API_KEY", "")
 	t.Setenv("STREAM_API_SECRET", "")
 	t.Setenv("STREAM_USER_TOKEN", "")
-	_, err := runWebRTC(context.Background(), Config{}, scenario.Scenario{ID: "restaurant.golden"}, nil, 1)
+	_, err := runWebRTC(context.Background(), Config{}, scenario.Scenario{ID: "restaurant.golden"}, nil, 1, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}

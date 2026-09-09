@@ -28,6 +28,7 @@ func TestGeminiIntegrationSuite(t *testing.T) {
 		Requires: []string{apiKeyEnvVar},
 		// Ending the audio stream makes the server transcribe what it is still holding.
 		SettlesOnClose: true,
+		ClockFixture:   "saturday_seven_thirty.wav",
 	}})
 }
 

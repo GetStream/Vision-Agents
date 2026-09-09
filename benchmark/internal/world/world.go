@@ -487,7 +487,7 @@ func CheckExpectedTools(tools []ToolCall, expected []scenario.ExpectedTool) []st
 			if used[i] || got.Name != want.Name {
 				continue
 			}
-			argFails := expectedArgFails(got.Args, want)
+			argFails := expectedArgFails(got.Args, want, tools)
 			if got.Error != "" {
 				argFails = append(argFails, want.Name+" failed: "+got.Error)
 			}
@@ -512,19 +512,52 @@ func CheckExpectedTools(tools []ToolCall, expected []scenario.ExpectedTool) []st
 	return fails
 }
 
-func expectedArgFails(args map[string]any, want scenario.ExpectedTool) []string {
+func expectedArgFails(args map[string]any, want scenario.ExpectedTool, tools []ToolCall) []string {
 	var fails []string
 	for key, wantValue := range want.Args {
+		resolved, err := resolveExpectedValue(wantValue, tools)
+		if err != nil {
+			fails = append(fails, want.Name+"."+key+" "+err.Error())
+			continue
+		}
 		gotValue, ok := args[key]
 		if !ok {
 			fails = append(fails, want.Name+"."+key+" missing")
 			continue
 		}
-		if !MatchExpectedValue(gotValue, wantValue) {
-			fails = append(fails, fmt.Sprintf("%s.%s want %v got %v", want.Name, key, wantValue, gotValue))
+		if !MatchExpectedValue(gotValue, resolved) {
+			fails = append(fails, fmt.Sprintf("%s.%s want %v got %v", want.Name, key, resolved, gotValue))
 		}
 	}
 	return fails
+}
+
+// resolveExpectedValue expands $tool.field references against earlier successful calls.
+func resolveExpectedValue(want any, tools []ToolCall) (any, error) {
+	ref, ok := want.(string)
+	if !ok || !strings.HasPrefix(ref, "$") {
+		return want, nil
+	}
+	rest := strings.TrimPrefix(ref, "$")
+	name, path, ok := strings.Cut(rest, ".")
+	if !ok || name == "" || path == "" {
+		return nil, fmt.Errorf("bad reference %s", ref)
+	}
+	for i := len(tools) - 1; i >= 0; i-- {
+		call := tools[i]
+		if call.Name != name || call.Error != "" {
+			continue
+		}
+		result, ok := call.Result.(map[string]any)
+		if !ok {
+			continue
+		}
+		got, found := Lookup(result, path)
+		if found {
+			return got, nil
+		}
+	}
+	return nil, fmt.Errorf("%s not available", rest)
 }
 
 // MatchExpectedValue compares expected tool args with normalization for common phone-call forms.

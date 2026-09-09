@@ -413,3 +413,43 @@ func TestTimingReportsWhyATurnWasNotMeasured(t *testing.T) {
 		}
 	}
 }
+
+func TestExtraToolNames(t *testing.T) {
+	got := ExtraToolNames([]world.ToolCall{
+		{Name: "check_availability"},
+		{Name: "invented_refund"},
+		{Name: "invented_refund"},
+	}, []scenario.ExpectedTool{{Name: "check_availability"}})
+	if len(got) != 1 || got[0] != "invented_refund" {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestCountConversation(t *testing.T) {
+	rate := audio.Rate
+	agent := audio.Silence(rate / 2)
+	speech := make([]int16, rate/5)
+	for i := range speech {
+		speech[i] = 8000
+	}
+	agent = append(agent, speech...)
+	m := Metrics{}
+	CountConversation(&m, caller.Result{
+		Agent: agent,
+		Rate:  rate,
+		Events: []caller.Event{
+			{TurnID: "a", Text: true},
+			{TurnID: "b", Text: true},
+			{TurnID: "cough", OverlapSound: "cough"},
+		},
+	}, "hello there friend")
+	if m.CallerTurns != 2 {
+		t.Fatalf("caller turns %d", m.CallerTurns)
+	}
+	if m.AgentTurns < 1 {
+		t.Fatalf("agent turns %d", m.AgentTurns)
+	}
+	if m.AgentWords != 3 {
+		t.Fatalf("words %d", m.AgentWords)
+	}
+}

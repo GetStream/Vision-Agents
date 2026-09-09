@@ -31,30 +31,37 @@ class TTS(tts.TTS):
 
     def __init__(
         self,
-        target: str,
+        target: str = "",
         voice: Optional[str] = None,
         language: Optional[str] = None,
         tags: Optional[dict[str, str]] = None,
         url: Optional[str] = None,
         customer_id: Optional[str] = None,
+        config_id: str = "",
+        options: Optional[dict[str, Any]] = None,
     ):
         """Route speech to `target`.
 
         Args:
             target: A `provider/model` name or a capability shortcut such as
-                `en-low-latency`.
+                `en-low-latency`. It may instead be held in the named config.
             voice: A provider-specific voice id.
             language: A language hint, which narrows the candidates.
             tags: Cost labels carried onto every request.
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
             customer_id: Who the work is billed to. Defaults to
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
+            config_id: A stored router config to take the options from, by name or by id.
+            options: Per-call overrides of that config's tts block. Usually built by
+                `Router.tts.realtime`.
         """
         super().__init__(provider_name="stream")
         self.model = target
         self.voice = voice
         self.language = language
         self.tags = tags or {}
+        self.config_id = config_id
+        self.options = options or {}
         self.backend = Backend(url=url, customer_id=customer_id)
 
         self._socket: Optional[Socket] = None
@@ -73,14 +80,24 @@ class TTS(tts.TTS):
         await self._socket.send(
             {
                 "type": "start",
+                "config_id": self.config_id,
                 "target": self.model,
                 "voice": self.voice or "",
                 "languages": [self.language] if self.language else [],
                 "tags": self.tags,
+                "tts": self.options,
             }
         )
         self._reader = asyncio.create_task(self._read())
         self._on_connected()
+
+    async def __aenter__(self) -> "TTS":
+        """Start speaking, for a caller holding the session itself."""
+        await self.start()
+        return self
+
+    async def __aexit__(self, *exception) -> None:
+        await self.close()
 
     async def stream_audio(self, text: str, *args, **kwargs) -> AsyncIterator[PcmData]:
         """Speak `text`, yielding audio as the provider produces it."""

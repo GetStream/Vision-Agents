@@ -66,6 +66,10 @@ const (
 	// overlapWithin is how long the agent is given to decide what to do about somebody
 	// talking while it is talking.
 	overlapWithin = 5 * time.Second
+	// bargeInWithin is how long the agent has to fall silent after the caller's first
+	// sound of an interruption. It is the benchmark's MaxBargeInStopMS with headroom for
+	// the controller round trip a cascaded loop pays that a full-duplex model does not.
+	bargeInWithin = 1 * time.Second
 	// settlePause is how long the conversation has to stay quiet before a test believes
 	// the agent has finished having its say.
 	settlePause = 2 * time.Second
@@ -571,13 +575,19 @@ func (s *ConversationSuite) TestTalkingOverTheAgentWithAChangeOfDirectionStopsIt
 
 	asked := held.says("Explain how the gears on a bicycle work.")
 	held.spokeAfter(asked, answerWithin)
+
+	// Microphone.Play returns when the utterance ended, so the barge-in is timed from
+	// before it begins: the agent must fall silent within bargeInWithin of the caller's
+	// first sound, not merely by the time they have finished the sentence.
+	started := time.Now()
 	changed := held.says("Actually, forget the bicycle. What is the capital of Spain?")
 
 	s.Require().Emptyf(since[agent.Turn](held.log, asked),
 		"the agent had already finished answering, so nothing was talked over\n%s", held.transcript())
-	held.awaits("the agent to stop and listen", answerWithin, func() bool {
-		return len(since[agent.Interrupted](held.log, changed)) > 0
+	held.awaits("the agent to stop and listen", bargeInWithin, func() bool {
+		return len(since[agent.Interrupted](held.log, started)) > 0
 	})
+	s.Falsef(held.edge.Talking(), "the agent kept talking after being cut off\n%s", held.transcript())
 	s.Containsf(strings.ToLower(held.answer(changed, answerWithin).Text), "madrid",
 		"the agent stopped talking but answered the wrong question\n%s", held.transcript())
 }

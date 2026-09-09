@@ -37,6 +37,8 @@ type accelSessionRequest struct {
 	UserID       string      `json:"user_id,omitempty"`
 	Instructions string      `json:"instructions,omitempty"`
 	Greeting     string      `json:"greeting,omitempty"`
+	LLM          string      `json:"llm,omitempty"`
+	STT          string      `json:"stt,omitempty"`
 	Tools        []AccelTool `json:"tools"`
 }
 
@@ -46,9 +48,12 @@ type accelSession struct {
 }
 
 type accelConn struct {
-	conn  *websocket.Conn
-	write sync.Mutex
-	done  chan struct{}
+	conn      *websocket.Conn
+	write     sync.Mutex
+	done      chan struct{}
+	callID    string
+	askedAt   map[string]time.Time
+	timingLog string
 }
 
 // Acceleration starts and controls the Go acceleration router.
@@ -88,21 +93,39 @@ func (a *Acceleration) Prepare(ctx context.Context) (func(), error) {
 	if a.Bin == "" {
 		return nil, fmt.Errorf("run: --bin or ACCEL_ROUTER is required with --target acceleration --spawn")
 	}
+	stop, err := StartRouter(ctx, a.Bin, a.URL)
+	if err != nil {
+		return nil, err
+	}
+	a.logger().Info("spawned accel router", "url", a.URL)
+	return stop, nil
+}
+
+// StartRouter launches the acceleration router and waits until /health succeeds.
+func StartRouter(ctx context.Context, bin, baseURL string) (func(), error) {
+	if bin == "" {
+		bin = os.Getenv("ACCEL_ROUTER")
+	}
+	if bin == "" {
+		return nil, fmt.Errorf("run: --bin or ACCEL_ROUTER is required to spawn the router")
+	}
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:8080"
+	}
 	addr := "127.0.0.1:8080"
-	if parsed, err := url.Parse(a.URL); err == nil && parsed.Host != "" {
+	if parsed, err := url.Parse(baseURL); err == nil && parsed.Host != "" {
 		addr = parsed.Host
 	}
 	stop, err := StartProcess(ctx, Process{
-		Command:      a.Bin,
+		Command:      bin,
 		Env:          []string{"ROUTER_ADDR=" + addr},
 		DropEnv:      []string{"ROUTER_ADDR="},
-		ReadyURL:     strings.TrimRight(a.URL, "/") + "/health",
+		ReadyURL:     strings.TrimRight(baseURL, "/") + "/health",
 		ReadyTimeout: 120 * time.Second,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run: spawn accel router: %w", err)
 	}
-	a.logger().Info("spawned accel router", "url", a.URL)
 	return stop, nil
 }
 
@@ -113,6 +136,8 @@ func (a *Acceleration) StartCall(ctx context.Context, callID string, callType st
 		UserID:       "accel-agent",
 		Instructions: a.Instructions,
 		Greeting:     "Hello, how can I help?",
+		LLM:          os.Getenv("VOICEBENCH_MODEL"),
+		STT:          os.Getenv("VOICEBENCH_STT"),
 		Tools:        a.Tools,
 	})
 	if err != nil {
@@ -159,7 +184,13 @@ func (a *Acceleration) StartCall(ctx context.Context, callID string, callType st
 	}
 
 	watchCtx, cancel := context.WithCancel(ctx)
-	session := &accelConn{conn: conn, done: make(chan struct{})}
+	session := &accelConn{
+		conn:      conn,
+		done:      make(chan struct{}),
+		callID:    callID,
+		askedAt:   map[string]time.Time{},
+		timingLog: strings.TrimSpace(os.Getenv("VOICEBENCH_TIMING_LOG")),
+	}
 	go session.serveTools(watchCtx, a.WorldURL)
 
 	a.logger().Info("accel session ready", "session", created.ID, "call", callID)
@@ -213,6 +244,7 @@ func (s *accelConn) serveTools(ctx context.Context, worldURL string) {
 		if ctx.Err() != nil {
 			return
 		}
+		s.observeTiming(frame)
 		if fmt.Sprint(frame["type"]) != "tool_call" {
 			continue
 		}
@@ -250,6 +282,60 @@ func (s *accelConn) writeJSON(v any) error {
 	defer s.write.Unlock()
 	_ = s.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return s.conn.WriteJSON(v)
+}
+
+func (s *accelConn) observeTiming(frame map[string]any) {
+	if s.timingLog == "" {
+		return
+	}
+	typ := fmt.Sprint(frame["type"])
+	turnID := fmt.Sprint(frame["turn_id"])
+	now := time.Now()
+	rec := map[string]any{
+		"at":      now.UTC().Format(time.RFC3339Nano),
+		"call_id": s.callID,
+		"type":    typ,
+		"turn_id": turnID,
+	}
+	switch typ {
+	case "responding":
+		s.askedAt[turnID] = now
+		return
+	case "response_delta":
+		started, ok := s.askedAt[turnID]
+		if !ok {
+			return
+		}
+		delete(s.askedAt, turnID)
+		rec["source"] = "first_delta"
+		rec["llm_ttfb_ms"] = float64(now.Sub(started)) / float64(time.Millisecond)
+	case "responded":
+		rec["source"] = "responded"
+		rec["claimed_ttft_ms"] = frame["time_to_first_token_ms"]
+		if started, ok := s.askedAt[turnID]; ok {
+			delete(s.askedAt, turnID)
+			rec["llm_ttfb_ms"] = float64(now.Sub(started)) / float64(time.Millisecond)
+		}
+	case "spoke":
+		rec["source"] = "spoke"
+		rec["tts_ttfb_ms"] = frame["time_to_first_byte_ms"]
+	case "turn":
+		rec["source"] = "turn"
+		rec["claimed_ttft_ms"] = frame["llm_ttft_ms"]
+		rec["tts_ttfb_ms"] = frame["tts_ttfb_ms"]
+	default:
+		return
+	}
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(s.timingLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	_, _ = f.Write(append(raw, '\n'))
+	_ = f.Close()
 }
 
 func CallWorldTool(ctx context.Context, worldURL, name, args string) (string, string) {

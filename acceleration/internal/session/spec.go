@@ -33,7 +33,7 @@ type Spec struct {
 	// model afterwards, which is worth paying for once per caller and not worth paying for
 	// once per conversation in a batch that is already being judged.
 	NoReview bool
-	// CallType defaults to "default".
+	// CallType defaults to "agent".
 	CallType string
 	// UserID is who the agent joins the call as.
 	UserID string
@@ -63,6 +63,10 @@ type Spec struct {
 	STTTarget      string
 	TTSTarget      string
 	SubagentTarget string
+	// ControllerTarget routes the flow controller. Internal rather than customer-facing:
+	// a caller configures the conversation's model, not the classifier that decides who
+	// holds the floor, so it is defaulted here rather than read from a config.
+	ControllerTarget string
 	// SearchTarget routes what the agent finds out about today. Unlike the three above it
 	// is not needed for a conversation to happen, so a deployment that routes no search
 	// simply leaves the tool unoffered.
@@ -162,6 +166,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Plugins:            config.Plugins,
 		Keyterms:           config.Keyterms,
 		KnowledgeNamespace: config.KnowledgeNamespace,
+		Sandbox:            config.Sandbox,
 		Tags:               routing.Tags(config.Tags),
 	}
 }
@@ -198,6 +203,9 @@ func (s *Spec) Normalize() error {
 	}
 	if s.LLMTarget == "" {
 		s.LLMTarget = defaultLLMTarget
+	}
+	if s.ControllerTarget == "" {
+		s.ControllerTarget = defaultControllerTarget
 	}
 	if s.SearchTarget == "" {
 		s.SearchTarget = defaultSearchTarget

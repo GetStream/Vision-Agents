@@ -42,8 +42,13 @@ const DefaultURL = "wss://api.meta.ai/v1/asr/realtime"
 const apiKeyEnvVar = "META_API_KEY"
 
 // The modes the server recognises. ModeEndpointing is the default here because a call
-// needs the model to find the turn boundaries; ModePushToTalk leaves that to the caller,
-// and ModeDiarization adds speaker labels on top of endpointing.
+// needs the model to find the turn boundaries; ModePushToTalk leaves that to the caller.
+//
+// ModeDiarization finds the same boundaries and names the voice as well, but it looks for
+// a speaker change rather than a clean end of speech, and measured against the same clip
+// it settles a turn in about 2150ms where endpointing takes about 770ms. That second and a
+// half is the whole of what a caller waits through, so naming the voice is something to
+// ask for when a microphone is shared rather than something to have by default.
 const (
 	ModePushToTalk  = "PUSH_TO_TALK"
 	ModeEndpointing = "ENDPOINTING"
@@ -134,6 +139,19 @@ type serverMessage struct {
 	Message string `json:"message"`
 }
 
+// turn is one run of speech the server has opened.
+type turn struct {
+	// startMs is how much audio had been processed when the turn began, so the turn's own
+	// duration can be told from the session-wide count the server reports.
+	startMs float64
+	// speaker is the diarised label for the voice this turn is in, empty until the server
+	// says and in the other two modes for good.
+	speaker string
+	// settled marks that the turn already has a final, so the server restating one is not
+	// reported to the rest of the call as the caller saying it twice.
+	settled bool
+}
+
 // STT is a Muse Voice Transcribe session.
 type STT struct {
 	options Options
@@ -156,17 +174,13 @@ type STT struct {
 	// lastAudioAt is when audio was last sent, so latency can be reported as the delay
 	// between sending audio and hearing about it.
 	lastAudioAt time.Time
-	// turnStartMs is how much audio had been processed when the current turn began, so
-	// the turn's own duration can be told from the session-wide count the server reports.
-	turnStartMs float64
-	// utterance counts the runs of speech seen so far, and ended marks that the current
-	// one is over so the next transcript starts a new one.
-	utterance int64
-	ended     bool
-	// settled marks that the current turn already has a final. A transcript flagged final
-	// and the speechComplete behind it report the same settled turn, and emitting both
-	// would tell the rest of the call the caller said it twice.
-	settled bool
+	// turns are the runs of speech the server has opened, keyed by the id it numbers them
+	// with. A later turn can open before an earlier one is settled, so which turn a frame
+	// belongs to is what the id says and not what the order suggests.
+	turns map[int64]*turn
+	// current is the turn the most recent speechStart opened, which is the one a partial
+	// belongs to: partials carry no id of their own.
+	current int64
 	started bool
 	closed  bool
 }
@@ -217,6 +231,7 @@ func New(options Options) (*STT, error) {
 		logger:   logger.With("provider", ProviderName, "model", options.Model),
 		emitter:  stt.NewEmitter(64),
 		finished: make(chan struct{}),
+		turns:    map[int64]*turn{},
 	}, nil
 }
 
@@ -408,10 +423,14 @@ func (s *STT) handleReadError(err error) {
 func (s *STT) handleMessage(message serverMessage) {
 	switch message.Type {
 	case messageSpeechStart:
-		s.startTurn(message.AudioProcessedMs)
+		s.startTurn(message.TurnID, message.AudioProcessedMs)
 	case messageTranscript:
+		// Which frame settles a turn is the mode's answer to give. Push to talk announces
+		// no turn boundaries, so the flag on the transcript is all there is; the other two
+		// settle on speechComplete, whose text is the one the model has been over and can
+		// differ from the last partial by its punctuation and capitals.
 		mode := stt.ModeReplacement
-		if message.Final {
+		if message.Final && s.options.Mode == ModePushToTalk {
 			mode = stt.ModeFinal
 		}
 		s.sendTranscript(message, mode)
@@ -421,9 +440,7 @@ func (s *STT) handleMessage(message serverMessage) {
 		// The boundary alone settles nothing: speechComplete carries the text the turn
 		// settles on and follows straight after.
 	case messageSpeaker:
-		// The router labels transcripts from the audio track it fed, so a diarised label
-		// is only worth seeing when the two disagree.
-		s.logger.Debug("diarised speaker", "label", message.Label)
+		s.nameSpeaker(message.Label)
 	case messageAudioProgress:
 		s.logger.Debug("audio progress", "audio_processed_ms", message.AudioProcessedMs)
 	case messageError:
@@ -444,64 +461,117 @@ func (s *STT) sendTranscript(message serverMessage, mode stt.Mode) {
 	if text == "" {
 		return
 	}
-	if mode == stt.ModeFinal && s.alreadySettled() {
+
+	reported, ok := s.record(message, mode)
+	if !ok {
 		return
 	}
-
-	participant, latencyMs, turnMs := s.snapshot(message.AudioProcessedMs)
 	s.emitter.Send(stt.Transcript{
-		Participant:      participant,
+		Participant:      reported.participant,
 		Mode:             mode,
-		Utterance:        s.utteranceID(mode),
+		Utterance:        reported.utterance,
+		Speaker:          reported.speaker,
 		Text:             text,
 		Provider:         ProviderName,
 		Model:            s.options.Model,
-		ProcessingTimeMs: latencyMs,
-		AudioDurationMs:  turnMs,
+		ProcessingTimeMs: reported.latencyMs,
+		AudioDurationMs:  reported.turnMs,
 	})
 }
 
-// startTurn opens a new run of speech at the point in the audio the server reports.
-func (s *STT) startTurn(audioProcessedMs float64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.ended = true
-	s.settled = false
-	s.turnStartMs = audioProcessedMs
+// reported is what a transcript event needs beyond its own text.
+type reported struct {
+	participant stt.Participant
+	utterance   int64
+	speaker     string
+	latencyMs   float64
+	turnMs      float64
 }
 
-// alreadySettled reports whether this turn has had its final already.
-func (s *STT) alreadySettled() bool {
+// record files a transcript against the turn it belongs to and returns what the event
+// needs. It reports false when that turn has already settled, since a final and the
+// server restating it are one turn and reporting both would tell the rest of the call the
+// caller said it twice.
+func (s *STT) record(message serverMessage, mode stt.Mode) (reported, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.settled
-}
-
-// utteranceID numbers the run of speech the transcript belongs to, and records whether it
-// settled that run.
-//
-// A final marks the run as over, but the count only moves on the next transcript, so the
-// final and the speechStart that follows it are one boundary between utterances rather
-// than two. A hypothesis arriving after a final belongs to a turn the server never
-// announced the start of, so it clears the settled mark that would swallow that turn's own
-// final.
-func (s *STT) utteranceID(mode stt.Mode) int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.utterance == 0 || s.ended {
-		s.utterance++
-		s.ended = false
-	}
+	current, id := s.turnFor(message)
 	if mode == stt.ModeFinal {
-		s.settled = true
-		s.ended = true
+		if current.settled {
+			return reported{}, false
+		}
+		current.settled = true
 	} else {
-		s.settled = false
+		// A hypothesis after a final belongs to a turn the server never announced the
+		// start of, so it clears the mark that would swallow that turn's own final.
+		current.settled = false
 	}
-	return s.utterance
+
+	var latencyMs float64
+	if !s.lastAudioAt.IsZero() {
+		latencyMs = float64(time.Since(s.lastAudioAt).Microseconds()) / 1000
+	}
+	turnMs := message.AudioProcessedMs - current.startMs
+	if turnMs < 0 {
+		turnMs = 0
+	}
+	return reported{
+		participant: s.participant,
+		utterance:   id,
+		speaker:     current.speaker,
+		latencyMs:   latencyMs,
+		turnMs:      turnMs,
+	}, true
+}
+
+// startTurn opens a run of speech at the point in the audio the server reports.
+func (s *STT) startTurn(turnID int64, audioProcessedMs float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.current = turnID
+	s.turns[turnID] = &turn{startMs: audioProcessedMs}
+}
+
+// nameSpeaker records which voice the open turn is in. The server sends this once per
+// turn, before the turn settles, so the settled transcript carries it even though the
+// partials ahead of it may not.
+func (s *STT) nameSpeaker(label string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if label == "" {
+		return
+	}
+	current, _ := s.turnFor(serverMessage{})
+	current.speaker = label
+}
+
+// turnFor returns the turn a frame belongs to and the id it is numbered by, opening the
+// turn if the server never announced its start, which is what happens to whatever it was
+// still holding when the audio stream ended.
+//
+// Only the boundary frames carry an id. A partial belongs to the turn speechStart opened
+// last, and push to talk announces no turns at all, so it is all one. A frame that names
+// its own turn does not become the turn partials belong to: a later turn can open before
+// an earlier one settles, and the earlier one settling does not take the floor back.
+//
+// The caller holds the lock.
+func (s *STT) turnFor(message serverMessage) (*turn, int64) {
+	id := message.TurnID
+	if id == 0 {
+		if s.current == 0 {
+			s.current = 1
+		}
+		id = s.current
+	}
+	current, ok := s.turns[id]
+	if !ok {
+		current = &turn{startMs: message.AudioProcessedMs}
+		s.turns[id] = current
+	}
+	return current, id
 }
 
 // languageNames are the twenty-five languages the model recognises, keyed by the ISO code
@@ -551,21 +621,4 @@ func languageBias(hints []string) []string {
 		named = append(named, hint)
 	}
 	return named
-}
-
-// snapshot returns the current speaker, how long ago audio was last sent, and how much
-// audio the current turn covers.
-func (s *STT) snapshot(audioProcessedMs float64) (stt.Participant, float64, float64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	var latencyMs float64
-	if !s.lastAudioAt.IsZero() {
-		latencyMs = float64(time.Since(s.lastAudioAt).Microseconds()) / 1000
-	}
-	turnMs := audioProcessedMs - s.turnStartMs
-	if turnMs < 0 {
-		turnMs = 0
-	}
-	return s.participant, latencyMs, turnMs
 }

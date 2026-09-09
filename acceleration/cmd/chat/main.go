@@ -112,7 +112,6 @@ func run(options options, logger *slog.Logger) error {
 	defer session.Close()
 
 	talker := newTalker(session, options)
-	go talker.consume()
 
 	fmt.Printf("model: %s/%s\n", session.Provider(), session.Model())
 
@@ -217,100 +216,78 @@ type talker struct {
 
 	// history is the conversation so far, sent in full on every turn.
 	history []llm.Message
-	// settled carries the summary of each finished turn.
-	settled chan llm.CompletionComplete
 }
 
 func newTalker(session *llmrouter.Session, options options) *talker {
-	return &talker{
-		session: session,
-		options: options,
-		price:   session.Price(),
-		settled: make(chan llm.CompletionComplete, 4),
-	}
+	return &talker{session: session, options: options, price: session.Price()}
 }
 
-// ask sends one turn and waits for that turn to finish. It waits on the id it sent, so the
-// summary of a turn that timed out earlier cannot be mistaken for this one's.
+// ask sends one turn, prints the answer as it arrives, and reports what the turn cost.
 func (t *talker) ask(ctx context.Context, question string) error {
 	t.history = append(t.history, llm.Message{Role: llm.User, Content: question})
 
-	request := llm.Request{
-		ID:           fmt.Sprintf("chat-%d", time.Now().UnixNano()),
-		Instructions: t.options.instructions,
-		Messages:     t.history,
-		MaxTokens:    t.options.maxTokens,
-	}
-	if err := t.session.Respond(request); err != nil {
+	turn, cancel := context.WithTimeout(ctx, completionTimeout)
+	defer cancel()
+
+	stream, err := t.session.Create(turn, llm.ResponseParams{
+		ID:              fmt.Sprintf("chat-%d", time.Now().UnixNano()),
+		Instructions:    t.options.instructions,
+		Input:           t.history,
+		MaxOutputTokens: t.options.maxTokens,
+	})
+	if err != nil {
 		return err
 	}
+	// Ctrl-C during a turn is barge-in, which is the thing this is for.
+	stop := context.AfterFunc(ctx, func() { stream.Close() })
+	defer stop()
 
-	deadline := time.After(completionTimeout)
-	for {
-		select {
-		case complete := <-t.settled:
-			if complete.CompletionID != request.ID {
-				continue
-			}
-			// The answer joins the history so the next turn has the context, exactly as an
-			// agent would keep it.
-			t.history = append(t.history, llm.Message{Role: llm.Assistant, Content: complete.Text})
-			fmt.Printf("\n%s\n", t.summarise(complete))
-			return nil
-		case <-ctx.Done():
-			// Ctrl-C during a turn is barge-in, which is the thing this is for.
-			return t.session.Interrupt()
-		case <-deadline:
-			return fmt.Errorf("gave up waiting for an answer after %s", completionTimeout)
-		}
-	}
-}
-
-// consume prints the answer as it arrives and reports each turn once it settles.
-func (t *talker) consume() {
-	for event := range t.session.Events() {
-		switch typed := event.(type) {
-		case llm.TextDelta:
-			fmt.Print(typed.Text)
-		case llm.ReasoningDelta:
+	for stream.Next() {
+		switch typed := stream.Current().(type) {
+		case llm.OutputTextDelta:
+			fmt.Print(typed.Delta)
+		case llm.ReasoningTextDelta:
 			// Thinking is not the answer, so it is only shown when asked for.
 			if t.options.thinking {
-				fmt.Fprint(os.Stderr, typed.Text)
+				fmt.Fprint(os.Stderr, typed.Delta)
 			}
-		case llm.CompletionComplete:
-			select {
-			case t.settled <- typed:
-			default:
-			}
-		case llm.Error:
+		case llm.ResponseFailed:
 			fmt.Fprintf(os.Stderr, "provider error (%s): %v\n", typed.Provider, typed.Err)
 		}
 	}
+
+	response := stream.Response()
+	// The answer joins the history so the next turn has the context, exactly as an agent
+	// would keep it.
+	t.history = append(t.history, llm.Message{Role: llm.Assistant, Content: response.OutputText})
+	fmt.Printf("\n%s\n", t.summarise(response))
+	return stream.Err()
 }
 
 // summarise is the line printed after each turn: what answered, how long the reader waited,
 // how many tokens it spent and what it cost.
-func (t *talker) summarise(complete llm.CompletionComplete) string {
+func (t *talker) summarise(response llm.Response) string {
+	usage := response.Usage
 	costMicros := t.price.CostMicros(routing.Usage{
-		InputTokens:       complete.InputTokens,
-		CachedInputTokens: complete.CachedInputTokens,
-		OutputTokens:      complete.OutputTokens,
+		InputTokens:       usage.InputTokens,
+		CachedInputTokens: usage.InputTokensDetails.CachedTokens,
+		OutputTokens:      usage.OutputTokens,
 	})
 
 	summary := fmt.Sprintf("%s/%s  first token %.0fms  %d in  %d out  $%.6f",
-		complete.Provider, complete.Model,
-		complete.TimeToFirstTokenMs,
-		complete.InputTokens, complete.OutputTokens,
+		response.Provider, response.Model,
+		response.TimeToFirstTokenMs,
+		usage.InputTokens, usage.OutputTokens,
 		float64(costMicros)/1_000_000)
 
-	if complete.CachedInputTokens > 0 {
-		summary += fmt.Sprintf("  (%d cached)", complete.CachedInputTokens)
+	if usage.InputTokensDetails.CachedTokens > 0 {
+		summary += fmt.Sprintf("  (%d cached)", usage.InputTokensDetails.CachedTokens)
 	}
-	if complete.ReasoningTokens > 0 {
-		summary += fmt.Sprintf("  (%d thinking)", complete.ReasoningTokens)
+	if usage.OutputTokensDetails.ReasoningTokens > 0 {
+		summary += fmt.Sprintf("  (%d thinking)", usage.OutputTokensDetails.ReasoningTokens)
 	}
-	if complete.Interrupted {
-		summary += "  (interrupted)"
+	if response.Status != llm.StatusCompleted {
+		summary += fmt.Sprintf("  (%s)", response.Status)
 	}
 	return summary
 }

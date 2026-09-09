@@ -7,7 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..models.create_session_request_sandbox import CreateSessionRequestSandbox
+from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -56,9 +56,9 @@ class CreateSessionRequest:
             terms, and providers that cannot be told about vocabulary ignore them.
         max_tokens (int | Unset):
         tasks (int | Unset): How much delegated work may run at once.
-        sandbox (CreateSessionRequestSandbox | Unset): Where the subagent may run code it writes. Only the subagent is
-            offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and
-            the subagent works everything out in its head.
+        sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
+            code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
+            everything out in its head.
         backchannel (bool | Unset): Murmur while a participant is still talking, the way a person does. Default: False.
         min_confidence (float | Unset): How sure the transcriber must be before the agent answers rather than checks
             what was meant.
@@ -94,7 +94,7 @@ class CreateSessionRequest:
     keyterms: list[str] | Unset = UNSET
     max_tokens: int | Unset = UNSET
     tasks: int | Unset = UNSET
-    sandbox: CreateSessionRequestSandbox | Unset = UNSET
+    sandbox: Sandbox | Unset = UNSET
     backchannel: bool | Unset = False
     min_confidence: float | Unset = UNSET
     skills: list[SessionSkill] | Unset = UNSET
@@ -309,11 +309,11 @@ class CreateSessionRequest:
         tasks = d.pop("tasks", UNSET)
 
         _sandbox = d.pop("sandbox", UNSET)
-        sandbox: CreateSessionRequestSandbox | Unset
+        sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
             sandbox = UNSET
         else:
-            sandbox = CreateSessionRequestSandbox(_sandbox)
+            sandbox = Sandbox(_sandbox)
 
         backchannel = d.pop("backchannel", UNSET)
 

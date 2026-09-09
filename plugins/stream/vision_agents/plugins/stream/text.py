@@ -57,6 +57,7 @@ class TextSession:
         subagent: str = "",
         skills: Optional[list[str]] = None,
         max_tokens: int = 0,
+        agent_id: str = "",
         url: Optional[str] = None,
         customer_id: Optional[str] = None,
     ):
@@ -75,6 +76,9 @@ class TextSession:
                 the model answers everything itself and skills mean nothing.
             skills: Which skills the model may hand work to, by name.
             max_tokens: A ceiling on a reply. Zero leaves the backend's default.
+            agent_id: Which conversation this belongs to. It names the channel the
+                exchange is written into, so answering a message means passing the
+                channel it was written in. Empty gives the session a new one of its own.
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
             customer_id: Who the work is billed to. Defaults to
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
@@ -86,6 +90,7 @@ class TextSession:
         self.subagent = subagent
         self.skills = skills
         self.max_tokens = max_tokens
+        self.agent_id = agent_id
 
         self.session: Optional[Session] = None
         self._socket: Optional[Socket] = None
@@ -200,4 +205,6 @@ class TextSession:
             request.skill_names = self.skills
         if self.max_tokens:
             request.max_tokens = self.max_tokens
+        if self.agent_id:
+            request.agent_id = self.agent_id
         return request

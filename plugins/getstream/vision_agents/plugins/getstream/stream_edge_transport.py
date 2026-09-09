@@ -166,7 +166,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
         self.events.register_events_from_module(sfu_events)
         self.events.register_events_from_module(getstream.models, "call.")
         self.conversation: Optional[StreamConversation] = None
-        self.channel_type = "messaging"
+        self.channel_type = "agent"
         self._agent_user_id: str | None = None
         self._track_resolver = TrackResolver()
 
@@ -384,7 +384,7 @@ class StreamEdge(EdgeTransport[StreamCall]):
     async def create_call(self, call_id: str, **kwargs) -> StreamCall:
         """Shortcut for creating a call/room etc."""
         self._require_authenticated()
-        call_type = kwargs.get("call_type", "default")
+        call_type = kwargs.get("call_type", "agent")
         call = self.client.video.call(call_type, call_id)
         await call.get_or_create(data={"created_by_id": self._agent_user_id})
         return call

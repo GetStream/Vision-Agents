@@ -13,9 +13,13 @@ import (
 	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 )
 
-const SchemaVersion = 2
-const BenchmarkVersion = "0.3.0"
+const SchemaVersion = 3
+const BenchmarkVersion = "0.4.0"
 const MethodologyVersion = "voicebench-live-v3"
+
+const KindAgent = "agent"
+const KindSTT = "stt"
+const KindTTS = "tts"
 
 const (
 	OutcomePass    = "pass"
@@ -48,10 +52,16 @@ type RunManifest struct {
 	Target                   string            `json:"target"`
 	TargetModel              string            `json:"target_model,omitempty"`
 	TargetVoice              string            `json:"target_voice,omitempty"`
+	TargetSTT                string            `json:"target_stt,omitempty"`
+	TargetLLM                string            `json:"target_llm,omitempty"`
+	TargetTTS                string            `json:"target_tts,omitempty"`
+	TargetSubagent           string            `json:"target_subagent,omitempty"`
 	CallerModel              string            `json:"caller_model"`
 	CallerVoice              string            `json:"caller_voice"`
 	GoVersion                string            `json:"go_version"`
 	NetworkProfile           string            `json:"network_profile,omitempty"`
+	ScoringASR               string            `json:"scoring_asr,omitempty"`
+	NormalizerVersion        string            `json:"normalizer_version,omitempty"`
 	JudgeCalibrationHash     string            `json:"judge_calibration_hash,omitempty"`
 	JudgeCalibrationReviewer string            `json:"judge_calibration_reviewer,omitempty"`
 	Command                  []string          `json:"command"`
@@ -63,6 +73,7 @@ type Summary struct {
 	SchemaVersion      int               `json:"schema_version"`
 	BenchmarkVersion   string            `json:"benchmark_version"`
 	MethodologyVersion string            `json:"methodology_version"`
+	Kind               string            `json:"kind"`
 	Providers          map[string]string `json:"providers"`
 	Manifest           RunManifest       `json:"manifest"`
 	System             string            `json:"system"`
@@ -90,6 +101,8 @@ type PackSummary struct {
 	ToolCountPerCall float64           `json:"tool_count_per_call"`
 	ToolErrors       int               `json:"tool_errors"`
 	ToolWaitP50      int               `json:"tool_wait_p50_ms"`
+	CallerTurnsP50   int               `json:"caller_turns_p50"`
+	AgentTurnsP50    int               `json:"agent_turns_p50"`
 }
 
 // CategoryCell is pass@k / pass^k for one call type.
@@ -125,6 +138,7 @@ func BuildSummary(system, runID string, k int, calls []CallResult) Summary {
 		SchemaVersion:      SchemaVersion,
 		BenchmarkVersion:   BenchmarkVersion,
 		MethodologyVersion: MethodologyVersion,
+		Kind:               KindAgent,
 		Providers:          defaultProviders(),
 		System:             system,
 		RunID:              runID,
@@ -161,6 +175,8 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 	var nonTool []int
 	var durations []int
 	var toolWait []int
+	var callerTurns []int
+	var agentTurns []int
 	spikes := 0
 	cutoffs := 0
 	toolCount := 0
@@ -189,6 +205,12 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 		}
 		if call.Metrics.ToolWaitMS > 0 {
 			toolWait = append(toolWait, call.Metrics.ToolWaitMS)
+		}
+		if call.Metrics.CallerTurns > 0 {
+			callerTurns = append(callerTurns, call.Metrics.CallerTurns)
+		}
+		if call.Metrics.AgentTurns > 0 {
+			agentTurns = append(agentTurns, call.Metrics.AgentTurns)
 		}
 		spikes += call.Metrics.SpikeCount
 		cutoffs += call.Metrics.FalseCutoff
@@ -266,6 +288,14 @@ func summarizePack(pack string, calls []CallResult, k int) PackSummary {
 		sort.Ints(toolWait)
 		out.ToolWaitP50 = score.Percentile(toolWait, 50)
 	}
+	if len(callerTurns) > 0 {
+		sort.Ints(callerTurns)
+		out.CallerTurnsP50 = score.Percentile(callerTurns, 50)
+	}
+	if len(agentTurns) > 0 {
+		sort.Ints(agentTurns)
+		out.AgentTurnsP50 = score.Percentile(agentTurns, 50)
+	}
 	out.V2VSamples = len(v2v)
 	out.NonToolSamples = len(nonTool)
 	out.DroppedTurns = dropped
@@ -330,7 +360,7 @@ func Write(dir string, summary Summary) error {
 func Markdown(s Summary) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Voicebench %s\n\n", s.RunID)
-	fmt.Fprintf(&b, "System: `%s`  \nK: %d  \nSchema: %d  \nBenchmark: `%s`  \nMethodology: `%s`\n\n", s.System, s.K, s.SchemaVersion, s.BenchmarkVersion, s.MethodologyVersion)
+	fmt.Fprintf(&b, "System: `%s`  \nKind: `%s`  \nK: %d  \nSchema: %d  \nBenchmark: `%s`  \nMethodology: `%s`\n\n", s.System, s.kind(), s.K, s.SchemaVersion, s.BenchmarkVersion, s.MethodologyVersion)
 	b.WriteString("## Methodology\n\n")
 	b.WriteString("Voicebench evaluates live voice agents through scripted calls against a seeded scenario backend. Trials are pass, fail, or invalid; evaluator failures are invalid and never count as agent failures. Reliability is computed per scenario. pass@k means at least one of the requested valid trials passed, pass^k means every requested trial passed, and neither is awarded when the requested trial set is incomplete. Latency is reported separately unless it affects interruption/selectivity gates. Targets are Voicebench acceptance thresholds, not universal industry standards or state-of-the-art claims.\n\n")
 	b.WriteString("## Scorecard\n\n")
@@ -343,9 +373,20 @@ func Markdown(s Summary) string {
 	if len(failures) == 0 {
 		b.WriteString("No hard-gate failures.\n")
 	} else {
-		b.WriteString("| Gate | Count |\n| --- | ---: |\n")
+		b.WriteString("| Gate | Failure | Count |\n| --- | --- | ---: |\n")
 		for _, f := range failures {
-			fmt.Fprintf(&b, "| %s | %d |\n", f.Name, f.Count)
+			fmt.Fprintf(&b, "| %s | %s | %d |\n", f.Gate, f.Name, f.Count)
+		}
+	}
+	details := trialFailures(s.Calls)
+	if len(details) > 0 {
+		b.WriteString("\n## Failed trials\n\n")
+		for _, d := range details {
+			fmt.Fprintf(&b, "### %s trial %d\n\n", d.ScenarioID, d.Trial)
+			for _, line := range d.Lines {
+				fmt.Fprintf(&b, "- %s\n", line)
+			}
+			b.WriteString("\n")
 		}
 	}
 	warnings := runWarnings(s)
@@ -362,9 +403,9 @@ func Markdown(s Summary) string {
 		fmt.Fprintf(&b, "| %s | %d ms (n=%d) | %d ms | %d ms (n=%d) | %d | %d | %.2f |\n", p.Pack, p.V2VP50, p.V2VSamples, p.V2VP95, p.NonToolP50, p.NonToolSamples, p.Spikes, p.DroppedTurns, p.Cutoff)
 	}
 	b.WriteString("\n## Operations\n\n")
-	b.WriteString("| Pack | Call duration P50 | Tool count / call | Tool errors | Tool wait P50 |\n| --- | ---: | ---: | ---: | ---: |\n")
+	b.WriteString("| Pack | Call duration P50 | Tool count / call | Tool errors | Tool wait P50 | Caller turns P50 | Agent turns P50 |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 	for _, p := range s.Packs {
-		fmt.Fprintf(&b, "| %s | %d ms | %.2f | %d | %d ms |\n", p.Pack, p.CallDurationP50, p.ToolCountPerCall, p.ToolErrors, p.ToolWaitP50)
+		fmt.Fprintf(&b, "| %s | %d ms | %.2f | %d | %d ms | %d | %d |\n", p.Pack, p.CallDurationP50, p.ToolCountPerCall, p.ToolErrors, p.ToolWaitP50, p.CallerTurnsP50, p.AgentTurnsP50)
 	}
 	b.WriteString("\n## Pass@k / pass^k\n\n")
 	b.WriteString("| Pack | Scenario | Category | complete | pass@k | pass^k | passed/valid | pass rate (95% CI) | invalid |\n| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: |\n")
@@ -381,6 +422,13 @@ func Markdown(s Summary) string {
 	b.WriteString("\nP50s are pooled over every measured turn in the pack, not a median of per-call medians; n is that sample count. Turns dropped are scripted turns with no usable reply gap, listed per call in `metrics.json` under `dropped_turns`.\n")
 	b.WriteString("\nHard gates are end-state AND successful expected tools/arguments AND policy AND entity fidelity AND tool order AND say-do AND filler AND barge-in stop AND hold/selectivity. Required evaluator failures make a trial invalid rather than failed. V2V latency and spikes are reported, not gated. Human-band % uses non-tool turns only.\n")
 	return b.String()
+}
+
+func (s Summary) kind() string {
+	if s.Kind != "" {
+		return s.Kind
+	}
+	return KindAgent
 }
 
 // InvalidTrials counts trials that produced no verdict.
@@ -430,32 +478,127 @@ func callWarnings(calls []CallResult) []string {
 }
 
 type failureCount struct {
+	Gate  string
 	Name  string
 	Count int
 }
 
 func failureSummary(calls []CallResult) []failureCount {
-	counts := map[string]int{}
+	counts := map[string]failureCount{}
 	for _, c := range calls {
-		for _, note := range c.Metrics.GateNotes {
-			if note != "" {
-				counts[note]++
-			}
-		}
 		if callOutcome(c) == OutcomeInvalid {
-			counts["evaluator_invalid"]++
+			key := "evaluator_invalid|"
+			counts[key] = failureCount{Gate: "evaluator_invalid", Name: strings.Join(c.InvalidReason, "; "), Count: counts[key].Count + 1}
+			continue
+		}
+		for _, detail := range gateDetails(c.Metrics) {
+			if detail.Cascade {
+				continue
+			}
+			key := detail.Gate + "|" + detail.Message
+			item := counts[key]
+			item.Gate = detail.Gate
+			item.Name = detail.Message
+			item.Count++
+			counts[key] = item
 		}
 	}
-	names := make([]string, 0, len(counts))
-	for name := range counts {
-		names = append(names, name)
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
 	}
-	sort.Strings(names)
-	out := make([]failureCount, 0, len(names))
-	for _, name := range names {
-		out = append(out, failureCount{Name: name, Count: counts[name]})
+	sort.Strings(keys)
+	out := make([]failureCount, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, counts[key])
 	}
 	return out
+}
+
+type trialFailure struct {
+	ScenarioID string
+	Trial      int
+	Lines      []string
+}
+
+func trialFailures(calls []CallResult) []trialFailure {
+	var out []trialFailure
+	for _, c := range calls {
+		if callOutcome(c) != OutcomeFail {
+			continue
+		}
+		var lines []string
+		for _, detail := range gateDetails(c.Metrics) {
+			if detail.Cascade {
+				lines = append(lines, fmt.Sprintf("%s (cascade): %s", detail.Gate, detail.Message))
+				continue
+			}
+			lines = append(lines, detail.Gate+": "+detail.Message)
+		}
+		if c.Error != "" {
+			lines = append(lines, "target: "+c.Error)
+		}
+		if len(lines) == 0 {
+			continue
+		}
+		out = append(out, trialFailure{ScenarioID: c.ScenarioID, Trial: c.Trial, Lines: lines})
+	}
+	return out
+}
+
+type gateDetail struct {
+	Gate    string
+	Message string
+	Cascade bool
+}
+
+func gateDetails(m score.Metrics) []gateDetail {
+	var out []gateDetail
+	add := func(gate string, items []string) {
+		rootSeen := false
+		for _, item := range items {
+			cascade := gate == "expected_tools" && rootSeen && isCascadeToolFail(item)
+			out = append(out, gateDetail{Gate: gate, Message: item, Cascade: cascade})
+			if !cascade {
+				rootSeen = true
+			}
+		}
+	}
+	add("end_state", m.EndStateFail)
+	add("expected_tools", m.ExpectedToolFail)
+	add("policy", m.PolicyFail)
+	add("entity_tools", m.EntityToolFail)
+	add("entity_speech", m.EntitySpeechFail)
+	add("tool_order", m.ToolOrderFail)
+	add("say_do", m.SayDoFail)
+	add("filler", m.FillerFail)
+	if m.BargeInStopMS > score.MaxBargeInStopMS {
+		add("barge_in", []string{fmt.Sprintf("stop %d ms exceeds %d ms", m.BargeInStopMS, score.MaxBargeInStopMS)})
+	} else if containsNote(m.GateNotes, "barge_in") {
+		add("barge_in", []string{"barge-in stop was not measured"})
+	}
+	if containsNote(m.GateNotes, "selectivity") {
+		add("selectivity", []string{"agent started a turn on non-directed overlap"})
+	}
+	if containsNote(m.GateNotes, "hold") {
+		add("hold", []string{"agent did not continue through mid-speech overlap"})
+	}
+	return out
+}
+
+func containsNote(notes []string, gate string) bool {
+	for _, note := range notes {
+		if note == gate {
+			return true
+		}
+	}
+	return false
+}
+
+func isCascadeToolFail(item string) bool {
+	return strings.HasSuffix(item, " not called") ||
+		strings.Contains(item, "identity not verified") ||
+		strings.Contains(item, " not available")
 }
 
 func artifactLinks(c CallResult) string {
@@ -470,6 +613,7 @@ func artifactLinks(c CallResult) string {
 	}{
 		{name: "audio", file: "mixed.wav"},
 		{name: "transcript", file: "transcript.json"},
+		{name: "heard", file: "heard.json"},
 		{name: "judge", file: "judge.json"},
 		{name: "tools", file: "tools.json"},
 		{name: "state", file: "state.json"},

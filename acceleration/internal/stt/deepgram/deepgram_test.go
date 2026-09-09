@@ -41,6 +41,61 @@ func (s *DeepgramSuite) drain(provider *STT) []stt.Event {
 	}
 }
 
+// newPrerecorded returns a batch transcriber that is never called, so the query it builds
+// can be read without touching the network.
+func (s *DeepgramSuite) newPrerecorded(options PrerecordedOptions) *Prerecorded {
+	if options.APIKey == "" {
+		options.APIKey = "test-key"
+	}
+	transcriber, err := NewPrerecorded(options)
+	s.Require().NoError(err)
+	return transcriber
+}
+
+func (s *DeepgramSuite) TestTheBatchQueryAsksToMaskProfanity() {
+	query := s.newPrerecorded(PrerecordedOptions{}).query(stt.Recording{
+		URL:             "https://example.test/call.wav",
+		ProfanityFilter: true,
+	})
+
+	s.Equal("true", query.Get("profanity_filter"))
+}
+
+func (s *DeepgramSuite) TestTheBatchQueryAsksToKeepFillerWords() {
+	query := s.newPrerecorded(PrerecordedOptions{}).query(stt.Recording{
+		URL:         "https://example.test/call.wav",
+		FillerWords: true,
+	})
+
+	s.Equal("true", query.Get("filler_words"),
+		"nova strips uh and um unless told otherwise, so verbatim is asked for")
+}
+
+func (s *DeepgramSuite) TestTheBatchQuerySaysNothingAboutWhatWasNotAsked() {
+	query := s.newPrerecorded(PrerecordedOptions{}).query(stt.Recording{
+		URL: "https://example.test/call.wav",
+	})
+
+	s.Empty(query.Get("profanity_filter"))
+	s.Empty(query.Get("filler_words"))
+	s.Empty(query.Get("mip_opt_out"))
+}
+
+func (s *DeepgramSuite) TestTheBatchQueryOptsOutOfModelImprovement() {
+	query := s.newPrerecorded(PrerecordedOptions{MipOptOut: true}).query(stt.Recording{
+		URL: "https://example.test/call.wav",
+	})
+
+	s.Equal("true", query.Get("mip_opt_out"),
+		"this is what makes the no-training declaration in router.yaml true")
+}
+
+func (s *DeepgramSuite) TestFluxOptsOutOfModelImprovement() {
+	// Flux takes it as a connection parameter rather than a query string, so the only
+	// place it can be read before connecting is the options the session was built with.
+	s.True(s.newSTT(Options{MipOptOut: true}).options.MipOptOut)
+}
+
 func (s *DeepgramSuite) TestNewRequiresAPIKey() {
 	s.T().Setenv("DEEPGRAM_API_KEY", "")
 

@@ -102,8 +102,8 @@ def resolve(name: str, start: Path | None = None) -> Path:
     """Find the agent directory called `name`.
 
     `name` may itself be a path. Otherwise this walks up from `start` (the current
-    working directory by default) looking for `examples/agents/{name}`, `agents/{name}`,
-    or a directory of that name.
+    working directory by default) looking for it under `examples/`, then for
+    `agents/{name}`, then for a directory of that name.
     """
     given = Path(name)
     if given.is_dir() and _looks_like_agent(given):
@@ -114,8 +114,10 @@ def resolve(name: str, start: Path | None = None) -> Path:
         return here
 
     while True:
+        # Every kind of example is looked under rather than only examples/agents, since
+        # which folder an agent was filed in says nothing about how it is loaded.
         for candidate in (
-            here / "examples" / "agents" / name,
+            *sorted((here / "examples").glob("*/" + name)),
             here / "agents" / name,
             here / name,
         ):
@@ -126,7 +128,8 @@ def resolve(name: str, start: Path | None = None) -> Path:
         here = here.parent
 
     raise FileNotFoundError(
-        f"no agent directory called {name!r}; expected examples/agents/{name}"
+        f"no agent directory called {name!r}; expected examples/agents/{name} or a "
+        f"sibling of it"
     )
 
 

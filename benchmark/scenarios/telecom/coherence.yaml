@@ -58,7 +58,7 @@ expected_tools:
   - name: walk_reboot
     args: {}
   - name: create_ticket
-    args: {reason: "no-service", address: "14 Cedar Lane"}
+    args: {address: "14 Cedar Lane"}
   - name: dispatch_tech
     args: {window: "am"}
 tool_order:

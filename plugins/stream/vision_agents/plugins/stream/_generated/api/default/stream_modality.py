@@ -70,13 +70,24 @@ def sync_detailed(
     offered a piece at a time: a caller running its own pipeline sends audio or text and gets
     transcripts, audio or completions back, and the request is failed over and billed exactly as it
     would be inside a session.
-    Every socket opens with a `start` frame naming the target and the cost tags. Speech-to-text then
-    takes binary 16 kHz mono PCM and returns `transcript` frames. Text-to-speech takes `speak` frames
-    and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a
-    little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes,
-    followed by PCM16 samples. Completions take `respond` frames and return `delta` and `complete`. All
-    three report failures as `error` frames and end with `closed`.
-    Memory and phone are recorded rather than routed, so they are not served here.
+    Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
+    take the options from, or the options outright; naming both overrides that config field by field.
+    What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
+    for a voice, `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a
+    conversation and `tags` to bill it.
+    Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
+    audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
+    header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16
+    samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
+    for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
+    `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
+    tokens and how long the caller waited for the first of them. An `interrupt` frame naming
+    `response_ids` abandons responses still being generated, which still settle and are still billed for
+    what they produced before being cut off. All three report failures as `error` frames and end with
+    `closed`.
+    Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
+    open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
     Args:
         modality (Modality): What kind of work was done. The first four are routed across
@@ -115,13 +126,24 @@ def sync(
     offered a piece at a time: a caller running its own pipeline sends audio or text and gets
     transcripts, audio or completions back, and the request is failed over and billed exactly as it
     would be inside a session.
-    Every socket opens with a `start` frame naming the target and the cost tags. Speech-to-text then
-    takes binary 16 kHz mono PCM and returns `transcript` frames. Text-to-speech takes `speak` frames
-    and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a
-    little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes,
-    followed by PCM16 samples. Completions take `respond` frames and return `delta` and `complete`. All
-    three report failures as `error` frames and end with `closed`.
-    Memory and phone are recorded rather than routed, so they are not served here.
+    Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
+    take the options from, or the options outright; naming both overrides that config field by field.
+    What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
+    for a voice, `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a
+    conversation and `tags` to bill it.
+    Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
+    audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
+    header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16
+    samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
+    for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
+    `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
+    tokens and how long the caller waited for the first of them. An `interrupt` frame naming
+    `response_ids` abandons responses still being generated, which still settle and are still billed for
+    what they produced before being cut off. All three report failures as `error` frames and end with
+    `closed`.
+    Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
+    open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
     Args:
         modality (Modality): What kind of work was done. The first four are routed across
@@ -155,13 +177,24 @@ async def asyncio_detailed(
     offered a piece at a time: a caller running its own pipeline sends audio or text and gets
     transcripts, audio or completions back, and the request is failed over and billed exactly as it
     would be inside a session.
-    Every socket opens with a `start` frame naming the target and the cost tags. Speech-to-text then
-    takes binary 16 kHz mono PCM and returns `transcript` frames. Text-to-speech takes `speak` frames
-    and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a
-    little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes,
-    followed by PCM16 samples. Completions take `respond` frames and return `delta` and `complete`. All
-    three report failures as `error` frames and end with `closed`.
-    Memory and phone are recorded rather than routed, so they are not served here.
+    Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
+    take the options from, or the options outright; naming both overrides that config field by field.
+    What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
+    for a voice, `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a
+    conversation and `tags` to bill it.
+    Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
+    audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
+    header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16
+    samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
+    for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
+    `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
+    tokens and how long the caller waited for the first of them. An `interrupt` frame naming
+    `response_ids` abandons responses still being generated, which still settle and are still billed for
+    what they produced before being cut off. All three report failures as `error` frames and end with
+    `closed`.
+    Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
+    open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
     Args:
         modality (Modality): What kind of work was done. The first four are routed across
@@ -198,13 +231,24 @@ async def asyncio(
     offered a piece at a time: a caller running its own pipeline sends audio or text and gets
     transcripts, audio or completions back, and the request is failed over and billed exactly as it
     would be inside a session.
-    Every socket opens with a `start` frame naming the target and the cost tags. Speech-to-text then
-    takes binary 16 kHz mono PCM and returns `transcript` frames. Text-to-speech takes `speak` frames
-    and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a
-    little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes,
-    followed by PCM16 samples. Completions take `respond` frames and return `delta` and `complete`. All
-    three report failures as `error` frames and end with `closed`.
-    Memory and phone are recorded rather than routed, so they are not served here.
+    Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
+    take the options from, or the options outright; naming both overrides that config field by field.
+    What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
+    for a voice, `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a
+    conversation and `tags` to bill it.
+    Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
+    audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
+    header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16
+    samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
+    for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
+    `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
+    tokens and how long the caller waited for the first of them. An `interrupt` frame naming
+    `response_ids` abandons responses still being generated, which still settle and are still billed for
+    what they produced before being cut off. All three report failures as `error` frames and end with
+    `closed`.
+    Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
+    open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
     Args:
         modality (Modality): What kind of work was done. The first four are routed across

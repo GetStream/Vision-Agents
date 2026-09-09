@@ -35,7 +35,7 @@ jobs:
 
       - name: Extract package version (hatch via uv)
         id: get_version
-        working-directory: agents-core
+        working-directory: sdks/python
         run: |
           VERSION=$(uvx -q hatch version)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

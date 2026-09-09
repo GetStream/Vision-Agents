@@ -7,7 +7,7 @@ max_duration_s: 180
 instructions: Book a patio table for 4 on Saturday at 7:30 with a high chair and a peanut allergy.
 turns:
   - id: intro
-    text: "Hi, I'd like to book a table for four this Saturday at 7:30, patio if you have it, a high chair, and one of us has a peanut allergy."
+    text: "Hi, I'd like to book a table for four this Saturday at 7:30 patio if you have it, a high chair, and one of us has a peanut allergy."
     trigger:
       kind: after_agent_turn
       delay_ms: 400

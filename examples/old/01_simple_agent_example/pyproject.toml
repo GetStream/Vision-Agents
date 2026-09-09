@@ -35,4 +35,4 @@ dependencies = [
 "vision-agents-plugins-cartesia" = {path = "../../../plugins/cartesia", editable=true}
 "vision-agents-plugins-gemini" = {path = "../../../plugins/gemini", editable=true}
 "vision-agents-plugins-vogent" = {path = "../../../plugins/vogent", editable=true}
-"vision-agents" = {path = "../../../agents-core", editable=true}
+"vision-agents" = {path = "../../../sdks/python", editable=true}

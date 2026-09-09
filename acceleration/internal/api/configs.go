@@ -256,6 +256,9 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if len(keytermsOf(request.Keyterms)) > stt.MaxKeyterms {
 		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false
 	}
+	if _, ok := sandboxOf(request.Sandbox); !ok {
+		return fmt.Sprintf("there is no sandbox provider called %q", *request.Sandbox), false
+	}
 	return "", true
 }
 
@@ -271,6 +274,19 @@ func modeOf(mode *AgentMode) (string, bool) {
 		return string(*mode), true
 	}
 	return "", false
+}
+
+// sandboxOf reads the sandbox a caller sent, which is optional. An unknown one is refused
+// rather than dropped, since a config that quietly runs no code is hard to tell from one
+// whose subagent simply chose not to.
+func sandboxOf(box *Sandbox) (string, bool) {
+	if box == nil || *box == "" {
+		return "", true
+	}
+	if !box.Valid() {
+		return "", false
+	}
+	return string(*box), true
 }
 
 // keytermsOf reads the terms a caller sent, which are optional and may be blank.
@@ -303,6 +319,7 @@ func skillComplaint(request SkillRequest) (string, bool) {
 // rather than the body, the same way a session's does.
 func storedConfig(request AgentConfigRequest, customerID string) store.AgentConfig {
 	mode, _ := modeOf(request.Mode)
+	box, _ := sandboxOf(request.Sandbox)
 	config := store.AgentConfig{
 		CustomerID:         customerID,
 		Name:               strings.TrimSpace(request.Name),
@@ -316,6 +333,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Instructions:       value(request.Instructions),
 		Greeting:           value(request.Greeting),
 		KnowledgeNamespace: value(request.KnowledgeNamespace),
+		Sandbox:            box,
 	}
 	if request.Skills != nil {
 		config.Skills = *request.Skills
@@ -361,6 +379,10 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.Instructions = optional(config.Instructions)
 	rendered.Greeting = optional(config.Greeting)
 	rendered.KnowledgeNamespace = optional(config.KnowledgeNamespace)
+	if config.Sandbox != "" {
+		box := Sandbox(config.Sandbox)
+		rendered.Sandbox = &box
+	}
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills

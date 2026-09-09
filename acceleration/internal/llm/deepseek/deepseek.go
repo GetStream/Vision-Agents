@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 )
 
@@ -32,6 +33,9 @@ const modelOwner = "deepseek-ai/"
 
 // defaultModel is used when the caller names no model.
 const defaultModel = "DeepSeek-V4-Flash-0731"
+
+// efforts are what the chat template accepts once thinking is on.
+var efforts = []string{"low", "medium", "high"}
 
 // Options configures the provider.
 type Options struct {
@@ -66,22 +70,29 @@ func New(options Options) (*openaicompat.LLM, error) {
 		options.BaseURL = defaultBaseURL
 	}
 
-	// The chat template decides whether the model thinks, so the switch travels as a
-	// template argument rather than as a standard request field.
-	templateArgs := map[string]any{"thinking": options.Thinking}
-	if options.Thinking && options.ReasoningEffort != "" {
-		templateArgs["reasoning_effort"] = options.ReasoningEffort
+	model := llm.Capabilities{StreamsReasoning: options.Thinking}
+	if options.Thinking {
+		model.ReasoningEfforts = efforts
+		model.DefaultEffort = options.ReasoningEffort
 	}
 
 	return openaicompat.New(openaicompat.Options{
-		Provider:   ProviderName,
-		Model:      upstreamModel(options.Model),
-		StatsModel: options.Model,
-		APIKey:     options.APIKey,
-		BaseURL:    options.BaseURL,
-		Reasoning:  options.Thinking,
-		ExtraBody:  map[string]any{"chat_template_kwargs": templateArgs},
-		Logger:     options.Logger,
+		Provider:     ProviderName,
+		Model:        upstreamModel(options.Model),
+		StatsModel:   options.Model,
+		APIKey:       options.APIKey,
+		BaseURL:      options.BaseURL,
+		Capabilities: model,
+		// The chat template decides whether the model thinks, so the switch travels as a
+		// template argument rather than as a standard request field.
+		RequestFields: func(_ llm.ResponseParams, effort string) map[string]any {
+			args := map[string]any{"thinking": options.Thinking}
+			if effort != "" {
+				args["reasoning_effort"] = effort
+			}
+			return map[string]any{"chat_template_kwargs": args}
+		},
+		Logger: options.Logger,
 	})
 }
 

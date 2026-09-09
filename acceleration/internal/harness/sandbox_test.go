@@ -94,7 +94,7 @@ func (s *HarnessSuite) TestCodeTheSubagentWroteRunsAndItsOutputIsAnsweredWith() 
 	s.Require().Len(s.slow.requests(), 2, "the task was put again with what the code said")
 	asked := s.slow.requests()[1]
 	s.Equal(s.slow.requests()[0].ID, asked.ID, "and it is still the same task")
-	last := asked.Messages[len(asked.Messages)-1]
+	last := asked.Input[len(asked.Input)-1]
 	s.Equal(llm.ToolResult, last.Role)
 	s.Equal("call-1", last.ToolCallID)
 	s.Equal("12.63\n", last.Content)
@@ -113,7 +113,7 @@ func (s *HarnessSuite) TestCodeThatCouldNotBeRunIsDescribedRatherThanHidden() {
 
 	s.awaitSettled(1)
 	s.Require().Len(s.slow.requests(), 2)
-	last := s.slow.requests()[1].Messages[len(s.slow.requests()[1].Messages)-1]
+	last := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1]
 	s.Contains(last.Content, errNoSandbox.Error())
 }
 
@@ -128,7 +128,7 @@ func (s *HarnessSuite) TestCodeThatExitedBadlySaysSo() {
 
 	s.awaitSettled(1)
 	s.Require().Len(s.slow.requests(), 2)
-	last := s.slow.requests()[1].Messages[len(s.slow.requests()[1].Messages)-1]
+	last := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1]
 	s.Contains(last.Content, "exited with 1")
 	s.Contains(last.Content, "NameError: total")
 }

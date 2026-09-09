@@ -10,6 +10,7 @@ import (
 	"log/slog"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -23,10 +24,14 @@ type Registry = routing.Registry[tts.TTS]
 type Options struct {
 	Config   routing.ModalityConfig
 	Registry *Registry
-	Store    *store.Store
-	Live     *live.Client
-	Voices   routing.VoiceResolver
-	Logger   *slog.Logger
+	// Recorders is the batch half, for NewRecordings. The two registries are separate
+	// because a streaming voice and a voice that returns a file are different endpoints
+	// at the same vendor.
+	Recorders *Recorders
+	Store     *store.Store
+	Live      *live.Client
+	Voices    routing.VoiceResolver
+	Logger    *slog.Logger
 }
 
 // Request is what a caller wants said.
@@ -46,6 +51,10 @@ type Request struct {
 	// Voice selects the speaker. Its meaning is the provider's, since a voice id is not
 	// portable between them.
 	Voice string
+	// Options is the rest of what the caller asked for: a speed, an emotion, an output
+	// format. A term named here narrows the candidates to the voices that declared it, so
+	// it is either honoured or the request is refused.
+	Options options.TTS
 }
 
 // Router selects a text-to-speech provider and opens synthesis sessions.
@@ -81,6 +90,8 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		Target:        request.Target,
 		LanguageHints: request.LanguageHints,
 		Voice:         request.Voice,
+		Terms:         request.Options.Terms(),
+		TTS:           request.Options,
 	}
 	provider, config, err := r.Select(ctx, core)
 	if err != nil {

@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
@@ -30,67 +29,52 @@ func (s *OpenAIIntegrationSuite) SetupSuite() {
 	}
 }
 
-func (s *OpenAIIntegrationSuite) start(options Options) *openaicompat.LLM {
+func (s *OpenAIIntegrationSuite) start(options Options) *LLM {
 	provider, err := New(options)
 	s.Require().NoError(err)
-
-	s.Require().NoError(provider.Start(context.Background()))
 	s.T().Cleanup(func() { provider.Close() })
 	return provider
 }
 
-// collect reads events until the completion settles, failing fast on a provider error.
-func (s *OpenAIIntegrationSuite) collect(provider *openaicompat.LLM) (
-	llm.CompletionComplete, []llm.Event,
-) {
-	var events []llm.Event
-	deadline := time.After(90 * time.Second)
+// ask runs one request to the end. A provider failure ends the stream, so a rejected request reports what went wrong rather than timing out.
+func (s *OpenAIIntegrationSuite) ask(provider *LLM, params llm.ResponseParams) (llm.Response, []llm.Event) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
 
-	for {
-		select {
-		case event, open := <-provider.Events():
-			if !open {
-				s.FailNow("the provider closed before the completion settled")
-				return llm.CompletionComplete{}, events
-			}
-			events = append(events, event)
-			if failure, failed := event.(llm.Error); failed {
-				s.FailNowf("provider error", "%v", failure.Err)
-			}
-			if complete, done := event.(llm.CompletionComplete); done {
-				return complete, events
-			}
-		case <-deadline:
-			s.FailNow("timed out waiting for a completion")
-			return llm.CompletionComplete{}, events
-		}
+	stream, err := provider.Create(ctx, params)
+	s.Require().NoError(err)
+	defer stream.Close()
+
+	var events []llm.Event
+	for stream.Next() {
+		events = append(events, stream.Current())
 	}
+	s.Require().NoError(stream.Err())
+	return stream.Response(), events
 }
 
 func (s *OpenAIIntegrationSuite) TestAnswersAndReportsWhatItCost() {
 	provider := s.start(Options{})
 
-	s.Require().NoError(provider.Respond(llm.Request{
+	complete, events := s.ask(provider, llm.ResponseParams{
 		ID:           "c1",
 		Instructions: "Answer with a single word and no punctuation.",
-		Messages: []llm.Message{
+		Input: []llm.Message{
 			{Role: llm.User, Content: "What is the capital of France?"},
 		},
-		MaxTokens: 32,
-	}))
+		MaxOutputTokens: 32,
+	})
 
-	complete, events := s.collect(provider)
-
-	s.Contains(strings.ToLower(complete.Text), "paris")
-	s.Equal("c1", complete.CompletionID)
-	s.Positive(complete.InputTokens)
-	s.Positive(complete.OutputTokens)
+	s.Contains(strings.ToLower(complete.OutputText), "paris")
+	s.Equal("c1", complete.ID)
+	s.Positive(complete.Usage.InputTokens)
+	s.Positive(complete.Usage.OutputTokens)
 	s.Positive(complete.TimeToFirstTokenMs)
-	s.Equal("stop", complete.FinishReason)
+	s.Equal(llm.StatusCompleted, complete.Status)
 
 	var deltas int
 	for _, event := range events {
-		if _, ok := event.(llm.TextDelta); ok {
+		if _, ok := event.(llm.OutputTextDelta); ok {
 			deltas++
 		}
 	}
@@ -100,31 +84,28 @@ func (s *OpenAIIntegrationSuite) TestAnswersAndReportsWhatItCost() {
 func (s *OpenAIIntegrationSuite) TestConversationHistoryIsHonoured() {
 	provider := s.start(Options{})
 
-	s.Require().NoError(provider.Respond(llm.Request{
+	complete, _ := s.ask(provider, llm.ResponseParams{
 		Instructions: "Answer with a single number and nothing else.",
-		Messages: []llm.Message{
+		Input: []llm.Message{
 			{Role: llm.User, Content: "My favourite number is 7. Remember it."},
 			{Role: llm.Assistant, Content: "Noted."},
 			{Role: llm.User, Content: "What is my favourite number?"},
 		},
-		MaxTokens: 32,
-	}))
+		MaxOutputTokens: 32,
+	})
 
-	complete, _ := s.collect(provider)
-
-	s.Contains(complete.Text, "7", "the whole conversation travels with the request")
+	s.Contains(complete.OutputText, "7", "the whole conversation travels with the request")
 }
 
 func (s *OpenAIIntegrationSuite) TestATruncatedAnswerSaysWhyItStopped() {
 	provider := s.start(Options{})
 
-	s.Require().NoError(provider.Respond(llm.Request{
-		Messages:  []llm.Message{{Role: llm.User, Content: "Write a long essay about the sea."}},
-		MaxTokens: 16,
-	}))
+	complete, _ := s.ask(provider, llm.ResponseParams{
+		Input:           []llm.Message{{Role: llm.User, Content: "Write a long essay about the sea."}},
+		MaxOutputTokens: 16,
+	})
 
-	complete, _ := s.collect(provider)
-
-	s.Equal("length", complete.FinishReason)
-	s.NotEmpty(complete.Text)
+	s.Equal(llm.StatusIncomplete, complete.Status)
+	s.Equal(llm.ReasonMaxOutputTokens, complete.IncompleteReason)
+	s.NotEmpty(complete.OutputText)
 }

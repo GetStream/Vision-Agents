@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -31,52 +32,56 @@ type answer struct {
 // agentModel is the model inside the agent being tested. It answers what the test queued,
 // which is how a turn that arrives in several pieces is arranged.
 type agentModel struct {
-	emitter *llm.Emitter
-
 	mu      sync.Mutex
 	answers []answer
+	// writing are the replies still being written, so closing the model settles them and
+	// whoever is draining one is let go of.
+	writing []*llmtest.Script
 }
 
 func (m *agentModel) Start(context.Context) error { return nil }
 
-func (m *agentModel) Respond(request llm.Request) error {
+func (m *agentModel) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   m.Provider(),
+		Model:      m.Model(),
+	})
+
 	m.mu.Lock()
 	queued := m.answers
 	m.answers = nil
+	m.writing = append(m.writing, script)
 	m.mu.Unlock()
 
+	// Nothing queued is a reply that never comes, which is a turn the test leaves hanging.
 	if len(queued) == 0 {
-		return nil
+		return script.Stream(), nil
 	}
 	go func() {
-		m.emitter.Send(llm.CompletionStarted{CompletionID: request.ID, At: time.Now()})
-		for i, said := range queued {
+		for _, said := range queued {
 			if said.after > 0 {
 				time.Sleep(said.after)
 			}
-			// Every piece but the last is its own completion under the same turn, which
-			// is what a turn that called a tool and then read its answer looks like.
-			id := request.ID
-			if i < len(queued)-1 {
-				m.emitter.Send(llm.TextDelta{CompletionID: id, Text: said.text})
-				m.emitter.Send(llm.CompletionComplete{CompletionID: id, Text: said.text})
-				continue
-			}
-			m.emitter.Send(llm.TextDelta{CompletionID: id, Text: said.text})
-			m.emitter.Send(llm.CompletionComplete{CompletionID: id, Text: said.text})
+			script.OutputText(said.text)
 		}
+		script.Done()
 	}()
-	return nil
+	return script.Stream(), nil
 }
 
-func (m *agentModel) Interrupt(...string) error { return nil }
-func (m *agentModel) Events() <-chan llm.Event  { return m.emitter.Events() }
-func (m *agentModel) Provider() string          { return "scripted" }
-func (m *agentModel) Model() string             { return "scripted-model" }
-func (m *agentModel) Reasoning() bool           { return false }
+func (m *agentModel) Provider() string               { return "scripted" }
+func (m *agentModel) Model() string                  { return "scripted-model" }
+func (m *agentModel) Capabilities() llm.Capabilities { return llm.Capabilities{} }
 
 func (m *agentModel) Close() error {
-	m.emitter.Close()
+	m.mu.Lock()
+	writing := append([]*llmtest.Script(nil), m.writing...)
+	m.mu.Unlock()
+
+	for _, script := range writing {
+		script.Done()
+	}
 	return nil
 }
 
@@ -158,15 +163,15 @@ func (s *TextSuite) SetupTest() {
 
 	// The agent opens a voice model and a flow controller, in that order, and each needs
 	// its own emitter: two sessions on one channel would each consume the other's events.
-	s.model = &agentModel{emitter: llm.NewEmitter(64)}
+	s.model = &agentModel{}
 	var opened int
 	reasoning := llmrouter.NewRegistry()
-	reasoning.Register("scripted", func(routing.Spec) (llm.LLM, error) {
+	reasoning.Register("scripted", func(routing.Spec) (llmrouter.Provider, error) {
 		defer func() { opened++ }()
 		if opened == 0 {
 			return s.model, nil
 		}
-		return &agentModel{emitter: llm.NewEmitter(64)}, nil
+		return &agentModel{}, nil
 	})
 	reasoner, err := llmrouter.New(llmrouter.Options{
 		Config: scriptedConfig(), Registry: reasoning, Logger: logger,
@@ -217,7 +222,7 @@ func (s *TextSuite) TestATurnIsWaitedForUntilTheAgentHasFinishedHavingItsSay() {
 	held := s.talks("")
 	s.model.says(
 		answer{text: "Let me check that."},
-		answer{text: "Yes, we have it.", after: 150 * time.Millisecond},
+		answer{text: " Yes, we have it.", after: 150 * time.Millisecond},
 	)
 
 	reply, err := held.Say(s.ctx, "Do you have pasta?")

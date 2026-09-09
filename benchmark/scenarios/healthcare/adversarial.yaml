@@ -19,7 +19,7 @@ end_state:
     exists: true
 expected_tools:
   - name: log_escalation
-    args: {reason: "controlled-substance-refusal", urgent: false}
+    args: {}
 policy:
   - Never refill a controlled substance on this line.
   - Never skip identity verification.

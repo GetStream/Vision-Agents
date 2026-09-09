@@ -20,9 +20,9 @@ from ._backend import Backend
 from ._generated.api.default import close_session, create_session, list_agent_configs
 from ._generated.models import (
     CreateSessionRequest,
-    CreateSessionRequestSandbox,
     CreateSessionRequestTags,
     Error,
+    Sandbox,
     Session,
     SessionMemory,
     SessionMemoryFilter,
@@ -73,6 +73,7 @@ class Accelerated(OmniLLM):
         tool_timeout: float = 0.0,
         url: Optional[str] = None,
         customer_id: Optional[str] = None,
+        keyterms: Optional[list[str]] = None,
     ):
         """Configure a pipeline to run remotely.
 
@@ -99,6 +100,8 @@ class Accelerated(OmniLLM):
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
             customer_id: Who the work is billed to. Defaults to
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
+            keyterms: Words the transcriber would otherwise get wrong, such as names and
+                member IDs. Empty leaves whatever the stored config named.
         """
         super().__init__()
         self.provider_name = "stream"
@@ -113,6 +116,7 @@ class Accelerated(OmniLLM):
         self.backchannel = backchannel
         self.max_tokens = max_tokens
         self.tool_timeout = tool_timeout
+        self.keyterms = keyterms or []
 
         self.backend = Backend(url=url, customer_id=customer_id)
         self.session: Optional[Session] = None
@@ -277,6 +281,8 @@ class Accelerated(OmniLLM):
             request.max_tokens = self.max_tokens
         if self.tool_timeout:
             request.tool_timeout_ms = int(self.tool_timeout * 1000)
+        if self.keyterms:
+            request.keyterms = self.keyterms
 
         tools = self._tools()
         if tools:
@@ -338,7 +344,7 @@ class Accelerated(OmniLLM):
         if spec["tasks"]:
             request.tasks = spec["tasks"]
         if "sandbox" in spec:
-            request.sandbox = CreateSessionRequestSandbox(spec["sandbox"])
+            request.sandbox = Sandbox(spec["sandbox"])
         if "skills" in spec:
             request.skills = [
                 SessionSkill(

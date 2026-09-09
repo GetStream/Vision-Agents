@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -22,13 +23,19 @@ const (
 
 // candidate is a stable transcript revision worth asking the flow controller about.
 type candidate struct {
-	ID           string
-	Participant  stt.Participant
+	ID          string
+	Participant stt.Participant
+	// Speaker is the voice the transcriber heard, for the ones that tell voices apart. It
+	// is how a second person at the caller's microphone is told from the caller.
+	Speaker      string
 	Text         string
 	Language     string
 	Confidence   float64
 	STTLatencyMs float64
 	ReadyAt      time.Time
+	// Unfinished says the words are a provisional revision of an utterance still in
+	// progress, put to the controller to decide the floor rather than settled.
+	Unfinished bool
 }
 
 // cadence decides when an evolving transcript has stayed unchanged long enough to act on.
@@ -42,11 +49,17 @@ type cadence struct {
 
 	mu       sync.Mutex
 	speakers map[string]*cadenceSpeaker
-	closed   bool
+	// grace is extra settling time owed to the next turn, whoever says it. It lasts until
+	// a turn has been put rather than until the next revision, so every revision of that
+	// turn is given it and not only the first.
+	grace  time.Duration
+	closed bool
 }
 
 type cadenceSpeaker struct {
 	participant stt.Participant
+	// speaker is the diarised voice the words were last heard in.
+	speaker     string
 	text        string
 	language    string
 	confidence  float64
@@ -111,7 +124,22 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		return "", ""
 	}
 
+	newUtterance := transcript.Utterance != 0 && current.utterance != 0 &&
+		transcript.Utterance != current.utterance
+	if current.text != "" && newUtterance && !revisesTranscript(current.text, text) {
+		// A new utterance that is not a revision of the words in flight, which is how a
+		// transcriber splitting "7:30" into "7:00." and "thirty" arrives. Keep both so
+		// the next answer is about everything the caller said, not only the tail.
+		text = strings.TrimSpace(current.text) + " " + strings.TrimSpace(text)
+	}
+
 	current.participant = transcript.Participant
+	// A transcriber names the voice part way through a turn, so the last word on it is
+	// the one to keep: an early revision that had nothing to say about who was talking
+	// should not erase what a later one worked out.
+	if transcript.Speaker != "" {
+		current.speaker = transcript.Speaker
+	}
 	current.language = transcript.Language
 	current.confidence = transcript.Confidence
 	current.latencyMs = transcript.ProcessingTimeMs
@@ -133,10 +161,16 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.candidateID = ""
 	current.generation++
 	current.revisedAt = time.Now()
-	c.scheduleLocked(current, c.gap)
+	delay := c.gap + c.grace
+	if incompleteIdentifier(text) {
+		// Member IDs, PINs and clock times arrive a digit at a time. Answering
+		// "ABC12345" 350ms before the last 6 is how verify_identity got the wrong id.
+		delay = c.retry
+	}
+	c.scheduleLocked(current, delay)
 	c.logger.Debug("heard more, waiting for the words to stop changing",
 		"participant", transcript.Participant.ID, "mode", transcript.Mode, "text", text,
-		"confidence", transcript.Confidence, "gap", c.gap, "superseded", superseded)
+		"confidence", transcript.Confidence, "gap", delay, "superseded", superseded)
 	return superseded, strings.TrimSpace(text)
 }
 
@@ -160,6 +194,7 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 			current.committedUtterance = current.utterance
 			current.committedAt = time.Now()
 			current.text = ""
+			current.speaker = ""
 			current.language = ""
 			current.confidence = 0
 			current.latencyMs = 0
@@ -173,8 +208,20 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 	return false
 }
 
-// Active reports the most recently heard participant while words are still evolving.
-func (c *cadence) Active() (stt.Participant, bool) {
+// Grace gives the next turn longer than usual to hold still, and is spent on it.
+//
+// What it is for is the turn after somebody was talked over: the line is running late, so
+// the words are still arriving when the usual gap says they have stopped. It is a one-off
+// rather than a setting, because a call is not slow for having had one collision in it.
+func (c *cadence) Grace(extra time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.grace = extra
+}
+
+// Active reports the most recently heard participant while words are still evolving, and
+// when their words last changed.
+func (c *cadence) Active() (stt.Participant, time.Time, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -188,9 +235,9 @@ func (c *cadence) Active() (stt.Participant, bool) {
 		}
 	}
 	if latest == nil {
-		return stt.Participant{}, false
+		return stt.Participant{}, time.Time{}, false
 	}
-	return latest.participant, true
+	return latest.participant, latest.revisedAt, true
 }
 
 func (c *cadence) Ready() <-chan candidate { return c.ready }
@@ -246,9 +293,11 @@ func (c *cadence) emit(participantID string, generation int64) {
 	waited := time.Since(current.revisedAt)
 	current.candidateID = replyPrefix + turnStamp()
 	current.timer = nil
+	c.grace = 0
 	ready := candidate{
 		ID:           current.candidateID,
 		Participant:  current.participant,
+		Speaker:      current.speaker,
 		Text:         strings.TrimSpace(current.text),
 		Language:     current.language,
 		Confidence:   current.confidence,
@@ -287,6 +336,9 @@ func (c *cadence) restating(current *cadenceSpeaker, transcript stt.Transcript, 
 		if transcript.Utterance != current.committedUtterance {
 			return false
 		}
+		if growsTranscript(current.committed, text) {
+			return false
+		}
 		// The words a transcriber settles on need not be the words it streamed: Gemini
 		// writes an order number as "1 2 3" while the caller is talking and "one two
 		// three" when it commits. Asking for the same words back would let one reading of
@@ -303,4 +355,48 @@ func (c *cadence) speakerFor(participant stt.Participant) *cadenceSpeaker {
 		c.speakers[participant.ID] = current
 	}
 	return current
+}
+
+// revisesTranscript reports whether next is the same run of speech as previous, restated
+// or grown, rather than a second utterance that happens to have arrived next.
+func revisesTranscript(previous, next string) bool {
+	prev := words(previous)
+	nxt := words(next)
+	if prev == "" || nxt == "" {
+		return true
+	}
+	return strings.HasPrefix(nxt, prev) || strings.HasPrefix(prev, nxt)
+}
+
+// growsTranscript reports whether next is previous with more words or a longer last token,
+// which is how "ABC12345" becomes "ABC123456" after the agent already answered the short
+// form.
+func growsTranscript(previous, next string) bool {
+	prev := strings.ToLower(words(previous))
+	nxt := strings.ToLower(words(next))
+	return prev != "" && nxt != prev && strings.HasPrefix(nxt, prev)
+}
+
+// incompleteIdentifier reports whether the last token still looks like a PIN, member ID,
+// phone fragment, or clock time that the transcriber may grow.
+func incompleteIdentifier(text string) bool {
+	fields := strings.Fields(words(text))
+	if len(fields) == 0 {
+		return false
+	}
+	last := fields[len(fields)-1]
+	if len(last) < 2 || len(last) > 16 {
+		return false
+	}
+	hasDigit := false
+	for _, symbol := range last {
+		if unicode.IsDigit(symbol) {
+			hasDigit = true
+			continue
+		}
+		if !unicode.IsLetter(symbol) {
+			return false
+		}
+	}
+	return hasDigit
 }

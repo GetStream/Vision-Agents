@@ -123,7 +123,7 @@ func (s *FullAgentIntegrationSuite) TestStreamParakeetFishGemmaAndSolHoldAConver
 		AgentID:        "sprint6-agent",
 		CallID:         s.callID,
 		LLM:            s.llm,
-		LLMTarget:      "gemma/gemma-4-E2B-it",
+		LLMTarget:      "gemma/gemma-4-26B-A4B-it",
 		SubagentTarget: "openai/gpt-5.6-sol",
 		Skills:         skills,
 		STT:            s.stt,

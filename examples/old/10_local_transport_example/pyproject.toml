@@ -15,4 +15,4 @@ dependencies = [
 "vision-agents-plugins-deepgram" = { path = "../../../plugins/deepgram", editable = true }
 "vision-agents-plugins-gemini" = { path = "../../../plugins/gemini", editable = true }
 "vision-agents-plugins-local" = { path = "../../../plugins/local", editable = true }
-"vision-agents" = { path = "../../../agents-core", editable = true }
+"vision-agents" = { path = "../../../sdks/python", editable = true }

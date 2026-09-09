@@ -171,9 +171,54 @@ agent = Agent(
 )
 ```
 
-`stream.Router("sonic_36")` asks the backend which kind of model a name is and returns the
+`Router().resolve("sonic_36")` asks the backend which kind of model a name is and returns the
 plugin for it. That costs a request at startup, so naming the modality is better when you
 know it.
+
+## A router config, four modalities
+
+`stream.Router` is the same routing with the options said once. It names a stored router
+config, and every keyword on a call overrides one field of it:
+
+```python
+from vision_agents.plugins.stream import Router, define_router
+
+await define_router(
+    "healthcare",
+    stt={"diarize": True, "keyterms": ["metformin", "sertraline"]},
+    tts={"voice": "dc4e4a1f", "speed": 1.1},
+    search={"include_domains": ["pubmed.ncbi.nlm.nih.gov"]},
+)
+
+router = Router("healthcare")
+
+async with router.stt.realtime() as stt:
+    ...
+
+agent = Agent(edge=getstream.Edge(), agent_user=agent_user, stt=router.stt.realtime())
+```
+
+`realtime()` returns a configured, not-yet-started session: `async with` starts and closes
+it, and handing the same object to an `Agent` lets the agent own its lifecycle instead.
+
+`recording()` is the non-realtime form — a whole source in, a whole result out, served by the
+batch half of a vendor rather than the streaming one, which is both cheaper and more accurate:
+
+```python
+transcript = await router.stt.recording("interview.mp4", diarize=True, words=True)
+print(transcript.text, transcript.speakers)
+
+audiobook = await router.tts.recording(chapter, format="mp3_44100_128")
+hits = await router.search("perioperative antibiotic guidance", results=5)
+```
+
+A recording takes a URL, a path or the bytes, and waits for the job unless you pass a
+`callback`, in which case it returns as soon as the job is accepted.
+
+An option a modality does not have is refused rather than sent and ignored, and so is one no
+provider behind that target can express: a transcript that was quietly not diarized is worse
+than being told. What each provider can express is in the `router-stt`, `router-tts`,
+`router-llm` and `router-search` skills.
 
 ## Regenerating the client
 

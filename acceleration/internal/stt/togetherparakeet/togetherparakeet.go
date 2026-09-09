@@ -6,9 +6,22 @@
 // answering are not, and that is what a provider name records.
 //
 // The wire protocol is the OpenAI realtime one rather than anything of Together's own, so
-// audio goes up base64-encoded inside a JSON frame. What comes back is a delta while the
-// caller is still talking and a completed transcript once they pause. Each delta restates
-// the utterance rather than adding to the last, which is why they are replacements.
+// audio goes up base64-encoded inside a JSON frame. What comes back needs reading with
+// care, because the frame names promise more than the server delivers.
+//
+// The server decodes audio in segments. Within one, each delta restates that segment from
+// its beginning, and a completed frame closes it. Neither is a turn: a completed is the
+// decoder flushing its buffer, which happens wherever the decoder happens to be, and a
+// segment runs on across a caller's silence into whatever they say next. One observed
+// completed read "hear me? Let us meet by the big bould" - the tail of one turn, the whole
+// of the next, and a word cut in half.
+//
+// So this provider assembles turns itself, from two things the server does hold to. The
+// deltas of a segment are cumulative, and a segment that closes mid-word is continued by
+// the next segment's deltas rather than replaced by them. What it cannot get from the
+// server at all is where one turn ends and the next begins; there is no voice activity
+// detection here, no session parameter that asks for it, and the sentence punctuation
+// arrives a flush too late to stand in for it. The boundary is the words stopping.
 package togetherparakeet
 
 import (
@@ -67,6 +80,14 @@ const (
 // full timeout would spend it in full on every hangup.
 const flushGrace = 1500 * time.Millisecond
 
+// defaultTurnGrace is how long the words have to stop arriving for the turn to be over.
+//
+// It is the only turn boundary available, so it is set from what the deltas do rather than
+// from taste. While somebody is talking they arrive at most ~700ms apart, and the sentence
+// punctuation lands ~900ms after the last word. This clears both, and settles a turn about
+// two seconds after it ends.
+const defaultTurnGrace = 1200 * time.Millisecond
+
 // Options configures the provider. APIKey falls back to TOGETHER_API_KEY.
 type Options struct {
 	APIKey string
@@ -77,7 +98,10 @@ type Options struct {
 	// FlushTimeout bounds how long Close waits for the transcript of whatever audio the
 	// server is still holding.
 	FlushTimeout time.Duration
-	Logger       *slog.Logger
+	// TurnGrace is how long the transcript has to stop changing before the turn is
+	// treated as over. Nothing on this protocol says where a turn ends.
+	TurnGrace time.Duration
+	Logger    *slog.Logger
 }
 
 // clientMessage is a frame sent to the server.
@@ -126,9 +150,18 @@ type STT struct {
 	// lastAudioAt is when audio was last sent, so latency can be reported as the delay
 	// between sending audio and hearing about it.
 	lastAudioAt time.Time
-	// hypothesis is the latest delta, kept so Close can tell an utterance the server is
-	// still working on from one it has already settled.
+	// hypothesis is the latest delta with published already taken off it, so it is what
+	// the segment in progress adds to this turn rather than to the one before.
 	hypothesis string
+	// run is the segments the server has settled since this turn began, joined exactly as
+	// it sent them. The deltas of the segment being decoded now go on the end of it.
+	run string
+	// published is the prefix of the segment in progress that went out under the previous
+	// turn. A segment does not restart when a turn does, so without taking this off, the
+	// end of one turn is repeated at the start of the next.
+	published string
+	// turn fires when the words stop arriving, which is the only end of turn there is.
+	turn *time.Timer
 	// utterance counts the runs of speech seen so far, and ended marks that the current
 	// one is over so the next transcript starts a new one.
 	utterance int64
@@ -159,6 +192,9 @@ func New(options Options) (*STT, error) {
 	}
 	if options.FlushTimeout == 0 {
 		options.FlushTimeout = 10 * time.Second
+	}
+	if options.TurnGrace == 0 {
+		options.TurnGrace = defaultTurnGrace
 	}
 	logger := options.Logger
 	if logger == nil {
@@ -251,17 +287,26 @@ func (s *STT) Close() error {
 	}
 	conn := s.conn
 	heard := !s.lastAudioAt.IsZero()
-	// An outstanding delta is the server working on an utterance it has not settled,
-	// which is the tail worth waiting the full timeout for.
+	// An outstanding delta is the server working on a segment it has not settled, and an
+	// unfinished run is a turn it settled only part of. Either is a tail worth waiting the
+	// full timeout for; a call whose last turn is already out is not.
 	patience := s.options.FlushTimeout
-	if s.hypothesis == "" {
+	if s.hypothesis == "" && s.run == "" {
 		patience = min(flushGrace, s.options.FlushTimeout)
 	}
+	turn := s.turn
 	s.mu.Unlock()
 
 	if conn != nil && heard {
 		s.flush(patience)
 	}
+
+	// Hanging up ends the turn whether or not the caller paused long enough for the grace
+	// period to notice, so the last thing they said is not lost to the teardown.
+	if turn != nil {
+		turn.Stop()
+	}
+	s.turnOver()
 
 	s.mu.Lock()
 	s.closed = true
@@ -436,39 +481,91 @@ func (s *STT) handleMessage(message serverMessage) {
 }
 
 // heard reports what the caller seems to be saying, which is worth showing at once: it
-// arrives while they are still talking, well before the utterance is settled.
+// arrives while they are still talking, well before the turn is over.
 //
-// Each delta restates the utterance so far, so it replaces its predecessor rather than
-// adding to it. Appending them would spell the sentence out several times over.
+// A delta restates the segment being decoded, not the turn, so the words to show are the
+// segments settled so far in this turn with this delta on the end. Sending the delta alone
+// is how "can you hear me" reaches the caller as "me".
+//
+// The join is deliberately not trimmed on either side: the server's own spacing is what
+// makes "…for for" and " this." into one sentence, and what keeps "bould" and "er." from
+// becoming two words.
 func (s *STT) heard(text string) {
-	text = strings.TrimSpace(text)
-	if text == "" {
+	s.mu.Lock()
+	s.hypothesis = strings.TrimPrefix(text, s.published)
+	whole := strings.TrimSpace(s.run + s.hypothesis)
+	s.mu.Unlock()
+
+	if whole == "" {
 		return
 	}
 
-	s.mu.Lock()
-	s.hypothesis = text
-	s.mu.Unlock()
-
-	s.sendTranscript(stt.ModeReplacement, text)
+	s.sendTranscript(stt.ModeReplacement, whole)
+	s.expectMore()
 }
 
-// settle reports the utterance the server has committed to, which supersedes the deltas
-// before it.
+// settle folds a segment the server has finished decoding into the turn in progress.
+//
+// A completed frame is the decoder flushing its buffer, not the caller reaching the end of
+// what they were saying. It arrives mid-sentence and even mid-word, so what it settles is
+// reported as a revision of the turn so far rather than as the turn itself. Treating each
+// flush as a turn is what published half a question and then its last word as a second.
 func (s *STT) settle(text string) {
-	text = strings.TrimSpace(text)
-	if text == "" {
+	s.mu.Lock()
+	// The segment is closed, so nothing more of it can be owed to the previous turn.
+	s.run += strings.TrimPrefix(text, s.published)
+	s.published = ""
+	s.hypothesis = ""
+	whole := strings.TrimSpace(s.run)
+	s.mu.Unlock()
+
+	if whole == "" {
 		// Nothing was said in the audio that was committed, but a Close waiting on it has
 		// its answer all the same.
 		s.reachedABoundary()
 		return
 	}
 
+	s.sendTranscript(stt.ModeReplacement, whole)
+	s.expectMore()
+	s.reachedABoundary()
+}
+
+// expectMore restarts the clock on the turn, because a caller who is still producing words
+// has not finished saying them.
+func (s *STT) expectMore() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return
+	}
+	if s.turn == nil {
+		s.turn = time.AfterFunc(s.options.TurnGrace, s.turnOver)
+		return
+	}
+	s.turn.Reset(s.options.TurnGrace)
+}
+
+// turnOver publishes what the caller said and starts a new turn.
+//
+// The segment being decoded does not end here - the server knows nothing about turns and
+// carries it on into whatever is said next - so what has gone out under this turn is
+// remembered as published, to be taken off the deltas that follow. Without that, a turn
+// begins with the end of the one before it.
+func (s *STT) turnOver() {
+	s.mu.Lock()
+	whole := strings.TrimSpace(s.run + s.hypothesis)
+	s.published += s.hypothesis
+	s.run = ""
 	s.hypothesis = ""
 	s.mu.Unlock()
 
-	s.sendTranscript(stt.ModeFinal, text)
+	if whole == "" {
+		return
+	}
+
+	s.sendTranscript(stt.ModeFinal, whole)
 	s.endUtterance()
 	s.reachedABoundary()
 }

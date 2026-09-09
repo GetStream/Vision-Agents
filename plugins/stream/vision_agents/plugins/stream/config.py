@@ -2,11 +2,12 @@ import asyncio
 import logging
 from typing import Optional, TypeVar, Union
 
-from vision_agents.core.harness import Skill
+from vision_agents.core.harness import Sandbox, Skill
 
 from ._backend import Backend
 from ._generated import AuthenticatedClient
 from ._generated.api.default import (
+    add_knowledge_url as add_knowledge_url_request,
     create_agent_config,
     create_skill,
     list_agent_configs,
@@ -20,10 +21,13 @@ from ._generated.models import (
     AgentConfigRequest,
     Error,
     KnowledgeDocument,
+    KnowledgeUrl,
+    KnowledgeUrlRequest,
     SkillRequest,
     SyncAgentRequest,
     SyncAgentResult,
 )
+from ._generated.models import Sandbox as SandboxProvider
 from .folder import Folder, load, resolve
 
 logger = logging.getLogger(__name__)
@@ -99,6 +103,7 @@ async def define_agent(
     greeting: str = "",
     skills: Optional[list[Skill]] = None,
     knowledge: str = "",
+    vm: Optional[Union[Sandbox, type[Sandbox]]] = None,
     url: Optional[str] = None,
     customer_id: Optional[str] = None,
 ) -> AgentConfig:
@@ -124,6 +129,10 @@ async def define_agent(
         skills: What the model may hand work to. A skill named here replaces a built-in
             of the same name.
         knowledge: The knowledge base the agent may look things up in.
+        vm: Where the subagent may run code it writes, as a `Sandbox` or the class itself,
+            so `vm=Daytona` reads the way it is meant to. Deciding it here rather than per
+            session is the point: which sandbox an agent is allowed is a property of the
+            agent. Without one the subagent works everything out in its head.
         url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
         customer_id: Who the work is billed to. Defaults to
             `STREAM_ACCELERATION_CUSTOMER_ID`.
@@ -134,9 +143,6 @@ async def define_agent(
     client = Backend(url=url, customer_id=customer_id).client()
 
     named = skills or []
-    if named:
-        await define_skills(named, client)
-
     wanted = AgentConfigRequest(name=name)
     if instructions:
         wanted.instructions = instructions
@@ -156,23 +162,70 @@ async def define_agent(
         wanted.skills = [skill.name for skill in named]
     if knowledge:
         wanted.knowledge_namespace = knowledge
+    if vm is not None:
+        box = vm() if isinstance(vm, type) else vm
+        wanted.sandbox = SandboxProvider(box.provider)
 
+    config: Optional[AgentConfig] = None
     for stored in _answer(await list_agent_configs.asyncio(client=client)):
         if stored.name == name:
             logger.info("updating agent config %s", stored.id)
-            return _answer(
+            config = _answer(
                 await update_agent_config.asyncio(stored.id, client=client, body=wanted)
             )
-    return _answer(await create_agent_config.asyncio(client=client, body=wanted))
+            break
+    if config is None:
+        config = _answer(await create_agent_config.asyncio(client=client, body=wanted))
+
+    # The skills belong to the config, so they are written after it: a new agent has no id
+    # to hang them off until it has been stored.
+    if named:
+        await define_skills(named, config.id, client)
+    return config
+
+
+async def add_knowledge_url(
+    namespace: str,
+    page: str,
+    url: Optional[str] = None,
+    customer_id: Optional[str] = None,
+) -> KnowledgeUrl:
+    """Fill a knowledge base from a page published elsewhere.
+
+    The page is read straight away and cut into passages the same way a document is, so
+    what comes back already says whether it worked. It stays a subscription rather than a
+    one-off: the passages are keyed by the url, and reading it again replaces them.
+
+    Args:
+        namespace: The knowledge base to add it to, which is the agent's own name for a
+            directory synced with `sync_agent`.
+        page: The http or https address to read.
+        url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
+        customer_id: Who the work is billed to. Defaults to
+            `STREAM_ACCELERATION_CUSTOMER_ID`.
+
+    Returns:
+        The page as stored, including how many passages it became and why it failed if
+        it did.
+    """
+    client = Backend(url=url, customer_id=customer_id).client()
+    added = _answer(
+        await add_knowledge_url_request.asyncio(
+            client=client, body=KnowledgeUrlRequest(namespace=namespace, url=page)
+        )
+    )
+    logger.info("read %s into %s as %d passages", page, namespace, added.passages)
+    return added
 
 
 async def define_skills(
-    skills: list[Skill], client: AuthenticatedClient
+    skills: list[Skill], config_id: str, client: AuthenticatedClient
 ) -> list[Skill]:
-    """Store skills, editing whichever is already under each name.
+    """Store one config's skills, editing whichever is already under each name.
 
     Args:
         skills: What to store.
+        config_id: The config they belong to, which is what a name is unique within.
         client: The router to store them in, from `Backend.client`.
 
     Returns:
@@ -180,11 +233,14 @@ async def define_skills(
     """
     known = {
         stored.name: stored.id
-        for stored in _answer(await list_skills.asyncio(client=client))
+        for stored in _answer(
+            await list_skills.asyncio(client=client, config_id=config_id)
+        )
     }
 
     for skill in skills:
         body = SkillRequest(
+            config_id=config_id,
             name=skill.name,
             description=skill.description,
             instructions=skill.instructions,

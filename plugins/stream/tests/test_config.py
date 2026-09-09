@@ -3,7 +3,7 @@ from typing import Any, AsyncIterator
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-from vision_agents.core.harness import Skill
+from vision_agents.core.harness import Daytona, Skill
 from vision_agents.plugins import stream
 
 EXPLAIN = Skill(
@@ -25,6 +25,7 @@ class Router:
         self.configs: dict[str, dict[str, Any]] = {}
         self.skills: dict[str, dict[str, Any]] = {}
         self.knowledge: list[dict[str, Any]] = []
+        self.pages: list[dict[str, Any]] = []
         self.syncs = 0
         self.url = ""
         self._next = 0
@@ -38,6 +39,7 @@ class Router:
         app.router.add_post("/v1/agents/skills", self._create_skill)
         app.router.add_put("/v1/agents/skills/{id}", self._update_skill)
         app.router.add_post("/v1/agents/sync", self._sync)
+        app.router.add_post("/v1/agents/knowledge/urls", self._add_page)
         return app
 
     async def _list_configs(self, request: web.Request) -> web.Response:
@@ -45,16 +47,25 @@ class Router:
 
     async def _create_config(self, request: web.Request) -> web.Response:
         return web.json_response(
-            status=201, data=self._store(self.configs, await request.json())
+            status=201, data=self._store(self.configs, await self._config(request))
         )
 
     async def _update_config(self, request: web.Request) -> web.Response:
         return web.json_response(
-            self._store(self.configs, await request.json(), request.match_info["id"])
+            self._store(
+                self.configs, await self._config(request), request.match_info["id"]
+            )
         )
 
     async def _list_skills(self, request: web.Request) -> web.Response:
-        return web.json_response(list(self.skills.values()))
+        held = request.query.get("config_id", "")
+        return web.json_response(
+            [
+                stored
+                for stored in self.skills.values()
+                if not held or stored["config_id"] == held
+            ]
+        )
 
     async def _create_skill(self, request: web.Request) -> web.Response:
         return web.json_response(
@@ -87,6 +98,7 @@ class Router:
             self.configs,
             {
                 "name": body["name"],
+                "mode": "voice",
                 "instructions": body.get("instructions", ""),
                 "skills": [skill["name"] for skill in skills],
                 "knowledge_namespace": body["name"] if body.get("knowledge") else "",
@@ -95,6 +107,33 @@ class Router:
             existing_id,
         )
         return web.json_response({"unchanged": False, "config": stored})
+
+    async def _add_page(self, request: web.Request) -> web.Response:
+        """Read a page into a namespace, which a router does before it answers."""
+        body = await request.json()
+        self.pages.append(body)
+        when = "2026-01-01T00:00:00Z"
+        return web.json_response(
+            status=201,
+            data={
+                "id": f"page-{len(self.pages)}",
+                "namespace": body["namespace"],
+                "url": body["url"],
+                "state": "indexed",
+                "passages": 4,
+                "created_at": when,
+                "updated_at": when,
+            },
+        )
+
+    async def _config(self, request: web.Request) -> dict[str, Any]:
+        """What was asked for, as a config the router would answer with.
+
+        A stored config always says which mode it runs in, whether or not the request
+        mentioned one.
+        """
+        body: dict[str, Any] = await request.json()
+        return dict(body, mode=body.get("mode") or "voice")
 
     def _store(
         self, kept: dict[str, dict[str, Any]], body: dict[str, Any], id: str = ""
@@ -178,6 +217,46 @@ class TestDefineAgent:
 
         assert router.skills == {}
         assert "skills" not in router.configs[config.id]
+
+    async def test_an_agent_carries_the_vm_its_subagent_runs_code_in(
+        self, router: Router
+    ):
+        config = await self.define(router, vm=Daytona)
+
+        assert router.configs[config.id]["sandbox"] == "daytona"
+
+    async def test_an_agent_without_a_vm_runs_no_code(self, router: Router):
+        config = await self.define(router)
+
+        assert "sandbox" not in router.configs[config.id]
+
+
+class TestAddKnowledgeUrl:
+    @pytest.fixture
+    async def router(self) -> AsyncIterator[Router]:
+        fake = Router()
+        server = TestServer(fake.app())
+        await server.start_server()
+        fake.url = str(server.make_url("")).rstrip("/")
+        yield fake
+        await server.close()
+
+    async def test_a_page_is_read_into_the_namespace_it_was_added_to(
+        self, router: Router
+    ):
+        page = await stream.add_knowledge_url(
+            "docs",
+            "https://example.com/handbook",
+            url=router.url,
+            customer_id="acme",
+        )
+
+        assert page.namespace == "docs"
+        assert page.url == "https://example.com/handbook"
+        assert page.passages == 4
+        assert router.pages == [
+            {"namespace": "docs", "url": "https://example.com/handbook"}
+        ]
 
 
 class TestSyncAgent:

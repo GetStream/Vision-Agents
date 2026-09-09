@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -94,7 +93,6 @@ func (s *OpenAICompatSuite) provider(options Options) *LLM {
 
 	provider, err := New(options)
 	s.Require().NoError(err)
-	s.Require().NoError(provider.Start(context.Background()))
 	s.T().Cleanup(func() { provider.Close() })
 	return provider
 }
@@ -204,31 +202,23 @@ func usageFrame(prompt, cached, completion, reasoning int64, finishReason string
 	})
 }
 
-// ask sends one request and returns the events up to and including its completion.
-func (s *OpenAICompatSuite) ask(provider *LLM, request llm.Request) (
-	llm.CompletionComplete, []llm.Event,
+// ask sends one request and returns the response and every event it produced.
+func (s *OpenAICompatSuite) ask(provider *LLM, params llm.ResponseParams) (
+	llm.Response, []llm.Event,
 ) {
-	s.Require().NoError(provider.Respond(request))
+	stream, err := provider.Create(context.Background(), params)
+	s.Require().NoError(err)
 
 	var events []llm.Event
-	deadline := time.After(5 * time.Second)
-	for {
-		select {
-		case event := <-provider.Events():
-			events = append(events, event)
-			if complete, ok := event.(llm.CompletionComplete); ok {
-				return complete, events
-			}
-		case <-deadline:
-			s.FailNow("the completion never settled")
-			return llm.CompletionComplete{}, events
-		}
+	for stream.Next() {
+		events = append(events, stream.Current())
 	}
+	return stream.Response(), events
 }
 
 // hello is the simplest request a test can make.
-func hello() llm.Request {
-	return llm.Request{Messages: []llm.Message{{Role: llm.User, Content: "hi"}}}
+func hello() llm.ResponseParams {
+	return llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "hi"}}}
 }
 
 func (s *OpenAICompatSuite) TestNewRejectsAConfigItCannotUse() {
@@ -249,15 +239,15 @@ func (s *OpenAICompatSuite) TestStreamedDeltasAssembleIntoTheAnswer() {
 	s.frames = []string{textFrame("Hello"), textFrame(", world"), usageFrame(11, 0, 4, 0, "stop")}
 	provider := s.provider(Options{})
 
-	complete, events := s.ask(provider, hello())
+	response, events := s.ask(provider, hello())
 
-	s.Equal("Hello, world", complete.Text)
-	s.Equal("stop", complete.FinishReason)
+	s.Equal("Hello, world", response.OutputText)
+	s.Equal(llm.StatusCompleted, response.Status)
 
 	var deltas []string
 	for _, event := range events {
-		if delta, ok := event.(llm.TextDelta); ok {
-			deltas = append(deltas, delta.Text)
+		if delta, ok := event.(llm.OutputTextDelta); ok {
+			deltas = append(deltas, delta.Delta)
 		}
 	}
 	s.Equal([]string{"Hello", ", world"}, deltas, "the caller can speak the answer as it arrives")
@@ -267,12 +257,12 @@ func (s *OpenAICompatSuite) TestUsageIsReportedForBilling() {
 	s.frames = []string{textFrame("hi"), usageFrame(15, 8, 64, 47, "stop")}
 	provider := s.provider(Options{})
 
-	complete, _ := s.ask(provider, hello())
+	response, _ := s.ask(provider, hello())
 
-	s.EqualValues(15, complete.InputTokens)
-	s.EqualValues(8, complete.CachedInputTokens)
-	s.EqualValues(64, complete.OutputTokens)
-	s.EqualValues(47, complete.ReasoningTokens)
+	s.EqualValues(15, response.Usage.InputTokens)
+	s.EqualValues(8, response.Usage.InputTokensDetails.CachedTokens)
+	s.EqualValues(64, response.Usage.OutputTokens)
+	s.EqualValues(47, response.Usage.OutputTokensDetails.ReasoningTokens)
 }
 
 func (s *OpenAICompatSuite) TestCumulativeUsageFramesSettleOnTheLastOne() {
@@ -285,10 +275,10 @@ func (s *OpenAICompatSuite) TestCumulativeUsageFramesSettleOnTheLastOne() {
 	}
 	provider := s.provider(Options{})
 
-	complete, _ := s.ask(provider, hello())
+	response, _ := s.ask(provider, hello())
 
-	s.EqualValues(43, complete.OutputTokens, "the last frame is the total, not one more instalment")
-	s.EqualValues(15, complete.InputTokens)
+	s.EqualValues(43, response.Usage.OutputTokens, "the last frame is the total, not one more instalment")
+	s.EqualValues(15, response.Usage.InputTokens)
 }
 
 func (s *OpenAICompatSuite) TestThinkingIsSeparatedFromTheAnswer() {
@@ -297,16 +287,16 @@ func (s *OpenAICompatSuite) TestThinkingIsSeparatedFromTheAnswer() {
 		textFrame("Hello!"),
 		usageFrame(11, 0, 20, 16, "stop"),
 	}
-	provider := s.provider(Options{Reasoning: true})
+	provider := s.provider(Options{Capabilities: llm.Capabilities{StreamsReasoning: true}})
 
-	complete, events := s.ask(provider, hello())
+	response, events := s.ask(provider, hello())
 
-	s.Equal("Hello!", complete.Text, "thinking must never be spoken as the reply")
+	s.Equal("Hello!", response.OutputText, "thinking must never be spoken as the reply")
 
 	var thinking string
 	for _, event := range events {
-		if delta, ok := event.(llm.ReasoningDelta); ok {
-			thinking += delta.Text
+		if delta, ok := event.(llm.ReasoningTextDelta); ok {
+			thinking += delta.Delta
 		}
 	}
 	s.Equal("The user said hi, so", thinking, "but it is still available to a caller that wants it")
@@ -316,9 +306,9 @@ func (s *OpenAICompatSuite) TestInstructionsAreSentAsASystemMessage() {
 	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
 	provider := s.provider(Options{})
 
-	s.ask(provider, llm.Request{
+	s.ask(provider, llm.ResponseParams{
 		Instructions: "Be terse.",
-		Messages:     []llm.Message{{Role: llm.User, Content: "hi"}},
+		Input:        []llm.Message{{Role: llm.User, Content: "hi"}},
 	})
 
 	messages := s.sentMessages(0)
@@ -334,7 +324,7 @@ func (s *OpenAICompatSuite) TestTheWholeConversationIsSentEveryTurn() {
 	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
 	provider := s.provider(Options{})
 
-	s.ask(provider, llm.Request{Messages: []llm.Message{
+	s.ask(provider, llm.ResponseParams{Input: []llm.Message{
 		{Role: llm.User, Content: "first"},
 		{Role: llm.Assistant, Content: "answer"},
 		{Role: llm.User, Content: "second"},
@@ -358,10 +348,14 @@ func (s *OpenAICompatSuite) TestUsageIsAlwaysRequested() {
 	s.Equal(true, options["include_usage"])
 }
 
-func (s *OpenAICompatSuite) TestExtraBodyReachesTheProvider() {
+func (s *OpenAICompatSuite) TestAProvidersOwnRequestFieldsReachIt() {
 	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
 	provider := s.provider(Options{
-		ExtraBody: map[string]any{"chat_template_kwargs": map[string]any{"thinking": false}},
+		RequestFields: func(llm.ResponseParams, string) map[string]any {
+			return map[string]any{
+				"chat_template_kwargs": map[string]any{"thinking": false},
+			}
+		},
 	})
 
 	s.ask(provider, hello())
@@ -369,6 +363,55 @@ func (s *OpenAICompatSuite) TestExtraBodyReachesTheProvider() {
 	args, ok := s.requests[0]["chat_template_kwargs"].(map[string]any)
 	s.Require().True(ok, "a provider's own request fields must survive")
 	s.Equal(false, args["thinking"])
+}
+
+func (s *OpenAICompatSuite) TestTheReasoningEffortIsResolvedBeforeItIsSent() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+	var sent string
+	provider := s.provider(Options{
+		Capabilities: llm.Capabilities{
+			ReasoningEfforts: []string{"low", "high"},
+			DefaultEffort:    "low",
+		},
+		RequestFields: func(_ llm.ResponseParams, effort string) map[string]any {
+			sent = effort
+			return nil
+		},
+	})
+
+	s.ask(provider, hello())
+	s.Equal("low", sent, "a request naming none gets the model's own default")
+
+	s.ask(provider, llm.ResponseParams{Input: hello().Input,
+		Reasoning: llm.ReasoningParams{Effort: "high"}})
+	s.Equal("high", sent)
+}
+
+func (s *OpenAICompatSuite) TestAnEffortTheModelDoesNotAcceptIsRefused() {
+	provider := s.provider(Options{
+		Capabilities: llm.Capabilities{ReasoningEfforts: []string{"low", "high"}},
+	})
+
+	_, err := provider.Create(context.Background(), llm.ResponseParams{
+		Input:     hello().Input,
+		Reasoning: llm.ReasoningParams{Effort: "max"},
+	})
+
+	s.Require().Error(err)
+	s.ErrorContains(err, "low, high", "the caller is told what is valid")
+}
+
+func (s *OpenAICompatSuite) TestChatCompletionsCannotStoreOrCacheByKey() {
+	// The protocol has nowhere to put them, so they are reported as unsupported rather
+	// than silently promised.
+	provider := s.provider(Options{
+		Capabilities: llm.Capabilities{Store: true, PromptCacheKey: true, Conversations: true},
+	})
+
+	model := provider.Capabilities()
+	s.False(model.Store)
+	s.False(model.PromptCacheKey)
+	s.False(model.Conversations)
 }
 
 func (s *OpenAICompatSuite) TestMaxTokensAndTemperatureAreOnlySentWhenAsked() {
@@ -380,10 +423,10 @@ func (s *OpenAICompatSuite) TestMaxTokensAndTemperatureAreOnlySentWhenAsked() {
 	s.NotContains(s.requests[0], "temperature", "zero is a real temperature, so unset must not send one")
 
 	temperature := 0.0
-	s.ask(provider, llm.Request{
-		Messages:    []llm.Message{{Role: llm.User, Content: "hi"}},
-		MaxTokens:   32,
-		Temperature: &temperature,
+	s.ask(provider, llm.ResponseParams{
+		Input:           []llm.Message{{Role: llm.User, Content: "hi"}},
+		MaxOutputTokens: 32,
+		Temperature:     &temperature,
 	})
 	s.EqualValues(32, s.requests[1]["max_completion_tokens"])
 	s.EqualValues(0.0, s.requests[1]["temperature"])
@@ -396,119 +439,114 @@ func (s *OpenAICompatSuite) TestJSONIsOnlyAskedForWhenWanted() {
 	s.ask(provider, hello())
 	s.NotContains(s.requests[0], "response_format", "prose is what a conversation wants")
 
-	s.ask(provider, llm.Request{
-		Messages: []llm.Message{{Role: llm.User, Content: "hi"}},
-		JSON:     true,
+	s.ask(provider, llm.ResponseParams{
+		Input: []llm.Message{{Role: llm.User, Content: "hi"}},
+		Text:  llm.TextParams{Format: llm.FormatJSONObject},
 	})
 	format, ok := s.requests[1]["response_format"].(map[string]any)
 	s.Require().True(ok, "a caller that parses the answer has to be able to ask for JSON")
 	s.Equal("json_object", format["type"])
 }
 
-func (s *OpenAICompatSuite) TestInterruptSettlesWhatHadAlreadyArrived() {
+func (s *OpenAICompatSuite) TestClosingAStreamSettlesWhatHadAlreadyArrived() {
 	s.hold = make(chan struct{})
 	s.frames = []string{textFrame("I was saying"), usageFrame(11, 0, 4, 0, "")}
 	provider := s.provider(Options{})
 
-	s.Require().NoError(provider.Respond(llm.Request{ID: "c1", Messages: hello().Messages}))
+	stream, err := provider.Create(context.Background(), llm.ResponseParams{
+		ID: "c1", Input: hello().Input,
+	})
+	s.Require().NoError(err)
 
-	// Wait for the text to arrive before cutting the model off.
-	s.Require().Eventually(func() bool {
-		select {
-		case event := <-provider.Events():
-			_, isDelta := event.(llm.TextDelta)
-			return isDelta
-		default:
-			return false
-		}
-	}, 5*time.Second, 10*time.Millisecond)
+	// Read up to the text before cutting the model off.
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	s.Require().IsType(llm.OutputTextDelta{}, stream.Current())
+	s.Require().NoError(stream.Close())
 
-	s.Require().NoError(provider.Interrupt())
-
-	complete := s.awaitCompletion(provider)
-	s.True(complete.Interrupted)
-	s.Equal("I was saying", complete.Text, "the words already spoken still happened")
-	s.EqualValues(4, complete.OutputTokens, "and are still billed")
+	response := drain(stream)
+	s.Equal(llm.StatusCancelled, response.Status)
+	s.Equal("I was saying", response.OutputText, "the words already spoken still happened")
+	s.EqualValues(4, response.Usage.OutputTokens, "and are still billed")
 	close(s.hold)
 }
 
-func (s *OpenAICompatSuite) TestInterruptedCompletionIsNotReportedAsAnError() {
+// drain reads a stream to the end and returns what it settled as.
+func drain(stream *llm.Stream) llm.Response {
+	for stream.Next() {
+	}
+	return stream.Response()
+}
+
+func (s *OpenAICompatSuite) TestAnAbandonedResponseIsNotReportedAsAnError() {
 	// Barge-in is the design working, so it must not count against the provider's health.
 	s.hold = make(chan struct{})
 	s.frames = []string{textFrame("cut short")}
 	provider := s.provider(Options{})
 
-	s.Require().NoError(provider.Respond(hello()))
-	s.Require().Eventually(func() bool {
-		select {
-		case event := <-provider.Events():
-			_, isDelta := event.(llm.TextDelta)
-			return isDelta
-		default:
-			return false
-		}
-	}, 5*time.Second, 10*time.Millisecond)
-	s.Require().NoError(provider.Interrupt())
+	stream, err := provider.Create(context.Background(), hello())
+	s.Require().NoError(err)
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	s.Require().NoError(stream.Close())
 
-	complete := s.awaitCompletion(provider)
-	s.True(complete.Interrupted)
-
-	select {
-	case event := <-provider.Events():
-		s.Failf("unexpected event", "an interrupted completion emitted %T", event)
-	case <-time.After(100 * time.Millisecond):
-	}
+	s.Equal(llm.StatusCancelled, drain(stream).Status)
+	s.NoError(stream.Err(), "the caller stopped it, so the provider did not fail")
 	close(s.hold)
 }
 
-func (s *OpenAICompatSuite) TestNamingACompletionAbandonsOnlyThatOne() {
-	// A caller delegating background work runs several completions at once, and a premise
+func (s *OpenAICompatSuite) TestClosingOneStreamLeavesTheOtherAlone() {
+	// A caller delegating background work runs several responses at once, and a premise
 	// going stale must abandon that work alone rather than everything in flight.
 	s.hold = make(chan struct{})
-	s.frames = []string{textFrame("working")}
+	s.frames = []string{textFrame("working"), usageFrame(5, 0, 1, 0, "stop")}
 	provider := s.provider(Options{})
 
-	s.Require().NoError(provider.Respond(llm.Request{ID: "keep", Messages: hello().Messages}))
-	s.Require().NoError(provider.Respond(llm.Request{ID: "drop", Messages: hello().Messages}))
-	s.awaitDeltas(provider, 2)
+	keep, err := provider.Create(context.Background(), llm.ResponseParams{
+		ID: "keep", Input: hello().Input,
+	})
+	s.Require().NoError(err)
+	drop, err := provider.Create(context.Background(), llm.ResponseParams{
+		ID: "drop", Input: hello().Input,
+	})
+	s.Require().NoError(err)
 
-	s.Require().NoError(provider.Interrupt("drop"))
+	s.Require().NoError(drop.Close())
+	dropped := drain(drop)
+	s.Equal("drop", dropped.ID)
+	s.Equal(llm.StatusCancelled, dropped.Status)
 
-	complete := s.awaitCompletion(provider)
-	s.Equal("drop", complete.CompletionID)
-	s.True(complete.Interrupted)
-
-	// The other one is still running: it settles only once the server lets it go.
-	select {
-	case event := <-provider.Events():
-		s.Failf("unexpected event", "the completion that was kept emitted %T", event)
-	case <-time.After(100 * time.Millisecond):
-	}
 	close(s.hold)
-	s.Equal("keep", s.awaitCompletion(provider).CompletionID)
+	kept := drain(keep)
+	s.Equal("keep", kept.ID)
+	s.Equal(llm.StatusCompleted, kept.Status)
 }
 
-func (s *OpenAICompatSuite) TestInterruptingNothingInParticularIsNotAnError() {
+func (s *OpenAICompatSuite) TestClosingAStreamTwiceIsSafe() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
 	provider := s.provider(Options{})
 
-	s.NoError(provider.Interrupt())
-	s.NoError(provider.Interrupt("never-existed"))
+	stream, err := provider.Create(context.Background(), hello())
+	s.Require().NoError(err)
+
+	s.NoError(stream.Close())
+	s.NoError(stream.Close())
 }
 
-func (s *OpenAICompatSuite) TestAFailedRequestStillSettlesTheCompletion() {
-	// A caller waiting on CompletionComplete must never be left hanging, or a turn never
-	// ends and the conversation stops.
+func (s *OpenAICompatSuite) TestAFailedRequestStillSettlesTheResponse() {
+	// A caller waiting for a response to settle must never be left hanging, or a turn
+	// never ends and the conversation stops.
 	s.status = http.StatusUnauthorized
 	provider := s.provider(Options{})
 
-	complete, events := s.ask(provider, hello())
+	response, events := s.ask(provider, hello())
 
-	s.Empty(complete.Text)
-	s.False(complete.Interrupted)
+	s.Empty(response.OutputText)
+	s.Equal(llm.StatusFailed, response.Status)
 
-	var failures []llm.Error
+	var failures []llm.ResponseFailed
 	for _, event := range events {
-		if failure, ok := event.(llm.Error); ok {
+		if failure, ok := event.(llm.ResponseFailed); ok {
 			failures = append(failures, failure)
 		}
 	}
@@ -516,34 +554,12 @@ func (s *OpenAICompatSuite) TestAFailedRequestStillSettlesTheCompletion() {
 	s.Equal("stream", failures[0].Context)
 }
 
-func (s *OpenAICompatSuite) TestRespondBeforeStartIsRefused() {
-	provider, err := New(Options{Provider: "p", Model: "m", APIKey: "k", BaseURL: s.server.URL})
-	s.Require().NoError(err)
-
-	s.ErrorContains(provider.Respond(hello()), "not started")
-}
-
-func (s *OpenAICompatSuite) TestRespondWithoutMessagesIsRefused() {
+func (s *OpenAICompatSuite) TestARequestWithNoInputIsRefused() {
 	provider := s.provider(Options{})
 
-	s.ErrorContains(provider.Respond(llm.Request{}), "at least one message")
-}
+	_, err := provider.Create(context.Background(), llm.ResponseParams{})
 
-func (s *OpenAICompatSuite) TestStartEmitsConnectedAndCloseEmitsDisconnected() {
-	provider := s.provider(Options{Provider: "test"})
-
-	connected, ok := (<-provider.Events()).(llm.Connected)
-	s.Require().True(ok)
-	s.Equal("test", connected.Provider)
-
-	s.Require().NoError(provider.Close())
-
-	disconnected, ok := (<-provider.Events()).(llm.Disconnected)
-	s.Require().True(ok)
-	s.True(disconnected.Clean)
-
-	_, open := <-provider.Events()
-	s.False(open, "the channel closes so a consumer's range loop ends")
+	s.ErrorContains(err, "at least one input message")
 }
 
 func (s *OpenAICompatSuite) TestCloseIsSafeToRepeat() {
@@ -576,8 +592,8 @@ func (s *OpenAICompatSuite) TestToolsAreOnlySentWhenOffered() {
 	s.ask(provider, hello())
 	s.NotContains(s.requests[0], "tools", "a model offered a toolbox eventually opens it")
 
-	s.ask(provider, llm.Request{
-		Messages: []llm.Message{{Role: llm.User, Content: "hi"}},
+	s.ask(provider, llm.ResponseParams{
+		Input: []llm.Message{{Role: llm.User, Content: "hi"}},
 		Tools: []llm.Tool{{
 			Name:        "transfer",
 			Description: "hand the caller to a human",
@@ -618,14 +634,14 @@ func (s *OpenAICompatSuite) TestASignedToolCallIsHandedBackSigned() {
 	}
 	provider := s.provider(Options{})
 
-	complete, _ := s.ask(provider, hello())
-	s.Require().Len(complete.ToolCalls, 1)
-	s.Equal("sig-abc", complete.ToolCalls[0].Signature)
+	response, _ := s.ask(provider, hello())
+	s.Require().Len(response.ToolCalls, 1)
+	s.Equal("sig-abc", response.ToolCalls[0].Signature)
 
 	s.frames = []string{textFrame("It is sunny."), usageFrame(30, 0, 4, 0, "stop")}
-	s.ask(provider, llm.Request{Messages: []llm.Message{
+	s.ask(provider, llm.ResponseParams{Input: []llm.Message{
 		{Role: llm.User, Content: "how is the weather?"},
-		{Role: llm.Assistant, ToolCalls: complete.ToolCalls},
+		{Role: llm.Assistant, ToolCalls: response.ToolCalls},
 		{Role: llm.ToolResult, ToolCallID: "call-1", Content: "20 and sunny"},
 	}})
 
@@ -655,12 +671,12 @@ func (s *OpenAICompatSuite) TestAnUnsignedToolCallIsReplayedWithoutAnEmptySignat
 	}
 	provider := s.provider(Options{})
 
-	complete, _ := s.ask(provider, hello())
-	s.Empty(complete.ToolCalls[0].Signature)
+	response, _ := s.ask(provider, hello())
+	s.Empty(response.ToolCalls[0].Signature)
 
 	s.frames = []string{textFrame("done"), usageFrame(30, 0, 4, 0, "stop")}
-	s.ask(provider, llm.Request{Messages: []llm.Message{
-		{Role: llm.Assistant, ToolCalls: complete.ToolCalls},
+	s.ask(provider, llm.ResponseParams{Input: []llm.Message{
+		{Role: llm.Assistant, ToolCalls: response.ToolCalls},
 		{Role: llm.ToolResult, ToolCallID: "call-1", Content: "transferred"},
 	}})
 
@@ -682,13 +698,13 @@ func (s *OpenAICompatSuite) TestStreamedFragmentsAssembleIntoOneToolCall() {
 	}
 	provider := s.provider(Options{})
 
-	complete, _ := s.ask(provider, hello())
+	response, _ := s.ask(provider, hello())
 
-	s.Require().Len(complete.ToolCalls, 1)
-	s.Equal("call-1", complete.ToolCalls[0].ID)
-	s.Equal("transfer", complete.ToolCalls[0].Name)
-	s.Equal(`{"to":"+15551234567"}`, complete.ToolCalls[0].Arguments)
-	s.Equal("tool_calls", complete.FinishReason)
+	s.Require().Len(response.ToolCalls, 1)
+	s.Equal("call-1", response.ToolCalls[0].ID)
+	s.Equal("transfer", response.ToolCalls[0].Name)
+	s.Equal(`{"to":"+15551234567"}`, response.ToolCalls[0].Arguments)
+	s.Equal(llm.StatusCompleted, response.Status)
 }
 
 func (s *OpenAICompatSuite) TestSeveralToolCallsKeepTheirOwnArguments() {
@@ -703,13 +719,13 @@ func (s *OpenAICompatSuite) TestSeveralToolCallsKeepTheirOwnArguments() {
 	}
 	provider := s.provider(Options{})
 
-	complete, _ := s.ask(provider, hello())
+	response, _ := s.ask(provider, hello())
 
-	s.Require().Len(complete.ToolCalls, 2)
-	s.Equal("press", complete.ToolCalls[0].Name)
-	s.Equal(`{"digits":"1"}`, complete.ToolCalls[0].Arguments)
-	s.Equal("transfer", complete.ToolCalls[1].Name)
-	s.Equal(`{"to":"+15550001111"}`, complete.ToolCalls[1].Arguments)
+	s.Require().Len(response.ToolCalls, 2)
+	s.Equal("press", response.ToolCalls[0].Name)
+	s.Equal(`{"digits":"1"}`, response.ToolCalls[0].Arguments)
+	s.Equal("transfer", response.ToolCalls[1].Name)
+	s.Equal(`{"to":"+15550001111"}`, response.ToolCalls[1].Arguments)
 }
 
 func (s *OpenAICompatSuite) TestSpeechAndAToolCallArriveTogether() {
@@ -722,11 +738,11 @@ func (s *OpenAICompatSuite) TestSpeechAndAToolCallArriveTogether() {
 	}
 	provider := s.provider(Options{})
 
-	complete, _ := s.ask(provider, hello())
+	response, _ := s.ask(provider, hello())
 
-	s.Equal("One moment, putting you through.", complete.Text)
-	s.Require().Len(complete.ToolCalls, 1)
-	s.Equal("transfer", complete.ToolCalls[0].Name)
+	s.Equal("One moment, putting you through.", response.OutputText)
+	s.Require().Len(response.ToolCalls, 1)
+	s.Equal("transfer", response.ToolCalls[0].Name)
 }
 
 func (s *OpenAICompatSuite) TestAToolCallWithNoIDStillGetsOne() {
@@ -738,14 +754,14 @@ func (s *OpenAICompatSuite) TestAToolCallWithNoIDStillGetsOne() {
 	}
 	provider := s.provider(Options{})
 
-	complete, _ := s.ask(provider, llm.Request{
-		ID:       "turn-1",
-		Messages: []llm.Message{{Role: llm.User, Content: "hi"}},
+	response, _ := s.ask(provider, llm.ResponseParams{
+		ID:    "turn-1",
+		Input: []llm.Message{{Role: llm.User, Content: "hi"}},
 	})
 
-	s.Require().Len(complete.ToolCalls, 1)
-	s.NotEmpty(complete.ToolCalls[0].ID)
-	s.Equal("press", complete.ToolCalls[0].Name)
+	s.Require().Len(response.ToolCalls, 1)
+	s.NotEmpty(response.ToolCalls[0].ID)
+	s.Equal("press", response.ToolCalls[0].Name)
 }
 
 func (s *OpenAICompatSuite) TestAToolResultIsSentWithTheCallItAnswers() {
@@ -754,7 +770,7 @@ func (s *OpenAICompatSuite) TestAToolResultIsSentWithTheCallItAnswers() {
 	s.frames = []string{textFrame("Done."), usageFrame(5, 0, 1, 0, "stop")}
 	provider := s.provider(Options{})
 
-	s.ask(provider, llm.Request{Messages: []llm.Message{
+	s.ask(provider, llm.ResponseParams{Input: []llm.Message{
 		{Role: llm.User, Content: "put me through"},
 		{
 			Role:      llm.Assistant,
@@ -806,37 +822,4 @@ func (s *OpenAICompatSuite) modelSentBy(provider *LLM) string {
 	model, ok := s.requests[0]["model"].(string)
 	s.Require().True(ok)
 	return model
-}
-
-// awaitDeltas drains events until the given number of text deltas have arrived, which is
-// how a test knows every completion it started is really under way.
-func (s *OpenAICompatSuite) awaitDeltas(provider *LLM, count int) {
-	deadline := time.After(5 * time.Second)
-	for seen := 0; seen < count; {
-		select {
-		case event := <-provider.Events():
-			if _, ok := event.(llm.TextDelta); ok {
-				seen++
-			}
-		case <-deadline:
-			s.FailNow("the deltas never arrived")
-			return
-		}
-	}
-}
-
-// awaitCompletion drains events until the completion settles.
-func (s *OpenAICompatSuite) awaitCompletion(provider *LLM) llm.CompletionComplete {
-	deadline := time.After(5 * time.Second)
-	for {
-		select {
-		case event := <-provider.Events():
-			if complete, ok := event.(llm.CompletionComplete); ok {
-				return complete
-			}
-		case <-deadline:
-			s.FailNow("the completion never settled")
-			return llm.CompletionComplete{}
-		}
-	}
 }

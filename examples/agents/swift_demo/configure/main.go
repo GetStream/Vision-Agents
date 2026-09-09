@@ -30,9 +30,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/GetStream/Vision-Agents/agents-core-go/acceleration"
-	"github.com/GetStream/Vision-Agents/agents-core-go/agents"
-	"github.com/GetStream/Vision-Agents/agents-core-go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/agents"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
 const agentName = "swift_demo"
@@ -76,7 +76,7 @@ func run(ctx context.Context, dir string) error {
 		Name:     folder.Name,
 		Stt:      text("deepgram/flux-general-en"),
 		Tts:      text("cartesia/sonic-preview"),
-		Llm:      text("gemini/gemini-3.5-flash-lite"),
+		Llm:      text("gemini/gemini-3.8-flash"),
 		Subagent: text("openai/gpt-5.6-sol"),
 		Greeting: text("Larkspur support, how can I help?"),
 		Keyterms: &[]string{"Larkspur", "store credit"},

@@ -18,19 +18,12 @@ import "stream-chat-react/css/index.css";
 /**
  * AgentChat is the conversation itself, read out of the channel the agent writes it to.
  *
- * Two halves arrive by different routes and meet in one channel. What the agent says is
- * written server-side as it is generated, so a reply appears here a piece at a time
- * without this component knowing anything about the model. What the person says is sent
- * here as an ordinary chat message and told to the session separately, because the agent
- * listens to a session rather than to a channel.
+ * Both halves are the channel. What the agent says is written server-side as it is
+ * generated, so a reply appears here a piece at a time without this component knowing
+ * anything about the model. What the person types is an ordinary chat message, which
+ * reaches the agent because the router is watching the channel for one.
  */
-export function AgentChat({
-  agentID,
-  sessionID,
-}: {
-  agentID: string;
-  sessionID: string;
-}) {
+export function AgentChat({ agentID }: { agentID: string }) {
   const [client, setClient] = useState<StreamChat | null>(null);
   const [channel, setChannel] = useState<ChatChannel | null>(null);
   const [failure, setFailure] = useState<unknown>(null);
@@ -92,15 +85,7 @@ export function AgentChat({
         <Channel channel={channel}>
           <Window>
             <MessageList />
-            <MessageComposer
-              overrideSubmitHandler={async ({ message, sendOptions }) => {
-                await channel.sendMessage(message, sendOptions);
-                const text = message.text?.trim();
-                if (text) {
-                  await router.respondSession(sessionID, text);
-                }
-              }}
-            />
+            <MessageComposer />
           </Window>
         </Channel>
       </Chat>

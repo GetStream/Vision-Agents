@@ -64,6 +64,8 @@ func (s *SkillsSuite) TestTheModelIsToldWhatEachSkillIsForAndHowToAsk() {
 	s.Contains(prompt, `<ask skill="name">`)
 	s.Contains(prompt, `<drop skill="name"/>`)
 	s.Contains(prompt, "never spoken aloud", "or the model would read its own request out")
+	s.Contains(prompt, "complete identifiers",
+		"a complete read-back is the fast model's, not a three-second colleague")
 	s.NotContains(prompt, "think it through",
 		"the fast model is told what a skill is for, never how the subagent does it")
 }

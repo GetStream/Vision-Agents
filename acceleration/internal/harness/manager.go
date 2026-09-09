@@ -31,10 +31,11 @@ const codeDeadline = 60 * time.Second
 
 // manager runs delegated work on the subagent and reports what came of it.
 //
-// A task is one completion on the subagent's session, so the completion id is the task
-// id and abandoning a task is one targeted interrupt. Nothing here waits: Create returns
-// as soon as the request is on its way, and the answer arrives on Results whenever it
-// arrives, which may be several turns of conversation later.
+// A task is one response on the subagent's session, drained by a goroutine of its own that
+// lives as long as the task does, code it runs included. Abandoning a task is closing its
+// stream. Nothing here waits: Create returns as soon as the request is on its way, and the
+// answer arrives on Results whenever it arrives, which may be several turns of conversation
+// later.
 type manager struct {
 	subagent *llmrouter.Session
 	// limit caps how much work may be in flight at once, because a model that asks for
@@ -58,7 +59,7 @@ type manager struct {
 	closed  bool
 
 	sequence  atomic.Int64
-	forwarder sync.WaitGroup
+	drainers  sync.WaitGroup
 	closeOnce sync.Once
 }
 
@@ -84,6 +85,9 @@ type task struct {
 	messages     []llm.Message
 	// rounds is how many times this task has run code.
 	rounds int
+	// stream is what the subagent is answering on, and closing it is what abandons the
+	// task. It is replaced each time the task runs code and asks again.
+	stream *llm.Stream
 }
 
 // live reports whether the task is still expected to produce an answer.
@@ -104,8 +108,6 @@ func newManager(
 		running:  map[string]*task{},
 		bySkill:  map[string]string{},
 	}
-	m.forwarder.Add(1)
-	go m.forward()
 	return m
 }
 
@@ -156,16 +158,43 @@ func (m *manager) Create(
 
 	m.abandon(superseded)
 
-	if err := m.subagent.Respond(llm.Request{
-		ID:           created.id,
-		Instructions: skill.Instructions,
-		Messages:     messages,
-		Tools:        m.tools(),
-	}); err != nil {
+	stream, err := m.ask(created.id, skill.Instructions, messages)
+	if err != nil {
 		m.forget(created.id)
 		return "", fmt.Errorf("harness: delegate %s: %w", skill.Name, err)
 	}
+	m.hold(created, stream)
+
+	m.drainers.Add(1)
+	go m.drain(created, stream)
 	return created.id, nil
+}
+
+// ask puts one question to the subagent.
+//
+// The context is the process rather than the call: a task outlives the turn that asked for
+// it by design, and what ends one early is its own deadline, a cancellation, or the session
+// being closed underneath it.
+func (m *manager) ask(id, instructions string, messages []llm.Message) (*llm.Stream, error) {
+	return m.subagent.Create(context.Background(), llm.ResponseParams{
+		ID:           id,
+		Instructions: instructions,
+		Input:        messages,
+		Tools:        m.tools(),
+	})
+}
+
+// hold records the stream a task is answering on, closing it straight away when the task
+// was abandoned while the request was still going out.
+func (m *manager) hold(running *task, stream *llm.Stream) {
+	m.mu.Lock()
+	running.stream = stream
+	abandoned := !running.live() || m.closed
+	m.mu.Unlock()
+
+	if abandoned {
+		stream.Close()
+	}
 }
 
 // CancelTurn abandons work whose conversational premise was superseded.
@@ -203,8 +232,18 @@ func (m *manager) abandon(taskID string) {
 	if taskID == "" {
 		return
 	}
-	if err := m.subagent.Interrupt(taskID); err != nil {
-		m.logger.Error("could not abandon a task", "task", taskID, "error", err)
+
+	m.mu.Lock()
+	running, ok := m.running[taskID]
+	var stream *llm.Stream
+	if ok {
+		stream = running.stream
+	}
+	m.mu.Unlock()
+
+	// A task whose request has not gone out yet is closed by hold instead, once it has.
+	if stream != nil {
+		stream.Close()
 	}
 }
 
@@ -272,10 +311,11 @@ func (m *manager) Close() error {
 		m.closed = true
 		m.mu.Unlock()
 
-		// Closing the session is what ends the forwarder: its events channel closes once
-		// the provider has settled everything it was running.
+		// Closing the session abandons whatever the provider is still generating, which
+		// is what lets every drainer reach the end of its stream and settle its task.
 		err = m.subagent.Close()
-		m.forwarder.Wait()
+		m.drainers.Wait()
+		m.results.Close()
 	})
 	return err
 }
@@ -323,19 +363,39 @@ func (m *manager) forget(taskID string) {
 	}
 }
 
-// forward turns the subagent's completions into results.
-func (m *manager) forward() {
-	defer m.forwarder.Done()
-	defer m.results.Close()
+// drain follows one task for the whole of its life, code it runs included, and reports what
+// became of it.
+func (m *manager) drain(running *task, stream *llm.Stream) {
+	defer m.drainers.Done()
 
-	for event := range m.subagent.Events() {
-		switch typed := event.(type) {
-		case llm.CompletionComplete:
-			m.settle(typed)
-		case llm.Error:
-			m.fail(typed)
+	for {
+		response := m.consume(running, stream)
+
+		next, more := m.advance(running, response)
+		if !more {
+			return
 		}
+		stream = next
 	}
+}
+
+// consume drains one response, remembering a failure against the task it belonged to so
+// that what settles is reported as a failure rather than as an empty answer.
+func (m *manager) consume(running *task, stream *llm.Stream) llm.Response {
+	defer stream.Close()
+
+	for stream.Next() {
+		failed, ok := stream.Current().(llm.ResponseFailed)
+		if !ok {
+			continue
+		}
+		m.mu.Lock()
+		if running.failure == nil {
+			running.failure = failed.Err
+		}
+		m.mu.Unlock()
+	}
+	return stream.Response()
 }
 
 // tools are what the subagent may do rather than say. Only running code is offered, and
@@ -347,41 +407,42 @@ func (m *manager) tools() []llm.Tool {
 	return []llm.Tool{sandbox.Tool()}
 }
 
-// settle reports what became of a task.
-func (m *manager) settle(complete llm.CompletionComplete) {
+// advance decides what a settled response means for its task: either the task runs the code
+// it asked for and puts the same question again, in which case the stream to follow next is
+// returned, or it is finished with and reported.
+func (m *manager) advance(running *task, response llm.Response) (*llm.Stream, bool) {
 	m.mu.Lock()
-	finished, ok := m.running[complete.CompletionID]
-	if !ok {
+	if _, known := m.running[running.id]; !known {
 		m.mu.Unlock()
-		return
+		return nil, false
 	}
-	if m.box != nil && len(complete.ToolCalls) > 0 && finished.live() &&
-		finished.rounds < toolRounds {
-		finished.rounds++
+	if m.box != nil && len(response.ToolCalls) > 0 && running.live() &&
+		running.rounds < toolRounds {
+		running.rounds++
 		m.mu.Unlock()
-		go m.resume(finished, complete)
-		return
+		return m.resume(running, response)
 	}
 	m.mu.Unlock()
 
 	var result Result
 	switch {
-	case finished.reason != "":
+	case running.reason != "":
 		result.State = Cancelled
-		result.Reason = finished.reason
-	case complete.Interrupted:
+		result.Reason = running.reason
+	case response.Status == llm.StatusCancelled:
 		// Nothing named this task, so the whole session was stopped.
 		result.State = Cancelled
 		result.Reason = ReasonClosed
-	case finished.failure != nil:
+	case running.failure != nil:
 		result.State = Failed
-		result.Err = finished.failure
+		result.Err = running.failure
 	default:
 		result.State = Done
-		result.Text, result.Question = answer(complete.Text)
+		result.Text, result.Question = answer(response.OutputText)
 	}
 
-	m.report(finished, result)
+	m.report(running, result)
+	return nil, false
 }
 
 // report drops a task and says what became of it.
@@ -400,20 +461,21 @@ func (m *manager) report(finished *task, result Result) {
 	m.results.Send(result)
 }
 
-// resume runs what a task asked for and puts the same question again with the answer.
+// resume runs what a task asked for and puts the same question again with the answer,
+// returning the stream the new answer arrives on.
 //
 // The deadline is not restarted: running code is part of the work the task was given,
 // not licence to take longer over it.
-func (m *manager) resume(running *task, complete llm.CompletionComplete) {
+func (m *manager) resume(running *task, response llm.Response) (*llm.Stream, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), codeDeadline)
 	defer cancel()
 
 	messages := append(running.messages, llm.Message{
 		Role:      llm.Assistant,
-		Content:   complete.Text,
-		ToolCalls: complete.ToolCalls,
+		Content:   response.OutputText,
+		ToolCalls: response.ToolCalls,
 	})
-	for _, call := range complete.ToolCalls {
+	for _, call := range response.ToolCalls {
 		messages = append(messages, llm.Message{
 			Role:       llm.ToolResult,
 			ToolCallID: call.ID,
@@ -430,23 +492,23 @@ func (m *manager) resume(running *task, complete llm.CompletionComplete) {
 
 	if abandoned != "" || closed {
 		// Nothing is waiting for this any more, but something has to settle the task:
-		// the completion it was running has already been and gone.
+		// the response it was running has already been and gone.
 		reason := abandoned
 		if reason == "" {
 			reason = ReasonClosed
 		}
 		m.report(running, Result{State: Cancelled, Reason: reason})
-		return
+		return nil, false
 	}
 
-	if err := m.subagent.Respond(llm.Request{
-		ID:           running.id,
-		Instructions: instructions,
-		Messages:     messages,
-		Tools:        m.tools(),
-	}); err != nil {
-		m.report(running, Result{State: Failed, Err: fmt.Errorf("harness: resume %s: %w", running.skill, err)})
+	stream, err := m.ask(running.id, instructions, messages)
+	if err != nil {
+		m.report(running, Result{State: Failed,
+			Err: fmt.Errorf("harness: resume %s: %w", running.skill, err)})
+		return nil, false
 	}
+	m.hold(running, stream)
+	return stream, true
 }
 
 // ran executes one tool call and renders what happened in words the model can read.
@@ -477,19 +539,4 @@ func (m *manager) ran(ctx context.Context, call llm.ToolCall) string {
 		return "The code ran and printed nothing."
 	}
 	return result.Output
-}
-
-// fail records a provider failure against the task it names, so the completion that
-// follows is reported as a failure rather than as an empty answer.
-func (m *manager) fail(failure llm.Error) {
-	if failure.CompletionID == "" {
-		m.logger.Error("the subagent failed", "error", failure.Err, "context", failure.Context)
-		return
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if running, ok := m.running[failure.CompletionID]; ok && running.failure == nil {
-		running.failure = failure.Err
-	}
 }

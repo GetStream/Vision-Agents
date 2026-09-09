@@ -7,11 +7,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -27,18 +27,18 @@ type script struct {
 	caller   []string
 	judge    string
 	rewrites string
-	asked    []llm.Request
+	asked    []llm.ResponseParams
 }
 
-func (s *script) next(request llm.Request) string {
+func (s *script) next(params llm.ResponseParams) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.asked = append(s.asked, request)
+	s.asked = append(s.asked, params)
 
 	switch {
-	case strings.HasPrefix(request.Instructions, judgeInstructions):
+	case strings.HasPrefix(params.Instructions, judgeInstructions):
 		return s.judge
-	case strings.HasPrefix(request.Instructions, expandInstructions):
+	case strings.HasPrefix(params.Instructions, expandInstructions):
 		return s.rewrites
 	case len(s.caller) > 0:
 		said := s.caller[0]
@@ -49,41 +49,33 @@ func (s *script) next(request llm.Request) string {
 	}
 }
 
-func (s *script) requests() []llm.Request {
+func (s *script) requests() []llm.ResponseParams {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]llm.Request(nil), s.asked...)
+	return append([]llm.ResponseParams(nil), s.asked...)
 }
 
 // scriptedModel is one model reading from the script. Each is its own because a router
-// hands out a session per Start, and two sessions sharing an emitter would each consume the
-// other's answers.
-type scriptedModel struct {
-	script  *script
-	emitter *llm.Emitter
-}
+// hands out a session per Start.
+type scriptedModel struct{ script *script }
 
 func (m *scriptedModel) Start(context.Context) error { return nil }
 
-func (m *scriptedModel) Respond(request llm.Request) error {
-	answer := m.script.next(request)
-	go func() {
-		m.emitter.Send(llm.CompletionStarted{CompletionID: request.ID, At: time.Now()})
-		m.emitter.Send(llm.CompletionComplete{CompletionID: request.ID, Text: answer})
-	}()
-	return nil
+func (m *scriptedModel) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	script := llmtest.New(llm.StreamOptions{
+		ResponseID: params.ID,
+		Provider:   m.Provider(),
+		Model:      m.Model(),
+	})
+	script.OutputText(m.script.next(params))
+	script.Done()
+	return script.Stream(), nil
 }
 
-func (m *scriptedModel) Interrupt(...string) error { return nil }
-func (m *scriptedModel) Events() <-chan llm.Event  { return m.emitter.Events() }
-func (m *scriptedModel) Provider() string          { return "scripted" }
-func (m *scriptedModel) Model() string             { return "scripted-model" }
-func (m *scriptedModel) Reasoning() bool           { return false }
-
-func (m *scriptedModel) Close() error {
-	m.emitter.Close()
-	return nil
-}
+func (m *scriptedModel) Provider() string               { return "scripted" }
+func (m *scriptedModel) Model() string                  { return "scripted-model" }
+func (m *scriptedModel) Capabilities() llm.Capabilities { return llm.Capabilities{} }
+func (m *scriptedModel) Close() error                   { return nil }
 
 // scriptedTransport is an agent that has already decided what it is going to say, which is
 // what testing the loop above it needs rather than an agent.
@@ -140,8 +132,8 @@ func (s *SimulationSuite) SetupTest() {
 	s.script = &script{}
 
 	registry := llmrouter.NewRegistry()
-	registry.Register("scripted", func(routing.Spec) (llm.LLM, error) {
-		return &scriptedModel{script: s.script, emitter: llm.NewEmitter(64)}, nil
+	registry.Register("scripted", func(routing.Spec) (llmrouter.Provider, error) {
+		return &scriptedModel{script: s.script}, nil
 	})
 	router, err := llmrouter.New(llmrouter.Options{
 		Config:   scriptedConfig(),
@@ -237,7 +229,8 @@ func (s *SimulationSuite) TestTheCallerIsNeverToldItIsTalkingToAnAgent() {
 	s.Require().NotEmpty(asked)
 	s.Contains(asked[0].Instructions, "order a pizza")
 	s.Contains(asked[0].Instructions, "Never mention that this is a test")
-	s.True(asked[0].JSON, "the caller is asked for a decision, so it has to answer in JSON")
+	s.Equal(llm.FormatJSONObject, asked[0].Text.Format,
+		"the caller is asked for a decision, so it has to answer in JSON")
 }
 
 func (s *SimulationSuite) TestTheCallerAnswersTheGreetingRatherThanTalkingOverIt() {
@@ -256,7 +249,7 @@ func (s *SimulationSuite) TestTheCallerAnswersTheGreetingRatherThanTalkingOverIt
 	// reason a greeting is in the transcript rather than only on the wire.
 	asked := s.script.requests()
 	s.Require().NotEmpty(asked)
-	s.Contains(asked[0].Messages[0].Content, "Northwind, how can I help?")
+	s.Contains(asked[0].Input[0].Content, "Northwind, how can I help?")
 }
 
 func (s *SimulationSuite) TestAFencedRulingIsStillUnderstood() {
@@ -290,7 +283,7 @@ func (s *SimulationSuite) TestTheJudgeIsAskedOnlyTheQuestionItWasGiven() {
 
 	asked := s.script.requests()
 	s.Require().NotEmpty(asked)
-	content := asked[len(asked)-1].Messages[0].Content
+	content := asked[len(asked)-1].Input[0].Content
 	s.Contains(content, "was an order placed for 8pm?")
 	s.Contains(content, "Caller: One pizza please.")
 	s.Contains(content, "Agent: Certainly.")
