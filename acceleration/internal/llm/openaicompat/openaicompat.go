@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -210,6 +211,7 @@ type puller struct {
 	id       uint64
 	upstream *ssestream.Stream[openai.ChatCompletionChunk]
 	cancel   context.CancelFunc
+	strip    thoughtStripper
 
 	err  error
 	done bool
@@ -243,7 +245,17 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 	}
 
 	for _, choice := range chunk.Choices {
-		w.OutputText(choice.Delta.Content)
+		if choice.Delta.Content != "" {
+			p.llm.logger.Debug("llm content delta",
+				"provider", p.llm.options.Provider, "text", choice.Delta.Content)
+			if looksLikeThinking(choice.Delta.Content) {
+				p.llm.logger.Info("llm content looks like thinking",
+					"provider", p.llm.options.Provider, "text", choice.Delta.Content)
+			}
+		}
+		speech, thinking := p.strip.Add(choice.Delta.Content)
+		w.OutputText(speech)
+		w.ReasoningText(thinking)
 		w.ReasoningText(reasoning(choice.Delta.JSON.ExtraFields))
 		for _, call := range choice.Delta.ToolCalls {
 			w.FunctionCall(
@@ -274,6 +286,10 @@ func (p *puller) Close() error {
 // finish releases the upstream and works out what ended it.
 func (p *puller) finish(w *llm.ResponseWriter) {
 	p.done = true
+
+	speech, thinking := p.strip.Flush()
+	w.OutputText(speech)
+	w.ReasoningText(thinking)
 
 	if err := p.upstream.Err(); err != nil && !errors.Is(err, context.Canceled) {
 		p.err = err
@@ -454,4 +470,21 @@ func signature(extra map[string]respjson.Field) string {
 		return ""
 	}
 	return content.Google.ThoughtSignature
+}
+
+// looksLikeThinking reports whether streamed content is a reasoning marker that leaked
+// into the answer rather than arriving on reasoning_content. Gemma 4 still emits empty
+// channel/thought blocks with thinking off when the server-side parser misses them.
+func looksLikeThinking(text string) bool {
+	lower := strings.ToLower(text)
+	switch {
+	case strings.Contains(lower, "<think"),
+		strings.Contains(lower, "</think"),
+		strings.Contains(lower, "<|channel|>"),
+		strings.Contains(lower, "channel thought"),
+		strings.Contains(lower, "channel response"):
+		return true
+	}
+	trimmed := strings.TrimSpace(lower)
+	return trimmed == "thought" || trimmed == "thought."
 }
