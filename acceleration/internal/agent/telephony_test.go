@@ -77,19 +77,30 @@ func (s *AgentSuite) onACall() {
 type stubToolRunner struct {
 	result string
 	err    error
+	delay  time.Duration
 
 	mu   sync.Mutex
 	runs []llm.ToolCall
 }
 
-func (r *stubToolRunner) Run(_ context.Context, call llm.ToolCall) (string, error) {
+func (r *stubToolRunner) Run(ctx context.Context, call llm.ToolCall) (string, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.runs = append(r.runs, call)
-	if r.err != nil {
-		return "", r.err
+	delay := r.delay
+	result := r.result
+	err := r.err
+	r.mu.Unlock()
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}
-	return r.result, nil
+	if err != nil {
+		return "", err
+	}
+	return result, nil
 }
 
 func (r *stubToolRunner) asked() []llm.ToolCall {

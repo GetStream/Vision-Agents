@@ -1073,6 +1073,20 @@ func (s *AgentSuite) TestANonStreamingVoiceGetsOneRequestPerSentence() {
 		"each sentence is its own synthesis, so each settles on its own")
 }
 
+func (s *AgentSuite) TestAStreamingVoiceIsFedClauseSizedChunks() {
+	s.join(true)
+	s.model.reply = []string{"We have a table, ", "let me book it."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	s.Equal("We have a table,", s.voice.spoken()[0].Text,
+		"a streaming voice is fed the clause before the sentence ends")
+	s.False(s.voice.spoken()[0].Final)
+}
+
 func (s *AgentSuite) TestTheConversationIsRemembered() {
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
@@ -1967,6 +1981,39 @@ func (s *AgentSuite) TestAudioFromAnAbandonedTurnIsNotPublished() {
 
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "no interruption")
 	s.Equal(before, len(s.edge.heard()), "audio from the abandoned turn stays unheard")
+}
+
+func (s *AgentSuite) TestASlowToolIsKeptCompany() {
+	s.ownsTools("both available")
+	s.runner.delay = 2 * time.Second
+	s.join(false)
+	s.model.reply = []string{"One moment. Checking."}
+	s.model.then = []string{"We have a table."}
+	s.asksFor("lookup_order", `{"order":"1"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "is Saturday free")
+
+	s.eventually(func() bool { return countOf[Backchannel](s.reported()) == 1 },
+		"a slow tool left the caller in silence")
+}
+
+func (s *AgentSuite) TestAFastToolProducesOnlyOneWorkingPhrase() {
+	s.ownsTools("found")
+	s.join(false)
+	s.model.reply = []string{"One moment. Checking."}
+	s.model.then = []string{"It ships tomorrow."}
+	s.asksFor("lookup_order", `{"order":"1"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+
+	s.eventually(func() bool { return s.spokenText("It ships tomorrow") },
+		"the tool result was never spoken")
+	s.never(func() bool { return countOf[Backchannel](s.reported()) > 0 },
+		"a fast tool must not earn a second working phrase")
 }
 
 func (s *AgentSuite) TestASecondToolDoesNotStartACompetingReply() {

@@ -540,6 +540,7 @@ func (a *Agent) Join(ctx context.Context) error {
 			return fmt.Errorf("agent: start tts: %w", err)
 		}
 		a.tts = voice
+		a.chunk.clauses = voice.Streaming()
 		// What the voice wants said about it is read once, here, rather than on every
 		// turn: the session cannot change provider without the agent rejoining, and
 		// instructions() is called under the lock this session was opened outside of.
@@ -997,6 +998,7 @@ func (a *Agent) floor() floor {
 	state := floor{
 		Quiet:           a.utterances == 0 && !a.generating && a.settling == "",
 		Speaking:        a.speakingTurn,
+		PendingTools:    a.pendingTools,
 		LastSpokeAt:     a.lastSpokeAt,
 		LastHeardAt:     a.lastHeardAt,
 		LastParticipant: a.lastParticipant,

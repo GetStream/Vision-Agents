@@ -805,6 +805,42 @@ func (s *ConverseSuite) TestALongSilenceWhileWorkRunsIsFilled() {
 	s.Equal([]ActionKind{ActBackchannel}, kinds(s.converse.Tick(state)))
 }
 
+func (s *ConverseSuite) TestASlowToolIsKeptCompanyEvenWithoutBackchannels() {
+	s.build(DuplexOptions{})
+
+	state := s.quiet()
+	state.PendingTools = 1
+	state.LastSpokeAt = time.Now().Add(-workingGap - time.Millisecond)
+
+	actions := s.converse.Tick(state)
+	s.Require().Equal([]ActionKind{ActBackchannel}, kinds(actions))
+	s.Contains(workingPhrases, actions[0].Text)
+	s.Empty(s.converse.Tick(state), "a wait is filled once, not on every tick")
+}
+
+func (s *ConverseSuite) TestAFastToolIsNotKeptCompanyTwice() {
+	s.build(DuplexOptions{})
+
+	state := s.quiet()
+	state.PendingTools = 1
+	state.LastSpokeAt = time.Now()
+
+	s.Empty(s.converse.Tick(state), "a tool that returns immediately has already been spoken for")
+}
+
+func (s *ConverseSuite) TestAToolWaitIsNotSpokenOverTheCaller() {
+	s.build(DuplexOptions{})
+	s.converse.Observe(stt.Transcript{
+		Participant: caller, Mode: stt.ModeReplacement, Text: "and make it six",
+	}, s.quiet())
+
+	state := s.quiet()
+	state.PendingTools = 1
+	state.LastSpokeAt = time.Now().Add(-workingGap - time.Millisecond)
+
+	s.Empty(s.converse.Tick(state), "never talk over a caller who still holds the floor")
+}
+
 func (s *ConverseSuite) TestACallNobodyHasSpokenOnIsAskedWhetherAnythingElseIsNeeded() {
 	s.build(DuplexOptions{Backchannel: true, BackchannelGap: time.Millisecond})
 
