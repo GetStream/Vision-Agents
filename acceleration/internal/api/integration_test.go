@@ -493,7 +493,7 @@ func (s *APIIntegrationSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() 
 		"name":"support","llm":"llm-fast","tts":"en-low-latency","voice":"aurora",
 		"subagent":"llm-best","instructions":"be brief","skills":["think","refund"],
 		"keyterms":["Vision Agents","Stream"],
-		"knowledge_namespace":"handbook","tags":{"project":"support"}
+		"knowledge_namespace":"handbook","sandbox":"daytona","tags":{"project":"support"}
 	}`)
 	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
 
@@ -517,8 +517,18 @@ func (s *APIIntegrationSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() 
 	s.Equal([]string{"Vision Agents", "Stream"}, *read.Keyterms)
 	s.Require().NotNil(read.KnowledgeNamespace)
 	s.Equal("handbook", *read.KnowledgeNamespace)
+	s.Require().NotNil(read.Sandbox)
+	s.Equal(Daytona, *read.Sandbox)
 	s.Require().NotNil(read.Tags)
 	s.Equal("support", (*read.Tags)["project"])
+}
+
+func (s *APIIntegrationSuite) TestAConfigNamingASandboxNobodyRunsIsRefused() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/configs",
+		`{"name":"support","sandbox":"docker"}`)
+
+	s.Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+	s.Contains(string(payload), "docker")
 }
 
 func (s *APIIntegrationSuite) TestAConfigNamingMoreKeytermsThanAnyProviderTakesIsRefused() {

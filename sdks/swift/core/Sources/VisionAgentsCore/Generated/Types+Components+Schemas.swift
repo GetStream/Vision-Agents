@@ -241,6 +241,13 @@ extension Components {
             case voice = "voice"
             case text = "text"
         }
+        /// Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/Sandbox`.
+        internal enum Sandbox: String, Codable, Hashable, Sendable, CaseIterable {
+            case daytona = "daytona"
+        }
         /// - Remark: Generated from `#/components/schemas/AgentConfig`.
         internal struct AgentConfig: Codable, Hashable, Sendable {
             /// - Remark: Generated from `#/components/schemas/AgentConfig/id`.
@@ -273,6 +280,8 @@ extension Components {
             internal var keyterms: [Swift.String]?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/knowledge_namespace`.
             internal var knowledgeNamespace: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/AgentConfig/sandbox`.
+            internal var sandbox: Components.Schemas.Sandbox?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/tags`.
             internal struct TagsPayload: Codable, Hashable, Sendable {
                 /// A container of undocumented properties.
@@ -320,6 +329,7 @@ extension Components {
             ///   - plugins:
             ///   - keyterms:
             ///   - knowledgeNamespace:
+            ///   - sandbox:
             ///   - tags:
             ///   - syncHash: Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
             ///   - createdAt:
@@ -340,6 +350,7 @@ extension Components {
                 plugins: [Swift.String]? = nil,
                 keyterms: [Swift.String]? = nil,
                 knowledgeNamespace: Swift.String? = nil,
+                sandbox: Components.Schemas.Sandbox? = nil,
                 tags: Components.Schemas.AgentConfig.TagsPayload? = nil,
                 syncHash: Swift.String? = nil,
                 createdAt: Foundation.Date,
@@ -360,6 +371,7 @@ extension Components {
                 self.plugins = plugins
                 self.keyterms = keyterms
                 self.knowledgeNamespace = knowledgeNamespace
+                self.sandbox = sandbox
                 self.tags = tags
                 self.syncHash = syncHash
                 self.createdAt = createdAt
@@ -381,6 +393,7 @@ extension Components {
                 case plugins
                 case keyterms
                 case knowledgeNamespace = "knowledge_namespace"
+                case sandbox
                 case tags
                 case syncHash = "sync_hash"
                 case createdAt = "created_at"
@@ -2284,18 +2297,8 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tasks`.
             internal var tasks: Swift.Int?
-            /// Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-            ///
-            ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/sandbox`.
-            internal enum SandboxPayload: String, Codable, Hashable, Sendable, CaseIterable {
-                case daytona = "daytona"
-            }
-            /// Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-            ///
-            ///
-            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/sandbox`.
-            internal var sandbox: Components.Schemas.CreateSessionRequest.SandboxPayload?
+            internal var sandbox: Components.Schemas.Sandbox?
             /// Murmur while a participant is still talking, the way a person does.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/backchannel`.
@@ -2371,7 +2374,7 @@ extension Components {
             ///   - keyterms: Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
             ///   - maxTokens:
             ///   - tasks: How much delegated work may run at once.
-            ///   - sandbox: Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+            ///   - sandbox:
             ///   - backchannel: Murmur while a participant is still talking, the way a person does.
             ///   - minConfidence: How sure the transcriber must be before the agent answers rather than checks what was meant.
             ///   - skills: Omit for the built-in set of think, recall and explain.
@@ -2402,7 +2405,7 @@ extension Components {
                 keyterms: [Swift.String]? = nil,
                 maxTokens: Swift.Int? = nil,
                 tasks: Swift.Int? = nil,
-                sandbox: Components.Schemas.CreateSessionRequest.SandboxPayload? = nil,
+                sandbox: Components.Schemas.Sandbox? = nil,
                 backchannel: Swift.Bool? = nil,
                 minConfidence: Swift.Double? = nil,
                 skills: [Components.Schemas.SessionSkill]? = nil,

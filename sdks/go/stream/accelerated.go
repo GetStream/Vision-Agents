@@ -395,7 +395,7 @@ func (p *Pipeline) request(call Call, config string) acceleration.CreateSessionR
 		request.Tasks = &call.Tasks
 	}
 	if call.Sandbox != "" {
-		sandbox := acceleration.CreateSessionRequestSandbox(call.Sandbox)
+		sandbox := acceleration.Sandbox(call.Sandbox)
 		request.Sandbox = &sandbox
 	}
 	if call.Skills != nil {

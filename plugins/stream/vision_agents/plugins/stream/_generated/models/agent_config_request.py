@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 from typing_extensions import Self
 
 from ..models.agent_mode import AgentMode
+from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -43,6 +44,9 @@ class AgentConfigRequest:
             or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
         knowledge_namespace (str | Unset): What the agent may look things up in. Empty means it knows only what it was
             told.
+        sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
+            code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
+            everything out in its head.
         tags (AgentConfigRequestTags | Unset): Cost labels, carried onto every request a session using it makes.
     """
 
@@ -60,6 +64,7 @@ class AgentConfigRequest:
     plugins: list[str] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
+    sandbox: Sandbox | Unset = UNSET
     tags: AgentConfigRequestTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -100,6 +105,10 @@ class AgentConfigRequest:
 
         knowledge_namespace = self.knowledge_namespace
 
+        sandbox: str | Unset = UNSET
+        if not isinstance(self.sandbox, Unset):
+            sandbox = self.sandbox.value
+
         tags: dict[str, Any] | Unset = UNSET
         if not isinstance(self.tags, Unset):
             tags = self.tags.to_dict()
@@ -137,6 +146,8 @@ class AgentConfigRequest:
             field_dict["keyterms"] = keyterms
         if knowledge_namespace is not UNSET:
             field_dict["knowledge_namespace"] = knowledge_namespace
+        if sandbox is not UNSET:
+            field_dict["sandbox"] = sandbox
         if tags is not UNSET:
             field_dict["tags"] = tags
 
@@ -182,6 +193,13 @@ class AgentConfigRequest:
 
         knowledge_namespace = d.pop("knowledge_namespace", UNSET)
 
+        _sandbox = d.pop("sandbox", UNSET)
+        sandbox: Sandbox | Unset
+        if isinstance(_sandbox, Unset):
+            sandbox = UNSET
+        else:
+            sandbox = Sandbox(_sandbox)
+
         _tags = d.pop("tags", UNSET)
         tags: AgentConfigRequestTags | Unset
         if isinstance(_tags, Unset):
@@ -204,6 +222,7 @@ class AgentConfigRequest:
             plugins=plugins,
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
+            sandbox=sandbox,
             tags=tags,
         )
 

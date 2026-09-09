@@ -3,7 +3,7 @@ from typing import Any, AsyncIterator
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-from vision_agents.core.harness import Skill
+from vision_agents.core.harness import Daytona, Skill
 from vision_agents.plugins import stream
 
 EXPLAIN = Skill(
@@ -197,6 +197,18 @@ class TestDefineAgent:
 
         assert router.skills == {}
         assert "skills" not in router.configs[config.id]
+
+    async def test_an_agent_carries_the_vm_its_subagent_runs_code_in(
+        self, router: Router
+    ):
+        config = await self.define(router, vm=Daytona)
+
+        assert router.configs[config.id]["sandbox"] == "daytona"
+
+    async def test_an_agent_without_a_vm_runs_no_code(self, router: Router):
+        config = await self.define(router)
+
+        assert "sandbox" not in router.configs[config.id]
 
 
 class TestSyncAgent:

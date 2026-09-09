@@ -2804,6 +2804,14 @@ components:
         conversation in writing, so it uses neither speech target and a session created
         from it needs no call to join.
 
+    Sandbox:
+      type: string
+      enum: [daytona]
+      description: >
+        Where the subagent may run code it writes. Only the subagent is offered it:
+        running code takes seconds, and the model holding the conversation has none to
+        spare. Omit it and the subagent works everything out in its head.
+
     AgentConfigRequest:
       type: object
       required: [name]
@@ -2867,6 +2875,8 @@ components:
           description: >
             What the agent may look things up in. Empty means it knows only what it was
             told.
+        sandbox:
+          $ref: "#/components/schemas/Sandbox"
         tags:
           type: object
           additionalProperties:
@@ -2913,6 +2923,8 @@ components:
             type: string
         knowledge_namespace:
           type: string
+        sandbox:
+          $ref: "#/components/schemas/Sandbox"
         tags:
           type: object
           additionalProperties:
@@ -4583,12 +4595,7 @@ components:
           type: integer
           description: How much delegated work may run at once.
         sandbox:
-          type: string
-          enum: [daytona]
-          description: >
-            Where the subagent may run code it writes. Only the subagent is offered it:
-            running code takes seconds, and the model holding the conversation has none to
-            spare. Omit it and the subagent works everything out in its head.
+          $ref: "#/components/schemas/Sandbox"
         backchannel:
           type: boolean
           default: false

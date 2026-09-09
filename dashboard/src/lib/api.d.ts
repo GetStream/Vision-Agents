@@ -1445,6 +1445,11 @@ export interface components {
          * @enum {string}
          */
         AgentMode: "voice" | "text";
+        /**
+         * @description Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+         * @enum {string}
+         */
+        Sandbox: "daytona";
         AgentConfigRequest: {
             /** @description What the config is called, which is unique among the customer's own. */
             name: string;
@@ -1470,6 +1475,7 @@ export interface components {
             keyterms?: string[];
             /** @description What the agent may look things up in. Empty means it knows only what it was told. */
             knowledge_namespace?: string;
+            sandbox?: components["schemas"]["Sandbox"];
             /** @description Cost labels, carried onto every request a session using it makes. */
             tags?: {
                 [key: string]: string;
@@ -1491,6 +1497,7 @@ export interface components {
             plugins?: string[];
             keyterms?: string[];
             knowledge_namespace?: string;
+            sandbox?: components["schemas"]["Sandbox"];
             tags?: {
                 [key: string]: string;
             };
@@ -2446,11 +2453,7 @@ export interface components {
             max_tokens?: number;
             /** @description How much delegated work may run at once. */
             tasks?: number;
-            /**
-             * @description Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-             * @enum {string}
-             */
-            sandbox?: "daytona";
+            sandbox?: components["schemas"]["Sandbox"];
             /**
              * @description Murmur while a participant is still talking, the way a person does.
              * @default false

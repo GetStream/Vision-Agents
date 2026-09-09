@@ -166,6 +166,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Plugins:            config.Plugins,
 		Keyterms:           config.Keyterms,
 		KnowledgeNamespace: config.KnowledgeNamespace,
+		Sandbox:            config.Sandbox,
 		Tags:               routing.Tags(config.Tags),
 	}
 }

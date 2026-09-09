@@ -41,6 +41,15 @@ func (s *SpecSuite) TestAConfigsPluginsBecomeTheSessions() {
 	s.Equal([]string{"slack", "calendly"}, spec.Plugins)
 }
 
+func (s *SpecSuite) TestAConfigsSandboxBecomesTheSessions() {
+	spec := FromConfig(store.AgentConfig{
+		CustomerID: "acme",
+		Sandbox:    daytonaProvider,
+	})
+
+	s.Equal(daytonaProvider, spec.Sandbox)
+}
+
 func (s *SpecSuite) TestKeytermsAreTidiedOnTheWayIn() {
 	spec := s.spec([]string{" Vision Agents ", "", "Stream"})
 

@@ -30,7 +30,6 @@ from .contact_state import ContactState
 from .contacts_request import ContactsRequest
 from .contacts_request_contacts_item import ContactsRequestContactsItem
 from .create_session_request import CreateSessionRequest
-from .create_session_request_sandbox import CreateSessionRequestSandbox
 from .create_session_request_tags import CreateSessionRequestTags
 from .data_policy import DataPolicy
 from .decision_kind import DecisionKind
@@ -82,6 +81,7 @@ from .router_config import RouterConfig
 from .router_config_request import RouterConfigRequest
 from .router_config_request_tags import RouterConfigRequestTags
 from .router_config_tags import RouterConfigTags
+from .sandbox import Sandbox
 from .say_request import SayRequest
 from .search_answer import SearchAnswer
 from .search_depth import SearchDepth
@@ -177,7 +177,6 @@ __all__ = (
     "ContactsRequest",
     "ContactsRequestContactsItem",
     "CreateSessionRequest",
-    "CreateSessionRequestSandbox",
     "CreateSessionRequestTags",
     "DataPolicy",
     "DecisionKind",
@@ -229,6 +228,7 @@ __all__ = (
     "RouterConfigRequest",
     "RouterConfigRequestTags",
     "RouterConfigTags",
+    "Sandbox",
     "SayRequest",
     "SearchAnswer",
     "SearchDepth",

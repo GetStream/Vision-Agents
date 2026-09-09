@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Optional, TypeVar, Union
 
-from vision_agents.core.harness import Skill
+from vision_agents.core.harness import Sandbox, Skill
 
 from ._backend import Backend
 from ._generated import AuthenticatedClient
@@ -24,6 +24,7 @@ from ._generated.models import (
     SyncAgentRequest,
     SyncAgentResult,
 )
+from ._generated.models import Sandbox as SandboxProvider
 from .folder import Folder, load, resolve
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ async def define_agent(
     greeting: str = "",
     skills: Optional[list[Skill]] = None,
     knowledge: str = "",
+    vm: Optional[Union[Sandbox, type[Sandbox]]] = None,
     url: Optional[str] = None,
     customer_id: Optional[str] = None,
 ) -> AgentConfig:
@@ -124,6 +126,10 @@ async def define_agent(
         skills: What the model may hand work to. A skill named here replaces a built-in
             of the same name.
         knowledge: The knowledge base the agent may look things up in.
+        vm: Where the subagent may run code it writes, as a `Sandbox` or the class itself,
+            so `vm=Daytona` reads the way it is meant to. Deciding it here rather than per
+            session is the point: which sandbox an agent is allowed is a property of the
+            agent. Without one the subagent works everything out in its head.
         url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
         customer_id: Who the work is billed to. Defaults to
             `STREAM_ACCELERATION_CUSTOMER_ID`.
@@ -153,6 +159,9 @@ async def define_agent(
         wanted.skills = [skill.name for skill in named]
     if knowledge:
         wanted.knowledge_namespace = knowledge
+    if vm is not None:
+        box = vm() if isinstance(vm, type) else vm
+        wanted.sandbox = SandboxProvider(box.provider)
 
     config: Optional[AgentConfig] = None
     for stored in _answer(await list_agent_configs.asyncio(client=client)):

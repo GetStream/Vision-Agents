@@ -597,6 +597,7 @@ func (s *SessionAPISuite) TestAConfigFillsInWhatTheRequestLeftOut() {
 		Greeting:           "hello there",
 		Skills:             []string{"refund"},
 		KnowledgeNamespace: "handbook",
+		Sandbox:            "daytona",
 		Tags:               map[string]string{"agent": "support"},
 	}
 
@@ -610,6 +611,7 @@ func (s *SessionAPISuite) TestAConfigFillsInWhatTheRequestLeftOut() {
 	s.Equal("hello there", spec.Greeting)
 	s.Equal([]string{"refund"}, spec.SkillNames)
 	s.Equal("handbook", spec.KnowledgeNamespace)
+	s.Equal("daytona", spec.Sandbox)
 	s.Equal("support", spec.Tags["agent"])
 }
 

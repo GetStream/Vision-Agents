@@ -20,9 +20,9 @@ from ._backend import Backend
 from ._generated.api.default import close_session, create_session, list_agent_configs
 from ._generated.models import (
     CreateSessionRequest,
-    CreateSessionRequestSandbox,
     CreateSessionRequestTags,
     Error,
+    Sandbox,
     Session,
     SessionMemory,
     SessionMemoryFilter,
@@ -344,7 +344,7 @@ class Accelerated(OmniLLM):
         if spec["tasks"]:
             request.tasks = spec["tasks"]
         if "sandbox" in spec:
-            request.sandbox = CreateSessionRequestSandbox(spec["sandbox"])
+            request.sandbox = Sandbox(spec["sandbox"])
         if "skills" in spec:
             request.skills = [
                 SessionSkill(

@@ -261,8 +261,11 @@ type AgentConfig struct {
 	// Keyterms are the business-specific words a transcriber would otherwise get wrong.
 	Keyterms []string `bun:"keyterms,type:jsonb"`
 	// KnowledgeNamespace is what the agent may look things up in.
-	KnowledgeNamespace string            `bun:"knowledge_namespace,notnull"`
-	Tags               map[string]string `bun:"tags,type:jsonb"`
+	KnowledgeNamespace string `bun:"knowledge_namespace,notnull"`
+	// Sandbox is where the subagent may run code it writes, "daytona" being the one
+	// provider there is. Empty means it runs none.
+	Sandbox string            `bun:"sandbox,notnull"`
+	Tags    map[string]string `bun:"tags,type:jsonb"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`

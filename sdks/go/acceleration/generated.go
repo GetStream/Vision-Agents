@@ -101,21 +101,6 @@ func (e ContactState) Valid() bool {
 	}
 }
 
-// Defines values for CreateSessionRequestSandbox.
-const (
-	Daytona CreateSessionRequestSandbox = "daytona"
-)
-
-// Valid indicates whether the value is a known member of the CreateSessionRequestSandbox enum.
-func (e CreateSessionRequestSandbox) Valid() bool {
-	switch e {
-	case Daytona:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for DecisionKind.
 const (
 	Answer      DecisionKind = "answer"
@@ -470,6 +455,21 @@ func (e RecordingStatus) Valid() bool {
 	}
 }
 
+// Defines values for Sandbox.
+const (
+	Daytona Sandbox = "daytona"
+)
+
+// Valid indicates whether the value is a known member of the Sandbox enum.
+func (e Sandbox) Valid() bool {
+	switch e {
+	case Daytona:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SearchDepth.
 const (
 	Deep     SearchDepth = "deep"
@@ -784,9 +784,12 @@ type AgentConfig struct {
 	Llm                *string   `json:"llm,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
-	Mode     AgentMode `json:"mode"`
-	Name     string    `json:"name"`
-	Plugins  *[]string `json:"plugins,omitempty"`
+	Mode    AgentMode `json:"mode"`
+	Name    string    `json:"name"`
+	Plugins *[]string `json:"plugins,omitempty"`
+
+	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	Sandbox  *Sandbox  `json:"sandbox,omitempty"`
 	Search   *string   `json:"search,omitempty"`
 	Skills   *[]string `json:"skills,omitempty"`
 	Stt      *string   `json:"stt,omitempty"`
@@ -822,6 +825,9 @@ type AgentConfigRequest struct {
 
 	// Plugins Hosted MCP servers this agent may reach, named from the built-in catalog.
 	Plugins *[]string `json:"plugins,omitempty"`
+
+	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
 	// Search What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
 	Search *string `json:"search,omitempty"`
@@ -1156,7 +1162,7 @@ type CreateSessionRequest struct {
 	Phone *SessionPhone `json:"phone,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *CreateSessionRequestSandbox `json:"sandbox,omitempty"`
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
 	// Search Omit it and the config decides, or search-fast when there is no config.
 	Search *string `json:"search,omitempty"`
@@ -1196,9 +1202,6 @@ type CreateSessionRequest struct {
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`
 }
-
-// CreateSessionRequestSandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-type CreateSessionRequestSandbox string
 
 // DataPolicy What a caller requires of what happens to their audio after it is transcribed. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 type DataPolicy struct {
@@ -1601,6 +1604,9 @@ type RouterConfigRequest struct {
 	// Tts How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
 	Tts *TtsOptions `json:"tts,omitempty"`
 }
+
+// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
+type Sandbox string
 
 // SayRequest defines model for SayRequest.
 type SayRequest struct {

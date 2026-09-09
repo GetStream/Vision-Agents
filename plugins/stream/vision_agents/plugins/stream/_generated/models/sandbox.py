@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 
-class CreateSessionRequestSandbox(StrEnum):
+class Sandbox(StrEnum):
     DAYTONA = "daytona"
 
     def __str__(self) -> str:
