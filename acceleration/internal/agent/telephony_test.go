@@ -610,6 +610,45 @@ func (s *AgentSuite) TestAnInterruptedReplyCancelsItsToolsWhenTheCallerChangesTh
 	s.True(sawCancel, "the model was not told the call was abandoned")
 }
 
+func (s *AgentSuite) TestACancelledCallHandsBackWhatItHadAlreadyCollected() {
+	// A correction mid-booking used to come back as "it was not run" and nothing else,
+	// so the retry read as though no detail had been agreed and the agent asked for the
+	// party size and the time all over again.
+	s.ownsTools("booked")
+	s.join(true)
+	s.model.reply = nil
+	s.model.then = []string{"Updated to six."}
+	s.voice.silent = true
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "table for four Saturday at 7:30, patio, peanut allergy")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "no turn was started")
+	turnID := s.model.requests()[0].ID
+	s.model.writes(turnID, "Four at 7:30 patio. ")
+	s.model.script(turnID).ToolCalls(llm.ToolCall{
+		ID:        "call-1",
+		Name:      "create_reservation",
+		Arguments: `{"time":"7:30","party_size":4,"patio":true,"allergen":"peanut"}`,
+	})
+	s.eventually(func() bool { return countOf[ResponseDelta](s.reported()) >= 1 }, "the reply never streamed")
+
+	s.says(participant, "wait, make it six")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the correction was never answered")
+	var cancelled string
+	for _, message := range s.history() {
+		if message.Role == llm.ToolResult && message.ToolCallID == "call-1" {
+			cancelled = message.Content
+		}
+	}
+	s.Require().NotEmpty(cancelled, "the model was not told the call was abandoned")
+	s.Contains(cancelled, "was not run")
+	for _, slot := range []string{"7:30", "patio", "peanut"} {
+		s.Contains(cancelled, slot, "a detail the caller already gave was dropped from the retry")
+	}
+}
+
 // awaitToolRan waits for one tool to have settled and returns what it reported, since the
 // collector sees the event on its own goroutine.
 func (s *AgentSuite) awaitToolRan() ToolRan {

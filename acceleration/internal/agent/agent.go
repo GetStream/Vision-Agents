@@ -51,6 +51,12 @@ const (
 // conversation that replays a tool call without an answer.
 const cancelledToolResult = "The caller spoke over this request, so it was not run. Decide again from what they just said."
 
+// cancelledToolResultWithArgs is the same for a call that had already collected what the
+// caller gave. Handing back only "it was not run" reads as though nothing had been
+// agreed, and the agent asks again for a party size and a time it was holding a moment
+// ago; the arguments are what make the correction a change to a booking in progress.
+const cancelledToolResultWithArgs = "The caller spoke over this request, so it was not run. It was about to send %s. Those values still hold apart from what they just corrected, so decide again without asking for details they have already given."
+
 // sentenceSuffix separates a turn id from the sequence number of a sentence within it, for
 // providers that need one synthesis per sentence.
 const sentenceSuffix = "#"
@@ -1522,7 +1528,7 @@ func (a *Agent) finishAbandoned(response llm.Response) {
 		for _, call := range calls {
 			a.history = append(a.history, llm.Message{
 				Role:       llm.ToolResult,
-				Content:    cancelledToolResult,
+				Content:    cancelledResult(call),
 				ToolCallID: call.ID,
 			})
 		}
@@ -1547,6 +1553,17 @@ func (a *Agent) finishAbandoned(response llm.Response) {
 	if ours {
 		a.resumeAfterAbandon()
 	}
+}
+
+// cancelledResult is what a dropped call is answered with, including what it had filled
+// in when there was anything to report.
+func cancelledResult(call llm.ToolCall) string {
+	args := strings.TrimSpace(call.Arguments)
+	switch args {
+	case "", "{}", "null":
+		return cancelledToolResult
+	}
+	return fmt.Sprintf(cancelledToolResultWithArgs, args)
 }
 
 func (a *Agent) resumeAfterAbandon() {
