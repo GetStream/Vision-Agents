@@ -38,6 +38,7 @@ type accelSessionRequest struct {
 	Instructions string      `json:"instructions,omitempty"`
 	Greeting     string      `json:"greeting,omitempty"`
 	LLM          string      `json:"llm,omitempty"`
+	STT          string      `json:"stt,omitempty"`
 	Tools        []AccelTool `json:"tools"`
 }
 
@@ -136,6 +137,7 @@ func (a *Acceleration) StartCall(ctx context.Context, callID string, callType st
 		Instructions: a.Instructions,
 		Greeting:     "Hello, how can I help?",
 		LLM:          os.Getenv("VOICEBENCH_MODEL"),
+		STT:          os.Getenv("VOICEBENCH_STT"),
 		Tools:        a.Tools,
 	})
 	if err != nil {
