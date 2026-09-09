@@ -65,8 +65,14 @@ type Result struct {
 	LastFrameAt  time.Time
 	// InboundDropped is how many agent frames the transport had to discard.
 	InboundDropped int
-	RequestedSNRDB float64
-	MeasuredSNRDB  float64
+	// AgentJitterMaxMS is the deepest the agent leg's jitter buffer got. The buffer is
+	// drained one frame per pacer tick and only sheds leading silence, so a burst of
+	// synthesis is written into the recording later than it arrived. SampleMs knows
+	// nothing about that, so this is how far agent word timings and wall-clock tool
+	// timestamps could have been pulled apart.
+	AgentJitterMaxMS int
+	RequestedSNRDB   float64
+	MeasuredSNRDB    float64
 }
 
 // DurationMS is the recorded call length in recording time.
@@ -136,6 +142,7 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 	callerRec := make([]int16, 0, maxN)
 	agentRec := make([]int16, 0, maxN)
 	var agentFrames []transport.Frame
+	agentJitterMax := 0
 	agentLive := false
 	hasSpoken := false
 	agentLiveAt := time.Time{}
@@ -407,6 +414,9 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 			for len(agentFrames) > maxAgentJitterFrames && audio.FrameEnergy(agentFrames[0].PCM) <= decodedSilenceThreshold {
 				agentFrames = agentFrames[1:]
 			}
+			if len(agentFrames) > agentJitterMax {
+				agentJitterMax = len(agentFrames)
+			}
 			if len(agentFrames) > 0 {
 				agentRec = append(agentRec, agentFrames[0].PCM...)
 				agentFrames = agentFrames[1:]
@@ -470,16 +480,17 @@ func (e Engine) Play(ctx context.Context, sc scenario.Scenario, media transport.
 			n = len(agentRec)
 		}
 		return Result{
-			InboundDropped: media.Dropped(),
-			Caller:         audio.PadRight(callerRec, n),
-			Agent:          audio.PadRight(agentRec, n),
-			Rate:           audio.Rate,
-			Events:         events,
-			StartedAt:      startedAt,
-			FirstFrameAt:   firstFrameAt,
-			LastFrameAt:    lastFrameAt,
-			RequestedSNRDB: requestedSNR,
-			MeasuredSNRDB:  measuredSNR,
+			InboundDropped:   media.Dropped(),
+			AgentJitterMaxMS: agentJitterMax * int(paceInterval/time.Millisecond),
+			Caller:           audio.PadRight(callerRec, n),
+			Agent:            audio.PadRight(agentRec, n),
+			Rate:             audio.Rate,
+			Events:           events,
+			StartedAt:        startedAt,
+			FirstFrameAt:     firstFrameAt,
+			LastFrameAt:      lastFrameAt,
+			RequestedSNRDB:   requestedSNR,
+			MeasuredSNRDB:    measuredSNR,
 		}
 	}
 

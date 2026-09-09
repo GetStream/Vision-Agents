@@ -42,16 +42,66 @@ func TestEntityInSpeech(t *testing.T) {
 
 func TestBargeInStopMSUnmeasured(t *testing.T) {
 	rec := caller.Result{Rate: audio.Rate, Agent: audio.Silence(audio.Rate)}
-	if got := BargeInStopMS(rec); got != -1 {
-		t.Fatalf("no barge event: %d", got)
+	got, reason := BargeInStopMS(rec)
+	if got != -1 || reason != BargeNoEvent {
+		t.Fatalf("no barge event: %d %q", got, reason)
 	}
 	rec.Events = []caller.Event{{
 		BargeIn:    true,
 		Kind:       scenario.TriggerBargeIn,
 		RecStartMs: 400,
 	}}
-	if got := BargeInStopMS(rec); got != -1 {
-		t.Fatalf("no straddle: %d", got)
+	got, reason = BargeInStopMS(rec)
+	if got != -1 || reason != BargeAlreadyQuiet {
+		t.Fatalf("no straddle: %d %q", got, reason)
+	}
+}
+
+func TestBargeInStopMSNamesAReplyThatStartedAfterTheBarge(t *testing.T) {
+	rate := audio.Rate
+	agent := audio.Concat(audio.Silence(1500*rate/1000), audio.Tone(600*rate/1000, 220, 12000))
+	rec := caller.Result{
+		Agent: agent,
+		Rate:  rate,
+		Events: []caller.Event{{
+			BargeIn:    true,
+			Kind:       scenario.TriggerBargeIn,
+			RecStartMs: 400,
+		}},
+	}
+	got, reason := BargeInStopMS(rec)
+	if got != -1 || reason != BargeStartedAfter {
+		t.Fatalf("an agent that answered late is not an agent with nothing to cut off: %d %q", got, reason)
+	}
+}
+
+// A reply that stops promptly and is followed by the answer to the correction is two
+// utterances. Reading the stop edge off spans merged at UtteranceMergeGapMS would join
+// them and report the prompt stop as a reply that ran on past the limit.
+func TestBargeInStopMSDoesNotRunOnIntoTheNextReply(t *testing.T) {
+	rate := audio.Rate
+	ms := func(n int) int { return n * rate / 1000 }
+	agent := audio.Concat(
+		audio.Silence(ms(200)),
+		audio.Tone(ms(400), 220, 12000),
+		audio.Silence(ms(600)),
+		audio.Tone(ms(1500), 220, 12000),
+	)
+	rec := caller.Result{
+		Agent: agent,
+		Rate:  rate,
+		Events: []caller.Event{{
+			BargeIn:    true,
+			Kind:       scenario.TriggerBargeIn,
+			RecStartMs: 400,
+		}},
+	}
+	got, reason := BargeInStopMS(rec)
+	if reason != BargeMeasured {
+		t.Fatalf("reason %q", reason)
+	}
+	if got < 150 || got > 350 {
+		t.Fatalf("stop %dms: the reply stopped 200ms after the barge", got)
 	}
 }
 
@@ -67,9 +117,9 @@ func TestBargeInStopMSMeasured(t *testing.T) {
 			RecStartMs: 400,
 		}},
 	}
-	got := BargeInStopMS(rec)
+	got, reason := BargeInStopMS(rec)
 	if got < 0 {
-		t.Fatalf("want measured stop, got %d", got)
+		t.Fatalf("want measured stop, got %d (%s)", got, reason)
 	}
 }
 
@@ -85,7 +135,7 @@ func TestBargeInStopMSToleratesFrameAlignment(t *testing.T) {
 			RecStartMs: 400,
 		}},
 	}
-	if got := BargeInStopMS(rec); got < 300 || got > 400 {
+	if got, _ := BargeInStopMS(rec); got < 300 || got > 400 {
 		t.Fatalf("stop %dms", got)
 	}
 }
@@ -200,6 +250,36 @@ func TestScoreFiller(t *testing.T) {
 	})
 	if !m.FillerHeard || !m.FillerNonBlocking {
 		t.Fatalf("filler %+v", m)
+	}
+	if len(m.FillerFail) != 0 {
+		t.Fatalf("fails %v", m.FillerFail)
+	}
+}
+
+// The reply that asks for a tool is spoken before the request is handed over, so the
+// filler lands just before the window opens. The non-blocking half of the gate already
+// looked back for it; the phrase half has to look back the same way.
+func TestScoreFillerCountsAFillerSpokenAsTheToolWasRequested(t *testing.T) {
+	rate := audio.Rate
+	start := time.Now().Add(-4 * time.Second)
+	agent := audio.Concat(audio.Silence(rate/5), audio.Tone(3*rate, 220, 12000))
+	rec := caller.Result{Agent: agent, Rate: rate, StartedAt: start}
+	sc := scenario.Scenario{ToolDelayMS: map[string]int{"check_availability": 3000}}
+	sess := &world.Session{Tools: []world.ToolCall{{
+		Name:    "check_availability",
+		Started: start.Add(900 * time.Millisecond),
+		Ended:   start.Add(3900 * time.Millisecond),
+	}}}
+	m := &Metrics{}
+	ScoreFiller(m, sc, rec, sess, Transcript{
+		Text: "One moment, checking the book.",
+		Words: []TranscriptWord{
+			{Text: "One", StartMS: 500, EndMS: 560},
+			{Text: "moment", StartMS: 570, EndMS: 650},
+		},
+	})
+	if !m.FillerHeard {
+		t.Fatalf("filler spoken 400ms before the tool started was not heard: %v", m.FillerFail)
 	}
 	if len(m.FillerFail) != 0 {
 		t.Fatalf("fails %v", m.FillerFail)

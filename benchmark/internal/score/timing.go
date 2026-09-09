@@ -17,9 +17,29 @@ const (
 	HumanBandMaxMS   = 700
 	MaxBargeInStopMS = 800
 	// UtteranceMergeGapMS joins speech spans separated by less than this, so a reply
-	// that pauses between sentences is still one utterance for selectivity, hold and
-	// barge-in.
+	// that pauses between sentences is still one utterance for selectivity and hold.
 	UtteranceMergeGapMS = 700
+	// FillerLeadInMS is how long before a delayed tool started a filler still counts.
+	// The reply that asks for a tool is spoken before the request is handed over, so
+	// the words meant to fill the pause are already in flight when the window opens.
+	// The non-blocking half of the filler gate has always allowed for that; the phrase
+	// half allows for the same, so one late tool timestamp cannot fail only one of them.
+	FillerLeadInMS = 2000
+	// BargeInMergeGapMS is the longest pause the barge-in stop edge reads through. A
+	// silence longer than this is already audible as the agent having stopped.
+	BargeInMergeGapMS = 300
+	// bargeAlignmentMS is how far after the barge an utterance may still start and count
+	// as the one that was interrupted, absorbing frame quantisation.
+	bargeAlignmentMS = 120
+)
+
+// Why a barge-in has no stop measurement. Collapsing these into one unmeasured value
+// made an agent that answered late look the same as one with nothing to interrupt.
+const (
+	BargeMeasured     = ""
+	BargeNoEvent      = "no_barge_event"
+	BargeStartedAfter = "started_after"
+	BargeAlreadyQuiet = "already_quiet"
 )
 
 // Timing is one voice-to-voice gap.
@@ -70,9 +90,11 @@ type Metrics struct {
 	FalseCutoff         int            `json:"false_cutoff"`
 	ClockDriftMS        int            `json:"clock_drift_ms"`
 	InboundDropped      int            `json:"inbound_dropped"`
+	AgentJitterMaxMS    int            `json:"agent_jitter_max_ms"`
 	RequestedSNRDB      float64        `json:"requested_snr_db,omitempty"`
 	MeasuredSNRDB       float64        `json:"measured_snr_db,omitempty"`
 	BargeInStopMS       int            `json:"barge_in_stop_ms"`
+	BargeInReason       string         `json:"barge_in_reason,omitempty"`
 	OverlapChecks       []OverlapCheck `json:"overlap_checks,omitempty"`
 	SelectivityHold     bool           `json:"selectivity_hold"`
 	HoldThroughOverlap  bool           `json:"hold_through_overlap"`
@@ -91,6 +113,8 @@ type Metrics struct {
 	GateNotes           []string       `json:"gate_notes"`
 	CallerTurns         int            `json:"caller_turns"`
 	AgentTurns          int            `json:"agent_turns"`
+	HeardUtterances     int            `json:"heard_utterances"`
+	HeardIgnored        int            `json:"heard_ignored"`
 	AgentWords          int            `json:"agent_words"`
 	CallerWER           float64        `json:"caller_wer,omitempty"`
 	CallerWERNormalized float64        `json:"caller_wer_normalized,omitempty"`
@@ -254,9 +278,14 @@ func Percentile(sorted []int, p int) int {
 	return sorted[idx]
 }
 
-// BargeInStopMS is time from barge-in start until agent energy drops.
-func BargeInStopMS(rec caller.Result) int {
-	const alignmentToleranceMS = 120
+// BargeInStopMS is time from barge-in start until agent energy drops, with the reason
+// there is no such time when there is not.
+//
+// The stop edge is read off spans merged only across pauses too short to hear as
+// stopping. Merging at UtteranceMergeGapMS, which selectivity and hold do want, joins
+// the interrupted reply to the one answering the correction, and reports a reply that
+// stopped promptly as one that ran on.
+func BargeInStopMS(rec caller.Result) (int, string) {
 	var barge caller.Event
 	found := false
 	for _, ev := range rec.Events {
@@ -267,19 +296,20 @@ func BargeInStopMS(rec caller.Result) int {
 		}
 	}
 	if !found {
-		return -1
+		return -1, BargeNoEvent
 	}
-	spans := mergeUtterances(audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, 80), UtteranceMergeGapMS)
-	for _, s := range spans {
-		if s.StartMs <= barge.RecStartMs+alignmentToleranceMS && s.EndMs > barge.RecStartMs {
-			stop := s.EndMs - barge.RecStartMs
-			if stop < 0 {
-				return 0
-			}
-			return stop
+	raw := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, 80)
+	for _, span := range mergeUtterances(raw, BargeInMergeGapMS) {
+		if span.StartMs <= barge.RecStartMs+bargeAlignmentMS && span.EndMs > barge.RecStartMs {
+			return span.EndMs - barge.RecStartMs, BargeMeasured
 		}
 	}
-	return -1
+	for _, span := range mergeUtterances(raw, UtteranceMergeGapMS) {
+		if span.StartMs > barge.RecStartMs+bargeAlignmentMS {
+			return -1, BargeStartedAfter
+		}
+	}
+	return -1, BargeAlreadyQuiet
 }
 
 // ScoreOverlaps evaluates every non-directed sound in the script.
@@ -458,13 +488,13 @@ func ScoreFiller(m *Metrics, sc scenario.Scenario, rec caller.Result, sess *worl
 	if startMs < 0 {
 		startMs = 0
 	}
-	m.FillerHeard = containsTimedFiller(transcript.Words, startMs, endMs)
+	m.FillerHeard = containsTimedFiller(transcript.Words, startMs-FillerLeadInMS, endMs)
 	if !m.FillerHeard {
 		m.FillerFail = append(m.FillerFail, "no filler phrase during delayed tool")
 	}
 	onset := firstOnsetAfter(rec.Agent, rec.Rate, startMs, audio.DefaultSpeechThreshold)
 	if onset < 0 {
-		onset = firstOnsetAfter(rec.Agent, rec.Rate, max(0, startMs-2000), audio.DefaultSpeechThreshold)
+		onset = firstOnsetAfter(rec.Agent, rec.Rate, max(0, startMs-FillerLeadInMS), audio.DefaultSpeechThreshold)
 	}
 	if onset >= 0 && onset < endMs {
 		m.FillerNonBlocking = true

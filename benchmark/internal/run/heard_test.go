@@ -46,3 +46,32 @@ func TestFetchAgentHeardResolvesStreamCallID(t *testing.T) {
 		t.Fatalf("overlap rulings missing: %+v", events)
 	}
 }
+
+// An ignore with no words is the ruling most worth reading under noise: it says the
+// agent heard something and decided it was not for it. Filtering on the text hid it.
+func TestFetchAgentHeardKeepsARulingWithNoWords(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/agents/calls", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]string{{"id": "sess-1", "call_id": "vb-noise-1"}})
+	})
+	mux.HandleFunc("GET /v1/agents/calls/sess-1/events", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"kind": "ask", "said": "table for four"},
+			{"kind": "ignore", "said": "  "},
+			{"kind": "ignore"},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	events, err := fetchAgentHeard(srv.URL, "voicebench", "vb-noise-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("wordless rulings were dropped: %+v", events)
+	}
+	if events[1].Said != "" || events[2].Said != "" {
+		t.Fatalf("%+v", events)
+	}
+}
