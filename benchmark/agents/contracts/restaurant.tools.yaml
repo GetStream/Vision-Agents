@@ -19,7 +19,11 @@ tools:
         time: {type: string}
         party_size: {type: integer}
         name: {type: string}
-        allergen: {type: string}
+        allergen:
+          type: string
+          description: >
+            The diner's allergy only, such as peanut. Dietary preferences like
+            gluten-free are not allergens.
         patio: {type: boolean}
         high_chair: {type: boolean}
         phone: {type: string}
@@ -48,7 +52,11 @@ tools:
       type: object
       properties:
         name: {type: string}
-        allergen: {type: string}
+        allergen:
+          type: string
+          description: >
+            The diner's allergy only, such as peanut. Dietary preferences like
+            gluten-free belong in modifiers, not here.
         items:
           type: array
           items:
@@ -59,4 +67,6 @@ tools:
         modifiers:
           type: array
           items: {type: string}
+          description: >
+            Item-level preferences such as gluten-free, no onion, or extra sauce.
       required: [name, allergen, items]
