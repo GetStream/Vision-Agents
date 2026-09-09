@@ -13,7 +13,7 @@ license = "MIT"
 dependencies = [
     "vision-agents",
     "sounddevice>=0.5.0",
-    "aiortc>=1.14.0, <1.15.0",
+    "aiortc>=1.14.0,<1.16.0",
     "av>=14.2.0, <17",
 ]
 
