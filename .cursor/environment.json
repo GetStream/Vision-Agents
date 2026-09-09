@@ -1,6 +1,7 @@
 {
   "name": "vision-agents",
   "install": "bash .cursor/install.sh",
-  "start": "sudo service postgresql start && sudo service redis-server start",
+  "start": "bash .cursor/start.sh",
+  "repositoryDependencies": ["github.com/GetStream/getstream-go-webrtc"],
   "ports": [{ "name": "acceleration-api", "port": 8080 }]
 }

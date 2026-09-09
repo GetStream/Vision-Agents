@@ -58,6 +58,20 @@ uv run --no-sync mypy
 
 `--no-sync` avoids a uv panic in sandboxed environments.
 
+## Cursor Cloud specific instructions
+
+Cloud Agent VMs inject provider keys as process environment variables. They do not
+check out a repo-root `.env`. `.cursor/start.sh` writes a gitignored `.env` from
+those values, creates the `model_router` database, and runs goose.
+
+Local Postgres is `:5432` and Redis is `:6379`, not the Docker Compose ports
+`:55432` / `:56379`. `ROUTER_POSTGRES_DSN` and `ROUTER_REDIS_ADDR` in that `.env`
+point at the local services.
+
+The router needs private `github.com/GetStream/getstream-go-webrtc`. Set
+`GOPRIVATE=github.com/GetStream/*` and include that repo in the environment's
+GitHub token scope (`repositoryDependencies`).
+
 `acceleration/api/openapi.yaml` is the source of truth for the HTTP layer. After editing it,
 regenerate all three sides — see [acceleration/README.md](acceleration/README.md).
 

@@ -11,8 +11,14 @@ sudo apt-get install -y postgresql redis-server pkg-config \
   libopus-dev libopusfile-dev libsoxr-dev
 
 export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"
+export GOPRIVATE="${GOPRIVATE:-github.com/GetStream/*}"
+export GONOSUMDB="${GONOSUMDB:-github.com/GetStream/*}"
 if ! grep -q '/usr/local/go/bin' "$HOME/.bashrc"; then
   echo 'export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"' >>"$HOME/.bashrc"
+fi
+if ! grep -q 'GOPRIVATE=' "$HOME/.bashrc"; then
+  echo 'export GOPRIVATE="${GOPRIVATE:-github.com/GetStream/*}"' >>"$HOME/.bashrc"
+  echo 'export GONOSUMDB="${GONOSUMDB:-github.com/GetStream/*}"' >>"$HOME/.bashrc"
 fi
 
 if ! command -v uv >/dev/null; then

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Per-boot services for Cursor cloud agents. Idempotent.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"
+export GOPRIVATE="${GOPRIVATE:-github.com/GetStream/*}"
+export GONOSUMDB="${GONOSUMDB:-github.com/GetStream/*}"
+
+sudo service postgresql start
+sudo service redis-server start
+
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$(whoami)'" | grep -q 1; then
+  sudo -u postgres createuser --superuser "$(whoami)"
+fi
+if ! psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='model_router'" | grep -q 1; then
+  createdb model_router
+fi
+
+export ROUTER_POSTGRES_DSN="${ROUTER_POSTGRES_DSN:-postgres://$(whoami)@/model_router?host=/var/run/postgresql&sslmode=disable}"
+export ROUTER_REDIS_ADDR="${ROUTER_REDIS_ADDR:-localhost:6379}"
+export STREAM_ACCELERATION_CUSTOMER_ID="${STREAM_ACCELERATION_CUSTOMER_ID:-voicebench}"
+
+python3 - "$ROOT" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+keys: list[str] = []
+example = root / ".env.example"
+if example.is_file():
+    for line in example.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        keys.append(line.split("=", 1)[0])
+for extra in (
+    "STREAM_ACCELERATION_CUSTOMER_ID",
+    "ROUTER_POSTGRES_DSN",
+    "ROUTER_REDIS_ADDR",
+    "GOPRIVATE",
+    "GONOSUMDB",
+):
+    if extra not in keys:
+        keys.append(extra)
+
+google = os.environ.get("GOOGLE_API_KEY", "")
+if google and not os.environ.get("GEMINI_API_KEY"):
+    os.environ["GEMINI_API_KEY"] = google
+
+skip = {"GH_TOKEN", "GITHUB_TOKEN", "GITHUB_PAT"}
+lines: list[str] = []
+for key in keys:
+    if key in skip:
+        continue
+    value = os.environ.get(key)
+    if not value:
+        continue
+    if value.startswith("your_") or value.endswith("_here"):
+        continue
+    lines.append(f"{key}={value}")
+
+path = root / ".env"
+path.write_text("\n".join(lines) + "\n")
+path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+print(f"wrote {path} ({len(lines)} keys)", file=sys.stderr)
+PY
+
+goose_bin="$(command -v goose || true)"
+if [ -z "$goose_bin" ] && [ -x "$HOME/go/bin/goose" ]; then
+  goose_bin="$HOME/go/bin/goose"
+fi
+if [ -n "$goose_bin" ] && [ -d "$ROOT/acceleration/migrations" ]; then
+  "$goose_bin" -dir "$ROOT/acceleration/migrations" postgres "$ROUTER_POSTGRES_DSN" up
+fi
