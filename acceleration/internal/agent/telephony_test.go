@@ -496,6 +496,72 @@ func (s *AgentSuite) TestPressingAMenuOptionSilentlyIsNotGivenAFillerEither() {
 		"the agent talked over the menu it had just pressed at")
 }
 
+func (s *AgentSuite) TestAnInterruptedReplyStillRunsItsTools() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(true)
+	s.model.reply = nil
+	s.voice.silent = true
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	turn := s.model.requests()[0].ID
+	s.model.script(turn).ToolCalls(llm.ToolCall{
+		ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`,
+	})
+
+	s.mutters(participant, "uh huh wait")
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"talking over the agent should abandon the reply")
+	s.model.finishes(turn)
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 },
+		"barging in is not a reason to drop the tool the model already asked for")
+	s.Equal(`{"order":"12"}`, s.runner.asked()[0].Arguments)
+
+	s.eventually(func() bool {
+		for _, message := range s.history() {
+			if message.Role == llm.ToolResult && message.ToolCallID == "call-1" {
+				return true
+			}
+		}
+		return false
+	}, "the tool result never reached the conversation")
+}
+
+func (s *AgentSuite) TestAnInterruptedReplyCancelsItsToolsWhenTheCallerChangesTheAsk() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(true)
+	s.model.reply = nil
+	s.model.then = []string{"A table for two, coming up."}
+	s.voice.silent = true
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the first reply never started")
+	turn := s.model.requests()[0].ID
+	s.model.script(turn).ToolCalls(llm.ToolCall{
+		ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`,
+	})
+
+	s.says(participant, "actually I want a table for two tonight")
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 },
+		"the new ask should stop the reply in flight")
+	s.model.finishes(turn)
+
+	s.never(func() bool { return len(s.runner.asked()) > 0 },
+		"a tool for the old ask must not run after the caller changed it")
+	s.Contains(s.history(), llm.Message{
+		Role:       llm.ToolResult,
+		Content:    "cancelled: the caller changed what they asked before this could run",
+		ToolCallID: "call-1",
+	})
+	s.eventually(func() bool { return len(s.model.requests()) == 2 },
+		"the new ask was never answered")
+}
+
 func (s *AgentSuite) TestATelephonyToolIsNotHandedToTheCallersRunner() {
 	// The two that act on the call are this process's to run, so a caller cannot quietly
 	// take over what happens when the model says it is transferring somebody.

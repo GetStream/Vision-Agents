@@ -255,6 +255,13 @@ type Agent struct {
 	// a provider is still sending. It holds one entry per interruption and lives only as
 	// long as the call.
 	abandoned map[string]struct{}
+	// settling is the turn an interruption closed that has not yet reported its tool
+	// calls. The follow-up waits for it so those calls land in history before the next
+	// user turn.
+	settling string
+	// pending is the follow-up held while settling completes. Presence means the caller
+	// changed what they asked, so the abandoned tools are cancelled rather than run.
+	pending *pendingTurn
 	// utterances counts syntheses that have not settled, so Finish knows when the agent
 	// has stopped talking.
 	utterances int
@@ -313,6 +320,15 @@ type Agent struct {
 
 	running   sync.WaitGroup
 	closeOnce sync.Once
+}
+
+// pendingTurn is a follow-up held until an interrupted reply has settled.
+type pendingTurn struct {
+	turnID      string
+	participant stt.Participant
+	text        string
+	listened    heard
+	note        string
 }
 
 // New validates the options and returns an Agent. It opens nothing; Join does that.
@@ -1234,6 +1250,17 @@ func (a *Agent) respondTurn(
 		a.mu.Unlock()
 		return errors.New("agent: not joined")
 	}
+	if a.settling != "" {
+		a.pending = &pendingTurn{
+			turnID:      turnID,
+			participant: participant,
+			text:        text,
+			listened:    listened,
+			note:        note,
+		}
+		a.mu.Unlock()
+		return nil
+	}
 	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
 	history := append([]llm.Message(nil), a.history...)
 
@@ -1434,6 +1461,9 @@ func (a *Agent) handle(event llm.Event) {
 
 	case llm.ResponseCompleted:
 		if !a.speaking(typed.Response.ID) {
+			if a.finishAbandoned(typed.Response) {
+				return
+			}
 			// The reply the chunker is holding is only cleared by the turn it belongs
 			// to, so a response arriving late for an abandoned one cannot cut the turn
 			// after it short.
@@ -1558,6 +1588,8 @@ func (a *Agent) finish(response llm.Response) {
 	currentHarness := a.harness
 	a.mu.Unlock()
 
+	a.logSettled(response, said != "", calls)
+
 	// A provider that kept this reply can be asked to carry on from it next turn rather
 	// than read the conversation again.
 	if currentHarness != nil {
@@ -1596,6 +1628,88 @@ func (a *Agent) finish(response llm.Response) {
 	a.respondQueued()
 	// A note that landed while this reply was being written waited for it to finish.
 	a.followUp()
+}
+
+// finishAbandoned records an interrupted reply so its tool calls still land in history.
+//
+// If the caller only barged in, the tools still run. If they already asked something
+// else, the tools are cancelled with a result the provider can match, and the follow-up
+// is answered after that.
+func (a *Agent) finishAbandoned(response llm.Response) bool {
+	a.mu.Lock()
+	if a.settling != response.ID {
+		a.mu.Unlock()
+		return false
+	}
+	a.mu.Unlock()
+
+	asked := a.harness.TakeAsked()
+	calls := append(append([]llm.ToolCall(nil), response.ToolCalls...), asked...)
+	said := strings.TrimSpace(a.spoken.String())
+	a.resetTurn()
+
+	a.mu.Lock()
+	a.generating = false
+	pending := a.pending
+	a.pending = nil
+	a.settling = ""
+	if said != "" || len(calls) > 0 {
+		a.history = append(a.history, llm.Message{
+			Role:      llm.Assistant,
+			Content:   said,
+			ToolCalls: calls,
+		})
+	}
+	currentHarness := a.harness
+	a.mu.Unlock()
+
+	a.logSettled(response, said != "", calls)
+
+	if pending != nil {
+		for _, call := range calls {
+			a.cancelledToolResult(call)
+		}
+		if err := a.respondTurn(pending.turnID, pending.participant, pending.text, pending.listened, pending.note); err != nil {
+			a.fail(err, "llm")
+		}
+		return true
+	}
+
+	if currentHarness != nil && len(calls) > 0 {
+		pendingCount := 0
+		tools := a.availableTools()
+		for _, call := range calls {
+			if _, known := tools.Lookup(call.Name); known {
+				pendingCount++
+			}
+		}
+		a.mu.Lock()
+		a.pendingTools += pendingCount
+		a.mu.Unlock()
+		currentHarness.Requested(response.ID, calls)
+	}
+	a.respondQueued()
+	a.followUp()
+	return true
+}
+
+// cancelledToolResult records that an interrupted tool did not run, so the next request
+// still has a result for every call the model made.
+func (a *Agent) cancelledToolResult(call llm.ToolCall) {
+	a.resolveTool(call, "cancelled: the caller changed what they asked before this could run")
+}
+
+// logSettled records every completion with whether it spoke and which tools it asked for.
+func (a *Agent) logSettled(response llm.Response, spoken bool, calls []llm.ToolCall) {
+	names := make([]string, 0, len(calls))
+	for _, call := range calls {
+		names = append(names, call.Name)
+	}
+	a.logger.Info("llm reply settled",
+		"turn", response.ID,
+		"status", response.Status,
+		"spoken", spoken,
+		"tools", names)
 }
 
 // fillsPause reports whether a turn that said nothing should say something before the
@@ -1876,7 +1990,7 @@ func (a *Agent) followUp() {
 // earned -- so a caller who waited only for the first would talk over the rest.
 func (a *Agent) Busy() bool {
 	a.mu.Lock()
-	working := a.generating || a.utterances > 0
+	working := a.generating || a.utterances > 0 || a.settling != "" || a.pending != nil
 	current := a.harness
 	a.mu.Unlock()
 
@@ -1988,6 +2102,9 @@ func (a *Agent) interrupt(participant stt.Participant) {
 		return
 	}
 	a.abandoned[turnID] = struct{}{}
+	if a.generating || a.streams[turnID] != nil || a.generatingCancel[turnID] != nil {
+		a.settling = turnID
+	}
 	a.speakingTurn = ""
 	a.generating = false
 	a.saying = ""
