@@ -70,6 +70,10 @@ func MatchStructuredValue(got, want string) bool {
 		gotDate, gotOK := dateValue(got)
 		return gotOK && gotDate == normalizedDate
 	}
+	if wantMinutes, ok := durationMinutes(want, true); ok {
+		gotMinutes, gotOK := durationMinutes(got, false)
+		return gotOK && gotMinutes == wantMinutes
+	}
 	return sameMeaning(got, want)
 }
 
@@ -169,6 +173,64 @@ func titleWords(s string) string {
 		parts[i] = string(runes)
 	}
 	return strings.Join(parts, " ")
+}
+
+// durationHedges are words a model wraps a wait in without changing it.
+var durationHedges = map[string]bool{
+	"in": true, "about": true, "around": true, "approximately": true,
+	"roughly": true, "from": true, "now": true, "or": true, "so": true,
+}
+
+var durationUnits = map[string]int{
+	"m": 1, "min": 1, "mins": 1, "minute": 1, "minutes": 1,
+	"h": 60, "hr": 60, "hrs": 60, "hour": 60, "hours": 60,
+}
+
+// durationMinutes normalizes a spoken wait such as "in 20 minutes" to whole minutes.
+//
+// requireUnit is what keeps a party size out of this: only an expectation that names a
+// unit opens the duration comparison, and only the value being judged against it may
+// leave the unit off, where minutes is the reading a pickup window has anyway.
+func durationMinutes(s string, requireUnit bool) (int, bool) {
+	minutes := 0
+	pending := -1
+	unit := false
+	counted := false
+	for _, token := range tokens(s) {
+		if durationHedges[token] {
+			continue
+		}
+		if scale, ok := durationUnits[token]; ok {
+			if pending < 0 {
+				return 0, false
+			}
+			minutes += pending * scale
+			pending = -1
+			unit = true
+			counted = true
+			continue
+		}
+		if pending >= 0 {
+			return 0, false
+		}
+		value, err := strconv.Atoi(token)
+		if err != nil {
+			word, known := wordToNum[token]
+			if !known {
+				return 0, false
+			}
+			value = word
+		}
+		pending = value
+	}
+	if pending >= 0 {
+		minutes += pending
+		counted = true
+	}
+	if !counted || (requireUnit && !unit) {
+		return 0, false
+	}
+	return minutes, true
 }
 
 func clockValue(s string) (string, bool) {

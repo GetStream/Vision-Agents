@@ -142,6 +142,26 @@ func TestMatchStructuredValue(t *testing.T) {
 	}
 }
 
+func TestMatchStructuredValueDurations(t *testing.T) {
+	for _, got := range []string{"20 minutes", "20 min", "20 mins", "in 20 minutes", "20", "twenty minutes", "about 20 minutes from now"} {
+		if !MatchStructuredValue(got, "20 minutes") {
+			t.Fatalf("%q should be twenty minutes", got)
+		}
+	}
+	if MatchStructuredValue("30 minutes", "20 minutes") {
+		t.Fatal("different waits matched")
+	}
+	if !MatchStructuredValue("90 minutes", "1 hour 30 minutes") {
+		t.Fatal("hours and minutes should add up")
+	}
+	if MatchStructuredValue("20 minutes", "20") {
+		t.Fatal("a bare expected number must not be read as a duration")
+	}
+	if MatchStructuredValue("six", "6") {
+		t.Fatal("a party size must not be read as a duration")
+	}
+}
+
 func TestLoadPacks(t *testing.T) {
 	root := findRepoRoot(t)
 	for _, pack := range Packs() {

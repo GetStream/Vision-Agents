@@ -63,10 +63,13 @@ tools:
             type: object
             properties:
               name: {type: string}
-        pickup_window: {type: string}
+        pickup_window:
+          type: string
+          description: >
+            How long until pickup, as a duration like 20 minutes.
         modifiers:
           type: array
           items: {type: string}
           description: >
             Item-level preferences such as gluten-free, no onion, or extra sauce.
-      required: [name, allergen, items]
+      required: [name, allergen, items, pickup_window]
