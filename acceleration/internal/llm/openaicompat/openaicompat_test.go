@@ -302,6 +302,31 @@ func (s *OpenAICompatSuite) TestThinkingIsSeparatedFromTheAnswer() {
 	s.Equal("The user said hi, so", thinking, "but it is still available to a caller that wants it")
 }
 
+func (s *OpenAICompatSuite) TestThoughtMarkersInTheAnswerAreNotSpoken() {
+	s.frames = []string{
+		textFrame("<|channel>thought"),
+		textFrame(" I should greet them "),
+		textFrame("<channel|>"),
+		textFrame("Hello there."),
+		usageFrame(11, 0, 20, 0, "stop"),
+	}
+	provider := s.provider(Options{})
+
+	response, events := s.ask(provider, hello())
+
+	s.Equal("Hello there.", response.OutputText, "in-band thought must never be spoken as the reply")
+
+	var spoken string
+	for _, event := range events {
+		if delta, ok := event.(llm.OutputTextDelta); ok {
+			spoken += delta.Delta
+		}
+	}
+	s.Equal("Hello there.", spoken)
+	s.NotContains(spoken, "thought")
+	s.NotContains(spoken, "<channel")
+}
+
 func (s *OpenAICompatSuite) TestInstructionsAreSentAsASystemMessage() {
 	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
 	provider := s.provider(Options{})

@@ -213,6 +213,8 @@ type puller struct {
 
 	err  error
 	done bool
+
+	thoughts thoughtStripper
 }
 
 // Advance reads one chunk and records what it carried.
@@ -243,7 +245,11 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 	}
 
 	for _, choice := range chunk.Choices {
-		w.OutputText(choice.Delta.Content)
+		spoken := p.thoughts.Add(choice.Delta.Content)
+		if looksLikeThinking(spoken) {
+			p.llm.logger.Info("llm content looks like thinking", "text", spoken)
+		}
+		w.OutputText(spoken)
 		w.ReasoningText(reasoning(choice.Delta.JSON.ExtraFields))
 		for _, call := range choice.Delta.ToolCalls {
 			w.FunctionCall(
@@ -274,6 +280,12 @@ func (p *puller) Close() error {
 // finish releases the upstream and works out what ended it.
 func (p *puller) finish(w *llm.ResponseWriter) {
 	p.done = true
+
+	leftover := p.thoughts.Flush()
+	if looksLikeThinking(leftover) {
+		p.llm.logger.Info("llm content looks like thinking", "text", leftover)
+	}
+	w.OutputText(leftover)
 
 	if err := p.upstream.Err(); err != nil && !errors.Is(err, context.Canceled) {
 		p.err = err
