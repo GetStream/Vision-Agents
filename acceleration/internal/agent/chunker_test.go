@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -57,6 +58,31 @@ func (s *ChunkerSuite) TestTextWithNoPunctuationIsStillSaid() {
 func (s *ChunkerSuite) TestAnAbbreviationDoesNotEndASentence() {
 	// Splitting on the dot in "Dr." would put a pause in the middle of a name.
 	s.Equal([]string{"Dr. Watson was there."}, s.stream("Dr. Watson was there."))
+}
+
+func (s *ChunkerSuite) TestAStreamingVoiceReleasesOnAClause() {
+	var chunker chunker
+	chunker.clauses = true
+
+	s.Equal([]string{"We have a table,"}, chunker.Add("We have a table, "))
+	s.Equal([]string{"let me book it."}, chunker.Add("let me book it."))
+}
+
+func (s *ChunkerSuite) TestANonStreamingVoiceWaitsForTheSentence() {
+	var chunker chunker
+
+	s.Empty(chunker.Add("We have a table, "))
+	s.Equal([]string{"We have a table, let me book it."}, chunker.Add("let me book it."))
+}
+
+func (s *ChunkerSuite) TestAStreamingVoiceReleasesOnALengthBoundary() {
+	var chunker chunker
+	chunker.clauses = true
+	long := strings.Repeat("word ", 12)
+
+	got := chunker.Add(long)
+	s.NotEmpty(got, "a streaming voice must not wait for a sentence that never comes")
+	s.GreaterOrEqual(len([]rune(got[0])), minChunkRunes)
 }
 
 func (s *ChunkerSuite) TestANewlineEndsASentence() {
