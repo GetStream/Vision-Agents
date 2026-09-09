@@ -3,7 +3,7 @@ from vision_agents.core.telephony import CallContext, InboundCall
 
 from ._backend import Backend
 from .accelerated import Accelerated
-from .config import define_agent, define_skills, sync_agent
+from .config import add_knowledge_url, define_agent, define_skills, sync_agent
 from .dispatch import StreamDispatch
 from .folder import Folder, load
 from .llm import LLM
@@ -29,6 +29,7 @@ __all__ = [
     "TextEvent",
     "TextSession",
     "TTS",
+    "add_knowledge_url",
     "define_agent",
     "define_router",
     "define_skills",

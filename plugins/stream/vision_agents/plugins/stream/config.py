@@ -7,6 +7,7 @@ from vision_agents.core.harness import Sandbox, Skill
 from ._backend import Backend
 from ._generated import AuthenticatedClient
 from ._generated.api.default import (
+    add_knowledge_url as add_knowledge_url_request,
     create_agent_config,
     create_skill,
     list_agent_configs,
@@ -20,6 +21,8 @@ from ._generated.models import (
     AgentConfigRequest,
     Error,
     KnowledgeDocument,
+    KnowledgeUrl,
+    KnowledgeUrlRequest,
     SkillRequest,
     SyncAgentRequest,
     SyncAgentResult,
@@ -179,6 +182,40 @@ async def define_agent(
     if named:
         await define_skills(named, config.id, client)
     return config
+
+
+async def add_knowledge_url(
+    namespace: str,
+    page: str,
+    url: Optional[str] = None,
+    customer_id: Optional[str] = None,
+) -> KnowledgeUrl:
+    """Fill a knowledge base from a page published elsewhere.
+
+    The page is read straight away and cut into passages the same way a document is, so
+    what comes back already says whether it worked. It stays a subscription rather than a
+    one-off: the passages are keyed by the url, and reading it again replaces them.
+
+    Args:
+        namespace: The knowledge base to add it to, which is the agent's own name for a
+            directory synced with `sync_agent`.
+        page: The http or https address to read.
+        url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
+        customer_id: Who the work is billed to. Defaults to
+            `STREAM_ACCELERATION_CUSTOMER_ID`.
+
+    Returns:
+        The page as stored, including how many passages it became and why it failed if
+        it did.
+    """
+    client = Backend(url=url, customer_id=customer_id).client()
+    added = _answer(
+        await add_knowledge_url_request.asyncio(
+            client=client, body=KnowledgeUrlRequest(namespace=namespace, url=page)
+        )
+    )
+    logger.info("read %s into %s as %d passages", page, namespace, added.passages)
+    return added
 
 
 async def define_skills(
