@@ -327,6 +327,26 @@ The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). S
 
 ## Bug Fixes
 
+### Acceleration: keep the caller company while a tool runs
+
+A model that said "one moment" and then called a tool went quiet until the result came back. The agent now speaks a working phrase if that wait stretches, without talking over the caller.
+
+### Acceleration: streaming voices are fed clauses, not starved between sentences
+
+A streaming TTS utterance drained between sentences whenever the model wrote slower than playback, so one reply scored as several speech spans. Clause-sized chunks (comma or length) keep the utterance fed.
+
+### Acceleration: Flux waits longer before ending a turn under noise
+
+Flux's 0.7 end-of-turn threshold split one noisy ask into fragments. The default is now 0.8.
+
+### Voicebench: Go target sends pack keyterms; restaurant books on the last detail
+
+The Python target already sent `Alvarez` / `512-555-0142`; the Go acceleration target did not, so the phone number was misheard. Pack keyterms now live in `benchmark/agents/contracts/keyterms.json` for both. The restaurant contract books when the last required detail arrives, and `allergen` is the allergy only — dietary preferences go on item modifiers.
+
+### Voicebench: score audio gates on utterances, not raw VAD spans
+
+Speech spans separated by less than 700 ms now merge before selectivity, hold, barge-in and false-cutoff. That is `voicebench-live-v4`; prior baselines are a different series.
+
 ### Together's speech models: a question no longer settles as its last word
 
 "Can you hear me" came back as "me". Together's realtime socket flushes its decoder on its
