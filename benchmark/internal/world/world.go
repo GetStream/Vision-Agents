@@ -370,20 +370,30 @@ func CheckAssertions(state map[string]any, assertions []scenario.Assertion) []st
 			continue
 		}
 		if a.Neq != nil {
-			if ok && fmt.Sprint(got) == fmt.Sprint(a.Neq) {
+			if ok && sameValue(got, a.Neq) {
 				fails = append(fails, a.Path+" equals forbidden "+fmt.Sprint(a.Neq))
 			}
 			continue
 		}
 		if a.Eq != nil {
-			gotNorm := normalize(got)
-			want := normalize(a.Eq)
-			if !ok || fmt.Sprint(gotNorm) != fmt.Sprint(want) {
+			if !ok || !sameValue(got, a.Eq) {
 				fails = append(fails, fmt.Sprintf("%s want %v got %v", a.Path, a.Eq, got))
 			}
 		}
 	}
 	return fails
+}
+
+// sameValue compares an end-state value the way the expected_tools gate compares a tool
+// argument. The two disagreed about the same string: an agent that put "Peanut" on the
+// ticket satisfied expected_tools and failed end_state.
+func sameValue(got, want any) bool {
+	gotStr, gotIsStr := got.(string)
+	wantStr, wantIsStr := want.(string)
+	if gotIsStr && wantIsStr {
+		return scenario.MatchStructuredValue(gotStr, wantStr)
+	}
+	return fmt.Sprint(normalize(got)) == fmt.Sprint(normalize(want))
 }
 
 func normalize(v any) any {

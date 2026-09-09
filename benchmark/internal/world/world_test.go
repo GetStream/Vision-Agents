@@ -63,6 +63,31 @@ func TestCreateReservationRequiresAllergen(t *testing.T) {
 	}
 }
 
+// An allergen the agent capitalised is the same allergen. end_state used to compare with
+// fmt.Sprint while expected_tools went through MatchStructuredValue, so one call could
+// satisfy the tool gate and fail the state gate on the identical string.
+func TestEndStateReadsAValueTheWayTheToolGateDoes(t *testing.T) {
+	state := map[string]any{"reservation": map[string]any{
+		"allergen":   "Peanut",
+		"time":       "7:30",
+		"party_size": 4.0,
+	}}
+	fails := CheckAssertions(state, []scenario.Assertion{
+		{Path: "reservation.allergen", Eq: "peanut"},
+		{Path: "reservation.time", Eq: "7:30"},
+		{Path: "reservation.party_size", Eq: 4},
+	})
+	if len(fails) != 0 {
+		t.Fatalf("fails %v", fails)
+	}
+	fails = CheckAssertions(state, []scenario.Assertion{
+		{Path: "reservation.allergen", Eq: "shellfish"},
+	})
+	if len(fails) != 1 {
+		t.Fatalf("a different allergen should still fail: %v", fails)
+	}
+}
+
 func TestTelecomRebootBeforeDispatch(t *testing.T) {
 	srv := New(nil)
 	srv.ListenAndServe("127.0.0.1:0")
