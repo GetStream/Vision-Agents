@@ -325,6 +325,38 @@ Adds `gemini-3.5-live-translate-preview` as a supported Live Translate model and
 
 The Anam avatar plugin now depends on `anam>=0.6.0,<0.7` (was `>=0.3.0,<0.4`). Sessions use the SDK's direct API-key path and default `video_quality="high"`; the plugin API is unchanged.
 
+### A VM on the agent config
+
+`define_agent(vm=Daytona)` says where the subagent may run the code it writes, and every
+session created from that config gets it without asking. Which sandbox an agent is allowed
+is a property of the agent rather than of one conversation, so it no longer has to be
+repeated per session — `AgentConfig.sandbox` carries it, a directory sync leaves it alone,
+and a session request still overrides it. Daytona is the only provider, and a config naming
+anything else is refused when it is written rather than once a call is running.
+
+```python
+await stream.define_agent(
+    name="analyst", llm="llm-fast", subagent="llm-thinking", vm=Daytona,
+)
+```
+
+### `add_knowledge_url`: filling a knowledge base from a page
+
+Python can now subscribe a knowledge base to a page it does not host. The page is read
+straight away, cut into the same passages a document becomes and kept under the url, so
+reading it again replaces what it wrote rather than duplicating it.
+
+```python
+await stream.add_knowledge_url("docs_agent", "https://visionagents.ai/introduction/quickstart")
+```
+
+### `examples/text_agents`: agents that answer in writing
+
+Two runnable examples of a conversation held in writing rather than on a call. `docs_agent`
+answers out of a knowledge directory and a page on the docs site, both under one namespace.
+`analyst` hands arithmetic to a subagent with a VM. `sync_agent(name)` now finds an agent
+directory anywhere under `examples/`, not only in `examples/agents/`.
+
 ## Bug Fixes
 
 ### Together's speech models: a question no longer settles as its last word
