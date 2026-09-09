@@ -16,6 +16,10 @@ const (
 	HumanBandMinMS   = 300
 	HumanBandMaxMS   = 700
 	MaxBargeInStopMS = 800
+	// UtteranceMergeGapMS joins speech spans separated by less than this, so a reply
+	// that pauses between sentences is still one utterance for selectivity, hold and
+	// barge-in.
+	UtteranceMergeGapMS = 700
 )
 
 // Timing is one voice-to-voice gap.
@@ -229,7 +233,7 @@ func CountConversation(m *Metrics, rec caller.Result, agentText string) {
 			m.CallerTurns++
 		}
 	}
-	m.AgentTurns = len(audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs))
+	m.AgentTurns = len(mergeUtterances(audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs), UtteranceMergeGapMS))
 	m.AgentWords = len(strings.Fields(agentText))
 }
 
@@ -265,7 +269,7 @@ func BargeInStopMS(rec caller.Result) int {
 	if !found {
 		return -1
 	}
-	spans := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, 80)
+	spans := mergeUtterances(audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, 80), UtteranceMergeGapMS)
 	for _, s := range spans {
 		if s.StartMs <= barge.RecStartMs+alignmentToleranceMS && s.EndMs > barge.RecStartMs {
 			stop := s.EndMs - barge.RecStartMs
@@ -280,7 +284,7 @@ func BargeInStopMS(rec caller.Result) int {
 
 // ScoreOverlaps evaluates every non-directed sound in the script.
 func ScoreOverlaps(rec caller.Result) []OverlapCheck {
-	agent := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
+	agent := mergeUtterances(audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs), UtteranceMergeGapMS)
 	var checks []OverlapCheck
 	for _, event := range rec.Events {
 		if event.OverlapSound == "" {
@@ -291,7 +295,7 @@ func ScoreOverlaps(rec caller.Result) []OverlapCheck {
 			if span.StartMs >= event.RecStartMs && span.StartMs <= event.RecEndMs+200 {
 				check.StartedTurn = true
 			}
-			if event.Kind == scenario.TriggerDuringAgent && span.StartMs < event.RecStartMs && span.EndMs > event.RecEndMs+150 {
+			if event.Kind == scenario.TriggerDuringAgent && span.StartMs < event.RecStartMs && span.EndMs >= event.RecEndMs {
 				check.Continued = true
 			}
 		}
@@ -320,10 +324,28 @@ func HoldThroughOverlap(checks []OverlapCheck) bool {
 	return true
 }
 
+// mergeUtterances joins speech spans separated by less than maxGapMS so a reply that
+// pauses between sentences still scores as one utterance.
+func mergeUtterances(spans []audio.Span, maxGapMS int) []audio.Span {
+	if len(spans) == 0 {
+		return nil
+	}
+	merged := []audio.Span{spans[0]}
+	for _, span := range spans[1:] {
+		last := &merged[len(merged)-1]
+		if span.StartMs-last.EndMs < maxGapMS {
+			last.EndMs = span.EndMs
+			continue
+		}
+		merged = append(merged, span)
+	}
+	return merged
+}
+
 // FalseCutoff counts agent starts inside scripted, non-barge caller utterances.
 // Script intervals remain authoritative when the caller leg also contains a noise bed.
 func FalseCutoff(rec caller.Result) int {
-	agentSpans := audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs)
+	agentSpans := mergeUtterances(audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs), UtteranceMergeGapMS)
 	n := 0
 	for _, agent := range agentSpans {
 		for _, event := range rec.Events {

@@ -228,6 +228,53 @@ func TestHoldThroughOverlap(t *testing.T) {
 	}
 }
 
+func TestMergeUtterancesJoinsTheSelectivityT1Gaps(t *testing.T) {
+	// restaurant.selectivity-t1: three sentences with 260 ms and 620 ms of true silence
+	// between them. The cough sits in the first gap at [12600, 12800].
+	spans := []audio.Span{
+		{StartMs: 12220, EndMs: 12540},
+		{StartMs: 12800, EndMs: 13380},
+		{StartMs: 14000, EndMs: 14500},
+	}
+	got := mergeUtterances(spans, UtteranceMergeGapMS)
+	if len(got) != 1 || got[0].StartMs != 12220 || got[0].EndMs != 14500 {
+		t.Fatalf("merged %+v", got)
+	}
+}
+
+func TestScoreOverlapsDoesNotTreatAGapCoughAsANewTurn(t *testing.T) {
+	rate := audio.Rate
+	totalMs := 15000
+	n := rate * totalMs / 1000
+	agent := make([]int16, n)
+	for _, span := range []audio.Span{
+		{StartMs: 12220, EndMs: 12540},
+		{StartMs: 12800, EndMs: 13380},
+		{StartMs: 14000, EndMs: 14500},
+	} {
+		start := span.StartMs * rate / 1000
+		end := span.EndMs * rate / 1000
+		for i := start; i < end && i < n; i++ {
+			agent[i] = 10000
+		}
+	}
+	rec := caller.Result{
+		Agent: agent,
+		Rate:  rate,
+		Events: []caller.Event{
+			{TurnID: "cough", Kind: scenario.TriggerDuringAgent, RecStartMs: 12600, RecEndMs: 12800, OverlapSound: "cough"},
+			{TurnID: "talker", Kind: scenario.TriggerDuringAgent, RecStartMs: 13300, RecEndMs: 14500, OverlapSound: "talker"},
+		},
+	}
+	checks := ScoreOverlaps(rec)
+	if !SelectivityHold(checks) {
+		t.Fatalf("cough in a sentence gap read as a new turn: %+v", checks)
+	}
+	if !HoldThroughOverlap(checks) {
+		t.Fatalf("merged reply did not hold through the cough: %+v", checks)
+	}
+}
+
 func TestScoreOverlapsChecksEverySound(t *testing.T) {
 	rate := audio.Rate
 	rec := caller.Result{
