@@ -95,6 +95,8 @@ A metric is only comparable over time if the scenarios, contracts, and threshold
 
 Keep a frozen scenario set for trend tracking. New scenarios land outside it until a version bump, so improving the bench never silently rewrites history. Bumping `MethodologyVersion` starts a new series; it does not patch the old one.
 
+`k=3` is below the noise floor for a pack-level number. Two restaurant runs at `k=3` sharing a `scenario_hash` and a `contract_hash`, differing only in a judge-prompt edit that cannot reach the tool log, disagreed by 4 on `expected_tools` and by 1 each on `end_state` and `entity_tools`, and by one trial overall. A one- or two-trial move at `k=3` is not a result. What did survive across four runs was the per-trial mechanism — the count of trials that wrote a correct booking while the caller heard under 25 words — so read a `k=3` run as a source of cases to look at, and raise `k` or pair the seeds before calling a delta.
+
 ### Two run tiers
 
 24 scenarios × `k` × several targets, including two-minute coherence calls, is too slow for per-change feedback.
