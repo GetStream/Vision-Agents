@@ -347,6 +347,18 @@ The Python target already sent `Alvarez` / `512-555-0142`; the Go acceleration t
 
 Speech spans separated by less than 700 ms now merge before selectivity, hold, barge-in and false-cutoff. That is `voicebench-live-v4`; prior baselines are a different series.
 
+### Voicebench: restaurant scenarios that no agent could pass, and gates that could not say why
+
+Three restaurant scenarios were unwinnable as written. `interrupt` demanded `allergen: gluten` while the contract said dietary preferences are not allergens, so the correction is now a shellfish allergy. `entity_dense` expected a `pickup_window` the schema left optional and compared it as an exact string, so `create_order` requires it and durations such as `20`, `20 min` and `in 20 minutes` now compare equal. `tool_filler` opened its window at the tool timestamp, but the reply that asks for a tool is spoken before the request is handed over, so the phrase check now looks back the same 2 s the non-blocking check already did.
+
+Two gates also became readable. `barge_in_reason` says whether the call recorded no barge-in, the agent answered late, or it was already quiet, instead of one unmeasured `-1`, and the stop edge is read across pauses up to 300 ms rather than 700 ms so a prompt stop is not merged into the reply that follows it. `metrics.json` gains `agent_jitter_max_ms`, `heard_utterances` and `heard_ignored`, and `heard.json` keeps rulings that carry no words.
+
+That is `voicebench-live-v5`; v4 baselines are a different series.
+
+### Acceleration: a tool call cancelled by a correction hands back what it collected
+
+A caller who changed one detail mid-booking used to be asked for the rest again. The tool result for the abandoned call said only that it had not run, so the retry read as though nothing had been agreed. It now carries the arguments the call was about to send.
+
 ### Together's speech models: a question no longer settles as its last word
 
 "Can you hear me" came back as "me". Together's realtime socket flushes its decoder on its

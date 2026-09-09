@@ -91,7 +91,7 @@ Do not mix dirty trees into the series. `RunManifest.GitDirty` already records t
 
 ### Freeze the bench definition
 
-A metric is only comparable over time if the scenarios, contracts, and thresholds behind it did not move. `MethodologyVersion` (`voicebench-live-v4`), `scenario_hash`, and `contract_hash` already detect drift. Add a policy on top, borrowing Inworld's rule that published presets are immutable and new behaviour means a new file.
+A metric is only comparable over time if the scenarios, contracts, and thresholds behind it did not move. `MethodologyVersion` (`voicebench-live-v5`), `scenario_hash`, and `contract_hash` already detect drift. Add a policy on top, borrowing Inworld's rule that published presets are immutable and new behaviour means a new file.
 
 Keep a frozen scenario set for trend tracking. New scenarios land outside it until a version bump, so improving the bench never silently rewrites history. Bumping `MethodologyVersion` starts a new series; it does not patch the old one.
 
