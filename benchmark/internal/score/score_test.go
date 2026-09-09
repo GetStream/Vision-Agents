@@ -42,16 +42,66 @@ func TestEntityInSpeech(t *testing.T) {
 
 func TestBargeInStopMSUnmeasured(t *testing.T) {
 	rec := caller.Result{Rate: audio.Rate, Agent: audio.Silence(audio.Rate)}
-	if got := BargeInStopMS(rec); got != -1 {
-		t.Fatalf("no barge event: %d", got)
+	got, reason := BargeInStopMS(rec)
+	if got != -1 || reason != BargeNoEvent {
+		t.Fatalf("no barge event: %d %q", got, reason)
 	}
 	rec.Events = []caller.Event{{
 		BargeIn:    true,
 		Kind:       scenario.TriggerBargeIn,
 		RecStartMs: 400,
 	}}
-	if got := BargeInStopMS(rec); got != -1 {
-		t.Fatalf("no straddle: %d", got)
+	got, reason = BargeInStopMS(rec)
+	if got != -1 || reason != BargeAlreadyQuiet {
+		t.Fatalf("no straddle: %d %q", got, reason)
+	}
+}
+
+func TestBargeInStopMSNamesAReplyThatStartedAfterTheBarge(t *testing.T) {
+	rate := audio.Rate
+	agent := audio.Concat(audio.Silence(1500*rate/1000), audio.Tone(600*rate/1000, 220, 12000))
+	rec := caller.Result{
+		Agent: agent,
+		Rate:  rate,
+		Events: []caller.Event{{
+			BargeIn:    true,
+			Kind:       scenario.TriggerBargeIn,
+			RecStartMs: 400,
+		}},
+	}
+	got, reason := BargeInStopMS(rec)
+	if got != -1 || reason != BargeStartedAfter {
+		t.Fatalf("an agent that answered late is not an agent with nothing to cut off: %d %q", got, reason)
+	}
+}
+
+// A reply that stops promptly and is followed by the answer to the correction is two
+// utterances. Reading the stop edge off spans merged at UtteranceMergeGapMS would join
+// them and report the prompt stop as a reply that ran on past the limit.
+func TestBargeInStopMSDoesNotRunOnIntoTheNextReply(t *testing.T) {
+	rate := audio.Rate
+	ms := func(n int) int { return n * rate / 1000 }
+	agent := audio.Concat(
+		audio.Silence(ms(200)),
+		audio.Tone(ms(400), 220, 12000),
+		audio.Silence(ms(600)),
+		audio.Tone(ms(1500), 220, 12000),
+	)
+	rec := caller.Result{
+		Agent: agent,
+		Rate:  rate,
+		Events: []caller.Event{{
+			BargeIn:    true,
+			Kind:       scenario.TriggerBargeIn,
+			RecStartMs: 400,
+		}},
+	}
+	got, reason := BargeInStopMS(rec)
+	if reason != BargeMeasured {
+		t.Fatalf("reason %q", reason)
+	}
+	if got < 150 || got > 350 {
+		t.Fatalf("stop %dms: the reply stopped 200ms after the barge", got)
 	}
 }
 
@@ -67,9 +117,9 @@ func TestBargeInStopMSMeasured(t *testing.T) {
 			RecStartMs: 400,
 		}},
 	}
-	got := BargeInStopMS(rec)
+	got, reason := BargeInStopMS(rec)
 	if got < 0 {
-		t.Fatalf("want measured stop, got %d", got)
+		t.Fatalf("want measured stop, got %d (%s)", got, reason)
 	}
 }
 
@@ -85,7 +135,7 @@ func TestBargeInStopMSToleratesFrameAlignment(t *testing.T) {
 			RecStartMs: 400,
 		}},
 	}
-	if got := BargeInStopMS(rec); got < 300 || got > 400 {
+	if got, _ := BargeInStopMS(rec); got < 300 || got > 400 {
 		t.Fatalf("stop %dms", got)
 	}
 }
@@ -181,7 +231,7 @@ func TestDelayedToolNamesSkipsVerify(t *testing.T) {
 func TestScoreFiller(t *testing.T) {
 	rate := audio.Rate
 	start := time.Now().Add(-2 * time.Second)
-	agent := audio.Concat(audio.Silence(rate/5), audio.Tone(rate, 220, 12000))
+	agent := audio.Concat(audio.Silence(rate/5), audio.Tone(3*rate, 220, 12000))
 	rec := caller.Result{Agent: agent, Rate: rate, StartedAt: start}
 	sc := scenario.Scenario{ToolDelayMS: map[string]int{"check_availability": 3000}}
 	sess := &world.Session{Tools: []world.ToolCall{{
@@ -200,6 +250,105 @@ func TestScoreFiller(t *testing.T) {
 	})
 	if !m.FillerHeard || !m.FillerNonBlocking {
 		t.Fatalf("filler %+v", m)
+	}
+	if len(m.FillerFail) != 0 {
+		t.Fatalf("fails %v", m.FillerFail)
+	}
+}
+
+// An agent that reads the booking back across the whole lookup never leaves the caller
+// waiting, and says something more useful than a stall phrase. Requiring the phrase failed
+// it, and a contract rewritten to lead with the phrase passed this gate while losing four
+// other scenarios, so what the words were is recorded and what fails is silence.
+func TestScoreFillerAcceptsAReadBackThatCoversTheWait(t *testing.T) {
+	rate := audio.Rate
+	start := time.Now().Add(-4 * time.Second)
+	rec := caller.Result{
+		Agent:     audio.Concat(audio.Silence(rate/10), audio.Tone(3*rate, 220, 12000)),
+		Rate:      rate,
+		StartedAt: start,
+	}
+	sc := scenario.Scenario{ToolDelayMS: map[string]int{"check_availability": 3000}}
+	sess := &world.Session{Tools: []world.ToolCall{{
+		Name:    "check_availability",
+		Started: start.Add(100 * time.Millisecond),
+		Ended:   start.Add(3100 * time.Millisecond),
+	}}}
+	m := &Metrics{}
+	ScoreFiller(m, sc, rec, sess, Transcript{
+		Text: "That is a party of four at seven thirty on the patio for Alvarez.",
+		Words: []TranscriptWord{
+			{Text: "party", StartMS: 200, EndMS: 400},
+			{Text: "Alvarez", StartMS: 2600, EndMS: 2900},
+		},
+	})
+	if len(m.FillerFail) != 0 {
+		t.Fatalf("speech covering the whole wait should pass: %v", m.FillerFail)
+	}
+	if m.FillerHeard {
+		t.Fatal("no stall phrase was spoken, so none should be recorded")
+	}
+}
+
+// Saying "one moment" and then going quiet is the failure the gate is for. The phrase was
+// what it used to look for, so this was the one shape that passed while sounding worst.
+func TestScoreFillerFailsAStallPhraseFollowedBySilence(t *testing.T) {
+	rate := audio.Rate
+	start := time.Now().Add(-4 * time.Second)
+	rec := caller.Result{
+		Agent:     audio.Concat(audio.Silence(rate/10), audio.Tone(rate/2, 220, 12000), audio.Silence(3*rate)),
+		Rate:      rate,
+		StartedAt: start,
+	}
+	sc := scenario.Scenario{ToolDelayMS: map[string]int{"check_availability": 3000}}
+	sess := &world.Session{Tools: []world.ToolCall{{
+		Name:    "check_availability",
+		Started: start.Add(100 * time.Millisecond),
+		Ended:   start.Add(3100 * time.Millisecond),
+	}}}
+	m := &Metrics{}
+	ScoreFiller(m, sc, rec, sess, Transcript{
+		Text: "One moment.",
+		Words: []TranscriptWord{
+			{Text: "One", StartMS: 150, EndMS: 300},
+			{Text: "moment", StartMS: 310, EndMS: 500},
+		},
+	})
+	if !m.FillerHeard {
+		t.Fatal("the phrase was spoken and should be recorded")
+	}
+	if len(m.FillerFail) == 0 {
+		t.Fatal("two seconds of dead air after the phrase should fail")
+	}
+	if m.FillerSilenceMS < 2000 {
+		t.Fatalf("silence measured as %d ms", m.FillerSilenceMS)
+	}
+}
+
+// The reply that asks for a tool is spoken before the request is handed over, so the
+// filler lands just before the window opens. The non-blocking half of the gate already
+// looked back for it; the phrase half has to look back the same way.
+func TestScoreFillerCountsAFillerSpokenAsTheToolWasRequested(t *testing.T) {
+	rate := audio.Rate
+	start := time.Now().Add(-4 * time.Second)
+	agent := audio.Concat(audio.Silence(rate/5), audio.Tone(3*rate, 220, 12000))
+	rec := caller.Result{Agent: agent, Rate: rate, StartedAt: start}
+	sc := scenario.Scenario{ToolDelayMS: map[string]int{"check_availability": 3000}}
+	sess := &world.Session{Tools: []world.ToolCall{{
+		Name:    "check_availability",
+		Started: start.Add(900 * time.Millisecond),
+		Ended:   start.Add(3900 * time.Millisecond),
+	}}}
+	m := &Metrics{}
+	ScoreFiller(m, sc, rec, sess, Transcript{
+		Text: "One moment, checking the book.",
+		Words: []TranscriptWord{
+			{Text: "One", StartMS: 500, EndMS: 560},
+			{Text: "moment", StartMS: 570, EndMS: 650},
+		},
+	})
+	if !m.FillerHeard {
+		t.Fatalf("filler spoken 400ms before the tool started was not heard: %v", m.FillerFail)
 	}
 	if len(m.FillerFail) != 0 {
 		t.Fatalf("fails %v", m.FillerFail)
@@ -225,6 +374,53 @@ func TestHoldThroughOverlap(t *testing.T) {
 	rec.Agent = audio.Concat(audio.Tone(rate/5, 220, 12000), audio.Silence(rate))
 	if HoldThroughOverlap(ScoreOverlaps(rec)) {
 		t.Fatal("agent stopped at cough")
+	}
+}
+
+func TestMergeUtterancesJoinsTheSelectivityT1Gaps(t *testing.T) {
+	// restaurant.selectivity-t1: three sentences with 260 ms and 620 ms of true silence
+	// between them. The cough sits in the first gap at [12600, 12800].
+	spans := []audio.Span{
+		{StartMs: 12220, EndMs: 12540},
+		{StartMs: 12800, EndMs: 13380},
+		{StartMs: 14000, EndMs: 14500},
+	}
+	got := mergeUtterances(spans, UtteranceMergeGapMS)
+	if len(got) != 1 || got[0].StartMs != 12220 || got[0].EndMs != 14500 {
+		t.Fatalf("merged %+v", got)
+	}
+}
+
+func TestScoreOverlapsDoesNotTreatAGapCoughAsANewTurn(t *testing.T) {
+	rate := audio.Rate
+	totalMs := 15000
+	n := rate * totalMs / 1000
+	agent := make([]int16, n)
+	for _, span := range []audio.Span{
+		{StartMs: 12220, EndMs: 12540},
+		{StartMs: 12800, EndMs: 13380},
+		{StartMs: 14000, EndMs: 14500},
+	} {
+		start := span.StartMs * rate / 1000
+		end := span.EndMs * rate / 1000
+		for i := start; i < end && i < n; i++ {
+			agent[i] = 10000
+		}
+	}
+	rec := caller.Result{
+		Agent: agent,
+		Rate:  rate,
+		Events: []caller.Event{
+			{TurnID: "cough", Kind: scenario.TriggerDuringAgent, RecStartMs: 12600, RecEndMs: 12800, OverlapSound: "cough"},
+			{TurnID: "talker", Kind: scenario.TriggerDuringAgent, RecStartMs: 13300, RecEndMs: 14500, OverlapSound: "talker"},
+		},
+	}
+	checks := ScoreOverlaps(rec)
+	if !SelectivityHold(checks) {
+		t.Fatalf("cough in a sentence gap read as a new turn: %+v", checks)
+	}
+	if !HoldThroughOverlap(checks) {
+		t.Fatalf("merged reply did not hold through the cough: %+v", checks)
 	}
 }
 
@@ -451,5 +647,31 @@ func TestCountConversation(t *testing.T) {
 	}
 	if m.AgentWords != 3 {
 		t.Fatalf("words %d", m.AgentWords)
+	}
+}
+
+// noise_kitchen asks the agent to complete the booking despite the noise and lists nothing
+// to refuse. The empty "Must refuse:" heading sat directly above the policy list, and the
+// judge read the list as what had to be refused: it failed the agent for booking, which is
+// the thing the scenario wanted.
+func TestJudgePromptDoesNotHeadThePolicyListWithAnEmptyRefusal(t *testing.T) {
+	sc := scenario.Scenario{Policy: []string{"Complete the booking despite kitchen noise."}}
+	prompt := judgePrompt(sc, "book me a table", "you are booked", nil)
+	if strings.Contains(prompt, "Must refuse") {
+		t.Fatalf("nothing to refuse, so no refusal heading:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "required to satisfy:\n- Complete the booking despite kitchen noise.") {
+		t.Fatalf("the policy list should read as requirements:\n%s", prompt)
+	}
+}
+
+func TestJudgePromptKeepsRefusalsWhenThereAreSome(t *testing.T) {
+	sc := scenario.Scenario{
+		Policy: []string{"Do not overbook a full slot."},
+		Judge:  scenario.JudgeSpec{MustRefuse: []string{"squeeze in an extra table"}},
+	}
+	prompt := judgePrompt(sc, "squeeze us in", "I cannot do that", nil)
+	if !strings.Contains(prompt, "Must refuse: squeeze in an extra table") {
+		t.Fatalf("refusals should still be named:\n%s", prompt)
 	}
 }

@@ -234,6 +234,7 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 	metrics.CallDurationMS = rec.DurationMS()
 	metrics.ClockDriftMS = rec.ClockDriftMS()
 	metrics.InboundDropped = rec.InboundDropped
+	metrics.AgentJitterMaxMS = rec.AgentJitterMaxMS
 	metrics.RequestedSNRDB = rec.RequestedSNRDB
 	metrics.MeasuredSNRDB = rec.MeasuredSNRDB
 	if sess != nil {
@@ -251,7 +252,7 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 		score.MarkToolTurns(&metrics, rec, sess.Tools)
 	}
 	score.SummarizeTiming(&metrics)
-	metrics.BargeInStopMS = score.BargeInStopMS(rec)
+	metrics.BargeInStopMS, metrics.BargeInReason = score.BargeInStopMS(rec)
 	metrics.OverlapChecks = score.ScoreOverlaps(rec)
 	metrics.SelectivityHold = score.SelectivityHold(metrics.OverlapChecks)
 	metrics.HoldThroughOverlap = score.HoldThroughOverlap(metrics.OverlapChecks)
@@ -342,7 +343,7 @@ func runOnce(ctx context.Context, cfg Config, worldSrv *world.Server, sc scenari
 	if err := writeJSON(filepath.Join(callDir, "transcript.json"), map[string]score.Transcript{"caller": callerTranscript, "agent": agentTranscript}); err != nil {
 		return result, err
 	}
-	if err := captureAgentHeard(cfg, callID, callDir); err != nil {
+	if err := captureAgentHeard(cfg, callID, callDir, &result.Metrics); err != nil {
 		result.Warnings = append(result.Warnings, "agent heard transcript: "+err.Error())
 		cfg.Logger.Warn("agent heard transcript", "err", err)
 	}

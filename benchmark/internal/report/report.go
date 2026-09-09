@@ -15,7 +15,7 @@ import (
 
 const SchemaVersion = 3
 const BenchmarkVersion = "0.4.0"
-const MethodologyVersion = "voicebench-live-v3"
+const MethodologyVersion = "voicebench-live-v5"
 
 const KindAgent = "agent"
 const KindSTT = "stt"
@@ -575,7 +575,7 @@ func gateDetails(m score.Metrics) []gateDetail {
 	if m.BargeInStopMS > score.MaxBargeInStopMS {
 		add("barge_in", []string{fmt.Sprintf("stop %d ms exceeds %d ms", m.BargeInStopMS, score.MaxBargeInStopMS)})
 	} else if containsNote(m.GateNotes, "barge_in") {
-		add("barge_in", []string{"barge-in stop was not measured"})
+		add("barge_in", []string{"barge-in stop was not measured: " + bargeInReason(m.BargeInReason)})
 	}
 	if containsNote(m.GateNotes, "selectivity") {
 		add("selectivity", []string{"agent started a turn on non-directed overlap"})
@@ -584,6 +584,19 @@ func gateDetails(m score.Metrics) []gateDetail {
 		add("hold", []string{"agent did not continue through mid-speech overlap"})
 	}
 	return out
+}
+
+func bargeInReason(reason string) string {
+	switch reason {
+	case score.BargeNoEvent:
+		return "the call recorded no barge-in"
+	case score.BargeStartedAfter:
+		return "the agent only started speaking after the barge-in"
+	case score.BargeAlreadyQuiet:
+		return "the agent was already quiet when the barge-in landed"
+	default:
+		return "reason unrecorded"
+	}
 }
 
 func containsNote(notes []string, gate string) bool {

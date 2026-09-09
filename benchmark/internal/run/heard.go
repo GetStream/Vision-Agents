@@ -8,18 +8,24 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/GetStream/Vision-Agents/benchmark/internal/score"
 )
 
 type heardEvent struct {
 	Kind string `json:"kind"`
-	Said string `json:"said"`
+	Said string `json:"said,omitempty"`
 	At   string `json:"at,omitempty"`
 }
 
-// captureAgentHeard writes what the acceleration agent settled on, per utterance.
-// Deepgram's view of the caller leg is already in transcript.json; this is the
-// agent's own STT, which is what hid the 7:30 split.
-func captureAgentHeard(cfg Config, callID, callDir string) error {
+// captureAgentHeard writes what the acceleration agent settled on, per utterance, and
+// counts what it did with it. Deepgram's view of the caller leg is already in
+// transcript.json; this is the agent's own STT, which is what hid the 7:30 split.
+//
+// The counts are what tell a noise failure apart: no utterances at all is STT losing the
+// caller, and utterances the flow controller ignored is the agent deciding they were not
+// meant for it.
+func captureAgentHeard(cfg Config, callID, callDir string, m *score.Metrics) error {
 	if cfg.TargetName != "accelerated" && cfg.TargetName != "acceleration" {
 		return nil
 	}
@@ -28,6 +34,14 @@ func captureAgentHeard(cfg Config, callID, callDir string) error {
 	events, err := fetchAgentHeard(base, customer, callID)
 	if err != nil {
 		return err
+	}
+	for _, event := range events {
+		switch event.Kind {
+		case "ask":
+			m.HeardUtterances++
+		case "ignore":
+			m.HeardIgnored++
+		}
 	}
 	return writeJSON(filepath.Join(callDir, "heard.json"), events)
 }
@@ -51,13 +65,18 @@ func fetchAgentHeard(base, customer, streamCallID string) ([]heardEvent, error) 
 	}
 	var events []heardEvent
 	for _, event := range raw {
-		if event.Said == nil || strings.TrimSpace(*event.Said) == "" {
-			continue
-		}
 		switch event.Kind {
 		case "ask", "answer", "settle", "wait", "interrupt", "ignore":
-			events = append(events, heardEvent{Kind: event.Kind, Said: *event.Said, At: event.At})
+		default:
+			continue
 		}
+		// A ruling with no words is still a ruling. Dropping those hid exactly the
+		// case worth reading: an utterance the agent decided was not for it.
+		said := ""
+		if event.Said != nil {
+			said = strings.TrimSpace(*event.Said)
+		}
+		events = append(events, heardEvent{Kind: event.Kind, Said: said, At: event.At})
 	}
 	return events, nil
 }

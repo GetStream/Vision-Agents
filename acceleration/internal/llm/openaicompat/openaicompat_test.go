@@ -302,6 +302,18 @@ func (s *OpenAICompatSuite) TestThinkingIsSeparatedFromTheAnswer() {
 	s.Equal("The user said hi, so", thinking, "but it is still available to a caller that wants it")
 }
 
+func (s *OpenAICompatSuite) TestThoughtMarkersInTheAnswerAreNotSpoken() {
+	s.frames = []string{
+		textFrame("<|channel>thought\n<channel|>Hello!"),
+		usageFrame(11, 0, 8, 0, "stop"),
+	}
+	provider := s.provider(Options{})
+
+	response, _ := s.ask(provider, hello())
+
+	s.Equal("Hello!", response.OutputText, "an empty thought channel must not be spoken")
+}
+
 func (s *OpenAICompatSuite) TestInstructionsAreSentAsASystemMessage() {
 	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
 	provider := s.provider(Options{})
@@ -822,4 +834,11 @@ func (s *OpenAICompatSuite) modelSentBy(provider *LLM) string {
 	model, ok := s.requests[0]["model"].(string)
 	s.Require().True(ok)
 	return model
+}
+
+func (s *OpenAICompatSuite) TestThinkingMarkersInContentAreRecognised() {
+	s.True(looksLikeThinking("<|channel|>thought"))
+	s.True(looksLikeThinking("Thought."))
+	s.True(looksLikeThinking("<think>planning</think>"))
+	s.False(looksLikeThinking("I thought you said Saturday."))
 }

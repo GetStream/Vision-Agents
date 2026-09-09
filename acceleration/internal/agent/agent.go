@@ -46,6 +46,17 @@ const (
 	playoutWaitCeiling = 2 * time.Second
 )
 
+// cancelledToolResult is what the model is told when a call it asked for was dropped
+// because the caller spoke over the reply. The result has to exist: a provider refuses a
+// conversation that replays a tool call without an answer.
+const cancelledToolResult = "The caller spoke over this request, so it was not run. Decide again from what they just said."
+
+// cancelledToolResultWithArgs is the same for a call that had already collected what the
+// caller gave. Handing back only "it was not run" reads as though nothing had been
+// agreed, and the agent asks again for a party size and a time it was holding a moment
+// ago; the arguments are what make the correction a change to a booking in progress.
+const cancelledToolResultWithArgs = "The caller spoke over this request, so it was not run. It was about to send %s. Those values still hold apart from what they just corrected, so decide again without asking for details they have already given."
+
 // sentenceSuffix separates a turn id from the sequence number of a sentence within it, for
 // providers that need one synthesis per sentence.
 const sentenceSuffix = "#"
@@ -260,6 +271,12 @@ type Agent struct {
 	utterances int
 	// generating is true while the voice model is still writing the current reply.
 	generating bool
+	// settling is a reply that was interrupted while still generating. Its completion
+	// still has to be recorded so a tool it asked for is not silently dropped.
+	settling string
+	// pending is the turn that arrived while settling, held until that completion is
+	// recorded so history stays in order.
+	pending *pendingReply
 	// toolReply is set when a tool returned and the caller has not been told yet. A
 	// second tool in the same turn must not start a competing generate: it would steal
 	// speakingTurn and drop the first result unspoken.
@@ -529,6 +546,7 @@ func (a *Agent) Join(ctx context.Context) error {
 			return fmt.Errorf("agent: start tts: %w", err)
 		}
 		a.tts = voice
+		a.chunk.clauses = voice.Streaming()
 		// What the voice wants said about it is read once, here, rather than on every
 		// turn: the session cannot change provider without the agent rejoining, and
 		// instructions() is called under the lock this session was opened outside of.
@@ -1035,8 +1053,9 @@ func (a *Agent) consumePresence() {
 func (a *Agent) floor() floor {
 	a.mu.Lock()
 	state := floor{
-		Quiet:           a.utterances == 0 && !a.generating,
+		Quiet:           a.utterances == 0 && !a.generating && a.settling == "",
 		Speaking:        a.speakingTurn,
+		PendingTools:    a.pendingTools,
 		LastSpokeAt:     a.lastSpokeAt,
 		LastHeardAt:     a.lastHeardAt,
 		LastParticipant: a.lastParticipant,
@@ -1177,6 +1196,15 @@ type heard struct {
 	confidence   float64
 }
 
+// pendingReply is a turn that arrived while an interrupted completion was still settling.
+type pendingReply struct {
+	id          string
+	participant stt.Participant
+	text        string
+	listened    heard
+	note        string
+}
+
 func participantName(participant stt.Participant) string {
 	if participant.Name != "" {
 		return participant.Name
@@ -1284,6 +1312,17 @@ func (a *Agent) respondTurn(
 	if a.harness == nil {
 		a.mu.Unlock()
 		return errors.New("agent: not joined")
+	}
+	if a.settling != "" {
+		a.pending = &pendingReply{
+			id:          turnID,
+			participant: participant,
+			text:        text,
+			listened:    listened,
+			note:        note,
+		}
+		a.mu.Unlock()
+		return nil
 	}
 	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
 	history := append([]llm.Message(nil), a.history...)
@@ -1484,17 +1523,121 @@ func (a *Agent) handle(event llm.Event) {
 		a.fail(typed.Err, "llm")
 
 	case llm.ResponseCompleted:
-		if !a.speaking(typed.Response.ID) {
-			// The reply the chunker is holding is only cleared by the turn it belongs
-			// to, so a response arriving late for an abandoned one cannot cut the turn
-			// after it short.
-			if a.replying == typed.Response.ID {
-				a.resetTurn()
-			}
+		spoken := a.speaking(typed.Response.ID)
+		a.logSettled(typed.Response, spoken)
+		if !spoken {
+			a.finishAbandoned(typed.Response)
 			return
 		}
 		a.finish(typed.Response)
 	}
+}
+
+// logSettled records whether a reply was spoken and which tools it asked for, so an
+// interruption that dropped a booking can be told apart from a model that never asked.
+func (a *Agent) logSettled(response llm.Response, spoken bool) {
+	tools := make([]string, 0, len(response.ToolCalls))
+	for _, call := range response.ToolCalls {
+		tools = append(tools, call.Name)
+	}
+	a.logger.Info("llm reply settled",
+		"turn", response.ID,
+		"status", response.Status,
+		"spoken", spoken,
+		"tools", tools,
+		"text", clipLog(response.OutputText, 160))
+}
+
+// finishAbandoned records a reply that was interrupted before the caller heard it out.
+//
+// The model may already have asked for a tool. Dropping that completion used to mean the
+// booking never ran and never appeared in history, so the next turn invented a confirmation
+// of work that did not happen. Tools are run when the caller only barged in, and cancelled
+// in history when they said something new that the model should re-decide.
+func (a *Agent) finishAbandoned(response llm.Response) {
+	if a.replying == response.ID {
+		_ = a.harness.Flush()
+		_ = a.directions.Flush()
+	}
+	asked := a.harness.TakeAsked()
+	calls := append(append([]llm.ToolCall(nil), response.ToolCalls...), asked...)
+	said := strings.TrimSpace(a.spoken.String())
+	a.resetTurn()
+
+	a.mu.Lock()
+	ours := a.settling == response.ID
+	a.generating = false
+	pending := a.pending
+	if said != "" || len(calls) > 0 {
+		a.history = append(a.history, llm.Message{
+			Role:      llm.Assistant,
+			Content:   said,
+			ToolCalls: calls,
+		})
+	}
+	if ours && pending != nil && len(calls) > 0 {
+		for _, call := range calls {
+			a.history = append(a.history, llm.Message{
+				Role:       llm.ToolResult,
+				Content:    cancelledResult(call),
+				ToolCallID: call.ID,
+			})
+		}
+	}
+	currentHarness := a.harness
+	a.mu.Unlock()
+
+	if ours && pending == nil && currentHarness != nil && len(calls) > 0 {
+		pendingCount := 0
+		tools := a.availableTools()
+		for _, call := range calls {
+			if _, known := tools.Lookup(call.Name); known {
+				pendingCount++
+			}
+		}
+		a.mu.Lock()
+		a.pendingTools += pendingCount
+		a.mu.Unlock()
+		currentHarness.Requested(response.ID, calls)
+	}
+
+	if ours {
+		a.resumeAfterAbandon()
+	}
+}
+
+// cancelledResult is what a dropped call is answered with, including what it had filled
+// in when there was anything to report.
+func cancelledResult(call llm.ToolCall) string {
+	args := strings.TrimSpace(call.Arguments)
+	switch args {
+	case "", "{}", "null":
+		return cancelledToolResult
+	}
+	return fmt.Sprintf(cancelledToolResultWithArgs, args)
+}
+
+func (a *Agent) resumeAfterAbandon() {
+	a.mu.Lock()
+	pending := a.pending
+	a.pending = nil
+	a.settling = ""
+	a.mu.Unlock()
+	if pending != nil {
+		if err := a.respondTurn(pending.id, pending.participant, pending.text, pending.listened, pending.note); err != nil {
+			a.fail(err, "llm")
+		}
+		return
+	}
+	a.respondQueued()
+}
+
+func clipLog(text string, n int) string {
+	text = strings.TrimSpace(strings.Join(strings.Fields(text), " "))
+	if len(text) <= n {
+		return text
+	}
+	return text[:n] + "…"
 }
 
 // say sends one delta of a reply on its way to the voice.
@@ -2039,10 +2182,16 @@ func (a *Agent) interrupt(participant stt.Participant) {
 		return
 	}
 	a.abandoned[turnID] = struct{}{}
+	wasGenerating := a.generating
+	_, creating := a.generatingCancel[turnID]
 	a.speakingTurn = ""
 	a.generating = false
 	a.saying = ""
 	reply, voice := a.streams[turnID], a.tts
+	settle := reply != nil || (wasGenerating && !creating)
+	if settle {
+		a.settling = turnID
+	}
 	a.mu.Unlock()
 
 	a.finishGenerate(turnID)
@@ -2068,7 +2217,9 @@ func (a *Agent) interrupt(participant stt.Participant) {
 
 	a.turns.interrupt(turnID)
 	a.emitter.Send(Interrupted{TurnID: turnID, Participant: participant})
-	a.respondQueued()
+	if !settle {
+		a.respondQueued()
+	}
 }
 
 // shorten stops the model from adding more while allowing speech already sent to the

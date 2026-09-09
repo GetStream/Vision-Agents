@@ -31,6 +31,16 @@ When speech arrives over an answer, the controller chooses:
 - `shorten`: stop generating, but finish audio already sent to the voice
 - `continue`: keep the floor and retain the new transcript for the next response
 
+The controller is asked while the caller is still talking, on transcript revisions rather
+than only once the words settle, so the floor can be given up mid-utterance. These
+provisional asks (`over-` candidates) are bounded per utterance and never answer: the words
+settle on their own and are answered through the ordinary path. The controller is told what
+the agent has said so far, so it can tell a correction from the caller's line echoing back.
+
+The reverse also holds: an unprompted turn the agent owes — a tool result, delegated work
+coming back, a turn queued behind the reply — waits (`hold`) while a caller has evolving
+words younger than `callerHold`, rather than taking the floor from somebody who has it.
+
 Background speech is ignored using Stream participant identity and conversational addressee
 classification.
 

@@ -466,6 +466,48 @@ directory anywhere under `examples/`, not only in `examples/agents/`.
 
 ## Bug Fixes
 
+### Acceleration: keep the caller company while a tool runs
+
+A model that said "one moment" and then called a tool went quiet until the result came back. The agent now speaks a working phrase if that wait stretches, without talking over the caller.
+
+### Acceleration: streaming voices are fed clauses, not starved between sentences
+
+A streaming TTS utterance drained between sentences whenever the model wrote slower than playback, so one reply scored as several speech spans. Clause-sized chunks (comma or length) keep the utterance fed.
+
+### Acceleration: Flux waits longer before ending a turn under noise
+
+Flux's 0.7 end-of-turn threshold split one noisy ask into fragments. The default is now 0.8.
+
+### Voicebench: Go target sends pack keyterms; restaurant books on the last detail
+
+The Python target already sent `Alvarez` / `512-555-0142`; the Go acceleration target did not, so the phone number was misheard. Pack keyterms now live in `benchmark/agents/contracts/keyterms.json` for both. The restaurant contract books when the last required detail arrives, and `allergen` is the allergy only — dietary preferences go on item modifiers.
+
+### Voicebench: score audio gates on utterances, not raw VAD spans
+
+Speech spans separated by less than 700 ms now merge before selectivity, hold, barge-in and false-cutoff. That is `voicebench-live-v4`; prior baselines are a different series.
+
+### Voicebench: restaurant scenarios that no agent could pass, and gates that could not say why
+
+Five restaurant scenarios were unwinnable as written. `interrupt` demanded `allergen: gluten` while the contract said dietary preferences are not allergens, so the correction is now a shellfish allergy. `entity_dense` expected a `pickup_window` the schema left optional and compared it as an exact string, so `create_order` requires it and durations such as `20`, `20 min` and `in 20 minutes` now compare equal. `tool_filler` opened its window at the tool timestamp, but the reply that asks for a tool is spoken before the request is handed over, so the phrase check now looks back the same 2 s the non-blocking check already did.
+
+`golden` and `coherence` require the exact callback number on `create_reservation`, and the caller said it once. When the agent's own transcriber dropped a digit — `512-555-0142` heard as "five one nine two five zero one four two" — no later turn carried the number again, so the scenario asked for a value the agent could not obtain while the contract told it to read the number back before relying on it. A caller who is asked to confirm now repeats the digits in groups, which is what makes the read-back worth doing.
+
+Two comparisons disagreed with themselves. `end_state` compared with `fmt.Sprint` while `expected_tools` went through `MatchStructuredValue`, so an agent that wrote `Peanut` on the ticket satisfied one gate and failed the other; both now use the same comparator.
+
+The filler gate scored the words rather than the property. It required one of a set of stall phrases inside the tool window, so an agent that read the booking back across a whole 3 s lookup — never leaving a pause, saying something more useful than "one moment" — failed, while an agent that said "one moment" and then went quiet passed. Rewriting the contract to lead with the phrase did pass it, 0/3 to 2/3 on `tool_filler`, and cost `coherence`, `entity_dense`, `interrupt` and `selectivity`: with the substantive reply moved out of the turn that already held the floor and into the one after the tool, noise cut it, and the caller heard "One moment" and nothing else on trials where the booking had in fact been written correctly. Same scenarios and same pipeline, that contract was 5/24 trials against 8/24 for the one it replaced, so it is not the fix.
+
+Silence is what a caller notices, so silence is what fails: `filler_silence_ms` is the longest stretch of a delayed tool the caller heard nothing in, and more than 800 ms of it — the agent's own `workingGap`, the point the implementation promises to speak up — fails the gate. `filler_heard` stays recorded as a description of how the wait was covered rather than a requirement.
+
+The judge read a positive policy as a prohibition. A scenario with no `judge.must_refuse` still got a `Must refuse:` heading, empty, immediately above the policy list, and the judge attached the heading to the list below it. `noise_kitchen` asks the agent to complete the booking despite the noise and lists nothing to refuse, so the verdict came back "Must not complete booking despite kitchen noise" for doing what the scenario wanted. The heading now appears only when there is something to refuse, and the policy list says it is a list of requirements.
+
+Two gates became readable. `barge_in_reason` says whether the call recorded no barge-in, the agent answered late, or it was already quiet, instead of one unmeasured `-1`, and the stop edge is read across pauses up to 300 ms rather than 700 ms so a prompt stop is not merged into the reply that follows it. `metrics.json` gains `agent_jitter_max_ms`, `heard_utterances` and `heard_ignored`, and `heard.json` keeps rulings that carry no words.
+
+That is `voicebench-live-v5`; v4 baselines are a different series.
+
+### Acceleration: a tool call cancelled by a correction hands back what it collected
+
+A caller who changed one detail mid-booking used to be asked for the rest again. The tool result for the abandoned call said only that it had not run, so the retry read as though nothing had been agreed. It now carries the arguments the call was about to send.
+
 ### Together's speech models: a question no longer settles as its last word
 
 "Can you hear me" came back as "me". Together's realtime socket flushes its decoder on its

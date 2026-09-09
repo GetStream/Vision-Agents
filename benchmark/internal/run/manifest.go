@@ -114,6 +114,10 @@ func contractHash(root, pack string) string {
 		content = append(content, raw...)
 		content = append(content, 0)
 	}
+	if raw, err := os.ReadFile(filepath.Join(root, "agents", "contracts", "keyterms.json")); err == nil {
+		content = append(content, raw...)
+		content = append(content, 0)
+	}
 	accel := filepath.Join(root, "agents", "accelerated", pack)
 	_ = filepath.Walk(accel, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info == nil || info.IsDir() {

@@ -16,6 +16,12 @@ and `converse.Ruled` turns the answer into what the agent should do: `answer`, `
 `Agent.perform` carries it out. Deciding and acting are separate so deciding stays a pure
 function of the state it is handed.
 
+While the agent is mid-sentence, `converse.Observe` also asks the controller about a
+caller's words as they arrive rather than only once they settle (`overlap`), so an
+`interrupt` or `shorten` can land while the caller is still talking. A turn the agent owes
+but nobody asked for — a tool result, delegated work, a queued turn — is held (`hold`) while
+the caller still has the floor, so the agent never talks over them.
+
 `wait` is not a dead end: the words go back to settling and are put again after a longer
 pause, so a caller who paused mid-sentence keeps their turn.
     20|

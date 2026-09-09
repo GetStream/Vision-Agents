@@ -61,6 +61,10 @@ const (
 	// hold the floor. A revision younger than this means somebody is mid-utterance, so a
 	// turn the agent owes waits rather than talking over them.
 	callerHold = 1500 * time.Millisecond
+	// workingGap is how long a tool may run in silence before the agent says it is still
+	// working. Short enough that a multi-second lookup is not a dead line, long enough
+	// that a tool which returns immediately is not followed by a second phrase.
+	workingGap = 800 * time.Millisecond
 )
 
 const (
@@ -122,6 +126,8 @@ type floor struct {
 	Speaking string
 	// Delegating reports whether the subagent is still working on something.
 	Delegating bool
+	// PendingTools is how many tool calls have not come back yet.
+	PendingTools int
 	// LastSpokeAt is when the agent last published audio.
 	LastSpokeAt time.Time
 	// LastHeardAt is when anyone on the call was last transcribed.
@@ -184,6 +190,9 @@ type converse struct {
 	// reported is the last ask and the last wait written down, so words that have not
 	// changed are not judged out loud again on every retry.
 	reported map[ActionKind]judged
+	// filledWorking is whether a working phrase has already been spoken for the current
+	// outstanding-tool wait, so a slow lookup is kept company once rather than nagged.
+	filledWorking bool
 }
 
 // overlapState is what has been asked about a participant's in-progress utterance.
@@ -701,11 +710,15 @@ func (c *converse) idle(state floor, participant stt.Participant) []Action {
 // Tick decides whether a long listening or thinking gap needs filling, so an agent that
 // is busy does not sound like a dead line.
 func (c *converse) Tick(state floor) []Action {
+	if actions := c.working(state); len(actions) > 0 {
+		return actions
+	}
+
 	participant, _, hearing := c.cadence.Active()
 	if !hearing {
 		participant = state.LastParticipant
 	}
-	if !hearing && !state.Delegating {
+	if !hearing && !state.Delegating && state.PendingTools == 0 {
 		return c.idle(state, participant)
 	}
 
@@ -722,6 +735,44 @@ func (c *converse) Tick(state floor) []Action {
 		Kind:        ActBackchannel,
 		Reason:      reason,
 		Participant: participant,
+		Text:        phrase,
+	})}
+}
+
+// working says a phrase while a tool is still outstanding and the agent has gone quiet,
+// so a model that spoke and then called a tool does not leave the caller in silence.
+//
+// It is not tied to the backchannel option: going quiet on somebody who asked a question
+// is never what was wanted. It never talks over a caller who still holds the floor.
+func (c *converse) working(state floor) []Action {
+	c.mu.Lock()
+	if state.PendingTools <= 0 {
+		c.filledWorking = false
+		c.mu.Unlock()
+		return nil
+	}
+	already := c.filledWorking
+	c.mu.Unlock()
+
+	if already || !state.Quiet || c.Listening() {
+		return nil
+	}
+	if state.LastSpokeAt.IsZero() || time.Since(state.LastSpokeAt) < workingGap {
+		return nil
+	}
+
+	phrase := c.duplex.Working()
+	if phrase == "" {
+		return nil
+	}
+
+	c.mu.Lock()
+	c.filledWorking = true
+	c.mu.Unlock()
+	return []Action{c.decide(Action{
+		Kind:        ActBackchannel,
+		Reason:      "work the caller was promised is still running and they have heard nothing for a while",
+		Participant: state.LastParticipant,
 		Text:        phrase,
 	})}
 }

@@ -1,0 +1,15 @@
+{
+  "restaurant": ["Alvarez", "Patel", "512-555-0142"],
+  "healthcare": [
+    "Maya Chen",
+    "Leo Chen",
+    "Priyanka Radhakrishnan",
+    "Radhakrishnan",
+    "ABC123456",
+    "ABC000111",
+    "QW4T9-8821",
+    "Oak Street Pharmacy",
+    "Westlake Compounding"
+  ],
+  "telecom": ["4471", "9821", "Cedar", "14 Cedar Lane", "840"]
+}

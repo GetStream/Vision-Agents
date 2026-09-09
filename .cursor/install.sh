@@ -11,14 +11,27 @@ sudo apt-get install -y postgresql redis-server pkg-config \
   libopus-dev libopusfile-dev libsoxr-dev
 
 export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"
+export GOPRIVATE="${GOPRIVATE:-github.com/GetStream/*}"
+export GONOSUMDB="${GONOSUMDB:-github.com/GetStream/*}"
+export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
+# Private getstream-go-webrtc is not on the Cursor GitHub App. A GH_TOKEN with
+# repo access fetches it; the token is never written to the repo.
+if [ -n "${GH_TOKEN:-}" ]; then
+  git config --global "url.https://x-access-token:${GH_TOKEN}@github.com/GetStream/getstream-go-webrtc.insteadOf" \
+    "https://github.com/GetStream/getstream-go-webrtc"
+fi
 if ! grep -q '/usr/local/go/bin' "$HOME/.bashrc"; then
   echo 'export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"' >>"$HOME/.bashrc"
+fi
+if ! grep -q 'GOPRIVATE=' "$HOME/.bashrc"; then
+  echo 'export GOPRIVATE="${GOPRIVATE:-github.com/GetStream/*}"' >>"$HOME/.bashrc"
+  echo 'export GONOSUMDB="${GONOSUMDB:-github.com/GetStream/*}"' >>"$HOME/.bashrc"
 fi
 
 if ! command -v uv >/dev/null; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
-uv venv --python "$PYTHON_VERSION"
+uv venv --python "$PYTHON_VERSION" --allow-existing
 uv sync --all-extras --dev
 
 if [ "$(go version 2>/dev/null | awk '{print $3}')" != "go${GO_VERSION}" ]; then
@@ -28,6 +41,7 @@ if [ "$(go version 2>/dev/null | awk '{print $3}')" != "go${GO_VERSION}" ]; then
   rm /tmp/go.tar.gz
 fi
 go install github.com/pressly/goose/v3/cmd/goose@latest
+(cd acceleration && go mod download github.com/GetStream/getstream-go-webrtc)
 
 # Give the agent's own user a Postgres superuser role so psql works without sudo.
 sudo service postgresql start

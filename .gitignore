@@ -7,6 +7,7 @@ __pycache__/
 # Cloud agents read the environment config from the repo, so it must be tracked.
 !.cursor/environment.json
 !.cursor/install.sh
+!.cursor/start.sh
 !.cursor/rules/
 # Distribution / packaging
 .Python
@@ -124,7 +125,6 @@ profile.html
 # pytest json report
 .report.json
 .agents/
-.cursor/
 
 # Code generators fetched on demand, not vendored. See sdks/swift/README.md.
 /.codegen/

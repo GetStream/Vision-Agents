@@ -77,19 +77,30 @@ func (s *AgentSuite) onACall() {
 type stubToolRunner struct {
 	result string
 	err    error
+	delay  time.Duration
 
 	mu   sync.Mutex
 	runs []llm.ToolCall
 }
 
-func (r *stubToolRunner) Run(_ context.Context, call llm.ToolCall) (string, error) {
+func (r *stubToolRunner) Run(ctx context.Context, call llm.ToolCall) (string, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.runs = append(r.runs, call)
-	if r.err != nil {
-		return "", r.err
+	delay := r.delay
+	result := r.result
+	err := r.err
+	r.mu.Unlock()
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}
-	return r.result, nil
+	if err != nil {
+		return "", err
+	}
+	return result, nil
 }
 
 func (r *stubToolRunner) asked() []llm.ToolCall {
@@ -531,6 +542,111 @@ func (s *AgentSuite) TestACallersToolThatFailsIsToldToTheModel() {
 	s.eventually(func() bool {
 		return s.spokenText("cannot look that up")
 	}, "the caller was left in silence by a tool that failed")
+}
+
+func (s *AgentSuite) TestAnInterruptedReplyStillRunsItsTools() {
+	// Closing the stream used to drop ResponseCompleted, so a booking the model asked
+	// for while being talked over never ran and never reached history.
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(true)
+	s.model.reply = nil
+	s.model.then = []string{"It ships tomorrow."}
+	s.voice.silent = true
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "no turn was started")
+	turnID := s.model.requests()[0].ID
+	s.model.writes(turnID, "One moment. ")
+	s.model.script(turnID).ToolCalls(llm.ToolCall{
+		ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`,
+	})
+	s.eventually(func() bool { return countOf[ResponseDelta](s.reported()) >= 1 }, "the reply never streamed")
+
+	s.agent.Interrupt()
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the interrupted tool call was dropped")
+	s.Equal("lookup_order", s.runner.asked()[0].Name)
+	s.eventually(func() bool {
+		for _, message := range s.history() {
+			if message.Role == llm.Assistant && len(message.ToolCalls) == 1 {
+				return true
+			}
+		}
+		return false
+	}, "the call never reached history")
+}
+
+func (s *AgentSuite) TestAnInterruptedReplyCancelsItsToolsWhenTheCallerChangesTheAsk() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(true)
+	s.model.reply = nil
+	s.model.then = []string{"Checking thirteen instead."}
+	s.voice.silent = true
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "where is my order")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "no turn was started")
+	turnID := s.model.requests()[0].ID
+	s.model.writes(turnID, "One moment. ")
+	s.model.script(turnID).ToolCalls(llm.ToolCall{
+		ID: "call-1", Name: "lookup_order", Arguments: `{"order":"12"}`,
+	})
+	s.eventually(func() bool { return countOf[ResponseDelta](s.reported()) >= 1 }, "the reply never streamed")
+
+	s.says(participant, "actually, order 13")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the correction was never answered")
+	s.Empty(s.runner.asked(), "the old lookup should not run against the corrected order")
+	var sawCancel bool
+	for _, message := range s.history() {
+		if message.Role == llm.ToolResult && message.ToolCallID == "call-1" {
+			s.Contains(message.Content, "was not run")
+			sawCancel = true
+		}
+	}
+	s.True(sawCancel, "the model was not told the call was abandoned")
+}
+
+func (s *AgentSuite) TestACancelledCallHandsBackWhatItHadAlreadyCollected() {
+	// A correction mid-booking used to come back as "it was not run" and nothing else,
+	// so the retry read as though no detail had been agreed and the agent asked for the
+	// party size and the time all over again.
+	s.ownsTools("booked")
+	s.join(true)
+	s.model.reply = nil
+	s.model.then = []string{"Updated to six."}
+	s.voice.silent = true
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "table for four Saturday at 7:30, patio, peanut allergy")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "no turn was started")
+	turnID := s.model.requests()[0].ID
+	s.model.writes(turnID, "Four at 7:30 patio. ")
+	s.model.script(turnID).ToolCalls(llm.ToolCall{
+		ID:        "call-1",
+		Name:      "create_reservation",
+		Arguments: `{"time":"7:30","party_size":4,"patio":true,"allergen":"peanut"}`,
+	})
+	s.eventually(func() bool { return countOf[ResponseDelta](s.reported()) >= 1 }, "the reply never streamed")
+
+	s.says(participant, "wait, make it six")
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the correction was never answered")
+	var cancelled string
+	for _, message := range s.history() {
+		if message.Role == llm.ToolResult && message.ToolCallID == "call-1" {
+			cancelled = message.Content
+		}
+	}
+	s.Require().NotEmpty(cancelled, "the model was not told the call was abandoned")
+	s.Contains(cancelled, "was not run")
+	for _, slot := range []string{"7:30", "patio", "peanut"} {
+		s.Contains(cancelled, slot, "a detail the caller already gave was dropped from the retry")
+	}
 }
 
 // awaitToolRan waits for one tool to have settled and returns what it reported, since the
