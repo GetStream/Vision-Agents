@@ -1,5 +1,6 @@
 """LLM backends the reference agents can run against."""
 
+import json
 import os
 from pathlib import Path
 
@@ -14,24 +15,13 @@ DEFAULT_ACCELERATED_SUBAGENT = "openai/gpt-5.6-sol"
 DEFAULT_CUSTOMER_ID = "voicebench"
 
 ACCELERATED_AGENTS = Path(__file__).resolve().parent.parent / "accelerated"
+_KEYTERMS_PATH = Path(__file__).resolve().parent.parent / "contracts" / "keyterms.json"
 
-# Names, IDs and addresses the frozen scenarios use. Without them Gemini hears Alvarez as
-# Arborists and last-four 9821 as 9822.
-PACK_KEYTERMS: dict[str, list[str]] = {
-    "restaurant": ["Alvarez", "Patel", "512-555-0142"],
-    "healthcare": [
-        "Maya Chen",
-        "Leo Chen",
-        "Priyanka Radhakrishnan",
-        "Radhakrishnan",
-        "ABC123456",
-        "ABC000111",
-        "QW4T9-8821",
-        "Oak Street Pharmacy",
-        "Westlake Compounding",
-    ],
-    "telecom": ["4471", "9821", "Cedar", "14 Cedar Lane", "840"],
-}
+
+def pack_keyterms(pack: str) -> list[str]:
+    """Return the shared pack keyterm list both targets send to the transcriber."""
+    packs = json.loads(_KEYTERMS_PATH.read_text())
+    return list(packs.get(pack, []))
 
 
 def _env(name: str, default: str) -> str:
@@ -75,7 +65,7 @@ def build_llm(kind: str, pack: str):
             subagent=_env("VOICEBENCH_SUBAGENT", DEFAULT_ACCELERATED_SUBAGENT),
             voice=os.environ.get("VOICEBENCH_VOICE", "").strip(),
             customer_id=_env("STREAM_ACCELERATION_CUSTOMER_ID", DEFAULT_CUSTOMER_ID),
-            keyterms=PACK_KEYTERMS.get(pack, []),
+            keyterms=pack_keyterms(pack),
         )
     if kind != "realtime":
         raise ValueError(f"unknown pipeline {kind!r}")

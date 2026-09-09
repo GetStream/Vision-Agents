@@ -38,6 +38,31 @@ func TestLoadPackContract(t *testing.T) {
 	}
 }
 
+func TestLoadPackKeyterms(t *testing.T) {
+	root := findTestRoot(t)
+	got, err := LoadPackKeyterms(root, "restaurant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0] != "Alvarez" || got[2] != "512-555-0142" {
+		t.Fatalf("restaurant keyterms %v", got)
+	}
+	healthcare, err := LoadPackKeyterms(root, "healthcare")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(healthcare) == 0 {
+		t.Fatal("healthcare keyterms missing")
+	}
+	unknown, err := LoadPackKeyterms(root, "missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unknown != nil {
+		t.Fatalf("unknown pack %v", unknown)
+	}
+}
+
 func TestAccelEventsURL(t *testing.T) {
 	got, err := AccelEventsURL("http://127.0.0.1:8080", "sess-1")
 	if err != nil {

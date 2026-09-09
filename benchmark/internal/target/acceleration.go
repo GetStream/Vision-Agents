@@ -39,6 +39,7 @@ type accelSessionRequest struct {
 	Greeting     string      `json:"greeting,omitempty"`
 	LLM          string      `json:"llm,omitempty"`
 	STT          string      `json:"stt,omitempty"`
+	Keyterms     []string    `json:"keyterms,omitempty"`
 	Tools        []AccelTool `json:"tools"`
 }
 
@@ -66,6 +67,7 @@ type Acceleration struct {
 	WorldURL     string
 	Instructions string
 	Tools        []AccelTool
+	Keyterms     []string
 	Logger       *slog.Logger
 }
 
@@ -77,6 +79,13 @@ func (a *Acceleration) Prepare(ctx context.Context) (func(), error) {
 		}
 		a.Instructions = instructions
 		a.Tools = tools
+	}
+	if a.Keyterms == nil {
+		keyterms, err := LoadPackKeyterms(a.Root, a.Pack)
+		if err != nil {
+			return nil, err
+		}
+		a.Keyterms = keyterms
 	}
 	if !a.Spawn {
 		if a.URL == "" {
@@ -138,6 +147,7 @@ func (a *Acceleration) StartCall(ctx context.Context, callID string, callType st
 		Greeting:     "Hello, how can I help?",
 		LLM:          os.Getenv("VOICEBENCH_MODEL"),
 		STT:          os.Getenv("VOICEBENCH_STT"),
+		Keyterms:     a.Keyterms,
 		Tools:        a.Tools,
 	})
 	if err != nil {
@@ -232,6 +242,19 @@ func LoadPackContract(root, pack string) (instructions string, tools []AccelTool
 		return "", nil, fmt.Errorf("run: accel tools: %s.tools.yaml has no tools", pack)
 	}
 	return strings.TrimSpace(string(promptRaw)), file.Tools, nil
+}
+
+// LoadPackKeyterms reads the shared pack keyterm list both targets send to the transcriber.
+func LoadPackKeyterms(root, pack string) ([]string, error) {
+	raw, err := os.ReadFile(filepath.Join(root, "agents", "contracts", "keyterms.json"))
+	if err != nil {
+		return nil, fmt.Errorf("run: pack keyterms: %w", err)
+	}
+	var packs map[string][]string
+	if err := json.Unmarshal(raw, &packs); err != nil {
+		return nil, fmt.Errorf("run: pack keyterms: %w", err)
+	}
+	return packs[pack], nil
 }
 
 func (s *accelConn) serveTools(ctx context.Context, worldURL string) {
