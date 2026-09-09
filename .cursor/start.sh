@@ -15,14 +15,20 @@ fi
 sudo service postgresql start
 sudo service redis-server start
 
-if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$(whoami)'" | grep -q 1; then
-  sudo -u postgres createuser --superuser "$(whoami)"
+PG_USER="$(whoami)"
+PG_PASSWORD="${ROUTER_POSTGRES_PASSWORD:-voicebench}"
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$PG_USER'" | grep -q 1; then
+  sudo -u postgres createuser --superuser "$PG_USER"
 fi
+# The router dials over TCP with a password: pgx reads host=/var/run/postgresql as the
+# socket itself rather than the directory holding it, so the peer-auth DSN psql accepts
+# fails the router's own migration with "permission denied".
+sudo -u postgres psql -tAc "ALTER ROLE \"$PG_USER\" WITH PASSWORD '$PG_PASSWORD'" >/dev/null
 if ! psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='model_router'" | grep -q 1; then
   createdb model_router
 fi
 
-export ROUTER_POSTGRES_DSN="${ROUTER_POSTGRES_DSN:-postgres://$(whoami)@/model_router?host=/var/run/postgresql&sslmode=disable}"
+export ROUTER_POSTGRES_DSN="${ROUTER_POSTGRES_DSN:-postgres://$PG_USER:$PG_PASSWORD@127.0.0.1:5432/model_router?sslmode=disable}"
 export ROUTER_REDIS_ADDR="${ROUTER_REDIS_ADDR:-localhost:6379}"
 export STREAM_ACCELERATION_CUSTOMER_ID="${STREAM_ACCELERATION_CUSTOMER_ID:-voicebench}"
 

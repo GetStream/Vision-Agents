@@ -72,6 +72,28 @@ The router needs private `github.com/GetStream/getstream-go-webrtc`. Set
 `GOPRIVATE=github.com/GetStream/*` and include that repo in the environment's
 GitHub token scope (`repositoryDependencies`).
 
+Running voicebench live on a cloud agent:
+
+```bash
+cd benchmark && go run ./cmd/voicebench synth -pack restaurant
+CGO_ENABLED=1 go build -tags webrtc -o /tmp/voicebench ./cmd/voicebench
+(cd ../acceleration && go build -o /tmp/router ./cmd/router)
+/tmp/voicebench run -pack restaurant -k 1 -target accelerated -spawn -bin /tmp/router
+```
+
+`go run ./cmd/voicebench run` fails with `streamrtc: rebuild with -tags webrtc` — the
+Stream transport is behind a build tag and needs cgo plus `libopus-dev`. Build the binary.
+
+The default accelerated pipeline is `inworld/inworld-tts-2-flash`, and no `INWORLD_API_KEY`
+is injected. Cartesia currently answers 402. Override with
+`VOICEBENCH_TTS=elevenlabs/eleven_flash_v2_5`, which is funded because caller synthesis
+uses the same account. `VOICEBENCH_STT=deepgram/flux-general-en` is the STT the turn-taking
+work is tuned against.
+
+Live runs cost money and a Gemma target activates a Baseten GPU. Prefer
+`VOICEBENCH_MODEL=gemini/gemini-3.8-flash`, and deactivate the Baseten deployment when a
+Gemma run finishes.
+
 `acceleration/api/openapi.yaml` is the source of truth for the HTTP layer. After editing it,
 regenerate all three sides — see [acceleration/README.md](acceleration/README.md).
 
