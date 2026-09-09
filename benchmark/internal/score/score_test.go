@@ -231,7 +231,7 @@ func TestDelayedToolNamesSkipsVerify(t *testing.T) {
 func TestScoreFiller(t *testing.T) {
 	rate := audio.Rate
 	start := time.Now().Add(-2 * time.Second)
-	agent := audio.Concat(audio.Silence(rate/5), audio.Tone(rate, 220, 12000))
+	agent := audio.Concat(audio.Silence(rate/5), audio.Tone(3*rate, 220, 12000))
 	rec := caller.Result{Agent: agent, Rate: rate, StartedAt: start}
 	sc := scenario.Scenario{ToolDelayMS: map[string]int{"check_availability": 3000}}
 	sess := &world.Session{Tools: []world.ToolCall{{
@@ -253,6 +253,75 @@ func TestScoreFiller(t *testing.T) {
 	}
 	if len(m.FillerFail) != 0 {
 		t.Fatalf("fails %v", m.FillerFail)
+	}
+}
+
+// An agent that reads the booking back across the whole lookup never leaves the caller
+// waiting, and says something more useful than a stall phrase. Requiring the phrase failed
+// it, and a contract rewritten to lead with the phrase passed this gate while losing four
+// other scenarios, so what the words were is recorded and what fails is silence.
+func TestScoreFillerAcceptsAReadBackThatCoversTheWait(t *testing.T) {
+	rate := audio.Rate
+	start := time.Now().Add(-4 * time.Second)
+	rec := caller.Result{
+		Agent:     audio.Concat(audio.Silence(rate/10), audio.Tone(3*rate, 220, 12000)),
+		Rate:      rate,
+		StartedAt: start,
+	}
+	sc := scenario.Scenario{ToolDelayMS: map[string]int{"check_availability": 3000}}
+	sess := &world.Session{Tools: []world.ToolCall{{
+		Name:    "check_availability",
+		Started: start.Add(100 * time.Millisecond),
+		Ended:   start.Add(3100 * time.Millisecond),
+	}}}
+	m := &Metrics{}
+	ScoreFiller(m, sc, rec, sess, Transcript{
+		Text: "That is a party of four at seven thirty on the patio for Alvarez.",
+		Words: []TranscriptWord{
+			{Text: "party", StartMS: 200, EndMS: 400},
+			{Text: "Alvarez", StartMS: 2600, EndMS: 2900},
+		},
+	})
+	if len(m.FillerFail) != 0 {
+		t.Fatalf("speech covering the whole wait should pass: %v", m.FillerFail)
+	}
+	if m.FillerHeard {
+		t.Fatal("no stall phrase was spoken, so none should be recorded")
+	}
+}
+
+// Saying "one moment" and then going quiet is the failure the gate is for. The phrase was
+// what it used to look for, so this was the one shape that passed while sounding worst.
+func TestScoreFillerFailsAStallPhraseFollowedBySilence(t *testing.T) {
+	rate := audio.Rate
+	start := time.Now().Add(-4 * time.Second)
+	rec := caller.Result{
+		Agent:     audio.Concat(audio.Silence(rate/10), audio.Tone(rate/2, 220, 12000), audio.Silence(3*rate)),
+		Rate:      rate,
+		StartedAt: start,
+	}
+	sc := scenario.Scenario{ToolDelayMS: map[string]int{"check_availability": 3000}}
+	sess := &world.Session{Tools: []world.ToolCall{{
+		Name:    "check_availability",
+		Started: start.Add(100 * time.Millisecond),
+		Ended:   start.Add(3100 * time.Millisecond),
+	}}}
+	m := &Metrics{}
+	ScoreFiller(m, sc, rec, sess, Transcript{
+		Text: "One moment.",
+		Words: []TranscriptWord{
+			{Text: "One", StartMS: 150, EndMS: 300},
+			{Text: "moment", StartMS: 310, EndMS: 500},
+		},
+	})
+	if !m.FillerHeard {
+		t.Fatal("the phrase was spoken and should be recorded")
+	}
+	if len(m.FillerFail) == 0 {
+		t.Fatal("two seconds of dead air after the phrase should fail")
+	}
+	if m.FillerSilenceMS < 2000 {
+		t.Fatalf("silence measured as %d ms", m.FillerSilenceMS)
 	}
 }
 

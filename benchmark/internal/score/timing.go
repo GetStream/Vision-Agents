@@ -1,6 +1,7 @@
 package score
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -28,6 +29,10 @@ const (
 	// BargeInMergeGapMS is the longest pause the barge-in stop edge reads through. A
 	// silence longer than this is already audible as the agent having stopped.
 	BargeInMergeGapMS = 300
+	// MaxToolSilenceMS is how long a delayed tool may leave the caller hearing nothing.
+	// It matches the agent's own workingGap, which is the point the implementation
+	// promises to speak up rather than keep waiting in silence.
+	MaxToolSilenceMS = 800
 	// bargeAlignmentMS is how far after the barge an utterance may still start and count
 	// as the one that was interrupted, absorbing frame quantisation.
 	bargeAlignmentMS = 120
@@ -100,6 +105,7 @@ type Metrics struct {
 	HoldThroughOverlap  bool           `json:"hold_through_overlap"`
 	FillerBeforeMS      int            `json:"filler_before_tool_ms"`
 	FillerHeard         bool           `json:"filler_heard"`
+	FillerSilenceMS     int            `json:"filler_silence_ms"`
 	FillerNonBlocking   bool           `json:"filler_non_blocking"`
 	FillerFail          []string       `json:"filler_fail"`
 	EndStateFail        []string       `json:"end_state_fail"`
@@ -458,7 +464,16 @@ func DelayedToolNames(sc scenario.Scenario) []string {
 	return append(names, extra...)
 }
 
-// ScoreFiller checks filler speech during a delayed tool window.
+// ScoreFiller checks that a delayed tool does not leave the caller in silence.
+//
+// The gate used to require one of a set of stall phrases inside the tool window, which
+// scored the words rather than the property. Measured on restaurant.tool_filler, an agent
+// that read the booking back across the whole 3 s lookup — never leaving a pause, and
+// saying something more useful than "one moment" — failed, and a contract rewritten to put
+// the stall phrase first passed it while losing four other scenarios: the substantive reply
+// moved into the post-tool turn, where noise could cut it. Silence is what a caller
+// notices, so silence is what fails. FillerHeard stays recorded, as a description of how
+// the wait was covered rather than a requirement.
 func ScoreFiller(m *Metrics, sc scenario.Scenario, rec caller.Result, sess *world.Session, transcript Transcript) {
 	names := DelayedToolNames(sc)
 	if len(names) == 0 {
@@ -489,8 +504,9 @@ func ScoreFiller(m *Metrics, sc scenario.Scenario, rec caller.Result, sess *worl
 		startMs = 0
 	}
 	m.FillerHeard = containsTimedFiller(transcript.Words, startMs-FillerLeadInMS, endMs)
-	if !m.FillerHeard {
-		m.FillerFail = append(m.FillerFail, "no filler phrase during delayed tool")
+	m.FillerSilenceMS = longestSilence(rec, startMs, endMs)
+	if m.FillerSilenceMS > MaxToolSilenceMS {
+		m.FillerFail = append(m.FillerFail, fmt.Sprintf("caller heard nothing for %d ms while %s ran", m.FillerSilenceMS, name))
 	}
 	onset := firstOnsetAfter(rec.Agent, rec.Rate, startMs, audio.DefaultSpeechThreshold)
 	if onset < 0 {
@@ -507,6 +523,32 @@ func ScoreFiller(m *Metrics, sc scenario.Scenario, rec caller.Result, sess *worl
 	if !m.FillerNonBlocking {
 		m.FillerFail = append(m.FillerFail, "blocked until tool returned")
 	}
+}
+
+// longestSilence is the longest stretch of the window the agent said nothing in, reading
+// through pauses short enough to hear as one utterance rather than as dead air.
+func longestSilence(rec caller.Result, startMs, endMs int) int {
+	if endMs <= startMs {
+		return 0
+	}
+	spans := mergeUtterances(audio.DetectSpeech(rec.Agent, rec.Rate, audio.DefaultSpeechThreshold, audio.DefaultHangoverMs), BargeInMergeGapMS)
+	longest := 0
+	quietFrom := startMs
+	for _, span := range spans {
+		if span.EndMs <= startMs || span.StartMs >= endMs {
+			continue
+		}
+		if gap := span.StartMs - quietFrom; gap > longest {
+			longest = gap
+		}
+		if span.EndMs > quietFrom {
+			quietFrom = span.EndMs
+		}
+	}
+	if gap := endMs - quietFrom; gap > longest {
+		longest = gap
+	}
+	return longest
 }
 
 // EntityInSpeech reports missing spoken entities.
