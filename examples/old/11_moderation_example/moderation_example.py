@@ -365,19 +365,19 @@ async def create_agent(**kwargs: object) -> Agent:
                 await agent._audio_track.flush()
 
             if escalation_count == 1:
-                await agent.simple_response(
+                await agent.responses.create(
                     "Someone just made an inappropriate gesture — "
                     "this is the 1st time. "
                     "Call them out casually in one sentence."
                 )
             elif escalation_count == 2:
-                await agent.simple_response(
+                await agent.responses.create(
                     "Someone made an inappropriate gesture for the 2nd time. "
                     "Warn them sternly in one sentence that if they do it "
                     "again they will be removed from the call."
                 )
             else:
-                await agent.simple_response(
+                await agent.responses.create(
                     f"This is the {escalation_count}{'rd' if escalation_count == 3 else 'th'} time. "
                     "Tell them in one sentence that they're being removed "
                     "from the call for repeated inappropriate behavior."

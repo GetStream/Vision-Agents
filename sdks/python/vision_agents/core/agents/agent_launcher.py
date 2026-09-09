@@ -102,7 +102,7 @@ class AgentLauncher:
     def __init__(
         self,
         create_agent: Callable[..., "Agent" | Coroutine[Any, Any, "Agent"]],
-        join_call: Callable[["Agent", str, str], Coroutine],
+        join_call: Callable[..., Coroutine],
         agent_idle_timeout: float = 60.0,
         max_concurrent_sessions: Optional[int] = None,
         max_sessions_per_call: Optional[int] = None,
@@ -115,7 +115,8 @@ class AgentLauncher:
 
         Args:
             create_agent: A function that creates and returns an Agent instance.
-            join_call: A coroutine function that handles joining a call with the agent.
+            join_call: A coroutine function that handles joining a call with the agent,
+                called as `join_call(agent, call_type=..., call_id=...)`.
             agent_idle_timeout: Timeout in seconds for an agent to stay alone on a call
                 before being automatically closed. Default is 60.0 seconds.
                 Set to 0 to disable idle timeout (agents won't leave until the call ends).
@@ -315,8 +316,11 @@ class AgentLauncher:
             if video_track_override_path:
                 agent.set_video_track_override_path(video_track_override_path)
 
+            # Both by keyword, so a handler that only cares about the call it is joining
+            # can take `(agent, call_id, **kwargs)` and leave the type in the kwargs.
             task = asyncio.create_task(
-                self._join_call(agent, call_type, call_id), name=f"agent-{agent.id}"
+                self._join_call(agent, call_type=call_type, call_id=call_id),
+                name=f"agent-{agent.id}",
             )
 
             # Remove the session when the task is done

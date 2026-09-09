@@ -11,8 +11,9 @@ uv run analyst.py
 ```
 
 Needs a router: see `acceleration/README.md`, then `STREAM_ACCELERATION_URL` and
-`STREAM_ACCELERATION_CUSTOMER_ID`. Running the code is Daytona, so the router needs
-`DAYTONA_API_KEY`. Daytona is the only sandbox there is today; anything else is refused
+`STREAM_ACCELERATION_CUSTOMER_ID`, plus the Stream app's `STREAM_API_KEY` and
+`STREAM_API_SECRET` that every agent is built with. Running the code is Daytona, so the
+router needs `DAYTONA_API_KEY`. Daytona is the only sandbox there is today; anything else is refused
 when the config is written rather than once a session is running.
 
 Only the subagent is offered the sandbox, because booting one and running code in it takes

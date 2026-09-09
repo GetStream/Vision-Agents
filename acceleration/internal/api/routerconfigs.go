@@ -150,6 +150,14 @@ func (s *Server) routerConfigComplaint(request RouterConfigRequest) (string, boo
 	if message, ok := s.sttComplaint(held); !ok {
 		return message, false
 	}
+
+	voice := ttsOptionsOf(request.Tts)
+	if err := voice.Validate(); err != nil {
+		return err.Error(), false
+	}
+	if message, ok := s.ttsComplaint(voice); !ok {
+		return message, false
+	}
 	return "", true
 }
 
@@ -187,6 +195,34 @@ func (s *Server) sttComplaint(held options.STT) (string, bool) {
 	for vendor := range held.Overwrites {
 		if !config.Declares(vendor) {
 			return fmt.Sprintf("there are overwrites for %q, which this deployment has no provider for", vendor), false
+		}
+	}
+	return "", true
+}
+
+// ttsComplaint is sttComplaint for the voice half, asked of the voice router's own config.
+func (s *Server) ttsComplaint(held options.TTS) (string, bool) {
+	voice, ok := s.routerFor(Modality(routing.TTS))
+	if !ok {
+		return "", true
+	}
+	config := voice.Config()
+
+	for _, target := range held.Providers {
+		if !config.Names(target) {
+			return fmt.Sprintf(
+				"%q is not a provider, a provider/model or a capability shortcut this deployment offers", target), false
+		}
+	}
+	if !config.Meets(held.DataPolicy) {
+		return "no voice this deployment offers meets that data policy", false
+	}
+	if !config.Expresses(held.Terms()) {
+		return "no voice this deployment offers can serve every option in this config", false
+	}
+	for vendor := range held.Overwrites {
+		if !config.Declares(vendor) {
+			return fmt.Sprintf("there are overwrites for %q, which this deployment has no voice for", vendor), false
 		}
 	}
 	return "", true

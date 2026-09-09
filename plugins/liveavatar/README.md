@@ -46,7 +46,7 @@ async def start_avatar_agent():
     call = await agent.create_call("default", str(uuid4()))
 
     async with agent.join(call):
-        await agent.simple_response("Hello! I'm your AI assistant with an avatar.")
+        await agent.responses.create("Hello! I'm your AI assistant with an avatar.")
         await agent.finish()
 
 

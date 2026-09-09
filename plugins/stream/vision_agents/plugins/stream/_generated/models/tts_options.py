@@ -10,6 +10,8 @@ from typing_extensions import Self
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.data_policy import DataPolicy
+    from ..models.tts_options_overwrites import TtsOptionsOverwrites
     from ..models.tts_options_pronunciations import TtsOptionsPronunciations
 
 
@@ -23,7 +25,15 @@ class TtsOptions:
 
         Attributes:
             target (str | Unset): A provider/model or a capability shortcut. Example: en-low-latency.
-            voice (str | Unset): Provider-specific voice id.
+            providers (list[str] | Unset): A priority list of where to try, in the order given, which wins over target when
+                it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is
+                expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to
+                the back.
+                 Example: ['elevenlabs', 'en-low-latency'].
+            voice (str | Unset): A provider's own voice id, or one of your voices by id or by the name you gave it. Prefix
+                it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to
+                the provider's library, and with it a name that is not one of yours is refused.
+                 Example: custom:receptionist.
             languages (list[str] | Unset):
             speed (float | Unset): Rate of delivery, 1 being the voice's own. Providers differ in the range they accept, so
                 one asked for a speed outside its own refuses.
@@ -39,9 +49,20 @@ class TtsOptions:
             pronunciations (TtsOptionsPronunciations | Unset): How to say words the voice gets wrong, keyed by the word.
             chunk_schedule (list[int] | Unset): Character counts at which a streaming voice flushes audio. Smaller first
                 values start speaking sooner and cost more requests. Live only.
+            data_policy (DataPolicy | Unset): What a caller requires of what happens to what they send: the audio they had
+                transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a
+                description: a request naming one is only routed to a model whose declared handling meets it, and if none does
+                the request is refused rather than sent somewhere that does not.
+            overwrites (TtsOptionsOverwrites | Unset): Settings for one voice provider that this vocabulary has no word for,
+                keyed by provider name, for example {"elevenlabs": {"voice_id": "21m00Tcm4TlvDq8ikWAM"}}. The provider named
+                parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather
+                than accepted and dropped. It is also the only way to steer a live voice per vendor, since a voice id from one
+                library means nothing at another.
+                 Example: {'elevenlabs': {'voice_id': '21m00Tcm4TlvDq8ikWAM'}}.
     """
 
     target: str | Unset = UNSET
+    providers: list[str] | Unset = UNSET
     voice: str | Unset = UNSET
     languages: list[str] | Unset = UNSET
     speed: float | Unset = UNSET
@@ -53,10 +74,16 @@ class TtsOptions:
     format_: str | Unset = UNSET
     pronunciations: TtsOptionsPronunciations | Unset = UNSET
     chunk_schedule: list[int] | Unset = UNSET
+    data_policy: DataPolicy | Unset = UNSET
+    overwrites: TtsOptionsOverwrites | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         target = self.target
+
+        providers: list[str] | Unset = UNSET
+        if not isinstance(self.providers, Unset):
+            providers = self.providers
 
         voice = self.voice
 
@@ -86,11 +113,21 @@ class TtsOptions:
         if not isinstance(self.chunk_schedule, Unset):
             chunk_schedule = self.chunk_schedule
 
+        data_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.data_policy, Unset):
+            data_policy = self.data_policy.to_dict()
+
+        overwrites: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.overwrites, Unset):
+            overwrites = self.overwrites.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
         if target is not UNSET:
             field_dict["target"] = target
+        if providers is not UNSET:
+            field_dict["providers"] = providers
         if voice is not UNSET:
             field_dict["voice"] = voice
         if languages is not UNSET:
@@ -113,17 +150,27 @@ class TtsOptions:
             field_dict["pronunciations"] = pronunciations
         if chunk_schedule is not UNSET:
             field_dict["chunk_schedule"] = chunk_schedule
+        if data_policy is not UNSET:
+            field_dict["data_policy"] = data_policy
+        if overwrites is not UNSET:
+            field_dict["overwrites"] = overwrites
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.data_policy import DataPolicy
+        from ..models.tts_options_overwrites import (
+            TtsOptionsOverwrites,
+        )
         from ..models.tts_options_pronunciations import (
             TtsOptionsPronunciations,
         )
 
         d = dict(src_dict)
         target = d.pop("target", UNSET)
+
+        providers = cast(list[str], d.pop("providers", UNSET))
 
         voice = d.pop("voice", UNSET)
 
@@ -152,8 +199,23 @@ class TtsOptions:
 
         chunk_schedule = cast(list[int], d.pop("chunk_schedule", UNSET))
 
+        _data_policy = d.pop("data_policy", UNSET)
+        data_policy: DataPolicy | Unset
+        if isinstance(_data_policy, Unset):
+            data_policy = UNSET
+        else:
+            data_policy = DataPolicy.from_dict(_data_policy)
+
+        _overwrites = d.pop("overwrites", UNSET)
+        overwrites: TtsOptionsOverwrites | Unset
+        if isinstance(_overwrites, Unset):
+            overwrites = UNSET
+        else:
+            overwrites = TtsOptionsOverwrites.from_dict(_overwrites)
+
         tts_options = cls(
             target=target,
+            providers=providers,
             voice=voice,
             languages=languages,
             speed=speed,
@@ -165,6 +227,8 @@ class TtsOptions:
             format_=format_,
             pronunciations=pronunciations,
             chunk_schedule=chunk_schedule,
+            data_policy=data_policy,
+            overwrites=overwrites,
         )
 
         tts_options.additional_properties = d

@@ -280,6 +280,12 @@ func (s *Server) streamTTS(
 	request routing.Request,
 	held options.TTS,
 ) error {
+	// A start frame is options the same way a stored config is, so a retention nothing
+	// could be measured against is refused rather than ignored.
+	if err := held.Validate(); err != nil {
+		return err
+	}
+
 	session, err := s.streams.TTS.Start(ctx, ttsrouter.Request{
 		CustomerID:    request.CustomerID,
 		AgentID:       request.AgentID,

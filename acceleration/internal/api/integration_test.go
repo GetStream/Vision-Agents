@@ -778,6 +778,41 @@ func (s *APIIntegrationSuite) TestUpdatingARouterConfigReplacesWhatItWas() {
 	s.Nil(updated.Stt.Diarize, "a field left out of a replacement is gone from it")
 }
 
+func (s *APIIntegrationSuite) TestAConfigNamingAVoiceThisDeploymentHasNeverHeardOfIsRefused() {
+	// Storing it would leave a config that fails every call made under it, which is worth
+	// hearing about while it is being written rather than once a socket is open.
+	response, payload := s.do(http.MethodPost, "/v1/router/configs",
+		`{"name":"clinic","tts":{"providers":["vocalizer"]}}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+
+	var failure Error
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Contains(failure.Error, "vocalizer")
+}
+
+func (s *APIIntegrationSuite) TestAConfigWithOverwritesForAVoiceNobodyOffersIsRefused() {
+	response, payload := s.do(http.MethodPost, "/v1/router/configs",
+		`{"name":"clinic","tts":{"overwrites":{"vocalizer":{"voice_id":"v-1"}}}}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+
+	var failure Error
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Contains(failure.Error, "no voice for")
+}
+
+func (s *APIIntegrationSuite) TestAConfigAskingAVoiceForARetentionNothingCanBeComparedAgainstIsRefused() {
+	response, payload := s.do(http.MethodPost, "/v1/router/configs",
+		`{"name":"clinic","tts":{"data_policy":{"retention":"ages"}}}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+
+	var failure Error
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Contains(failure.Error, "ages")
+}
+
 func (s *APIIntegrationSuite) TestARouterConfigNobodyHasIsRefusedRatherThanIgnored() {
 	// A caller that named a config meant it: transcribing at whatever the fallback happens
 	// to be is not what they asked for.

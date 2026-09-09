@@ -9,10 +9,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -167,4 +169,69 @@ func (s *ServiceSuite) TestAProvidersOwnLibraryVoicePassesStraightThrough() {
 	resolved, err := s.resolver.ResolveVoice(s.ctx, "acme", "elevenlabs", "Rachel")
 	s.Require().NoError(err)
 	s.Equal("Rachel", resolved, "a name nobody registered here belongs to the provider")
+}
+
+func (s *ServiceSuite) TestAVoiceAskedForAsTheirOwnResolvesTheSameWayAsABareName() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	external, err := s.resolver.ResolveVoice(s.ctx, "acme", "elevenlabs", options.OwnVoicePrefix+"founder")
+	s.Require().NoError(err)
+	s.Equal("el-1", external)
+}
+
+func (s *ServiceSuite) TestAVoiceAskedForAsTheirOwnIsNotPassedToTheProvidersLibrary() {
+	// Without the prefix "Rachel" is a library voice; with it the customer said there is
+	// nothing else it could be, so somebody else's Rachel is the wrong answer.
+	_, err := s.resolver.ResolveVoice(s.ctx, "acme", "elevenlabs", options.OwnVoicePrefix+"Rachel")
+
+	s.ErrorContains(err, "not one of this customer's voices")
+}
+
+func (s *ServiceSuite) TestTheirOwnVoiceStillFailsOverToAProviderThatHasIt() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	_, err := s.resolver.ResolveVoice(s.ctx, "acme", "cartesia", options.OwnVoicePrefix+"founder")
+
+	s.ErrorIs(err, routing.ErrVoiceNotPrepared,
+		"a provider that was never given the voice is one to move past, not one to fail on")
+}
+
+func (s *ServiceSuite) TestABindingRecordsWhenTheProviderLastHadTheVoice() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	bindings, err := s.service.Bindings(s.ctx, voice.ID)
+	s.Require().NoError(err)
+	s.Require().Len(bindings, 1)
+	s.Require().NotNil(bindings[0].SyncedAt)
+	prepared := *bindings[0].SyncedAt
+
+	// Preparing again with a provider that now refuses leaves the binding failed, and
+	// updated_at moves. The time it was last synced is the thing that must not.
+	s.status = http.StatusUnprocessableEntity
+	s.reply = `{"detail":"too quiet"}`
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	bindings, err = s.service.Bindings(s.ctx, voice.ID)
+	s.Require().NoError(err)
+	s.Require().Len(bindings, 1)
+	s.Equal(store.VoiceFailed, bindings[0].State)
+	s.Require().NotNil(bindings[0].SyncedAt)
+	s.WithinDuration(prepared, *bindings[0].SyncedAt, time.Millisecond,
+		"a failed attempt is not a sync, and updated_at is what moved")
+}
+
+func (s *ServiceSuite) TestABindingThatWasNeverReadyWasNeverSynced() {
+	s.status = http.StatusUnprocessableEntity
+	s.reply = `{"detail":"too quiet"}`
+
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	bindings, err := s.service.Bindings(s.ctx, voice.ID)
+	s.Require().NoError(err)
+	s.Require().Len(bindings, 1)
+	s.Nil(bindings[0].SyncedAt)
 }

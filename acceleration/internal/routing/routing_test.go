@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -222,12 +223,33 @@ func (s *RoutingSuite) TestDefaultConfigDeclaresADataPolicyForEverySpeechModel()
 	}
 }
 
+func (s *RoutingSuite) TestDefaultConfigDeclaresADataPolicyForEveryVoice() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	for _, provider := range config[TTS].Providers {
+		s.Truef(provider.DataPolicy.Declared(),
+			"%s declares no data policy, so it would serve a request that asked about one",
+			provider.Name())
+		s.Truef(provider.DataPolicy.Valid(),
+			"%s declares a data policy nothing can be compared against", provider.Name())
+	}
+}
+
 func (s *RoutingSuite) TestConfigRejectsASpeechModelWithoutADataPolicy() {
 	config := Config{STT: ModalityConfig{Providers: []ProviderConfig{
 		{Provider: "quick", Model: "en", Languages: []string{"en"}},
 	}}}
 
 	s.ErrorContains(config.Validate(), "quick/en declares no data_policy")
+}
+
+func (s *RoutingSuite) TestConfigRejectsAVoiceWithoutADataPolicy() {
+	config := Config{TTS: ModalityConfig{Providers: []ProviderConfig{
+		{Provider: "lush", Model: "en", Languages: []string{"en"}},
+	}}}
+
+	s.ErrorContains(config.Validate(), "lush/en declares no data_policy")
 }
 
 func (s *RoutingSuite) TestConfigRejectsADataPolicyItCannotCompare() {
@@ -647,6 +669,33 @@ func (s *RoutingSuite) TestAProvidersOwnLibraryVoicePassesStraightThrough() {
 
 	s.Equal("quick", config.Provider, "a library voice rules nobody out")
 	s.Equal("nova", spoke.Voice)
+}
+
+func (s *RoutingSuite) TestTheirOwnVoiceIsRefusedWhereNoVoicesAreResolvedAtAll() {
+	_, _, err := s.newRouter().Select(s.ctx,
+		Request{CustomerID: "acme", Target: "quick/en", Voice: options.OwnVoicePrefix + "founder"})
+
+	s.ErrorContains(err, "no voices of its own",
+		"handing the prefix to a provider would ask its library for a voice called custom:founder")
+}
+
+func (s *RoutingSuite) TestEachRouterReadsTheOverwritesForItsOwnModality() {
+	var spoke Spec
+	router := s.newRouterResolving(prepared{}, func(spec Spec) (*stubProvider, error) {
+		spoke = spec
+		return &stubProvider{model: spec.Model}, nil
+	})
+
+	_, _, err := router.Select(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "quick/en",
+		STT:        options.STT{Overwrites: map[string]json.RawMessage{"quick": json.RawMessage(`{"heard":true}`)}},
+		TTS:        options.TTS{Overwrites: map[string]json.RawMessage{"quick": json.RawMessage(`{"spoke":true}`)}},
+	})
+	s.Require().NoError(err)
+
+	s.JSONEq(`{"spoke":true}`, string(spoke.Overwrites),
+		"a vendor that both transcribes and speaks must not be handed the other half's settings")
 }
 
 func (s *RoutingSuite) TestAVoiceNoProviderWasGivenLeavesNobodyToSayIt() {

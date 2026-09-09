@@ -14,6 +14,7 @@ package routing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -374,7 +375,7 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 		STT:           request.STT,
 		TTS:           request.TTS,
 		Search:        request.Search,
-		Overwrites:    request.STT.Overwrites[candidate.Config.Provider],
+		Overwrites:    r.overwrites(request, candidate.Config.Provider),
 		Logger:        r.logger,
 	}
 
@@ -405,10 +406,33 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	return provider, nil
 }
 
-// voice is the id this candidate knows the requested voice by. Without a resolver, or for
-// a name that is not a customer's own voice, it is what was asked for.
+// overwrites is the block this candidate was given, out of whichever modality's options
+// this router serves. A router only ever reads its own: the same request carries all
+// three, and a vendor that transcribes and speaks would otherwise be handed the settings
+// meant for its other half.
+func (r *Router[P]) overwrites(request Request, provider string) json.RawMessage {
+	switch r.modality {
+	case STT:
+		return request.STT.Overwrites[provider]
+	case TTS:
+		return request.TTS.Overwrites[provider]
+	default:
+		return nil
+	}
+}
+
+// voice is the id this candidate knows the requested voice by. For a name that is not a
+// customer's own voice, and where there is no resolver to say, it is what was asked for.
 func (r *Router[P]) voice(ctx context.Context, request Request, provider string) (string, error) {
-	if r.voices == nil || request.Voice == "" {
+	if request.Voice == "" {
+		return "", nil
+	}
+	if r.voices == nil {
+		// A deployment with no resolver has no voices of its own, so a name asked for as
+		// one is a mistake, and passing it on would send the prefix to the provider.
+		if strings.HasPrefix(request.Voice, options.OwnVoicePrefix) {
+			return "", fmt.Errorf("routing: %q was asked for, and this deployment has no voices of its own", request.Voice)
+		}
 		return request.Voice, nil
 	}
 	return r.voices.ResolveVoice(ctx, request.CustomerID, provider, request.Voice)

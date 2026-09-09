@@ -23,6 +23,8 @@ class VoiceBinding:
         external_id (str | Unset): What this provider calls the voice.
         error (str | Unset): Why the provider would not take the recordings, when it would not.
         updated_at (datetime.datetime | Unset):
+        synced_at (datetime.datetime | Unset): When this provider last came back with a voice that can be spoken in,
+            absent until one does. It is not updated_at, which moves again when a binding goes back to pending.
     """
 
     provider: str
@@ -30,6 +32,7 @@ class VoiceBinding:
     external_id: str | Unset = UNSET
     error: str | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
+    synced_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +48,10 @@ class VoiceBinding:
         if not isinstance(self.updated_at, Unset):
             updated_at = self.updated_at.isoformat()
 
+        synced_at: str | Unset = UNSET
+        if not isinstance(self.synced_at, Unset):
+            synced_at = self.synced_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -59,6 +66,8 @@ class VoiceBinding:
             field_dict["error"] = error
         if updated_at is not UNSET:
             field_dict["updated_at"] = updated_at
+        if synced_at is not UNSET:
+            field_dict["synced_at"] = synced_at
 
         return field_dict
 
@@ -80,12 +89,20 @@ class VoiceBinding:
         else:
             updated_at = datetime.datetime.fromisoformat(_updated_at)
 
+        _synced_at = d.pop("synced_at", UNSET)
+        synced_at: datetime.datetime | Unset
+        if isinstance(_synced_at, Unset):
+            synced_at = UNSET
+        else:
+            synced_at = datetime.datetime.fromisoformat(_synced_at)
+
         voice_binding = cls(
             provider=provider,
             state=state,
             external_id=external_id,
             error=error,
             updated_at=updated_at,
+            synced_at=synced_at,
         )
 
         voice_binding.additional_properties = d

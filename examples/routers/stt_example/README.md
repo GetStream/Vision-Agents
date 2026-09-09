@@ -1,16 +1,16 @@
-# Simple router example
+# STT example
 
-Every other example points a `Router` at a config somebody else wrote. This one writes it.
-`routers/` holds a YAML file per config, one `sync_routers` call stores the directory, and
-what is inside is the interesting half: who to try and in what order, and what may happen
-to the audio afterwards.
+Transcribing through a config this example writes itself, rather than one somebody else
+wrote. `routers/` holds a folder per config, each with a `router.yaml`, and naming one is
+what stores it. What is inside is the interesting half: who to try and in what order, and
+what may happen to the audio afterwards.
 
 Nothing here names a model to transcribe with — the router picks, and the config is what
 it picks by.
 
 ## The config
 
-`routers/clinic.yaml` cares where the audio goes more than which model is best at it:
+`routers/clinic/router.yaml` cares where the audio goes more than which model is best at it:
 
 ```yaml
 stt:
@@ -51,13 +51,15 @@ It needs `ROUTER_POSTGRES_DSN`, since a stored config is a row, and `DEEPGRAM_AP
 Provider credentials live with the router, not with this example.
 
 ```bash
-cd examples/routers/simple_router_example
+cd examples/routers/stt_example
 uv sync
-uv run simple_router_example.py
+uv run stt_example.py
 ```
 
-Running it twice edits the config rather than storing another copy, so it is safe to keep
-running while editing the YAML.
+Nothing here calls `sync_routers`. `Router("clinic")` finds `routers/clinic/router.yaml`
+and stores it on the first session; `.router_sync` records the md5, so a run that edits
+nothing sends nothing, and one that edits the YAML edits the config rather than storing
+another copy.
 
 Needs a `.env` with:
 

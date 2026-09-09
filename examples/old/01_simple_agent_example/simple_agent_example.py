@@ -64,7 +64,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     # Have the agent join the call/room
     async with agent.join(call):
         # Use agent.simple response or...
-        await agent.simple_response("tell me something interesting in a short sentence")
+        await agent.responses.create(
+            "tell me something interesting in a short sentence"
+        )
         # Alternatively: if you need more control, user the native openAI create_response
         # await llm.create_response(input=[
         #     {

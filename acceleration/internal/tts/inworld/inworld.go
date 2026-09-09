@@ -63,6 +63,10 @@ type Options struct {
 	Model   string
 	// SampleRate is the rate to synthesise at.
 	SampleRate int
+	// DeliveryMode is how much the voice may vary between chunks: STABLE, BALANCED or
+	// CREATIVE. It is what this family has instead of a temperature, which the TTS-2
+	// models ignore. Empty leaves it to the server.
+	DeliveryMode string
 	// BaseURL overrides the host, for a proxy or a test server.
 	BaseURL string
 	// HandshakeTimeout bounds the initial connect.
@@ -80,6 +84,7 @@ type createConfig struct {
 	ModelID       string      `json:"modelId"`
 	AudioConfig   audioConfig `json:"audioConfig"`
 	Temperature   float64     `json:"temperature"`
+	DeliveryMode  string      `json:"deliveryMode,omitempty"`
 	AutoMode      bool        `json:"autoMode"`
 	TimestampType string      `json:"timestampType"`
 }
@@ -304,7 +309,8 @@ func (t *TTS) Synthesize(request tts.Request) error {
 					AudioEncoding:   "PCM",
 					SampleRateHertz: t.options.SampleRate,
 				},
-				Temperature: 1.1,
+				Temperature:  1.1,
+				DeliveryMode: t.options.DeliveryMode,
 				// The agent already flushes at sentence boundaries. Letting the server
 				// decide as well splits a streamed utterance into several billed ones.
 				AutoMode:      false,

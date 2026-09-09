@@ -1616,7 +1616,7 @@ export interface components {
          * @enum {string}
          */
         TranscriptionMode: "verbatim" | "smart";
-        /** @description What a caller requires of what happens to their audio after it is transcribed. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not. */
+        /** @description What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not. */
         DataPolicy: {
             /** @description False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no. */
             allow_training?: boolean;
@@ -1643,7 +1643,18 @@ export interface components {
              * @example en-low-latency
              */
             target?: string;
-            /** @description Provider-specific voice id. */
+            /**
+             * @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back.
+             * @example [
+             *       "elevenlabs",
+             *       "en-low-latency"
+             *     ]
+             */
+            providers?: string[];
+            /**
+             * @description A provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused.
+             * @example custom:receptionist
+             */
             voice?: string;
             languages?: string[];
             /**
@@ -1682,6 +1693,18 @@ export interface components {
             };
             /** @description Character counts at which a streaming voice flushes audio. Smaller first values start speaking sooner and cost more requests. Live only. */
             chunk_schedule?: number[];
+            data_policy?: components["schemas"]["DataPolicy"];
+            /**
+             * @description Settings for one voice provider that this vocabulary has no word for, keyed by provider name, for example {"elevenlabs": {"voice_id": "21m00Tcm4TlvDq8ikWAM"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped. It is also the only way to steer a live voice per vendor, since a voice id from one library means nothing at another.
+             * @example {
+             *       "elevenlabs": {
+             *         "voice_id": "21m00Tcm4TlvDq8ikWAM"
+             *       }
+             *     }
+             */
+            overwrites?: {
+                [key: string]: unknown;
+            };
         };
         /** @description How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. */
         LlmOptions: {
@@ -1956,7 +1979,7 @@ export interface components {
         VoiceSampleRequest: {
             /**
              * Format: byte
-             * @description The recording, base64 encoded. A minute of clean speech is plenty.
+             * @description The recording, base64 encoded. Thirty seconds of clean speech is plenty, and every provider here clones from less.
              */
             audio: string;
             /** @description What to call the file upstream. The extension is how a provider knows what it was given, so send one. */
@@ -1989,6 +2012,11 @@ export interface components {
             error?: string;
             /** Format: date-time */
             updated_at?: string;
+            /**
+             * Format: date-time
+             * @description When this provider last came back with a voice that can be spoken in, absent until one does. It is not updated_at, which moves again when a binding goes back to pending.
+             */
+            synced_at?: string;
         };
         Voice: {
             id: string;

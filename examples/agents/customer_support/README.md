@@ -1,6 +1,7 @@
 # Customer support
 
-Syncs this directory onto the acceleration server, then joins a call as that agent.
+Joins a call as the agent `agent.yaml` names, storing this directory on the acceleration
+server on the way in.
 
 ```bash
 cd examples/agents/customer_support

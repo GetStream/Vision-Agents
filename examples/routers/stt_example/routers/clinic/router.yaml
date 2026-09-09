@@ -1,5 +1,7 @@
-# Transcription for clinical audio, where where the audio goes matters more than which
-# model is best at transcribing it.
+name: clinic
+description: Transcription for clinical audio, where where the audio goes matters more
+  than which model is best at transcribing it.
+
 tags:
   team: clinical
 

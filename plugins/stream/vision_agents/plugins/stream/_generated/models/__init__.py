@@ -137,6 +137,7 @@ from .transcription_request_tags import TranscriptionRequestTags
 from .transfer_call_request import TransferCallRequest
 from .transfer_call_request_tags import TransferCallRequestTags
 from .tts_options import TtsOptions
+from .tts_options_overwrites import TtsOptionsOverwrites
 from .tts_options_pronunciations import TtsOptionsPronunciations
 from .turn_stats_bucket import TurnStatsBucket
 from .voice import Voice
@@ -284,6 +285,7 @@ __all__ = (
     "TransferCallRequest",
     "TransferCallRequestTags",
     "TtsOptions",
+    "TtsOptionsOverwrites",
     "TtsOptionsPronunciations",
     "TurnStatsBucket",
     "Voice",

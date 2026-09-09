@@ -28,9 +28,9 @@ reach the agent that was on it:
 - **The agent is still running.** The router answers from that session itself.
   The reply is written into the channel and is not spoken, because whoever is on
   the call did not ask the question and should not be read the answer.
-- **Nothing is running.** The message is handed to this process, which opens a
-  text session on the same channel. Its replies land back in the conversation
-  because the session is given the channel as its agent id.
+- **Nothing is running.** The message is handed to this process, which answers it
+  with the agent it keeps for that channel, starting one if there is none. The
+  agent is given the channel, so its replies land back in the conversation.
 
 Either way the agent's own writing carries a `source` field, so the messages it
 stores are not mistaken for new questions and answered again.

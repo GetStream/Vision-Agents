@@ -4,6 +4,7 @@ One agent, configured by Go and talked to by an iOS app. It is the whole split t
 a backend decides what an agent is, and a phone only holds conversations with it.
 
 ```
+agent.yaml           what the agent is called
 instructions.md      what the agent is told
 skills/              what it can go away and think about
 knowledge/           what it can look things up in

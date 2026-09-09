@@ -84,7 +84,7 @@ async def create_agent() -> Agent:
 async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs: Any) -> None:
     call = await agent.edge.create_call(call_id)
     async with agent.join(call=call, participant_wait_timeout=0):
-        await agent.simple_response("Greet the user briefly")
+        await agent.responses.create("Greet the user briefly")
         await agent.finish()
 
 

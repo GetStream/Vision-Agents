@@ -2,26 +2,19 @@ import asyncio
 import base64
 import logging
 from pathlib import Path
-from typing import Any, Optional, TypeVar, Union
-
-import yaml
-from attrs import fields
+from typing import Any, Optional, Union
 
 from ._backend import Backend
 from ._generated import AuthenticatedClient
 from ._generated.api.default import (
-    create_router_config,
     get_speech,
     get_transcription,
-    list_router_configs,
     record_speech,
     resolve_target,
     search as search_request,
     transcribe_recording,
-    update_router_config,
 )
 from ._generated.models import (
-    Error,
     LlmOptions,
     Modality,
     RecordingSource,
@@ -43,15 +36,25 @@ from ._generated.models import (
     TtsOptions,
 )
 from ._generated.types import UNSET, Unset
+from ._routerconfig import (
+    ROUTER_FILE,
+    ROUTER_STAMP,
+    answer,
+    block,
+    ensure_router,
+    find,
+    fingerprint,
+    read_router,
+    router_folders,
+    store,
+    wanted,
+)
+from .folder import write_stamp
 from .llm import LLM
 from .stt import STT
 from .tts import TTS
 
 logger = logging.getLogger(__name__)
-
-# Block is one modality's option block, which are the same shape for a stored config, a
-# start frame and a recording job.
-Block = TypeVar("Block", SttOptions, TtsOptions, LlmOptions, SearchOptions)
 
 # ORDER is which modality a name is tried against first, for `resolve`. Speech models are
 # the ones named by hand most often, and the model that answers is usually asked for by
@@ -62,9 +65,6 @@ ORDER = (Modality.TTS, Modality.STT, Modality.LLM)
 # than real time, so a feature-length recording is minutes rather than hours, and asking
 # every second costs nothing next to that.
 POLL = 1.0
-
-# ROUTER_KEYS are the top-level keys a router config file may hold.
-ROUTER_KEYS = frozenset({"name", "stt", "tts", "llm", "search", "tags"})
 
 
 class Router:
@@ -86,6 +86,9 @@ class Router:
 
     Everything in the named config is a default, and every keyword on a call overrides one
     field of it.
+
+    A config that lives on disk as `routers/{name}/router.yaml` is stored on first use, so
+    naming one here is all it takes to route through it.
     """
 
     def __init__(
@@ -151,9 +154,9 @@ class Router:
             )
 
         client = self.client()
-        stored = await _named(client, self.config)
+        stored = await find(client, self.config)
 
-        wanted = RouterConfigRequest(name=self.config, stt=_block(SttOptions, options))
+        wanted = RouterConfigRequest(name=self.config, stt=block(SttOptions, options))
         # Carried forward rather than restated: a config is one row, and writing the
         # speech half of it should not silently drop the voice half.
         if stored is not None:
@@ -167,7 +170,58 @@ class Router:
         if self.tags:
             wanted.tags = RouterConfigRequestTags.from_dict(self.tags)
 
-        return await _store(client, wanted, stored)
+        return await store(client, wanted, stored)
+
+    async def configure_tts(self, **options) -> RouterConfig:
+        """Store how this router speaks.
+
+        The voice half of `configure_stt`, on the same terms: the other three modalities
+        are left as they were stored.
+
+        ```python
+        await Router("healthcare").configure_tts(
+            providers=["elevenlabs", "en-low-latency"],
+            voice="custom:receptionist",
+            data_policy={"allow_training": False, "retention": "none"},
+        )
+        ```
+
+        Args:
+            **options: Any field of the tts block - `providers`, `target`, `voice`,
+                `languages`, `speed`, `emotion`, `format`, `data_policy`, `overwrites`,
+                `pronunciations`.
+
+        Returns:
+            The stored config.
+
+        Raises:
+            ValueError: if this router was not named, or an option is not one speech
+                takes.
+            RuntimeError: if the router refuses the config, which is what it does with a
+                provider it does not have or a data policy nothing it offers can meet.
+        """
+        if not self.config:
+            raise ValueError(
+                "configure_tts writes a named config, so the router needs a name: "
+                'Router("healthcare").configure_tts(...)'
+            )
+
+        client = self.client()
+        stored = await find(client, self.config)
+
+        wanted = RouterConfigRequest(name=self.config, tts=block(TtsOptions, options))
+        if stored is not None:
+            wanted.stt, wanted.llm, wanted.search = (
+                stored.stt,
+                stored.llm,
+                stored.search,
+            )
+            if not isinstance(stored.tags, Unset):
+                wanted.tags = RouterConfigRequestTags.from_dict(stored.tags.to_dict())
+        if self.tags:
+            wanted.tags = RouterConfigRequestTags.from_dict(self.tags)
+
+        return await store(client, wanted, stored)
 
     async def search(self, query: str, **options) -> SearchAnswer:
         """Answer `query` out of what is true now.
@@ -184,13 +238,14 @@ class Router:
             ValueError: if an option is not one search takes.
             RuntimeError: if no provider could answer.
         """
-        body = SearchRequest(query=query, options=_block(SearchOptions, options))
+        await ensure_router(self.config, self.backend)
+        body = SearchRequest(query=query, options=block(SearchOptions, options))
         if self.config:
             body.config_id = self.config
         if self.tags:
             body.tags = SearchRequestTags.from_dict(self.tags)
 
-        return _answer(await search_request.asyncio(client=self.client(), body=body))
+        return answer(await search_request.asyncio(client=self.client(), body=body))
 
     def resolve(self, target: str, **kwargs) -> Union[STT, TTS, LLM]:
         """Whatever the backend routes a name to.
@@ -264,20 +319,10 @@ async def define_router(
         ValueError: if an option is not one that modality takes.
     """
     client = Backend(url=url, customer_id=customer_id).client()
-
-    wanted = RouterConfigRequest(name=name)
-    if stt:
-        wanted.stt = _block(SttOptions, stt)
-    if tts:
-        wanted.tts = _block(TtsOptions, tts)
-    if llm:
-        wanted.llm = _block(LlmOptions, llm)
-    if search:
-        wanted.search = _block(SearchOptions, search)
-    if tags:
-        wanted.tags = RouterConfigRequestTags.from_dict(tags)
-
-    return await _store(client, wanted, await _named(client, name))
+    request = wanted(
+        name, {"stt": stt, "tts": tts, "llm": llm, "search": search, "tags": tags}
+    )
+    return await store(client, request, await find(client, name))
 
 
 async def sync_routers(
@@ -285,15 +330,18 @@ async def sync_routers(
     url: Optional[str] = None,
     customer_id: Optional[str] = None,
 ) -> list[RouterConfig]:
-    """Store every router config a directory of YAML files describes.
+    """Store every router config a directory of router folders describes.
 
     The same bargain as `sync_agent`, for routing: a config that lives in the repository
-    is one that can be reviewed, and one written by hand at a call site is not. Each file
-    is one config, named by its `name` key or by its own filename, and each is written by
-    name, so running this twice edits rather than duplicates.
+    is one that can be reviewed, and one written by hand at a call site is not. Each
+    `{name}/router.yaml` is one config, named by its `name` key or by the folder it is in,
+    and each is written by name, so running this twice edits rather than duplicates.
+
+    `Router("healthcare")` stores its own folder on first use, so this is for storing a
+    whole directory of them at once, ahead of anything routing through them.
 
     ```yaml
-    # routers/healthcare.yaml
+    # routers/healthcare/router.yaml
     tags:
       team: clinical
     stt:
@@ -304,90 +352,41 @@ async def sync_routers(
     ```
 
     Args:
-        directory: Where the `.yaml` files are.
+        directory: Where the router folders are.
         url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
         customer_id: Who the work is billed to. Defaults to
             `STREAM_ACCELERATION_CUSTOMER_ID`.
 
     Returns:
-        The stored configs, in the order the files were read.
+        The stored configs, in the order the folders were read.
 
     Raises:
-        ValueError: if the directory holds no YAML, or a file names an option a modality
-            does not take.
+        ValueError: if the directory holds no router folders, or one names an option a
+            modality does not take.
         RuntimeError: if the router refuses one of them.
     """
     folder = Path(directory)
-    files = await asyncio.to_thread(_router_files, folder)
-    if not files:
-        raise ValueError(f"{folder} holds no .yaml router configs")
+    found = await asyncio.to_thread(router_folders, folder)
+    if not found:
+        raise ValueError(f"{folder} holds no {{name}}/{ROUTER_FILE} router configs")
 
     stored = []
-    for path in files:
-        described = await asyncio.to_thread(_read_router, path)
+    for path in found:
+        file = path / ROUTER_FILE
+        described = await asyncio.to_thread(read_router, file)
+        described.pop("description", None)
         stored.append(
             await define_router(
-                described.pop("name", path.stem),
+                described.pop("name", path.name),
                 url=url,
                 customer_id=customer_id,
                 **described,
             )
         )
+        md5 = await asyncio.to_thread(fingerprint, file)
+        await asyncio.to_thread(write_stamp, path, ROUTER_STAMP, md5)
     logger.info("synced %d router configs from %s", len(stored), folder)
     return stored
-
-
-def _router_files(folder: Path) -> list[Path]:
-    """The YAML in a directory, in a fixed order so two runs do the same thing."""
-    if not folder.is_dir():
-        raise ValueError(f"{folder} is not a directory")
-    return sorted(
-        path
-        for path in folder.iterdir()
-        if path.is_file() and path.suffix in (".yaml", ".yml")
-    )
-
-
-def _read_router(path: Path) -> dict[str, Any]:
-    """One config file, as the keywords `define_router` takes.
-
-    A key that is not a modality is refused here rather than ignored, the same way an
-    unknown option inside a block is: a misspelt `sst:` would otherwise store a config
-    that transcribes at whatever the fallback happens to be.
-    """
-    described = yaml.safe_load(path.read_text()) or {}
-    if not isinstance(described, dict):
-        raise ValueError(f"{path} should describe one config, as a mapping")
-
-    unknown = sorted(set(described) - ROUTER_KEYS)
-    if unknown:
-        raise ValueError(
-            f"{path} names {', '.join(unknown)}, which is not "
-            f"{', '.join(sorted(ROUTER_KEYS))}"
-        )
-    return described
-
-
-async def _named(client: AuthenticatedClient, name: str) -> Optional[RouterConfig]:
-    """The stored config called `name`, if there is one."""
-    for stored in _answer(await list_router_configs.asyncio(client=client)):
-        if stored.name == name:
-            return stored
-    return None
-
-
-async def _store(
-    client: AuthenticatedClient,
-    wanted: RouterConfigRequest,
-    stored: Optional[RouterConfig],
-) -> RouterConfig:
-    """Write a config, editing the one of that name rather than adding a second."""
-    if stored is not None:
-        logger.info("updating router config %s", stored.id)
-        return _answer(
-            await update_router_config.asyncio(stored.id, client=client, body=wanted)
-        )
-    return _answer(await create_router_config.asyncio(client=client, body=wanted))
 
 
 class SpeechToText:
@@ -411,7 +410,7 @@ class SpeechToText:
         """
         return STT(
             config_id=self._router.config,
-            options=_block(SttOptions, options).to_dict(),
+            options=block(SttOptions, options).to_dict(),
             tags=self._router.tags,
             url=self._router.backend.url,
             customer_id=self._router.backend.customer_id,
@@ -444,8 +443,9 @@ class SpeechToText:
             ValueError: if an option is not one transcription takes.
             RuntimeError: if the job failed.
         """
+        await ensure_router(self._router.config, self._router.backend)
         body = TranscriptionRequest(
-            source=await _source(source), options=_block(SttOptions, options)
+            source=await _source(source), options=block(SttOptions, options)
         )
         if self._router.config:
             body.config_id = self._router.config
@@ -455,7 +455,7 @@ class SpeechToText:
             body.tags = TranscriptionRequestTags.from_dict(self._router.tags)
 
         client = self._router.client()
-        job = _answer(await transcribe_recording.asyncio(client=client, body=body))
+        job = answer(await transcribe_recording.asyncio(client=client, body=body))
         if callback:
             return job
         return await _until_done(
@@ -473,15 +473,18 @@ class TextToSpeech:
         """A speaking session, configured and not yet started.
 
         Args:
-            **options: Any field of the config's tts block - `target`, `voice`,
-                `languages`, `speed`, `emotion`, `stability`, `format`.
+            **options: Any field of the config's tts block - `target`, `providers`,
+                `voice`, `languages`, `speed`, `emotion`, `stability`, `format`,
+                `data_policy`, `overwrites`. A voice named `custom:receptionist` is one of
+                your own and nothing else; a bare name is looked for among yours and
+                passed to the provider's library when it is not there.
 
         Raises:
             ValueError: if an option is not one a voice takes.
         """
         return TTS(
             config_id=self._router.config,
-            options=_block(TtsOptions, options).to_dict(),
+            options=block(TtsOptions, options).to_dict(),
             tags=self._router.tags,
             url=self._router.backend.url,
             customer_id=self._router.backend.customer_id,
@@ -501,8 +504,9 @@ class TextToSpeech:
         Args:
             text: What to say, in whole paragraphs.
             callback: A URL the finished job is POSTed to.
-            **options: Any field of the config's tts block - `voice`, `format`, `speed`,
-                `stability`.
+            **options: Any field of the config's tts block - `providers`, `voice`,
+                `format`, `speed`, `stability`, `data_policy`, `overwrites`. A voice named
+                `custom:reader` is one of your own and nothing else.
 
         Returns:
             The audio, or the accepted job when a callback was given.
@@ -511,7 +515,8 @@ class TextToSpeech:
             ValueError: if an option is not one a voice takes.
             RuntimeError: if the job failed.
         """
-        body = SpeechRequest(text=text, options=_block(TtsOptions, options))
+        await ensure_router(self._router.config, self._router.backend)
+        body = SpeechRequest(text=text, options=block(TtsOptions, options))
         if self._router.config:
             body.config_id = self._router.config
         if callback:
@@ -520,7 +525,7 @@ class TextToSpeech:
             body.tags = SpeechRequestTags.from_dict(self._router.tags)
 
         client = self._router.client()
-        job = _answer(await record_speech.asyncio(client=client, body=body))
+        job = answer(await record_speech.asyncio(client=client, body=body))
         if callback:
             return job
         return await _until_done(job, lambda: get_speech.asyncio(job.id, client=client))
@@ -549,33 +554,11 @@ class Completions:
         """
         return LLM(
             config_id=self._router.config,
-            options=_block(LlmOptions, options).to_dict(),
+            options=block(LlmOptions, options).to_dict(),
             tags=self._router.tags,
             url=self._router.backend.url,
             customer_id=self._router.backend.customer_id,
         )
-
-
-def _block(model: type[Block], given: dict[str, Any]) -> Block:
-    """Turn keywords into one modality's option block.
-
-    An option the modality does not have is refused here rather than sent and ignored,
-    which is the same bargain the backend makes with a provider that cannot express a
-    term: better to be told than to be answered wrongly.
-    """
-    allowed = {
-        field.name.rstrip("_")
-        for field in fields(model)
-        if field.name != "additional_properties"
-    }
-    unknown = sorted(set(given) - allowed)
-    if unknown:
-        raise ValueError(
-            f"{', '.join(unknown)} is not something {model.__name__} takes; "
-            f"it has {', '.join(sorted(allowed))}"
-        )
-    named = {name: value for name, value in given.items() if value is not None}
-    return model.from_dict(named)
 
 
 async def _source(source: Union[str, Path, bytes]) -> RecordingSource:
@@ -619,20 +602,11 @@ async def _until_done(job, ask):
     """
     while job.status in (RecordingStatus.QUEUED, RecordingStatus.RUNNING):
         await asyncio.sleep(POLL)
-        job = _answer(await ask())
+        job = answer(await ask())
 
     if job.status is RecordingStatus.FAILED:
         raise RuntimeError(_value(job.error) or "the recording failed")
     return job
-
-
-def _answer(answer):
-    """Return what the router sent, raising what it said went wrong instead."""
-    if isinstance(answer, Error):
-        raise RuntimeError(answer.error)
-    if answer is None:
-        raise RuntimeError("the router did not answer")
-    return answer
 
 
 def _value(held: Union[str, Unset, None]) -> str:

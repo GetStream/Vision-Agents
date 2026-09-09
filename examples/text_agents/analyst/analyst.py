@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from dotenv import load_dotenv
+from vision_agents.core import Agent
 from vision_agents.core.harness import Daytona
 from vision_agents.plugins import stream as acceleration
 
@@ -52,13 +53,14 @@ async def main() -> None:
         vm=Daytona,
     )
 
-    async with acceleration.TextSession(config_id=config.id) as session:
-        async for event in session.ask(QUESTION.strip()):
-            if event.type == "delta":
+    agent = Agent(config=config.name)
+    async with agent.chat():
+        async for event in agent.ask(QUESTION.strip()):
+            if event.type == "agent_speech_delta":
                 print(event.text, end="", flush=True)
             elif event.type == "delegated":
                 print(f"\n[handed to {event.skill}]")
-            elif event.type == "settled":
+            elif event.type == "task_settled":
                 print(f"[{event.skill} came back]\n{event.text}")
             elif event.type == "error":
                 print(f"[{event.error}]")

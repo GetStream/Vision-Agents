@@ -16,7 +16,8 @@ T = TypeVar("T", bound="VoiceSampleRequest")
 class VoiceSampleRequest:
     """
     Attributes:
-        audio (str): The recording, base64 encoded. A minute of clean speech is plenty.
+        audio (str): The recording, base64 encoded. Thirty seconds of clean speech is plenty, and every provider here
+            clones from less.
         filename (str | Unset): What to call the file upstream. The extension is how a provider knows what it was given,
             so send one.
         content_type (str | Unset):

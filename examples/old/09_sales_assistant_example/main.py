@@ -69,10 +69,10 @@ async def join_call(
         if _meeting_context:
             prompt = f"Meeting context: {_meeting_context}\n\n{prompt}"
 
-        await agent.simple_response(prompt)
+        await agent.responses.create(prompt)
 
         # Keep the agent alive — STT + turn detection will trigger
-        # additional simple_response calls automatically.
+        # additional responses.create calls automatically.
         await agent.finish()
 
 

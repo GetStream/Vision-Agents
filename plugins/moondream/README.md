@@ -165,7 +165,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
         if event.participant.user.id != "agent":
             await asyncio.sleep(2)
             # Ask the agent to describe what it sees
-            await agent.simple_response("Describe what you currently see")
+            await agent.responses.create("Describe what you currently see")
 
     async with agent.join(call):
         await agent.finish()

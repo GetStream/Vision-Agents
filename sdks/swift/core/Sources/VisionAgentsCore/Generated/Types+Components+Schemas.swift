@@ -717,7 +717,7 @@ extension Components {
             case verbatim = "verbatim"
             case smart = "smart"
         }
-        /// What a caller requires of what happens to their audio after it is transcribed. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+        /// What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
         ///
         ///
         /// - Remark: Generated from `#/components/schemas/DataPolicy`.
@@ -775,7 +775,13 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/TtsOptions/target`.
             internal var target: Swift.String?
-            /// Provider-specific voice id.
+            /// A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/providers`.
+            internal var providers: [Swift.String]?
+            /// A provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused.
+            ///
             ///
             /// - Remark: Generated from `#/components/schemas/TtsOptions/voice`.
             internal var voice: Swift.String?
@@ -840,11 +846,40 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/TtsOptions/chunk_schedule`.
             internal var chunkSchedule: [Swift.Int]?
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/data_policy`.
+            internal var dataPolicy: Components.Schemas.DataPolicy?
+            /// Settings for one voice provider that this vocabulary has no word for, keyed by provider name, for example {"elevenlabs": {"voice_id": "21m00Tcm4TlvDq8ikWAM"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped. It is also the only way to steer a live voice per vendor, since a voice id from one library means nothing at another.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/overwrites`.
+            internal struct OverwritesPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                /// Creates a new `OverwritesPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// Settings for one voice provider that this vocabulary has no word for, keyed by provider name, for example {"elevenlabs": {"voice_id": "21m00Tcm4TlvDq8ikWAM"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped. It is also the only way to steer a live voice per vendor, since a voice id from one library means nothing at another.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/TtsOptions/overwrites`.
+            internal var overwrites: Components.Schemas.TtsOptions.OverwritesPayload?
             /// Creates a new `TtsOptions`.
             ///
             /// - Parameters:
             ///   - target: A provider/model or a capability shortcut.
-            ///   - voice: Provider-specific voice id.
+            ///   - providers: A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back.
+            ///   - voice: A provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused.
             ///   - languages:
             ///   - speed: Rate of delivery, 1 being the voice's own. Providers differ in the range they accept, so one asked for a speed outside its own refuses.
             ///   - volume: Loudness, 1 being the voice's own.
@@ -855,8 +890,11 @@ extension Components {
             ///   - format: Codec, sample rate and bitrate as one name - pcm_16000, mp3_44100_128, ulaw_8000 for telephony.
             ///   - pronunciations: How to say words the voice gets wrong, keyed by the word.
             ///   - chunkSchedule: Character counts at which a streaming voice flushes audio. Smaller first values start speaking sooner and cost more requests. Live only.
+            ///   - dataPolicy:
+            ///   - overwrites: Settings for one voice provider that this vocabulary has no word for, keyed by provider name, for example {"elevenlabs": {"voice_id": "21m00Tcm4TlvDq8ikWAM"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped. It is also the only way to steer a live voice per vendor, since a voice id from one library means nothing at another.
             internal init(
                 target: Swift.String? = nil,
+                providers: [Swift.String]? = nil,
                 voice: Swift.String? = nil,
                 languages: [Swift.String]? = nil,
                 speed: Swift.Float? = nil,
@@ -867,9 +905,12 @@ extension Components {
                 similarity: Swift.Float? = nil,
                 format: Swift.String? = nil,
                 pronunciations: Components.Schemas.TtsOptions.PronunciationsPayload? = nil,
-                chunkSchedule: [Swift.Int]? = nil
+                chunkSchedule: [Swift.Int]? = nil,
+                dataPolicy: Components.Schemas.DataPolicy? = nil,
+                overwrites: Components.Schemas.TtsOptions.OverwritesPayload? = nil
             ) {
                 self.target = target
+                self.providers = providers
                 self.voice = voice
                 self.languages = languages
                 self.speed = speed
@@ -881,9 +922,12 @@ extension Components {
                 self.format = format
                 self.pronunciations = pronunciations
                 self.chunkSchedule = chunkSchedule
+                self.dataPolicy = dataPolicy
+                self.overwrites = overwrites
             }
             internal enum CodingKeys: String, CodingKey {
                 case target
+                case providers
                 case voice
                 case languages
                 case speed
@@ -895,6 +939,8 @@ extension Components {
                 case format
                 case pronunciations
                 case chunkSchedule = "chunk_schedule"
+                case dataPolicy = "data_policy"
+                case overwrites
             }
         }
         /// How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things.

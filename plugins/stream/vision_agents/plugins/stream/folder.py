@@ -1,16 +1,24 @@
 """An agent written down as a directory of instructions, skills and knowledge."""
 
 import hashlib
+import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
 from vision_agents.core.harness import Skill
 
+AGENT_FILE = "agent.yaml"
+AGENT_STAMP = ".agent_sync"
 INSTRUCTIONS_FILE = "instructions.md"
 SKILLS_DIR = "skills"
 KNOWLEDGE_DIR = "knowledge"
+
+logger = logging.getLogger(__name__)
 
 _READABLE = {".md", ".mdx", ".txt", ".rst", ".yaml", ".yml"}
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)$")
@@ -40,6 +48,7 @@ class Folder:
     ::
 
         agents/jean/
+          agent.yaml
           instructions.md
           skills/think.md
           knowledge/pricing.md
@@ -47,6 +56,7 @@ class Folder:
 
     path: Path
     name: str
+    declaration: str = ""
     instructions: str = ""
     skills: list[Skill] = field(default_factory=list)
     knowledge: list[Document] = field(default_factory=list)
@@ -59,7 +69,9 @@ class Folder:
 
     def hash(self) -> str:
         """A fingerprint of the directory. The same files produce the same hash."""
-        hasher = hashlib.sha256()
+        hasher = hashlib.md5()
+        hasher.update(self.declaration.encode())
+        hasher.update(b"\n")
         hasher.update(self.instructions.encode())
         for skill in sorted(self.skills, key=lambda item: item.name):
             hasher.update(b"\nskill:")
@@ -82,14 +94,18 @@ class Folder:
 def load(path: str | Path) -> Folder:
     """Read an agent directory.
 
-    Everything in it is optional: a directory with only instructions.md is a valid
-    agent, and so is one with only skills.
+    Everything but the name is optional: a directory with only instructions.md is a
+    valid agent, and so is one with only skills.
     """
     root = Path(path)
     if not root.is_dir():
         raise ValueError(f"{root} is not an agent directory")
 
     folder = Folder(path=root, name=root.name)
+    declaration = root / AGENT_FILE
+    if declaration.is_file():
+        folder.declaration = declaration.read_text().strip()
+        folder.name = _declared_name(declaration) or root.name
     instructions = root / INSTRUCTIONS_FILE
     if instructions.is_file():
         folder.instructions = instructions.read_text().strip()
@@ -104,6 +120,22 @@ def resolve(name: str, start: Path | None = None) -> Path:
     `name` may itself be a path. Otherwise this walks up from `start` (the current
     working directory by default) looking for it under `examples/`, then for
     `agents/{name}`, then for a directory of that name.
+    """
+    found = find(name, start)
+    if found is None:
+        raise FileNotFoundError(
+            f"no agent directory called {name!r}; expected examples/agents/{name}/"
+            f"{AGENT_FILE} or a sibling of it"
+        )
+    return found
+
+
+def find(name: str, start: Path | None = None) -> Path | None:
+    """The agent directory called `name`, or None when there is none.
+
+    What makes a directory an agent is `agent.yaml`: a name is looked up rather than
+    guessed at, so a config that lives on the router and nowhere on disk is simply not
+    found here rather than mistaken for a directory that happens to share its name.
     """
     given = Path(name)
     if given.is_dir() and _looks_like_agent(given):
@@ -124,21 +156,42 @@ def resolve(name: str, start: Path | None = None) -> Path:
             if candidate.is_dir() and _looks_like_agent(candidate):
                 return candidate.resolve()
         if here.parent == here:
-            break
+            return None
         here = here.parent
 
-    raise FileNotFoundError(
-        f"no agent directory called {name!r}; expected examples/agents/{name} or a "
-        f"sibling of it"
-    )
+
+def read_stamp(path: Path, filename: str) -> str:
+    """The fingerprint a directory was last synced under, or empty when it never was."""
+    stamp = path / filename
+    if not stamp.is_file():
+        return ""
+    try:
+        recorded = json.loads(stamp.read_text())
+    except json.JSONDecodeError:
+        logger.debug("%s is not readable, so the directory is synced again", stamp)
+        return ""
+    if not isinstance(recorded, dict):
+        return ""
+    return str(recorded.get("md5", ""))
+
+
+def write_stamp(path: Path, filename: str, md5: str) -> None:
+    """Record what was synced and when, so a second launch can do nothing."""
+    stamp = path / filename
+    synced_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    stamp.write_text(json.dumps({"md5": md5, "synced_at": synced_at}) + "\n")
+
+
+def _declared_name(path: Path) -> str:
+    """The name `agent.yaml` gives, if it gives one."""
+    declared = yaml.safe_load(path.read_text()) or {}
+    if not isinstance(declared, dict):
+        raise ValueError(f"{path} should describe one agent, as a mapping")
+    return str(declared.get("name", "")).strip()
 
 
 def _looks_like_agent(path: Path) -> bool:
-    return (
-        (path / INSTRUCTIONS_FILE).is_file()
-        or (path / SKILLS_DIR).is_dir()
-        or (path / KNOWLEDGE_DIR).is_dir()
-    )
+    return (path / AGENT_FILE).is_file()
 
 
 def _load_skills(path: Path) -> list[Skill]:

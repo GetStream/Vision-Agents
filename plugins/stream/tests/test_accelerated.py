@@ -11,6 +11,15 @@ from vision_agents.plugins import stream
 
 SETTLE = 2.0
 
+# JOHN is the one config the fake has stored, which is what a name is resolved to.
+JOHN = {
+    "id": "config-7",
+    "name": "john",
+    "mode": "voice",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z",
+}
+
 
 class Router:
     """A stand-in for the acceleration router, serving the two endpoints a session uses.
@@ -21,6 +30,7 @@ class Router:
 
     def __init__(self):
         self.created: Optional[dict[str, Any]] = None
+        self.synced: Optional[dict[str, Any]] = None
         self.closed: list[str] = []
         self.commands: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.url = ""
@@ -33,20 +43,15 @@ class Router:
         app.router.add_get("/v1/agents/sessions/{id}/events", self._events)
         app.router.add_delete("/v1/agents/sessions/{id}", self._close)
         app.router.add_get("/v1/agents/configs", self._configs)
+        app.router.add_post("/v1/agents/sync", self._sync)
         return app
 
     async def _configs(self, _: web.Request) -> web.Response:
-        return web.json_response(
-            data=[
-                {
-                    "id": "config-7",
-                    "name": "john",
-                    "mode": "voice",
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "updated_at": "2026-01-01T00:00:00Z",
-                }
-            ]
-        )
+        return web.json_response(data=[JOHN])
+
+    async def _sync(self, request: web.Request) -> web.Response:
+        self.synced = await request.json()
+        return web.json_response({"unchanged": False, "config": JOHN})
 
     async def send(self, frame: dict[str, Any]) -> None:
         """Send one frame to whoever is watching the session."""
@@ -64,7 +69,7 @@ class Router:
             status=201,
             data={
                 "id": "session-1",
-                "call_id": self.created["call_id"],
+                "call_id": self.created.get("call_id", ""),
                 "call_type": self.created.get("call_type", "default"),
                 "user_id": self.created.get("user_id", ""),
                 "agent_id": self.created.get("agent_id", ""),
@@ -327,6 +332,47 @@ class TestAccelerated:
         assert "instructions" not in router.created
         assert "greeting" not in router.created
 
+    @pytest.fixture
+    def john_dir(self, tmp_path, monkeypatch):
+        """An agent directory, and the directory an agent naming it is launched from."""
+        folder = tmp_path / "agents" / "john"
+        folder.mkdir(parents=True)
+        (folder / "agent.yaml").write_text("name: john\n")
+        (folder / "instructions.md").write_text("Be brief.\n")
+        monkeypatch.chdir(tmp_path)
+        return folder
+
+    async def test_joining_stores_the_directory_the_config_is_named_after(
+        self, router: Router, call: RemoteCall, john_dir
+    ):
+        # Nobody called sync_agent: the directory is what the config is, so joining is
+        # what stores whatever it says now.
+        pipeline = stream.Accelerated(config="john", url=router.url, customer_id="acme")
+
+        await pipeline.join_remote(call)
+        await pipeline.leave_remote()
+
+        assert router.synced is not None
+        assert router.synced["instructions"] == "Be brief."
+        assert router.created is not None
+        assert router.created["config_id"] == "config-7"
+
+    async def test_joining_again_for_an_untouched_directory_stores_nothing(
+        self, router: Router, call: RemoteCall, john_dir
+    ):
+        first = stream.Accelerated(config="john", url=router.url, customer_id="acme")
+        await first.join_remote(call)
+        await first.leave_remote()
+
+        router.synced = None
+        again = stream.Accelerated(config="john", url=router.url, customer_id="acme")
+        await again.join_remote(call)
+        await again.leave_remote()
+
+        assert router.synced is None, (
+            ".agent_sync should answer for a directory nothing has touched"
+        )
+
     async def test_a_config_name_nothing_is_stored_under_says_so(
         self, router: Router, call: RemoteCall
     ):
@@ -336,3 +382,92 @@ class TestAccelerated:
 
         with pytest.raises(RemotePipelineError, match="nobody"):
             await pipeline.join_remote(call)
+
+    @pytest.fixture
+    async def writing(
+        self, llm: stream.Accelerated
+    ) -> AsyncIterator[stream.Accelerated]:
+        """A pipeline with no call to join, answering in an existing conversation."""
+        await llm.join_remote(
+            RemoteCall(
+                call_type="default",
+                call_id="",
+                agent_user_id="agent",
+                instructions="be brief",
+                agent_id="channel-1",
+            )
+        )
+        yield llm
+        await llm.leave_remote()
+
+    async def test_a_conversation_with_no_call_to_join_is_held_in_writing(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        assert router.created is not None
+        assert router.created["text"] is True
+        assert "call_id" not in router.created
+
+    async def test_the_conversation_answered_in_is_the_one_the_agent_was_given(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        # It names the channel the exchange is written into, so answering a message means
+        # passing the channel it was written in.
+        assert router.created is not None
+        assert router.created["agent_id"] == "channel-1"
+
+    async def test_a_reply_arrives_as_it_is_written_and_again_when_it_is_finished(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send({"type": "response_delta", "text": "Routing picks "})
+        await router.send({"type": "responded", "text": "Routing picks a provider."})
+
+        delta = await asyncio.wait_for(anext(events), SETTLE)
+        answer = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert delta == RemoteEvent(type="agent_speech_delta", text="Routing picks ")
+        assert answer.type == "agent_speech"
+        assert answer.text == "Routing picks a provider."
+
+    async def test_work_handed_to_a_skill_is_reported_going_out_and_coming_back(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send(
+            {
+                "type": "delegated",
+                "task_id": "task-1",
+                "skill": "explain",
+                "prompt": "failover",
+            }
+        )
+        await router.send(
+            {
+                "type": "task_settled",
+                "task_id": "task-1",
+                "skill": "explain",
+                "text": "It retries.",
+            }
+        )
+
+        handed = await asyncio.wait_for(anext(events), SETTLE)
+        back = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert handed == RemoteEvent(type="delegated", skill="explain", text="failover")
+        assert back == RemoteEvent(
+            type="task_settled", skill="explain", text="It retries."
+        )
+
+    async def test_what_was_looked_up_is_reported_with_what_it_found(
+        self, router: Router, writing: stream.Accelerated
+    ):
+        events = writing.remote_events()
+        await router.send(
+            {"type": "looked_up", "query": "delivery cost", "documents": 3}
+        )
+
+        event = await asyncio.wait_for(anext(events), SETTLE)
+
+        assert event == RemoteEvent(
+            type="looked_up", query="delivery cost", documents=3
+        )

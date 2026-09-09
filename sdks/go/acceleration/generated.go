@@ -1203,7 +1203,7 @@ type CreateSessionRequest struct {
 	Voice *string `json:"voice,omitempty"`
 }
 
-// DataPolicy What a caller requires of what happens to their audio after it is transcribed. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 type DataPolicy struct {
 	// AllowTraining False requires a provider that has said it does not train on what it is sent. Omitting this asks nothing. A provider that has published nothing either way counts as not having said no.
 	AllowTraining *bool `json:"allow_training,omitempty"`
@@ -2036,7 +2036,7 @@ type SttOptions struct {
 	// Channels Transcribe a multichannel recording per channel rather than mixed down.
 	Channels *int `json:"channels,omitempty"`
 
-	// DataPolicy What a caller requires of what happens to their audio after it is transcribed. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
 
 	// DetectLanguage Let the provider identify the language instead of being told it.
@@ -2298,6 +2298,9 @@ type TtsOptions struct {
 	// ChunkSchedule Character counts at which a streaming voice flushes audio. Smaller first values start speaking sooner and cost more requests. Live only.
 	ChunkSchedule *[]int `json:"chunk_schedule,omitempty"`
 
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
+
 	// Emotion Affect to speak with, for the providers that take one.
 	Emotion *string `json:"emotion,omitempty"`
 
@@ -2308,8 +2311,20 @@ type TtsOptions struct {
 	Format    *string   `json:"format,omitempty"`
 	Languages *[]string `json:"languages,omitempty"`
 
+	// Overwrites Settings for one voice provider that this vocabulary has no word for, keyed by provider name, for example {"elevenlabs": {"voice_id": "21m00Tcm4TlvDq8ikWAM"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped. It is also the only way to steer a live voice per vendor, since a voice id from one library means nothing at another.
+	//
+	//
+	// Example: {"elevenlabs":{"voice_id":"21m00Tcm4TlvDq8ikWAM"}}
+	Overwrites *map[string]interface{} `json:"overwrites,omitempty"`
+
 	// Pronunciations How to say words the voice gets wrong, keyed by the word.
 	Pronunciations *map[string]string `json:"pronunciations,omitempty"`
+
+	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, and each is expanded where it stands, so the order given is the order tried. Health only moves a provider that is down to the back.
+	//
+	//
+	// Example: ["elevenlabs","en-low-latency"]
+	Providers *[]string `json:"providers,omitempty"`
 
 	// Similarity How closely a cloned voice tracks its reference.
 	Similarity *float32 `json:"similarity,omitempty"`
@@ -2331,7 +2346,10 @@ type TtsOptions struct {
 	// Example: en-low-latency
 	Target *string `json:"target,omitempty"`
 
-	// Voice Provider-specific voice id.
+	// Voice A provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused.
+	//
+	//
+	// Example: custom:receptionist
 	Voice *string `json:"voice,omitempty"`
 
 	// Volume Loudness, 1 being the voice's own.
@@ -2382,7 +2400,10 @@ type VoiceBinding struct {
 	ExternalId *string           `json:"external_id,omitempty"`
 	Provider   string            `json:"provider"`
 	State      VoiceBindingState `json:"state"`
-	UpdatedAt  *time.Time        `json:"updated_at,omitempty"`
+
+	// SyncedAt When this provider last came back with a voice that can be spoken in, absent until one does. It is not updated_at, which moves again when a binding goes back to pending.
+	SyncedAt  *time.Time `json:"synced_at,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
 // VoiceBindingState defines model for VoiceBinding.State.
@@ -2409,7 +2430,7 @@ type VoiceSample struct {
 
 // VoiceSampleRequest defines model for VoiceSampleRequest.
 type VoiceSampleRequest struct {
-	// Audio The recording, base64 encoded. A minute of clean speech is plenty.
+	// Audio The recording, base64 encoded. Thirty seconds of clean speech is plenty, and every provider here clones from less.
 	Audio       []byte  `json:"audio"`
 	ContentType *string `json:"content_type,omitempty"`
 

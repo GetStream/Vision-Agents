@@ -28,7 +28,9 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
 
     # Have the agent join the call/room
     async with agent.join(call):
-        await agent.simple_response("tell me something interesting in a short sentence")
+        await agent.responses.create(
+            "tell me something interesting in a short sentence"
+        )
 
         # run till the call ends
         await agent.finish()

@@ -181,4 +181,56 @@ func (s *OptionsSuite) TestMergeOverwritesOneProviderAtATime() {
 		"merging should not edit what was stored")
 }
 
+func (s *OptionsSuite) TestAVoiceMergeWritesAPriorityListOverTheStoredOne() {
+	stored := TTS{Providers: []string{"elevenlabs", "cartesia"}}
+
+	s.Equal([]string{"inworld"}, stored.Merge(TTS{Providers: []string{"inworld"}}).Providers)
+	s.Equal([]string{"elevenlabs", "cartesia"}, stored.Merge(TTS{}).Providers,
+		"a call that says nothing about where to go keeps the config's list")
+}
+
+func (s *OptionsSuite) TestAVoiceMergeKeepsTheDataPolicyHalvesApart() {
+	stored := TTS{DataPolicy: DataPolicy{AllowTraining: no(), Retention: "30d"}}
+
+	merged := stored.Merge(TTS{DataPolicy: DataPolicy{Retention: RetentionNone}})
+
+	s.Equal(RetentionNone, merged.DataPolicy.Retention)
+	s.False(*merged.DataPolicy.AllowTraining, "tightening the retention should not forget the rest")
+}
+
+func (s *OptionsSuite) TestAVoiceMergeOverwritesOneProviderAtATime() {
+	stored := TTS{Overwrites: map[string]json.RawMessage{
+		"elevenlabs": json.RawMessage(`{"voice_id":"el-1"}`),
+		"inworld":    json.RawMessage(`{"delivery_mode":"STABLE"}`),
+	}}
+
+	merged := stored.Merge(TTS{Overwrites: map[string]json.RawMessage{
+		"elevenlabs": json.RawMessage(`{"voice_id":"el-2"}`),
+	}})
+
+	s.JSONEq(`{"voice_id":"el-2"}`, string(merged.Overwrites["elevenlabs"]))
+	s.JSONEq(`{"delivery_mode":"STABLE"}`, string(merged.Overwrites["inworld"]),
+		"changing one vendor's setting should not drop what was said about the others")
+	s.JSONEq(`{"voice_id":"el-1"}`, string(stored.Overwrites["elevenlabs"]),
+		"merging should not edit what was stored")
+}
+
+func (s *OptionsSuite) TestAVoiceValidateRejectsARetentionItCannotCompare() {
+	s.ErrorContains(TTS{DataPolicy: DataPolicy{Retention: "ages"}}.Validate(), "not \"ages\"")
+	s.NoError(TTS{DataPolicy: DataPolicy{Retention: "30d"}}.Validate())
+}
+
+func (s *OptionsSuite) TestAVoiceValidateRejectsAnOverwriteWithNoProvider() {
+	s.ErrorContains(
+		TTS{Overwrites: map[string]json.RawMessage{"": json.RawMessage(`{}`)}}.Validate(),
+		"has to name the provider",
+	)
+}
+
+func (s *OptionsSuite) TestADataPolicyIsNotSomethingAVoiceHasToExpress() {
+	asked := TTS{DataPolicy: DataPolicy{AllowTraining: no()}}.Terms()
+
+	s.Empty(asked, "a policy narrows which voices may answer, it is not a term one declares")
+}
+
 func intOf(value int) *int { return &value }

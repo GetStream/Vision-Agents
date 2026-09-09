@@ -100,7 +100,22 @@ recording before trusting it, and drop the term if v3 ignores it.
 
 Voice ids are not a term. They are resolved by the voice catalogue in
 [`internal/tts/voices`](../../../acceleration/internal/tts/voices), so a name that no provider
-has is a 404 rather than a routing failure.
+has is a 404 rather than a routing failure. `custom:` in front of one says it is the
+customer's own and nothing else, so a name that is not theirs is refused rather than passed to
+the provider's library.
+
+## Three things that narrow candidates without being terms
+
+- `providers` is a priority list tried in the order written, and this router's half of it is
+  the streaming one: a vendor named live gets its socket model, not its file-returning one.
+- `data_policy` is a requirement. Every entry in `router.yaml` declares what the vendor does
+  with the text, `Config.Validate()` refuses one that does not, and an undeclared handling
+  satisfies no policy. Only the two entries on our own Baseten deployment currently promise no
+  training and no retention, so `allow_training: false` routes there until an account
+  elsewhere is opted out and its entry is edited.
+- `overwrites` is per vendor, decoded into a typed struct with `DisallowUnknownFields`, so a
+  misspelt key fails at build time. Since the live entries express no terms, this is the only
+  way to steer a live voice: `elevenlabs: {voice_id}`, `inworld: {voice_id, delivery_mode}`.
 
 ## Adding an option
 

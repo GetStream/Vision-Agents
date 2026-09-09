@@ -31,6 +31,8 @@ from ._generated.models import (
     SessionToolParameters,
 )
 from ._socket import Socket
+from .config import ensure_agent
+from .knowledge import Knowledge
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +121,9 @@ class Accelerated(OmniLLM):
         self.keyterms = keyterms or []
 
         self.backend = Backend(url=url, customer_id=customer_id)
+        # A knowledge base belongs to the stored config that reads it, so an agent
+        # configured here rather than by name has none to fill.
+        self.knowledge = Knowledge(config, self.backend)
         self.session: Optional[Session] = None
 
         self._socket: Optional[Socket] = None
@@ -135,10 +140,18 @@ class Accelerated(OmniLLM):
         """Create the session and start watching it.
 
         Returns once the backend is in the call, so an agent that has joined is one that
-        is already listening.
+        is already listening. A call with nothing to join is held in writing instead.
         """
         request = self._request(call)
         if self.config:
+            # The directory is the config, so it is stored before the config is looked
+            # up: an agent whose instructions changed since the last run joins with the
+            # ones on disk rather than the ones the server happens to remember.
+            await ensure_agent(
+                self.config,
+                url=self.backend.url,
+                customer_id=self.backend.customer_id,
+            )
             request.config_id = await self._config_id(self.config)
 
         created = await create_session.asyncio(
@@ -160,7 +173,11 @@ class Accelerated(OmniLLM):
         )
         await self._socket.connect()
         self._reader = asyncio.create_task(self._watch())
-        logger.info("joined call %s remotely as session %s", call.call_id, created.id)
+        logger.info(
+            "joined %s remotely as session %s",
+            f"call {call.call_id}" if call.call_id else "a conversation in writing",
+            created.id,
+        )
 
     async def remote_events(self) -> AsyncIterator[RemoteEvent]:
         """Yield what the backend did until the call ends."""
@@ -254,12 +271,17 @@ class Accelerated(OmniLLM):
     def _request(self, call: RemoteCall) -> CreateSessionRequest:
         """Render the agent's configuration as a session to create."""
         request = CreateSessionRequest(
-            call_id=call.call_id,
-            call_type=call.call_type,
             user_id=call.agent_user_id,
-            agent_id=call.agent_user_id,
+            agent_id=call.agent_id or call.agent_user_id,
             backchannel=self.backchannel,
         )
+        if call.call_id:
+            request.call_id = call.call_id
+            request.call_type = call.call_type
+        else:
+            # Nothing to join, so the conversation is held in writing and the agent id is
+            # the channel it is written in.
+            request.text = True
         # Anything named here wins over the stored config, so a field this agent does not
         # decide is left out rather than sent empty: sending it would replace what the
         # config says with nothing.
@@ -462,8 +484,29 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
             user_id=participant.get("user_id", ""),
             participant_id=participant.get("id", ""),
         )
+    if kind == "response_delta":
+        return RemoteEvent(type="agent_speech_delta", text=frame.get("text", ""))
     if kind == "responded":
         return RemoteEvent(type="agent_speech", text=frame.get("text", ""))
+    if kind == "looked_up":
+        return RemoteEvent(
+            type="looked_up",
+            query=frame.get("query", ""),
+            documents=int(frame.get("documents", 0)),
+        )
+    if kind == "delegated":
+        return RemoteEvent(
+            type="delegated",
+            skill=frame.get("skill", ""),
+            text=frame.get("prompt", ""),
+        )
+    if kind in ("task_settled", "task_cancelled"):
+        return RemoteEvent(
+            type="task_settled",
+            skill=frame.get("skill", ""),
+            text=frame.get("text", ""),
+            error=frame.get("error", ""),
+        )
     if kind == "turn":
         return RemoteEvent(
             type="agent_turn_ended",

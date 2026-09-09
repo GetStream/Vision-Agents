@@ -109,6 +109,40 @@ func (r Router) ConfigureSTT(
 	return storeRouterConfig(ctx, client, wanted, stored)
 }
 
+// ConfigureTTS stores how this router speaks.
+//
+// The voice half of ConfigureSTT, on the same terms: the other three modalities are left
+// as they were stored. A voice named "custom:receptionist" is one of the customer's own
+// and nothing else, where a bare name falls back to the provider's library.
+func (r Router) ConfigureTTS(
+	ctx context.Context,
+	options *acceleration.TtsOptions,
+) (*acceleration.RouterConfig, error) {
+	if r.Config == "" {
+		return nil, errors.New(
+			`stream: ConfigureTTS writes a named config, so the router needs one: Router{Config: "healthcare"}`)
+	}
+
+	client, err := r.client()
+	if err != nil {
+		return nil, err
+	}
+
+	stored, err := namedRouterConfig(ctx, client, r.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	wanted := acceleration.RouterConfigRequest{Name: r.Config, Tts: options}
+	if stored != nil {
+		wanted.Stt, wanted.Llm, wanted.Search = stored.Stt, stored.Llm, stored.Search
+		wanted.Tags = stored.Tags
+	}
+	r.label(&wanted.Tags)
+
+	return storeRouterConfig(ctx, client, wanted, stored)
+}
+
 // SyncRouters stores every router config a directory of YAML files describes.
 //
 // The same bargain as an agent directory, for routing: a config that lives in the

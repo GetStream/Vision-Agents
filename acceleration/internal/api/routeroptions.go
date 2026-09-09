@@ -42,25 +42,8 @@ func sttOptionsOf(sent *SttOptions) options.STT {
 		ProfanityFilter: sent.ProfanityFilter,
 		Mode:            string(value(sent.Mode)),
 	}
-	if sent.DataPolicy != nil {
-		held.DataPolicy = options.DataPolicy{
-			AllowTraining: sent.DataPolicy.AllowTraining,
-			Retention:     options.Retention(value(sent.DataPolicy.Retention)),
-		}
-	}
-	// An overwrite is carried as text rather than as a decoded object because nothing
-	// here reads inside it: it is handed to whichever provider it names, which is the
-	// only thing that knows what its own settings are called.
-	for provider, block := range value(sent.Overwrites) {
-		encoded, err := json.Marshal(block)
-		if err != nil {
-			continue
-		}
-		if held.Overwrites == nil {
-			held.Overwrites = make(map[string]json.RawMessage, len(value(sent.Overwrites)))
-		}
-		held.Overwrites[provider] = encoded
-	}
+	held.DataPolicy = dataPolicyOf(sent.DataPolicy)
+	held.Overwrites = overwritesOf(sent.Overwrites)
 	return held
 }
 
@@ -98,23 +81,8 @@ func sttOptionsFor(held options.STT) *SttOptions {
 		mode := TranscriptionMode(held.Mode)
 		sent.Mode = &mode
 	}
-	if held.DataPolicy.Asks() {
-		sent.DataPolicy = &DataPolicy{
-			AllowTraining: held.DataPolicy.AllowTraining,
-			Retention:     optional(string(held.DataPolicy.Retention)),
-		}
-	}
-	if len(held.Overwrites) > 0 {
-		overwrites := make(map[string]any, len(held.Overwrites))
-		for provider, block := range held.Overwrites {
-			var decoded any
-			if err := json.Unmarshal(block, &decoded); err != nil {
-				continue
-			}
-			overwrites[provider] = decoded
-		}
-		sent.Overwrites = &overwrites
-	}
+	sent.DataPolicy = dataPolicyFor(held.DataPolicy)
+	sent.Overwrites = overwritesFor(held.Overwrites)
 	return sent
 }
 
@@ -124,6 +92,7 @@ func ttsOptionsOf(sent *TtsOptions) options.TTS {
 	}
 	return options.TTS{
 		Target:         value(sent.Target),
+		Providers:      value(sent.Providers),
 		Voice:          value(sent.Voice),
 		Languages:      value(sent.Languages),
 		Speed:          wider(sent.Speed),
@@ -135,12 +104,15 @@ func ttsOptionsOf(sent *TtsOptions) options.TTS {
 		Format:         value(sent.Format),
 		Pronunciations: value(sent.Pronunciations),
 		ChunkSchedule:  value(sent.ChunkSchedule),
+		DataPolicy:     dataPolicyOf(sent.DataPolicy),
+		Overwrites:     overwritesOf(sent.Overwrites),
 	}
 }
 
 func ttsOptionsFor(held options.TTS) *TtsOptions {
 	sent := &TtsOptions{
 		Target:        optional(held.Target),
+		Providers:     list(held.Providers),
 		Voice:         optional(held.Voice),
 		Languages:     list(held.Languages),
 		Speed:         narrower(held.Speed),
@@ -151,6 +123,8 @@ func ttsOptionsFor(held options.TTS) *TtsOptions {
 		Similarity:    narrower(held.Similarity),
 		Format:        optional(held.Format),
 		ChunkSchedule: list(held.ChunkSchedule),
+		DataPolicy:    dataPolicyFor(held.DataPolicy),
+		Overwrites:    overwritesFor(held.Overwrites),
 	}
 	if len(held.Pronunciations) > 0 {
 		pronunciations := held.Pronunciations
@@ -271,6 +245,64 @@ func list[T any](items []T) *[]T {
 		return nil
 	}
 	return &items
+}
+
+// dataPolicyOf and dataPolicyFor move a policy between the two shapes. Both modalities
+// that can be asked for one say it the same way, so they read it the same way too.
+func dataPolicyOf(sent *DataPolicy) options.DataPolicy {
+	if sent == nil {
+		return options.DataPolicy{}
+	}
+	return options.DataPolicy{
+		AllowTraining: sent.AllowTraining,
+		Retention:     options.Retention(value(sent.Retention)),
+	}
+}
+
+func dataPolicyFor(held options.DataPolicy) *DataPolicy {
+	if !held.Asks() {
+		return nil
+	}
+	return &DataPolicy{
+		AllowTraining: held.AllowTraining,
+		Retention:     optional(string(held.Retention)),
+	}
+}
+
+// overwritesOf carries an overwrite as text rather than as a decoded object because
+// nothing here reads inside it: it is handed to whichever provider it names, which is the
+// only thing that knows what its own settings are called.
+func overwritesOf(sent *map[string]any) map[string]json.RawMessage {
+	blocks := value(sent)
+	if len(blocks) == 0 {
+		return nil
+	}
+
+	held := make(map[string]json.RawMessage, len(blocks))
+	for provider, block := range blocks {
+		encoded, err := json.Marshal(block)
+		if err != nil {
+			continue
+		}
+		held[provider] = encoded
+	}
+	return held
+}
+
+func overwritesFor(held map[string]json.RawMessage) *map[string]any {
+	if len(held) == 0 {
+		return nil
+	}
+
+	overwrites := make(map[string]any, len(held))
+	for provider, block := range held {
+		var decoded any
+		if err := json.Unmarshal(block, &decoded); err != nil {
+			continue
+		}
+		overwrites[provider] = decoded
+	}
+	return &overwrites
 }
 
 // wider and narrower move between the float32 the spec's "format: float" generates and

@@ -194,6 +194,56 @@ func TestConfigureSTTNeedsANamedRouter(t *testing.T) {
 	}
 }
 
+func TestConfigureTTSCarriesTheOtherModalitiesForward(t *testing.T) {
+	server := newConfigured(t)
+	no := false
+
+	if _, err := DefineRouter(t.Context(), backendFor(server), RouterOptions{
+		Name: "healthcare",
+		STT:  &acceleration.SttOptions{Providers: &[]string{"deepgram"}},
+	}); err != nil {
+		t.Fatalf("defining the config: %v", err)
+	}
+
+	router := Router{Config: "healthcare", Backend: backendFor(server)}
+	voice := "custom:receptionist"
+	stored, err := router.ConfigureTTS(t.Context(), &acceleration.TtsOptions{
+		Providers:  &[]string{"elevenlabs", "en-low-latency"},
+		Voice:      &voice,
+		DataPolicy: &acceleration.DataPolicy{AllowTraining: &no},
+	})
+	if err != nil {
+		t.Fatalf("configuring speech: %v", err)
+	}
+
+	if got := *stored.Tts.Providers; len(got) != 2 || got[0] != "elevenlabs" {
+		t.Errorf("the priority list came back as %v", got)
+	}
+	if stored.Tts.Voice == nil || *stored.Tts.Voice != "custom:receptionist" {
+		t.Error("a voice asked for as one of the customer's own should be stored as one")
+	}
+	if stored.Tts.DataPolicy == nil || *stored.Tts.DataPolicy.AllowTraining {
+		t.Error("the data policy came back as something other than what was written")
+	}
+	if stored.Stt == nil || stored.Stt.Providers == nil {
+		t.Error("writing how a config speaks should not drop how it hears")
+	}
+	if server.count() != 1 {
+		t.Errorf("the backend is holding %d configs, not 1", server.count())
+	}
+}
+
+func TestConfigureTTSNeedsANamedRouter(t *testing.T) {
+	server := newConfigured(t)
+	router := Router{Backend: backendFor(server)}
+
+	_, err := router.ConfigureTTS(t.Context(), &acceleration.TtsOptions{})
+
+	if err == nil || !strings.Contains(err.Error(), "needs one") {
+		t.Fatalf("an unnamed router should be refused, got %v", err)
+	}
+}
+
 func TestADirectoryOfYamlBecomesOneConfigEach(t *testing.T) {
 	server := newConfigured(t)
 	directory := t.TempDir()

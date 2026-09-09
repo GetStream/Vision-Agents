@@ -49,7 +49,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
         if event.participant.user.id != "agent":
             await asyncio.sleep(5)  # let a few seconds of video buffer
-            await agent.simple_response("Describe what just happened in the video")
+            await agent.responses.create("Describe what just happened in the video")
 
     async with agent.join(call):
         await agent.finish()

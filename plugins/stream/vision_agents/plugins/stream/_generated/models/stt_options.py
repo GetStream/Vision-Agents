@@ -64,9 +64,10 @@ class SttOptions:
                 the repetitions and the false starts; smart removes them, tidies the grammar and formats the result, which is
                 why it cannot also diarize or time the words - they may no longer be the words that were spoken. Almost no
                 provider offers both, so this narrows where a request can go.
-            data_policy (DataPolicy | Unset): What a caller requires of what happens to their audio after it is transcribed.
-                This is a requirement rather than a description: a request naming one is only routed to a model whose declared
-                handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+            data_policy (DataPolicy | Unset): What a caller requires of what happens to what they send: the audio they had
+                transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a
+                description: a request naming one is only routed to a model whose declared handling meets it, and if none does
+                the request is refused rather than sent somewhere that does not.
             overwrites (SttOptionsOverwrites | Unset): Settings for one provider that this vocabulary has no word for, keyed
                 by provider name, for example {"deepgram": {"eot_threshold": 0.6}}. The provider named parses its own block and
                 refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.

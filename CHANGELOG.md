@@ -2,6 +2,17 @@
 
 ## Breaking Changes
 
+### `agent.simple_response(...)` is now `agent.responses.create(...)`
+
+Matches the shape of OpenAI's `client.responses.create`:
+
+```python
+async with agent.join(call):
+    await agent.responses.create("greet the user in one short sentence")
+```
+
+Arguments and behaviour are unchanged. `LLM.simple_response` on plugins is unaffected.
+
 ### Calls and transcripts default to the `agent` type
 
 A call type or channel type that is not named is now `agent` rather than `default` and
@@ -23,7 +34,7 @@ no longer ends with `await agent.finish()`:
 
 ```python
 async with agent.join(call):
-    await agent.simple_response("greet the user in one short sentence")
+    await agent.responses.create("greet the user in one short sentence")
 ```
 
 `finish()` is unchanged and still safe to call. Leaving a call that is still live is
@@ -60,7 +71,69 @@ tts = router.resolve("sonic_36")       # what Router("sonic_36") used to be
 A `start` frame on `/v1/{modality}/stream` with neither `target` nor `config_id` is also
 refused now, rather than falling back to a default nobody asked for.
 
+### `stream.TextSession` is gone: an agent answers in writing
+
+A conversation held in writing is the same `Agent` a call would get, so there is no second
+thing to learn. `chat()` holds it and `ask()` follows one reply:
+
+```python
+agent = Agent(config="docs_agent")
+
+async with agent.chat():
+    async for event in agent.ask("how does failover work?"):
+        if event.type == "agent_speech_delta":
+            print(event.text, end="", flush=True)
+```
+
+The events are the agent's own `RemoteEvent`s rather than `TextEvent`s: `delta` is
+`agent_speech_delta`, `answer` is `agent_speech` and `settled` is `task_settled`.
+`chat(agent_id)` answers in a conversation that already exists rather than in one of the
+agent's own.
+
+Dispatch keeps one agent per channel, so a written conversation carries on where it left off:
+
+```python
+@dispatch.wait_for_message()
+async def written(message: InboundMessage) -> None:
+    agent = await dispatch.get_or_create_agent(
+        message, lambda: Agent(config="chat_support")
+    )
+    await agent.responses.create(message.text)
+```
+
+### An agent directory needs `agent.yaml`, and a router config lives in a folder
+
+What makes a directory an agent is now `agent.yaml` next to `instructions.md`, rather than
+any of `instructions.md`, `skills/` or `knowledge/` being present. A directory without one
+is no longer found by name, so add one to each:
+
+```yaml
+# agents/customer_support/agent.yaml
+name: customer_support
+```
+
+Router configs move from a flat file per config to a folder per config. `routers/clinic.yaml`
+becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
+`{name}/router.yaml` under it rather than `*.yaml`. Both files take an optional
+`description`.
+
 ## New Features
+
+### An agent or router stores its own directory on starting
+
+`Agent(config="customer_support")` and `Router("clinic")` now find the directory behind the
+name and store it themselves, so the explicit sync goes away:
+
+```python
+async def create_agent(**kwargs) -> Agent:
+    return Agent(config="simple_voice_ai")  # no sync_agent call
+```
+
+`.agent_sync` and `.router_sync`, written next to `agent.yaml` and `router.yaml`, record the
+md5 of what was last stored and when. A launch that changed none of the synced files costs a
+file read rather than a request. `sync_agent` and `sync_routers` are unchanged and still
+there for storing a directory ahead of time; `ensure_agent(name)` is the new form that
+answers out of the stamp.
 
 ### Speech-to-text routing: a priority list, a data policy, and configs from YAML
 
@@ -95,6 +168,36 @@ await Router("healthcare").configure_stt(
 `sync_routers("routers/")` stores a directory of YAML configs the way `sync_agent` stores an
 agent directory, so routing that matters can live in the repository and be reviewed. Go gains
 `DefineRouter`, `Router.ConfigureSTT` and `SyncRouters`, which it did not have at all.
+
+### Text-to-speech routing says the same three things
+
+`TtsOptions` gains `providers`, `data_policy` and `overwrites`, which mean for a voice exactly
+what they mean for a transcript. Every voice in the router config now declares what it does
+with the text it is sent, so `allow_training: false` routes only to one that has said it does
+not train on it, and a policy nothing meets is refused rather than served anyway. A vendor
+named in a priority list is served by its streaming model on a socket and its batch model for
+a recording, so asking for `elevenlabs` live cannot land on the file-returning model.
+
+`overwrites` is currently the only way to steer a live voice per vendor — a voice id from one
+library means nothing at another — and covers `elevenlabs: {voice_id}` and
+`inworld: {voice_id, delivery_mode}`.
+
+A voice may also be named `custom:receptionist`, which means one of your own voices and
+nothing else: without the prefix a name that is not yours is passed through to the provider's
+library, and with it, it is refused. `VoiceBinding` gains `synced_at`, which is when a provider
+last came back with a voice that can be spoken in — `updated_at` moves again when a binding
+goes back to pending, so it could never answer that.
+
+```python
+await Router("healthcare").configure_tts(
+    providers=["elevenlabs", "en-low-latency"],
+    voice="custom:receptionist",
+    data_policy={"allow_training": False, "retention": "none"},
+    overwrites={"inworld": {"delivery_mode": "STABLE"}},
+)
+```
+
+Go gains `Router.ConfigureTTS` beside `ConfigureSTT`.
 
 ### Call pipeline shows the model routing picked
 
@@ -148,7 +251,7 @@ twice:
 
 ```python
 async with agent.join(call_type, call_id):
-    await agent.simple_response("greet the user in one short sentence")
+    await agent.responses.create("greet the user in one short sentence")
 ```
 
 `join(call)` with a call of your own is unchanged, and `create_call` is still there for
@@ -228,7 +331,7 @@ dispatch = StreamDispatch()
 @dispatch.wait_for_call()
 async def answer(call: InboundCall):
     async with agent.answer(call):
-        await agent.simple_response("greet the caller")
+        await agent.responses.create("greet the caller")
         await agent.finish()
 
 
@@ -340,15 +443,19 @@ await stream.define_agent(
 )
 ```
 
-### `add_knowledge_url`: filling a knowledge base from a page
+### `agent.knowledge`: filling a knowledge base from a page
 
-Python can now subscribe a knowledge base to a page it does not host. The page is read
-straight away, cut into the same passages a document becomes and kept under the url, so
-reading it again replaces what it wrote rather than duplicating it.
+An agent can now subscribe what it looks things up in to a page it does not host. The page
+is read straight away, cut into the same passages a document becomes and kept under the url,
+so reading it again replaces what it wrote rather than duplicating it.
 
 ```python
-await stream.add_knowledge_url("docs_agent", "https://visionagents.ai/introduction/quickstart")
+agent = Agent(config="docs_agent")
+await agent.knowledge.add_url("https://visionagents.ai/introduction/quickstart")
 ```
+
+Which knowledge base that is belongs to the stored config, so an agent configured by hand
+rather than by name has none to fill, and an agent whose pipeline runs here has none at all.
 
 ### `examples/text_agents`: agents that answer in writing
 
@@ -389,7 +496,7 @@ Two tools in one reply each started a generate, and the second stole the floor s
 
 ### `openai` plugin: `ChatCompletionsLLM` ignored injected/eager turn text and leaked `<think>` reasoning
 
-`ChatCompletionsLLM.simple_response` rebuilt the request purely from the conversation and ignored its `text` argument unless `participant` was `None`. Because the agent always supplies a participant, injected `agent.simple_response()` instructions produced an empty request (`400 chat content is empty`), and eager turns answered the *previous* transcript. The current `text` is now appended as the trailing user message when the conversation does not already end with it. Additionally, `<think>...</think>` reasoning spans emitted by reasoning models (e.g. MiniMax-M3) are now stripped from streamed deltas and final text so they no longer reach chat or TTS.
+`ChatCompletionsLLM.simple_response` rebuilt the request purely from the conversation and ignored its `text` argument unless `participant` was `None`. Because the agent always supplies a participant, injected `agent.responses.create()` instructions produced an empty request (`400 chat content is empty`), and eager turns answered the *previous* transcript. The current `text` is now appended as the trailing user message when the conversation does not already end with it. Additionally, `<think>...</think>` reasoning spans emitted by reasoning models (e.g. MiniMax-M3) are now stripped from streamed deltas and final text so they no longer reach chat or TTS.
 
 ### `gemini` plugin: crash on duplicate follow-up tool calls (#588)
 

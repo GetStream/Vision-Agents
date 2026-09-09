@@ -253,6 +253,31 @@ class TestAgentLauncher:
             assert session.finished
             assert not launcher.get_session(session_id=session.id)
 
+    async def test_a_handler_can_take_the_call_id_alone(self, stream_edge_mock):
+        # An agent that only ever joins calls of one type has no reason to name it.
+        llm = DummyLLM()
+        tts = DummyTTS()
+        joined: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+
+        async def create_agent(**kwargs) -> Agent:
+            return Agent(
+                llm=llm,
+                tts=tts,
+                edge=stream_edge_mock,
+                agent_user=User(name="test"),
+            )
+
+        async def join_call(agent: Agent, call_id: str, **kwargs) -> None:
+            await joined.put((call_id, kwargs))
+
+        launcher = AgentLauncher(create_agent=create_agent, join_call=join_call)
+        async with launcher:
+            await launcher.start_session(call_id="test", call_type="default")
+            call_id, rest = await asyncio.wait_for(joined.get(), 5.0)
+
+        assert call_id == "test"
+        assert rest == {"call_type": "default"}
+
     async def test_close_session_exists(self, stream_edge_mock):
         llm = DummyLLM()
         tts = DummyTTS()

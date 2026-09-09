@@ -2,11 +2,14 @@ import asyncio
 import logging
 import os
 import time
+from contextlib import AsyncExitStack
 from datetime import datetime
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional, Union
 
+from vision_agents.core.agents import Agent
 from vision_agents.core.messaging import InboundMessage
 from vision_agents.core.telephony import InboundCall
+from vision_agents.core.utils.utils import await_or_run
 
 from ._backend import Backend
 from ._socket import Socket
@@ -17,6 +20,7 @@ DISPATCH_PATH = "/v1/dispatch"
 
 Handler = Callable[[InboundCall], Awaitable[None]]
 MessageHandler = Callable[[InboundMessage], Awaitable[None]]
+AgentFactory = Callable[[], Union[Agent, Awaitable[Agent]]]
 
 
 class StreamDispatch:
@@ -46,7 +50,7 @@ class StreamDispatch:
                 llm=stream.Accelerated(config="john"),
             )
             async with agent.answer(call):
-                await agent.simple_response("greet the caller")
+                await agent.responses.create("greet the caller")
                 await agent.finish()
 
 
@@ -87,6 +91,12 @@ class StreamDispatch:
         self._message_handler: Optional[MessageHandler] = None
         self._socket: Optional[Socket] = None
         self._running: set[asyncio.Task[None]] = set()
+        # Which agent is answering which channel. A channel is one conversation, so the
+        # agent that answered the last message on it is the one that knows what has been
+        # said and should answer the next.
+        self._agents: dict[str, Agent] = {}
+        self._agents_lock = asyncio.Lock()
+        self._started = AsyncExitStack()
         # worker_id is what the router calls this connection, for matching a log line here
         # against one there.
         self.worker_id = ""
@@ -125,15 +135,14 @@ class StreamDispatch:
             ```python
             @dispatch.wait_for_message()
             async def written(message: InboundMessage):
-                async with stream.TextSession(
-                    config_id=message.config_id, agent_id=message.agent_id
-                ) as session:
-                    async for event in session.ask(message.text):
-                        pass
+                agent = await dispatch.get_or_create_agent(
+                    message, lambda: Agent(config="support")
+                )
+                await agent.responses.create(message.text)
             ```
 
-            Nothing is done with the events because the answer is written into the channel
-            by the backend as it is generated: the person who wrote is already reading it.
+            Nothing is waited for because the answer is written into the channel by the
+            backend as it is generated: the person who wrote is already reading it.
 
         Returns:
             A decorator that keeps the function it is given.
@@ -144,6 +153,38 @@ class StreamDispatch:
             return handler
 
         return register
+
+    async def get_or_create_agent(
+        self, message: InboundMessage, create_agent: AgentFactory
+    ) -> Agent:
+        """The agent answering on this message's channel, started if none is.
+
+        A channel is one conversation. The second message on it goes to the agent that
+        answered the first, which is still open and knows what has been said; only a
+        channel nothing is answering calls `create_agent`. The agent is given the channel,
+        so what it writes lands in the conversation the question was asked in.
+
+        Agents are kept until this worker stops waiting, so a conversation is not restarted
+        between messages.
+
+        Args:
+            message: What arrived, whose channel the agent answers in.
+            create_agent: Builds the agent for a channel nothing is answering. May be
+                sync or async.
+
+        Returns:
+            An agent already answering in writing.
+        """
+        async with self._agents_lock:
+            answering = self._agents.get(message.channel_id)
+            if answering is not None and not answering.closed:
+                return answering
+
+            agent = await await_or_run(create_agent)
+            await self._started.enter_async_context(agent.chat(message.agent_id))
+            self._agents[message.channel_id] = agent
+            logger.info("started an agent on %s", message.channel_id)
+            return agent
 
     async def run(self) -> None:
         """Wait for calls and messages until cancelled.
@@ -176,6 +217,8 @@ class StreamDispatch:
             reporter.cancel()
             await asyncio.gather(reporter, return_exceptions=True)
             await self._drain()
+            await self._started.aclose()
+            self._agents.clear()
             await socket.close()
             self._socket = None
 

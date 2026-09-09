@@ -93,7 +93,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     logger.info("🤖 Starting Agent...")
 
     async with agent.join(call):
-        await agent.simple_response(text="Hello! Tell me what you can do.")
+        await agent.responses.create(text="Hello! Tell me what you can do.")
 
         await agent.finish()
 

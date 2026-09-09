@@ -356,7 +356,15 @@ func (o STT) Terms() []Term {
 
 // TTS is how a caller wants text spoken.
 type TTS struct {
-	Target         string            `json:"target,omitempty"`
+	Target string `json:"target,omitempty"`
+	// Providers is a priority list of where to try, in the order given, and it means the
+	// same thing here as it does for speech: a bare provider name, a "provider/model", or
+	// a capability shortcut, tried in the order written. Empty leaves the choice to
+	// Target.
+	Providers []string `json:"providers,omitempty"`
+	// Voice is a provider's own voice id, or one of the customer's own voices by id or by
+	// name. OwnVoicePrefix asks for the latter and nothing else, for a name that could be
+	// both.
 	Voice          string            `json:"voice,omitempty"`
 	Languages      []string          `json:"languages,omitempty"`
 	Speed          *float64          `json:"speed,omitempty"`
@@ -368,12 +376,29 @@ type TTS struct {
 	Format         string            `json:"format,omitempty"`
 	Pronunciations map[string]string `json:"pronunciations,omitempty"`
 	ChunkSchedule  []int             `json:"chunk_schedule,omitempty"`
+	// DataPolicy is what the caller requires of what happens to what is sent to be
+	// spoken, and to the voice speaking it.
+	DataPolicy DataPolicy `json:"data_policy,omitempty"`
+	// Overwrites are settings for one provider that the vocabulary above has no word for,
+	// keyed by provider name, on the same terms as the speech ones: the provider named
+	// parses its own block and refuses a field it does not have.
+	Overwrites map[string]json.RawMessage `json:"overwrites,omitempty"`
 }
+
+// OwnVoicePrefix marks a voice as one of the customer's own rather than one out of a
+// provider's library.
+//
+// Without it a bare name is looked for among the customer's voices first and passed
+// through when there is none, which is what keeps every existing config working. With it
+// there is no passing through: a voice that is not theirs is an error, so a typo cannot
+// quietly become a stranger's voice from a provider's catalogue.
+const OwnVoicePrefix = "custom:"
 
 // Merge returns these options with everything the other one names written over them.
 func (o TTS) Merge(over TTS) TTS {
 	merged := o
 	overwrite(&merged.Target, over.Target)
+	overwriteSlice(&merged.Providers, over.Providers)
 	overwrite(&merged.Voice, over.Voice)
 	overwriteSlice(&merged.Languages, over.Languages)
 	overwritePointer(&merged.Speed, over.Speed)
@@ -387,7 +412,32 @@ func (o TTS) Merge(over TTS) TTS {
 		merged.Pronunciations = maps.Clone(over.Pronunciations)
 	}
 	overwriteSlice(&merged.ChunkSchedule, over.ChunkSchedule)
+	overwritePointer(&merged.DataPolicy.AllowTraining, over.DataPolicy.AllowTraining)
+	overwrite((*string)(&merged.DataPolicy.Retention), string(over.DataPolicy.Retention))
+	// Per provider rather than wholesale, so a call can change one vendor's setting
+	// without restating what the config said about the others.
+	if len(over.Overwrites) > 0 {
+		merged.Overwrites = make(map[string]json.RawMessage, len(o.Overwrites)+len(over.Overwrites))
+		maps.Copy(merged.Overwrites, o.Overwrites)
+		maps.Copy(merged.Overwrites, over.Overwrites)
+	}
 	return merged
+}
+
+// Validate reports the first thing about these options a voice could not be asked for.
+func (o TTS) Validate() error {
+	if !o.DataPolicy.Valid() {
+		return fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention)
+	}
+	for provider, block := range o.Overwrites {
+		if provider == "" {
+			return errors.New("options: an overwrite has to name the provider it is for")
+		}
+		if !json.Valid(block) {
+			return fmt.Errorf("options: the overwrites for %s are not valid JSON", provider)
+		}
+	}
+	return nil
 }
 
 // Terms is what these options ask of a voice.

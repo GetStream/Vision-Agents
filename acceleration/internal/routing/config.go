@@ -430,11 +430,12 @@ func (c Config) Validate() error {
 		if err := c[modality].validate(); err != nil {
 			return fmt.Errorf("routing: %s: %w", modality, err)
 		}
-		// Speech is the modality a data policy can be asked of, so it is the one where
-		// every model has to have said what happens to what it is sent. An undeclared
-		// model would not answer such a request anyway; failing here is how that is
-		// found out when the provider is added rather than when a customer asks.
-		if modality != STT {
+		// Speech in and speech out are the modalities a data policy can be asked of, so
+		// they are the ones where every model has to have said what happens to what it is
+		// sent. An undeclared model would not answer such a request anyway; failing here
+		// is how that is found out when the provider is added rather than when a customer
+		// asks.
+		if modality != STT && modality != TTS {
 			continue
 		}
 		for _, provider := range c[modality].Providers {

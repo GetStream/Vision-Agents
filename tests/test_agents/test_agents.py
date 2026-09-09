@@ -17,7 +17,7 @@ from vision_agents.core.edge import Call, EdgeTransport
 from vision_agents.core.events import EventManager
 from vision_agents.core.harness import DefaultHarness
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent, OmniLLM
-from vision_agents.core.llm.remote import RemoteCall, RemoteEvent
+from vision_agents.core.llm.remote import KnowledgePage, RemoteCall, RemoteEvent
 from vision_agents.core.processors.base_processor import AudioPublisher
 from vision_agents.core.stt import STT as BaseSTT
 from vision_agents.core.telephony import InboundCall, OutboundCall, PlacedCall
@@ -154,6 +154,17 @@ class DummyCall(Call):
         return self._id
 
 
+class DummyKnowledge:
+    """A knowledge base that keeps whatever was read into it."""
+
+    def __init__(self):
+        self.pages: list[str] = []
+
+    async def add_url(self, url: str) -> KnowledgePage:
+        self.pages.append(url)
+        return KnowledgePage(url=url, state="indexed", passages=3)
+
+
 class DummyRemotePipeline(OmniLLM):
     """An LLM whose pipeline runs somewhere else, as far as the agent can tell."""
 
@@ -161,6 +172,7 @@ class DummyRemotePipeline(OmniLLM):
 
     def __init__(self):
         super().__init__()
+        self.knowledge = DummyKnowledge()
         self.joined: Optional[RemoteCall] = None
         self.left = False
         self.said: list[str] = []
@@ -207,6 +219,20 @@ class DummyRemotePipeline(OmniLLM):
 
     async def stop_watching_video_track(self) -> None:
         pass
+
+
+async def asking(
+    agent: Agent, llm: DummyRemotePipeline, question: str
+) -> "asyncio.Task[list[RemoteEvent]]":
+    """Start following a reply, returning once the question has reached the pipeline."""
+
+    async def read() -> list[RemoteEvent]:
+        return [event async for event in agent.ask(question)]
+
+    following = asyncio.create_task(read())
+    while question not in llm.said:
+        await asyncio.sleep(0)
+    return following
 
 
 @pytest.fixture
@@ -910,17 +936,19 @@ class TestAgent:
         assert agent.call is not None
         assert agent.call.id == "call-9"
 
-    async def test_joining_a_call_type_without_an_id_is_refused(self):
+    async def test_joining_one_name_creates_a_call_of_that_id_on_the_agent_type(self):
+        edge = DummyEdge()
         agent = Agent(
             llm=DummyLLM(),
             tts=DummyTTS(),
-            edge=DummyEdge(),
+            edge=edge,
             agent_user=User(name="test"),
         )
 
-        with pytest.raises(ValueError, match="needs the call's id"):
-            async with agent.join("default", wait_for_end=False):
-                pass
+        async with agent.join("call-9", wait_for_end=False):
+            assert agent._call_type == "agent"
+
+        assert edge.created_calls == ["call-9"]
 
     async def test_avatar_wiring(self):
         """Avatar metrics forward to agent metrics after merge, and the
@@ -1048,7 +1076,7 @@ class TestAgent:
 
         async with agent.join(call, wait_for_end=False):
             await agent.say("one moment")
-            await agent.simple_response("greet them")
+            await agent.responses.create("greet them")
 
         assert llm.said == ["one moment", "greet them"]
 
@@ -1080,6 +1108,122 @@ class TestAgent:
             pass
 
         assert llm.left
+
+    async def test_a_written_conversation_joins_no_call(self):
+        llm = DummyRemotePipeline()
+        agent = Agent(
+            llm=llm,
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            instructions="be brief",
+        )
+
+        async with agent.chat("channel-1"):
+            pass
+
+        assert llm.joined is not None
+        assert llm.joined.call_id == ""
+        assert llm.joined.agent_id == "channel-1"
+        assert llm.joined.instructions == "be brief"
+        assert llm.left
+
+    async def test_a_written_conversation_needs_a_pipeline_running_elsewhere(self):
+        # Nothing here holds one: the backend is what hears a question and writes back.
+        agent = Agent(
+            llm=DummyLLM(),
+            stt=DummySTT(),
+            tts=DummyTTS(),
+            turn_detection=DummyTurnDetector(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        with pytest.raises(RuntimeError, match="runs elsewhere"):
+            async with agent.chat():
+                pass
+
+    async def test_a_page_is_read_into_the_knowledge_base_the_pipeline_looks_up(self):
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        page = await agent.knowledge.add_url("https://example.com/handbook")
+
+        assert page.passages == 3
+        assert llm.knowledge.pages == ["https://example.com/handbook"]
+
+    async def test_an_agent_answering_here_has_no_knowledge_base(self):
+        # The lookup happens where the pipeline does, so a local one has nothing to fill.
+        agent = Agent(
+            llm=DummyLLM(),
+            stt=DummySTT(),
+            tts=DummyTTS(),
+            turn_detection=DummyTurnDetector(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        with pytest.raises(RuntimeError, match="runs elsewhere"):
+            agent.knowledge
+
+    async def test_asking_follows_the_reply_until_it_is_finished(self):
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.chat():
+            written = await asking(agent, llm, "what is routing")
+            await llm.report(RemoteEvent(type="agent_speech_delta", text="It picks "))
+            await llm.report(RemoteEvent(type="agent_speech_delta", text="a provider."))
+            await llm.report(
+                RemoteEvent(type="agent_speech", text="It picks a provider.")
+            )
+            seen = await asyncio.wait_for(written, timeout=5)
+
+        assert llm.said == ["what is routing"]
+        assert [event.type for event in seen] == [
+            "agent_speech_delta",
+            "agent_speech_delta",
+            "agent_speech",
+        ]
+        assert seen[-1].text == "It picks a provider."
+
+    async def test_a_question_handed_to_a_skill_is_answered_over_two_turns(self):
+        # The model says something while the work runs and answers again once it comes
+        # back. Ending at the first reply would hand back the filler and drop the answer.
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.chat():
+            written = await asking(agent, llm, "how does failover work")
+            await llm.report(RemoteEvent(type="delegated", skill="explain"))
+            await llm.report(RemoteEvent(type="agent_speech", text="Let me check."))
+            await llm.report(
+                RemoteEvent(type="task_settled", skill="explain", text="It retries.")
+            )
+            await llm.report(
+                RemoteEvent(type="agent_speech", text="It retries on the next one.")
+            )
+            seen = await asyncio.wait_for(written, timeout=5)
+
+        assert [event.type for event in seen] == [
+            "delegated",
+            "agent_speech",
+            "task_settled",
+            "agent_speech",
+        ]
+        assert seen[-1].text == "It retries on the next one."
+
+    async def test_a_conversation_that_ends_stops_whoever_is_reading_it(self):
+        # A session closed underneath the reader must not leave it waiting for an answer
+        # that is never coming.
+        llm = DummyRemotePipeline()
+        agent = Agent(llm=llm, edge=DummyEdge(), agent_user=User(name="test"))
+
+        async with agent.chat():
+            written = await asking(agent, llm, "anything")
+            await llm.leave_remote()
+            seen = await asyncio.wait_for(written, timeout=5)
+
+        assert seen == []
 
 
 class TestOpenUI:

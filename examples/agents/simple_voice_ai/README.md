@@ -1,8 +1,8 @@
 # Simple voice AI (accelerated)
 
-A voice agent with nothing in the pipeline running in Python. `instructions.md` says what
-the agent is, and it names no models at all: a config that says nothing about who does the
-work gets the router's defaults.
+A voice agent with nothing in the pipeline running in Python. `agent.yaml` names it,
+`instructions.md` says what it is, and it names no models at all: a config that says
+nothing about who does the work gets the router's defaults.
 
 | Modality   | Default target   |
 | ---------- | ---------------- |
@@ -54,5 +54,6 @@ STREAM_ACCELERATION_URL=http://localhost:8080
 STREAM_ACCELERATION_CUSTOMER_ID=examples
 ```
 
-The first run pushes `instructions.md` to the router; a second run with the same file does
-nothing.
+Nothing here calls `sync_agent`. The agent finds the directory `agent.yaml` marks and
+pushes it on joining; `.agent_sync` records the md5, so a second run over the same files
+does nothing.

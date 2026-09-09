@@ -13,6 +13,11 @@ import (
 // Recorders is the set of batch voices a build can construct.
 type Recorders = routing.Registry[tts.Recorder]
 
+// batch is what this router's half of the provider list is, for a priority list that
+// names a vendor rather than one of their models. A whole text wants the batch voice,
+// which is the one that can be asked for a codec rather than raw audio.
+var batch = false
+
 // NewRecorderRegistry returns an empty registry.
 func NewRecorderRegistry() *Recorders { return routing.NewRegistry[tts.Recorder]() }
 
@@ -75,9 +80,12 @@ func (r *Recordings) Record(
 		CustomerID:    recording.CustomerID,
 		Tags:          recording.Tags,
 		Target:        recording.Options.Target,
+		Providers:     recording.Options.Providers,
+		Realtime:      &batch,
 		LanguageHints: recording.Options.Languages,
 		Voice:         recording.Options.Voice,
 		Terms:         recording.Options.Terms(),
+		DataPolicy:    recording.Options.DataPolicy,
 		TTS:           recording.Options,
 	}
 

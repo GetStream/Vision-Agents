@@ -2,6 +2,7 @@ package ttsrouter
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
@@ -72,6 +74,28 @@ func (s *TTSRouterSuite) newRouter() *Router {
 	s.Require().NoError(err)
 
 	router, err := New(Options{Config: config[routing.TTS], Registry: DefaultRegistry()})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return router
+}
+
+// newStubbedRouter routes over the built-in config with every real voice replaced by a
+// stub, so where a request lands can be asked of the deployment's own config without a
+// key for any of the vendors in it. Every spec built is recorded, which is how what a
+// provider was asked for is checked.
+func (s *TTSRouterSuite) newStubbedRouter(built *[]routing.Spec) *Router {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+
+	registry := routing.NewRegistry[tts.TTS]()
+	for _, provider := range config[routing.TTS].Providers {
+		registry.Register(provider.Provider, func(spec routing.Spec) (tts.TTS, error) {
+			*built = append(*built, spec)
+			return newStubTTS(), nil
+		})
+	}
+
+	router, err := New(Options{Config: config[routing.TTS], Registry: registry})
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)
 	return router
@@ -175,6 +199,131 @@ func (s *TTSRouterSuite) TestRegistryPassesTheVoiceAndLanguageToTheProvider() {
 	})
 	s.Require().NoError(err)
 	s.Equal("eleven_multilingual_v2", built.Model())
+}
+
+func (s *TTSRouterSuite) TestAPriorityListIsTriedInTheOrderItWasWritten() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Options:    options.TTS{Providers: []string{"inworld", "cartesia"}},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("inworld", session.Provider(),
+		"a caller who wrote an order wants the second name only once the first is down")
+}
+
+func (s *TTSRouterSuite) TestAVendorNamedForALiveCallGetsTheirStreamingModel() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	// ElevenLabs has four models here, and eleven_v3 is the one that returns a file
+	// rather than streaming. A socket asking for the vendor by name must not get it.
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Options:    options.TTS{Providers: []string{"elevenlabs"}},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Equal("elevenlabs", session.Provider())
+	s.NotEqual("eleven_v3", session.Model(), "the batch model cannot serve a live socket")
+}
+
+func (s *TTSRouterSuite) TestAVoiceThatTrainsOnWhatItIsSentIsNotAskedToSpeakForACallerWhoRefused() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+	no := false
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "en-low-latency",
+		Options:    options.TTS{DataPolicy: options.DataPolicy{AllowTraining: &no}},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	config, ok := router.Config().Provider(session.Provider() + "/" + session.Model())
+	s.Require().True(ok)
+	s.Equal(options.ClaimNo, config.DataPolicy.TrainsOnData)
+}
+
+func (s *TTSRouterSuite) TestAPolicyNoVoiceMeetsIsRefusedRatherThanServedAnyway() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+	no := false
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Options: options.TTS{
+			Providers:  []string{"elevenlabs"},
+			DataPolicy: options.DataPolicy{AllowTraining: &no},
+		},
+	})
+
+	s.Error(err, "speaking somewhere the caller ruled out is worse than not speaking")
+	s.Empty(built, "nothing should have been built for a request nobody may serve")
+}
+
+func (s *TTSRouterSuite) TestAnOverwriteReachesTheVendorItNames() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	session, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Voice:      "library-voice",
+		Options: options.TTS{
+			Providers: []string{"inworld"},
+			Overwrites: map[string]json.RawMessage{
+				"inworld":    json.RawMessage(`{"delivery_mode":"STABLE"}`),
+				"elevenlabs": json.RawMessage(`{"voice_id":"el-1"}`),
+			},
+		},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Require().Len(built, 1)
+	s.JSONEq(`{"delivery_mode":"STABLE"}`, string(built[0].Overwrites),
+		"a vendor is handed its own block and nobody else's")
+}
+
+func (s *TTSRouterSuite) TestRegistryReadsTheDeliveryModeAndVoiceFromOverwrites() {
+	var inworldSaid inworldSettings
+	s.Require().NoError(routing.Spec{
+		Overwrites: json.RawMessage(`{"delivery_mode":"CREATIVE","voice_id":"Ashley"}`),
+	}.Settings(&inworldSaid))
+	s.Equal("CREATIVE", inworldSaid.DeliveryMode)
+	s.Equal("Ashley", inworldSaid.VoiceID)
+
+	var elevenlabsSaid elevenlabsSettings
+	s.Require().NoError(routing.Spec{
+		Overwrites: json.RawMessage(`{"voice_id":"el-1"}`),
+	}.Settings(&elevenlabsSaid))
+	s.Equal("el-1", elevenlabsSaid.VoiceID)
+}
+
+func (s *TTSRouterSuite) TestAVendorsOwnVoiceIdWinsOverTheOneTheRequestAsked() {
+	// A voice id from one library means nothing at another, so a config that routes
+	// between vendors names the voice per vendor and the one chosen is the one read.
+	s.Equal("el-1", voiceOr("el-1", "founder"))
+	s.Equal("founder", voiceOr("", "founder"))
+}
+
+func (s *TTSRouterSuite) TestRegistryRefusesAnOverwriteTheVendorHasNoFieldFor() {
+	registry := DefaultRegistry()
+	s.T().Setenv("INWORLD_API_KEY", "test-key")
+
+	_, err := registry.Build("inworld", routing.Spec{
+		Model:      "inworld-tts-2-flash",
+		Overwrites: json.RawMessage(`{"delivery_moode":"STABLE"}`),
+	})
+
+	s.ErrorContains(err, "delivery_moode",
+		"a misspelt setting has to be reported, since the alternative is silently not sending it")
 }
 
 func (s *TTSRouterSuite) TestStartRequiresACustomer() {

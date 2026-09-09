@@ -5,6 +5,7 @@ from typing import Any, AsyncIterator, Optional
 import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestServer
+from vision_agents.core import Agent
 from vision_agents.core.messaging import InboundMessage
 from vision_agents.core.telephony import InboundCall
 from vision_agents.plugins import stream
@@ -24,6 +25,9 @@ class Router:
         # capacity is what the worker said it could hold, read off the query string.
         self.capacity = ""
         self.reports: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        # sessions is one entry per session created, which is how many conversations the
+        # worker started rather than carried on.
+        self.sessions: list[dict[str, Any]] = []
         self._socket: Optional[web.WebSocketResponse] = None
         self._connected = asyncio.Event()
         self._closing = False
@@ -31,6 +35,10 @@ class Router:
     def app(self) -> web.Application:
         app = web.Application()
         app.router.add_get("/v1/dispatch", self._dispatch)
+        app.router.add_get("/v1/agents/configs", self._configs)
+        app.router.add_post("/v1/agents/sessions", self._create)
+        app.router.add_get("/v1/agents/sessions/{id}/events", self._session_events)
+        app.router.add_delete("/v1/agents/sessions/{id}", self._close)
         return app
 
     async def hand_over(self, frame: dict[str, Any]) -> None:
@@ -64,6 +72,46 @@ class Router:
         assert self._socket is not None
         self._closing = True
         await self._socket.close()
+
+    async def _configs(self, _: web.Request) -> web.Response:
+        return web.json_response(
+            data=[
+                {
+                    "id": "config-7",
+                    "name": "chat_desk",
+                    "mode": "text",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        )
+
+    async def _create(self, request: web.Request) -> web.Response:
+        wanted = await request.json()
+        self.sessions.append(wanted)
+        return web.json_response(
+            status=201,
+            data={
+                "id": f"session-{len(self.sessions)}",
+                "call_id": "",
+                "call_type": "agent",
+                "user_id": wanted.get("user_id", ""),
+                "agent_id": wanted.get("agent_id", ""),
+                "text": True,
+                "state": "live",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        )
+
+    async def _close(self, _: web.Request) -> web.Response:
+        return web.Response(status=204)
+
+    async def _session_events(self, request: web.Request) -> web.WebSocketResponse:
+        socket = web.WebSocketResponse()
+        await socket.prepare(request)
+        async for _ in socket:
+            pass
+        return socket
 
     async def _dispatch(self, request: web.Request) -> web.WebSocketResponse:
         self.capacity = request.query.get("capacity", "")
@@ -99,7 +147,7 @@ MESSAGE = {
     "channel_type": "agent",
     "channel_id": "call-1",
     "agent_id": "call-1",
-    "config_id": "chat_support",
+    "config_id": "chat_desk",
     "text": "is my invoice reissuable?",
     "message_id": "message-1",
     "user_id": "sam",
@@ -412,7 +460,7 @@ class TestStreamDispatch:
 
         assert message.channel_id == "call-1"
         assert message.channel_type == "agent"
-        assert message.config_id == "chat_support"
+        assert message.config_id == "chat_desk"
         assert message.text == "is my invoice reissuable?"
         assert message.message_id == "message-1"
         assert message.user_id == "sam"
@@ -499,6 +547,71 @@ class TestStreamDispatch:
             await asyncio.gather(running, return_exceptions=True)
 
         assert message.text == "is my invoice reissuable?"
+
+    @pytest.fixture
+    def acceleration(self, router: Router, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The environment an agent built from a stored config reads."""
+        monkeypatch.setenv("STREAM_ACCELERATION_URL", router.url)
+        monkeypatch.setenv("STREAM_ACCELERATION_CUSTOMER_ID", "acme")
+        monkeypatch.setenv("STREAM_API_KEY", "key")
+        monkeypatch.setenv("STREAM_API_SECRET", "secret")
+
+    async def answering(
+        self, router: Router, dispatch: stream.StreamDispatch, *channels: str
+    ) -> list[Agent]:
+        """The agent each of those channels was answered by, in order."""
+        answered: asyncio.Queue[Agent] = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await answered.put(
+                await dispatch.get_or_create_agent(
+                    message, lambda: Agent(config="chat_desk")
+                )
+            )
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            agents = []
+            for channel in channels:
+                await router.hand_over({**MESSAGE, "channel_id": channel})
+                agents.append(await asyncio.wait_for(answered.get(), SETTLE))
+            return agents
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+    async def test_an_agent_answers_in_the_channel_the_message_was_written_in(
+        self, router: Router, dispatch: stream.StreamDispatch, acceleration: None
+    ):
+        # The channel is the agent id, which is what puts the answer back in the
+        # conversation the question was asked in.
+        await self.answering(router, dispatch, "call-1")
+
+        assert len(router.sessions) == 1
+        assert router.sessions[0]["agent_id"] == "call-1"
+        assert router.sessions[0]["text"] is True
+        assert router.sessions[0]["config_id"] == "config-7"
+
+    async def test_a_second_message_on_a_channel_goes_to_the_agent_that_answered_the_first(
+        self, router: Router, dispatch: stream.StreamDispatch, acceleration: None
+    ):
+        # Starting a second agent would answer as though the first exchange never happened.
+        first, second = await self.answering(router, dispatch, "call-1", "call-1")
+
+        assert first is second
+        assert len(router.sessions) == 1
+
+    async def test_another_channel_is_another_conversation(
+        self, router: Router, dispatch: stream.StreamDispatch, acceleration: None
+    ):
+        first, second = await self.answering(router, dispatch, "call-1", "call-2")
+
+        assert first is not second
+        assert [created["agent_id"] for created in router.sessions] == [
+            "call-1",
+            "call-2",
+        ]
 
     async def test_a_message_still_being_answered_is_waited_for(
         self, router: Router, dispatch: stream.StreamDispatch

@@ -231,7 +231,7 @@ class TestDefineAgent:
         assert "sandbox" not in router.configs[config.id]
 
 
-class TestAddKnowledgeUrl:
+class TestKnowledge:
     @pytest.fixture
     async def router(self) -> AsyncIterator[Router]:
         fake = Router()
@@ -241,22 +241,37 @@ class TestAddKnowledgeUrl:
         yield fake
         await server.close()
 
-    async def test_a_page_is_read_into_the_namespace_it_was_added_to(
-        self, router: Router
-    ):
-        page = await stream.add_knowledge_url(
-            "docs",
-            "https://example.com/handbook",
-            url=router.url,
-            customer_id="acme",
+    @pytest.fixture
+    def knowledge(self, router: Router) -> stream.Knowledge:
+        return stream.Knowledge(
+            "docs", stream.Backend(url=router.url, customer_id="acme")
         )
 
-        assert page.namespace == "docs"
+    async def test_a_page_is_read_into_the_agents_own_namespace(
+        self, router: Router, knowledge: stream.Knowledge
+    ):
+        page = await knowledge.add_url("https://example.com/handbook")
+
         assert page.url == "https://example.com/handbook"
+        assert page.state == "indexed"
         assert page.passages == 4
         assert router.pages == [
             {"namespace": "docs", "url": "https://example.com/handbook"}
         ]
+
+    async def test_an_agent_configured_by_hand_has_no_knowledge_base(
+        self, router: Router
+    ):
+        # Which base an agent reads is the stored config's business, so an agent that
+        # names none has nothing to add to rather than a namespace of its own.
+        nameless = stream.Knowledge(
+            "", stream.Backend(url=router.url, customer_id="acme")
+        )
+
+        with pytest.raises(ValueError, match="named by the agent"):
+            await nameless.add_url("https://example.com/handbook")
+
+        assert router.pages == []
 
 
 class TestSyncAgent:
@@ -267,12 +282,19 @@ class TestSyncAgent:
         knowledge = root / "knowledge"
         skills.mkdir(parents=True)
         knowledge.mkdir()
+        (root / "agent.yaml").write_text("name: support\n")
         (root / "instructions.md").write_text("Be helpful.\n")
         (skills / "refund.md").write_text(
             "---\ndescription: work out a refund\n---\nRead the policy.\n"
         )
         (knowledge / "policy.md").write_text("# Returns\n\n30 days.\n")
         return root
+
+    @pytest.fixture
+    def launched_from(self, support_dir, monkeypatch):
+        """Where an example is run from: the directory the agent's own is filed in."""
+        monkeypatch.chdir(support_dir.parent)
+        return support_dir
 
     @pytest.fixture
     async def router(self) -> AsyncIterator[Router]:
@@ -312,3 +334,42 @@ class TestSyncAgent:
         assert again.config.id == first.config.id
         assert router.syncs == 2
         assert len(router.configs) == 1
+
+    async def test_a_launch_after_an_unchanged_launch_asks_the_router_nothing(
+        self, router: Router, launched_from
+    ):
+        stored = await stream.ensure_agent(
+            "support", url=router.url, customer_id="acme"
+        )
+
+        assert stored is not None
+        assert router.syncs == 1
+        assert (
+            await stream.ensure_agent("support", url=router.url, customer_id="acme")
+            is None
+        ), ".agent_sync should answer for a directory nothing has touched"
+        assert router.syncs == 1
+
+    async def test_a_launch_after_an_edit_stores_the_directory_again(
+        self, router: Router, launched_from
+    ):
+        await stream.ensure_agent("support", url=router.url, customer_id="acme")
+
+        (launched_from / "instructions.md").write_text("Be brief.\n")
+        stored = await stream.ensure_agent(
+            "support", url=router.url, customer_id="acme"
+        )
+
+        assert stored is not None
+        assert stored.unchanged is False
+        assert router.configs[stored.config.id]["instructions"] == "Be brief."
+        assert router.syncs == 2
+
+    async def test_a_name_with_no_directory_behind_it_is_left_alone(
+        self, router: Router, launched_from
+    ):
+        assert (
+            await stream.ensure_agent("nowhere", url=router.url, customer_id="acme")
+            is None
+        )
+        assert router.syncs == 0

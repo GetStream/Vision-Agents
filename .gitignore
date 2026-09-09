@@ -91,6 +91,9 @@ stream-py/
 examples/**/uv.lock
 plugins/*/example/uv.lock
 
+# Audio an example spoke for itself
+/examples/routers/tts_example/spoken.wav
+
 # Compiled Go commands, which land beside the module they were built from
 /acceleration/agent
 /acceleration/chat
@@ -136,4 +139,8 @@ xcuserdata/
 # churn. The app's, under xcshareddata, is committed.
 /sdks/swift/*/Package.resolved
 *.spec.md
+
+# What an agent or router directory was last synced as. Local to whoever ran it.
+.agent_sync
+.router_sync
 

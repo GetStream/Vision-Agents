@@ -79,5 +79,5 @@ The `LocalModerationProcessor` extends the Roboflow cloud detection processor bu
 - Implements `Warmable` so the model loads during agent startup, not on the first frame
 - No cloud round-trip per frame — lower latency
 - Detected regions are covered with a heavy Gaussian blur
-- Detection events trigger LLM responses via `agent.simple_response()`
+- Detection events trigger LLM responses via `agent.responses.create()`
 - A warning lock prevents overlapping warnings; a `_wait_for_tts_playback` helper ensures the full warning is heard before any kick

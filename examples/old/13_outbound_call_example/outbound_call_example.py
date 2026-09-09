@@ -77,7 +77,7 @@ async def main() -> None:
         ring_timeout=25.0,
     ) as placed:
         logger.info("ringing %s, join %s to listen in", to, placed.call_id)
-        await agent.simple_response(
+        await agent.responses.create(
             "greet the user and let them know you're a friendly AI agent"
         )
         await agent.finish()

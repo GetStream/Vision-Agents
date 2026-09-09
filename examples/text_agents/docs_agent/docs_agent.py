@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from dotenv import load_dotenv
-from vision_agents.plugins import stream as acceleration
+from vision_agents.core import Agent
 
 logging.basicConfig(level=logging.INFO)
 # What this example prints is the point of it, and a request per HTTP call would bury that.
@@ -13,10 +13,10 @@ load_dotenv()
 """
 A text agent that answers out of what it has read, and nothing else.
 
-Half of what it knows is the knowledge directory next to this file, which `sync_agent`
-stores. The other half is published elsewhere: `add_knowledge_url` reads that page, cuts it
-into the same passages a document becomes and keeps them under the same name, so the one
-lookup the agent does mid-answer covers both.
+Half of what it knows is the knowledge directory next to this file, which the agent stores
+itself on starting. The other half is published elsewhere: `agent.knowledge.add_url` reads
+that page, cuts it into the same passages a document becomes and keeps them under the same
+name, so the one lookup the agent does mid-answer covers both.
 
 Needs a router: see acceleration/README.md, then point STREAM_ACCELERATION_URL at it. The
 knowledge base is TURBOPUFFER_API_KEY on the router and reading a page is EXA_API_KEY.
@@ -31,13 +31,14 @@ QUESTION = "What do I need to run my first agent, and what does llm-fast mean?"
 
 
 async def main() -> None:
-    synced = await acceleration.sync_agent(AGENT)
-    page = await acceleration.add_knowledge_url(AGENT, QUICKSTART)
+    agent = Agent(config=AGENT)
+
+    page = await agent.knowledge.add_url(QUICKSTART)
     print(f"\n{page.url} is {page.state} as {page.passages} passages\n")
 
-    async with acceleration.TextSession(config_id=synced.config.id) as session:
-        async for event in session.ask(QUESTION):
-            if event.type == "delta":
+    async with agent.chat():
+        async for event in agent.ask(QUESTION):
+            if event.type == "agent_speech_delta":
                 print(event.text, end="", flush=True)
             elif event.type == "looked_up":
                 print(f"[looked up {event.query!r}: {event.documents} passages]")

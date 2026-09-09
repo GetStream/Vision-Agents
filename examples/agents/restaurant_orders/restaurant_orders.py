@@ -12,7 +12,7 @@ load_dotenv()
 
 """
 An agent that answers the restaurant's phone and takes orders from the menu in
-this directory.
+this directory, which is stored on the first call rather than by hand.
 """
 
 dispatch = acceleration.StreamDispatch()
@@ -25,13 +25,12 @@ async def inbound_call(call: acceleration.CallContext):
     )
     async with agent.join(call):
         await call.wait_for_phone_participant()
-        await agent.simple_response(
+        await agent.responses.create(
             "greet the user and let them know you're a friendly AI agent"
         )
 
 
 async def main() -> None:
-    await acceleration.sync_agent("restaurant_orders")
     logger.info("waiting for calls; ring the number to start one")
     await dispatch.run()
 

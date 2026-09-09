@@ -70,7 +70,7 @@ async def answer(call: InboundCall) -> None:
     # waits for them to finish joining before returning, so the greeting is not said to an
     # empty call.
     async with agent.answer(call):
-        await agent.simple_response("greet the caller and ask how you can help")
+        await agent.responses.create("greet the caller and ask how you can help")
         await agent.finish()
 
     logger.info("the call from %s ended", call.caller_number)

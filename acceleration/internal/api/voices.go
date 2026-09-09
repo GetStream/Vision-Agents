@@ -248,6 +248,7 @@ func (s *Server) describeVoice(ctx context.Context, voice store.Voice) (Voice, e
 			State:      VoiceBindingState(binding.State),
 			Error:      optional(binding.Error),
 			UpdatedAt:  &binding.UpdatedAt,
+			SyncedAt:   binding.SyncedAt,
 		})
 	}
 

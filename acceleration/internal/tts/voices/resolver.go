@@ -3,7 +3,10 @@ package voices
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -24,16 +27,26 @@ func NewResolver(backing *store.Store) *Resolver {
 
 // ResolveVoice returns the id this provider knows the voice by.
 //
-// A name that is not one of the customer's own voices comes back unchanged. One that is,
-// but that this provider was never given, comes back as routing.ErrVoiceNotPrepared so the
-// router moves on to a provider that has it.
+// A name that is not one of the customer's own voices comes back unchanged, unless it was
+// asked for with options.OwnVoicePrefix, which says there is nothing else it could be: a
+// name that is then not theirs is an error rather than a name handed to a provider whose
+// library may have someone else under it. One that is theirs, but that this provider was
+// never given, comes back as routing.ErrVoiceNotPrepared so the router moves on to a
+// provider that has it.
 func (r *Resolver) ResolveVoice(ctx context.Context, customerID, provider, voice string) (string, error) {
-	if r.store == nil || customerID == "" || voice == "" {
+	asked, theirs := strings.CutPrefix(voice, options.OwnVoicePrefix)
+	if r.store == nil || customerID == "" || asked == "" {
+		if theirs {
+			return "", notTheirs(asked)
+		}
 		return voice, nil
 	}
 
-	own, err := r.own(ctx, customerID, voice)
+	own, err := r.own(ctx, customerID, asked)
 	if errors.Is(err, store.ErrNoVoice) {
+		if theirs {
+			return "", notTheirs(asked)
+		}
 		return voice, nil
 	}
 	if err != nil {
@@ -48,6 +61,12 @@ func (r *Resolver) ResolveVoice(ctx context.Context, customerID, provider, voice
 		return "", err
 	}
 	return externalID, nil
+}
+
+// notTheirs is what a voice asked for with the prefix and not found under it comes back
+// as. Unlike a bare name there is no second reading of it to fall back to.
+func notTheirs(voice string) error {
+	return fmt.Errorf("voices: %q is not one of this customer's voices", voice)
 }
 
 // own finds the customer's voice by id, and failing that by the name they gave it, since

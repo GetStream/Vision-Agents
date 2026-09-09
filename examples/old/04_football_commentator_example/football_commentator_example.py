@@ -54,7 +54,7 @@ async def create_agent(**kwargs) -> Agent:
         # Ping LLM for a commentary only when the ball is detected and the call is not debounced.
         if ball_detected and debouncer:
             # Pick a question randomly from the list
-            await agent.simple_response(random.choice(questions))
+            await agent.responses.create(random.choice(questions))
 
     return agent
 

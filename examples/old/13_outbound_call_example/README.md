@@ -81,7 +81,7 @@ Then one context manager creates the call, rings the person and joins:
 
 ```python
 async with agent.outbound_call(from_=held, to=person, call_type="default", call_id="hello"):
-    await agent.simple_response("greet the user and let them know you're a friendly AI agent")
+    await agent.responses.create("greet the user and let them know you're a friendly AI agent")
     await agent.finish()
 ```
 

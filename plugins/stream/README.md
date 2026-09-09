@@ -54,18 +54,19 @@ holding the conversation has none to spare.
 
 ## An agent as a directory
 
-`sync_agent("customer_support")` reads `examples/agents/customer_support/` —
-`instructions.md`, `skills/*.md` and `knowledge/` — and stores them on the
-backend. A hash of the directory goes with it, so a second call with the same
-files does nothing.
+`agents/customer_support/agent.yaml` is what makes a directory an agent, and
+`instructions.md`, `skills/*.md` and `knowledge/` are what it holds. Joining a call
+stores them on the backend, so naming the config is the whole of it:
 
 ```python
-from vision_agents.plugins import stream as acceleration
-
-await acceleration.sync_agent("customer_support")
+from vision_agents.core import Agent
 
 agent = Agent(config="customer_support")
 ```
+
+`.agent_sync` next to `agent.yaml` records the md5 of what was last stored, so a run that
+changed nothing costs a file read rather than a request. `sync_agent("customer_support")`
+is still there for storing a directory ahead of time, without joining anything.
 
 `Agent(config=)` fills in the edge, the remote pipeline and a phone, so the Go
 backend handles routing. See `examples/agents/` for customer support, an outbound
@@ -79,6 +80,7 @@ the same skills handed to the same slower model, and the same knowledge base loo
 mid-answer.
 
 ```python
+from vision_agents.core import Agent
 from vision_agents.core.harness import Skill
 from vision_agents.plugins import stream
 
@@ -91,26 +93,30 @@ config = await stream.define_agent(
     knowledge="docs",
 )
 
-async with stream.TextSession(config_id=config.id) as session:
-    async for event in session.ask("how does failover work?"):
-        if event.type == "delta":
+agent = Agent(config=config.name)
+async with agent.chat():
+    async for event in agent.ask("how does failover work?"):
+        if event.type == "agent_speech_delta":
             print(event.text, end="", flush=True)
 ```
 
 `define_agent` stores a named configuration in the backend's Postgres, along with the skills
 it names. Both are found by name before writing, so running it again edits what is stored
-rather than storing another copy. A session then names the config by id, which is how the
-same agent is reached from a script, from a phone call and from anywhere else without any of
-them repeating the configuration.
+rather than storing another copy. An agent then names the config, which is how the same
+agent is reached from a script, from a phone call and from anywhere else without any of them
+repeating the configuration.
 
-`TextSession.ask` streams back what the backend did on its way to an answer: `delta` as it
-is written, `looked_up` when the knowledge base was searched, `delegated` and `settled`
-around work handed to a skill, and `answer` when the turn is finished. Delegated work
-outlives the turn that asked for it, so the model says something while it runs and the answer
-arrives when it comes back.
+`agent.ask` streams back what the backend did on its way to an answer: `agent_speech_delta`
+as it is written, `looked_up` when the knowledge base was searched, `delegated` and
+`task_settled` around work handed to a skill, and `agent_speech` when the turn is finished.
+Delegated work outlives the turn that asked for it, so the model says something while it runs
+and the answer arrives when it comes back.
 
-See [example 12](../../examples/old/12_docs_agent_example) for the whole thing, including reading
-this repo's markdown into a knowledge base.
+`agent.chat(agent_id)` answers in a conversation that already exists rather than in one of
+the agent's own, which is how a message written to a channel is answered where it was asked.
+
+See [the docs agent](../../examples/text_agents/docs_agent) for the whole thing, including
+reading this repo's markdown into a knowledge base.
 
 A config can also be named rather than looked up by id, which is what an agent usually
 wants:
@@ -143,7 +149,7 @@ agent = Agent(
 )
 
 async with agent.outbound_call(from_=held, to=person, call_type="default", call_id="hello"):
-    await agent.simple_response("greet the user and let them know you're a friendly AI agent")
+    await agent.responses.create("greet the user and let them know you're a friendly AI agent")
     await agent.finish()
 ```
 

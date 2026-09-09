@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from vision_agents.plugins.stream.folder import load, resolve
+from vision_agents.plugins.stream.folder import find, load, resolve
 
 
 def write(root: Path, name: str, content: str) -> None:
@@ -15,6 +15,7 @@ class TestFolder:
         self, tmp_path: Path
     ):
         root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
         write(root, "instructions.md", "You are Jean.\n")
         write(
             root,
@@ -38,6 +39,7 @@ class TestFolder:
 
     def test_the_same_files_hash_the_same(self, tmp_path: Path):
         root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
         write(root, "instructions.md", "You are Jean.\n")
         write(root, "knowledge/pricing.md", "# Pricing\n")
 
@@ -47,6 +49,27 @@ class TestFolder:
 
         write(root, "instructions.md", "You are someone else.\n")
         assert load(root).hash() != first
+
+    def test_editing_the_declaration_changes_the_hash(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n")
+        write(root, "instructions.md", "You are Jean.\n")
+        first = load(root).hash()
+
+        write(root, "agent.yaml", "name: jean\ndescription: the receptionist\n")
+        assert load(root).hash() != first
+
+    def test_the_declaration_names_the_agent(self, tmp_path: Path):
+        root = tmp_path / "jean-the-agent"
+        write(root, "agent.yaml", "name: jean\n")
+
+        assert load(root).name == "jean"
+
+    def test_a_directory_without_a_name_is_called_after_itself(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "description: the receptionist\n")
+
+        assert load(root).name == "jean"
 
     def test_a_skill_without_a_description_is_refused(self, tmp_path: Path):
         root = tmp_path / "jean"
@@ -75,6 +98,7 @@ class TestFolder:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         agent = tmp_path / "examples" / "agents" / "support"
+        write(agent, "agent.yaml", "name: support\n")
         write(agent, "instructions.md", "Help.\n")
         monkeypatch.chdir(tmp_path)
 
@@ -84,7 +108,22 @@ class TestFolder:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         agent = tmp_path / "examples" / "text_agents" / "docs_agent"
+        write(agent, "agent.yaml", "name: docs_agent\n")
         write(agent, "instructions.md", "Answer from the docs.\n")
         monkeypatch.chdir(tmp_path)
 
         assert resolve("docs_agent") == agent.resolve()
+
+    def test_a_directory_without_a_declaration_is_not_an_agent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Instructions alone no longer make a directory an agent: agent.yaml is what says
+        # so, and without it a name belongs to whatever is stored on the router.
+        write(
+            tmp_path / "examples" / "agents" / "support", "instructions.md", "Help.\n"
+        )
+        monkeypatch.chdir(tmp_path)
+
+        assert find("support") is None
+        with pytest.raises(FileNotFoundError, match="agent.yaml"):
+            resolve("support")

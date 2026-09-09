@@ -7,7 +7,6 @@ from vision_agents.core.harness import Sandbox, Skill
 from ._backend import Backend
 from ._generated import AuthenticatedClient
 from ._generated.api.default import (
-    add_knowledge_url as add_knowledge_url_request,
     create_agent_config,
     create_skill,
     list_agent_configs,
@@ -21,14 +20,12 @@ from ._generated.models import (
     AgentConfigRequest,
     Error,
     KnowledgeDocument,
-    KnowledgeUrl,
-    KnowledgeUrlRequest,
     SkillRequest,
     SyncAgentRequest,
     SyncAgentResult,
 )
 from ._generated.models import Sandbox as SandboxProvider
-from .folder import Folder, load, resolve
+from .folder import AGENT_STAMP, Folder, find, load, read_stamp, resolve, write_stamp
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +43,9 @@ async def sync_agent(
     Reads `examples/agents/{name}/` (or `path`) and writes what it holds to the
     acceleration server. A hash of the directory is sent with it: a second call with
     the same files does nothing.
+
+    This always asks the server. `ensure_agent` is the one that answers out of
+    `.agent_sync` and does not.
 
     Args:
         name: What the agent is called, which is also its directory's name.
@@ -76,7 +76,8 @@ async def sync_agent(
         for document in folder.knowledge
     ]
 
-    body = SyncAgentRequest(name=folder.name, hash_=folder.hash())
+    fingerprint = folder.hash()
+    body = SyncAgentRequest(name=folder.name, hash_=fingerprint)
     if folder.instructions:
         body.instructions = folder.instructions
     if skills:
@@ -85,11 +86,46 @@ async def sync_agent(
         body.knowledge = knowledge
 
     result = _answer(await sync_agent_request.asyncio(client=client, body=body))
+    await asyncio.to_thread(write_stamp, folder.path, AGENT_STAMP, fingerprint)
     if result.unchanged:
         logger.info("agent %s is already in sync", folder.name)
     else:
         logger.info("synced agent %s", folder.name)
     return result
+
+
+async def ensure_agent(
+    name: str,
+    url: Optional[str] = None,
+    customer_id: Optional[str] = None,
+) -> Optional[SyncAgentResult]:
+    """Store the agent directory called `name`, if there is one and it has changed.
+
+    This is what makes launching an agent enough. `.agent_sync` next to `agent.yaml`
+    holds the fingerprint of what was last stored, so a run that changed nothing costs a
+    file read rather than a request, and a name with no directory behind it is left to
+    whatever is already on the server.
+
+    Args:
+        name: The stored config, which is also the directory's name.
+        url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
+        customer_id: Who the work is billed to. Defaults to
+            `STREAM_ACCELERATION_CUSTOMER_ID`.
+
+    Returns:
+        What the router stored, or None when nothing needed storing.
+    """
+    path = await asyncio.to_thread(find, name)
+    if path is None:
+        return None
+
+    folder = await asyncio.to_thread(load, path)
+    stamped = await asyncio.to_thread(read_stamp, path, AGENT_STAMP)
+    if stamped == folder.hash():
+        logger.debug("%s is unchanged since it was last synced", path)
+        return None
+
+    return await sync_agent(name, path=str(path), url=url, customer_id=customer_id)
 
 
 async def define_agent(
@@ -182,40 +218,6 @@ async def define_agent(
     if named:
         await define_skills(named, config.id, client)
     return config
-
-
-async def add_knowledge_url(
-    namespace: str,
-    page: str,
-    url: Optional[str] = None,
-    customer_id: Optional[str] = None,
-) -> KnowledgeUrl:
-    """Fill a knowledge base from a page published elsewhere.
-
-    The page is read straight away and cut into passages the same way a document is, so
-    what comes back already says whether it worked. It stays a subscription rather than a
-    one-off: the passages are keyed by the url, and reading it again replaces them.
-
-    Args:
-        namespace: The knowledge base to add it to, which is the agent's own name for a
-            directory synced with `sync_agent`.
-        page: The http or https address to read.
-        url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
-        customer_id: Who the work is billed to. Defaults to
-            `STREAM_ACCELERATION_CUSTOMER_ID`.
-
-    Returns:
-        The page as stored, including how many passages it became and why it failed if
-        it did.
-    """
-    client = Backend(url=url, customer_id=customer_id).client()
-    added = _answer(
-        await add_knowledge_url_request.asyncio(
-            client=client, body=KnowledgeUrlRequest(namespace=namespace, url=page)
-        )
-    )
-    logger.info("read %s into %s as %d passages", page, namespace, added.passages)
-    return added
 
 
 async def define_skills(

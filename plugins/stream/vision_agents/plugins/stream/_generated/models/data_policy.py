@@ -14,9 +14,10 @@ T = TypeVar("T", bound="DataPolicy")
 
 @_attrs_define
 class DataPolicy:
-    """What a caller requires of what happens to their audio after it is transcribed. This is a requirement rather than a
-    description: a request naming one is only routed to a model whose declared handling meets it, and if none does the
-    request is refused rather than sent somewhere that does not.
+    """What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had
+    spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only
+    routed to a model whose declared handling meets it, and if none does the request is refused rather than sent
+    somewhere that does not.
 
         Attributes:
             allow_training (bool | Unset): False requires a provider that has said it does not train on what it is sent.

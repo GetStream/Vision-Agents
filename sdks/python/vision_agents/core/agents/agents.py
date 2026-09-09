@@ -38,8 +38,10 @@ from ..llm import events as llm_events
 from ..llm.llm import LLM, AudioLLM, VideoLLM
 from ..llm.realtime import Realtime
 from ..llm.remote import (
+    KnowledgeBase,
     RemoteCall,
     RemoteEvent,
+    RemoteKnowledge,
     RemotePipeline,
     RemotePipelineError,
 )
@@ -111,6 +113,45 @@ _COMPONENT_METADATA_KEYS: tuple[str, ...] = (
 tracer: Tracer = trace.get_tracer("agents")
 
 
+class Responses:
+    """Response creation on an agent, shaped like OpenAI's ``client.responses``."""
+
+    def __init__(self, agent: "Agent") -> None:
+        self._agent = agent
+
+    async def create(
+        self,
+        text: str,
+        participant: Optional[Participant] = None,
+        interrupt: bool = True,
+    ) -> None:
+        """Ask the LLM to reply to an injected instruction.
+
+        The request is routed through the agent's inference flow so it shares
+        the same LLM/TTS/audio pipeline as speech-driven turns.
+
+        Args:
+            text: Instruction or message to inject.
+            participant: Participant the injected turn is attributed to.
+                Defaults to the agent itself when not supplied.
+            interrupt: If True (default), preempt any in-flight LLM turn. If
+                False, drop silently when a turn is already in flight.
+        """
+        agent = self._agent
+        with agent.tracer.start_as_current_span("agent.responses.create"):
+            if isinstance(agent.llm, RemotePipeline):
+                await agent.llm.respond_remote(text, interrupt=interrupt)
+                return
+
+            if participant is None:
+                participant = Participant(
+                    original=agent.agent_user,
+                    user_id=agent._agent_user_id,
+                    id=agent._agent_user_id,
+                )
+            await agent._flow.simple_response(text, participant, interrupt=interrupt)
+
+
 class Agent:
     """
     Agent class makes it easy to build your own video AI.
@@ -129,7 +170,7 @@ class Agent:
     Commonly used methods
 
     * agent.join(call) // join a call; leaving the block waits for it to end
-    * agent.simple_response("greet the user")
+    * agent.responses.create("greet the user")
     * await agent.finish() // (wait for the call session to finish)
     * agent.close() // cleanup
 
@@ -278,6 +319,8 @@ class Agent:
         self.cost_tracking = cost_tracking
         self.memory_filter = memory_filter
 
+        self.responses = Responses(self)
+
         # OpenTelemetry data
         self.tracer = tracer
         self._root_span: Optional[Span] = None
@@ -359,6 +402,9 @@ class Agent:
         self._remote_participants: set[str] = set()
         self._remote_participant_joined = asyncio.Event()
 
+        # Where `ask` reads the reply from while it is following one.
+        self._following: Optional[asyncio.Queue[Optional[RemoteEvent]]] = None
+
         # Metrics broadcasting settings
         self._broadcast_metrics = broadcast_metrics
         self._broadcast_metrics_interval = broadcast_metrics_interval
@@ -391,6 +437,28 @@ class Agent:
     @property
     def id(self) -> str:
         return self._id
+
+    @property
+    def knowledge(self) -> KnowledgeBase:
+        """What the agent looks things up in, as somewhere to put more of it.
+
+        Example:
+            ```python
+            agent = Agent(config="docs_agent")
+            await agent.knowledge.add_url("https://visionagents.ai/introduction/quickstart")
+            ```
+
+        Raises:
+            RuntimeError: If the agent's LLM is not a pipeline running elsewhere. The
+                lookup happens where the pipeline does, so an agent answering here has no
+                knowledge base of its own.
+        """
+        if not isinstance(self.llm, RemoteKnowledge):
+            raise RuntimeError(
+                "a knowledge base belongs to a pipeline that runs elsewhere, "
+                "e.g. Agent(config=...)"
+            )
+        return self.llm.knowledge
 
     def _subscribe_to_edge_events(self):
         """
@@ -445,37 +513,6 @@ class Agent:
                 self._call_ended_event.set()
 
             await self.close()
-
-    async def simple_response(
-        self,
-        text: str,
-        participant: Optional[Participant] = None,
-        interrupt: bool = True,
-    ) -> None:
-        """Ask the LLM to reply to an injected instruction.
-
-        The request is routed through the agent's inference flow so it shares
-        the same LLM/TTS/audio pipeline as speech-driven turns.
-
-        Args:
-            text: Instruction or message to inject.
-            participant: Participant the injected turn is attributed to.
-                Defaults to the agent itself when not supplied.
-            interrupt: If True (default), preempt any in-flight LLM turn. If
-                False, drop silently when a turn is already in flight.
-        """
-        with self.tracer.start_as_current_span("agent.simple_response"):
-            if isinstance(self.llm, RemotePipeline):
-                await self.llm.respond_remote(text, interrupt=interrupt)
-                return
-
-            if participant is None:
-                participant = Participant(
-                    original=self.agent_user,
-                    user_id=self._agent_user_id,
-                    id=self._agent_user_id,
-                )
-            await self._flow.simple_response(text, participant, interrupt=interrupt)
 
     async def say(self, text: str, interrupt: bool = False) -> None:
         """Speak ``text`` directly through TTS, bypassing the LLM.
@@ -576,8 +613,9 @@ class Agent:
         caller with `call.wait_for_phone_participant()` before greeting them.
 
         Args:
-            call: the call to join, an inbound call to attach to, or the type of a call
-                 to create and then join, in which case `call_id` names it.
+            call: the call to join, an inbound call to attach to, or the id of an `agent`
+                 call to create and then join. A call of some other type is joined by
+                 naming the type here and the id in `call_id`.
             call_id: what the call is called, when `call` is a call type.
             participant_wait_timeout: timeout in seconds to wait for other participants to join before proceeding.
                  If `0`, do not wait at all. If `None`, wait forever.
@@ -590,9 +628,13 @@ class Agent:
 
         """
         if isinstance(call, str):
-            if not call_id:
-                raise ValueError("joining a call by its type needs the call's id too")
-            call = await self.create_call(call, call_id)
+            # One name is a call of the default `agent` type; two are the type and the id,
+            # which is how a call of some other type is joined.
+            call = (
+                await self.create_call(call, call_id)
+                if call_id
+                else await self.create_call("agent", call)
+            )
         elif isinstance(call, InboundCall):
             if not call.call_id:
                 raise ValueError(
@@ -719,7 +761,7 @@ class Agent:
         Example:
             ```python
             async with agent.outbound_call(from_=held, to=person):
-                await agent.simple_response("greet the user")
+                await agent.responses.create("greet the user")
             ```
 
         Args:
@@ -786,7 +828,7 @@ class Agent:
             @dispatch.wait_for_call()
             async def answer(call: InboundCall):
                 async with agent.answer(call):
-                    await agent.simple_response("greet the caller")
+                    await agent.responses.create("greet the caller")
             ```
 
         Args:
@@ -818,6 +860,103 @@ class Agent:
             wait_for_end=wait_for_end,
         ):
             yield
+
+    @asynccontextmanager
+    async def chat(self, agent_id: str = "") -> AsyncIterator[None]:
+        """Hold the conversation in writing rather than on a call.
+
+        The same instructions, skills and knowledge a call would have had, without the
+        call: nothing is joined, nothing is transcribed and nothing is spoken. Replies are
+        written into the agent's channel, so an agent id is what answers in a conversation
+        that already exists rather than in one of its own.
+
+        Example:
+            ```python
+            agent = Agent(config="docs_agent")
+            async with agent.chat():
+                async for event in agent.ask("how does routing fail over?"):
+                    ...
+            ```
+
+        Args:
+            agent_id: The conversation to answer in. Empty starts one of the agent's own.
+
+        Raises:
+            RuntimeError: If the agent's LLM is not a pipeline running elsewhere. A written
+                conversation is held by the backend, which is what makes it one.
+        """
+        if not isinstance(self.llm, RemotePipeline):
+            raise RuntimeError(
+                "answering in writing needs a pipeline that runs elsewhere, "
+                "e.g. Agent(config=...)"
+            )
+        if self._call_ended_event is not None:
+            raise RuntimeError("Agent already joined the call")
+
+        async with self._join_lock:
+            try:
+                await self._start_components()
+                if self.mcp_manager:
+                    with self.span("mcp_manager.connect_all"):
+                        await self.mcp_manager.connect_all()
+
+                with self.span("llm.join_remote"):
+                    await self.llm.join_remote(self._remote_call("", agent_id))
+                self.logger.info(
+                    "🤖 Agent answering in writing on %s",
+                    agent_id or "a conversation of its own",
+                )
+
+                self._call_ended_event = asyncio.Event()
+                self._joined_at = time.time()
+                self._remote_events_task = asyncio.create_task(
+                    self._consume_remote_events(self.llm)
+                )
+                yield
+            finally:
+                await self.close()
+
+    async def ask(self, text: str) -> AsyncIterator[RemoteEvent]:
+        """Ask something, following the reply until it is finished.
+
+        Work handed to a skill outlives the turn that asked for it: the model says
+        something while the work runs and answers again once it comes back, so the reply
+        is over only when nothing is still out with the subagent.
+
+        Args:
+            text: The question, as though it had been said.
+
+        Yields:
+            What the backend did on its way to an answer.
+
+        Raises:
+            RuntimeError: If the agent's LLM is not a pipeline running elsewhere.
+        """
+        if not isinstance(self.llm, RemotePipeline):
+            raise RuntimeError(
+                "asking needs a pipeline that runs elsewhere, e.g. Agent(config=...)"
+            )
+
+        following: asyncio.Queue[Optional[RemoteEvent]] = asyncio.Queue()
+        self._following = following
+        try:
+            await self.llm.respond_remote(text)
+
+            pending = 0
+            while True:
+                event = await following.get()
+                if event is None:
+                    return
+                yield event
+
+                if event.type == "delegated":
+                    pending += 1
+                elif event.type == "task_settled":
+                    pending -= 1
+                elif event.type == "agent_speech" and pending <= 0:
+                    return
+        finally:
+            self._following = None
 
     async def wait_for_participant(self, timeout: Optional[float] = None) -> None:
         """
@@ -923,17 +1062,7 @@ class Agent:
         self.llm.set_conversation(self.conversation)
 
         with self.span("llm.join_remote"):
-            await pipeline.join_remote(
-                RemoteCall(
-                    call_type=self._call_type,
-                    call_id=call.id,
-                    agent_user_id=self._agent_user_id,
-                    instructions=self.instructions.full_reference,
-                    harness=self.harness,
-                    cost_tracking=self.cost_tracking,
-                    memory_filter=self.memory_filter,
-                )
-            )
+            await pipeline.join_remote(self._remote_call(call.id))
         self.logger.info(f"🤖 Agent joined call remotely: {call.id}")
         self.events.send(events.AgentJoinedCallEvent(call=call))
 
@@ -943,17 +1072,37 @@ class Agent:
             self._consume_remote_events(pipeline)
         )
 
+    def _remote_call(self, call_id: str, agent_id: str = "") -> RemoteCall:
+        """What the remote pipeline is told to run, on a call or in writing."""
+        return RemoteCall(
+            call_type=self._call_type,
+            call_id=call_id,
+            agent_user_id=self._agent_user_id,
+            instructions=self.instructions.full_reference,
+            agent_id=agent_id,
+            harness=self.harness,
+            cost_tracking=self.cost_tracking,
+            memory_filter=self.memory_filter,
+        )
+
     async def _consume_remote_events(self, pipeline: RemotePipeline) -> None:
         """Record what the remote pipeline did until the call ends."""
         with log_exceptions(self.logger, "Error consuming remote pipeline events"):
             async for event in pipeline.remote_events():
                 await self._record_remote_event(event)
 
+        if self._following is not None:
+            # A reply nobody is going to finish, so whoever is following it is told rather
+            # than left waiting for an answer that is not coming.
+            await self._following.put(None)
         if self._call_ended_event is not None:
             self._call_ended_event.set()
 
     async def _record_remote_event(self, event: RemoteEvent) -> None:
         """Turn one remote event into the agent's own events, transcript and chat."""
+        if self._following is not None:
+            await self._following.put(event)
+
         participant = Participant(
             original=None,
             user_id=event.user_id,

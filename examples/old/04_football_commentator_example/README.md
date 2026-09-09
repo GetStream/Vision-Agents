@@ -1,22 +1,22 @@
 # AI Football Commentator Example
 
-[Vision Agents](https://visionagents.ai/) is our open source framework for quickly building low-latency video AI applications on the edge. It runs on Stream’s global edge network by default, supports any edge provider and integrates with 25+ leading voice and video AI models. 
+[Vision Agents](https://visionagents.ai/) is our open source framework for quickly building low-latency video AI applications on the edge. It runs on Stream’s global edge network by default, supports any edge provider and integrates with 25+ leading voice and video AI models.
 
-To put the framework to the test, we built a real-time sports commentator using stock football footage. The system combines Roboflow’s [RF-DETR](https://roboflow.com/model/rf-detr) for real-time player identification with real-time models from [Google Gemini](https://gemini.google/overview/gemini-live) and [OpenAI](https://platform.openai.com/docs/guides/realtime). 
+To put the framework to the test, we built a real-time sports commentator using stock football footage. The system combines Roboflow’s [RF-DETR](https://roboflow.com/model/rf-detr) for real-time player identification with real-time models from [Google Gemini](https://gemini.google/overview/gemini-live) and [OpenAI](https://platform.openai.com/docs/guides/realtime).
 
 Both models could provide feedback, but neither was accurate or fast enough for live sports. This post covers what we built, how it performed, and what we hope to see from future real-time models to make it viable.
 
-## Code Setup 
+## Code Setup
 
 Note: You can find the code for this tutorial on the [Vision Agents GitHub page](https://github.com/GetStream/Vision-Agents/tree/main/plugins/roboflow/examples/detection).
 
 Given that we were working with complex clips of sports games with motion and differing camera angles, the live models from Gemini and OpenAI needed some help to identify key elements in the frame, such as the players and ball.
 
-The sports commentator uses a two-model architecture: Roboflow’s [RF-DETR](https://github.com/roboflow/rf-detr) handles fast object detection while Gemini/OpenAI reviews the annotated video and provides natural language commentary. 
+The sports commentator uses a two-model architecture: Roboflow’s [RF-DETR](https://github.com/roboflow/rf-detr) handles fast object detection while Gemini/OpenAI reviews the annotated video and provides natural language commentary.
 
 The data flow through the application works as shown in the diagram:
 1. Video input is sent to Roboflow’s RF-DETR model.
-2. This emits detection events and allows the video to be annotated with bounding boxes. 
+2. This emits detection events and allows the video to be annotated with bounding boxes.
 3. The annotated video is sent to the real-time model, as well as to the user’s display.
 4. When detection event criteria are met, the application prompts the real-time model to respond to what it sees.
 5. The model provides commentary on the match event.
@@ -97,11 +97,11 @@ With our pipeline configured, we ran our first tests using public domain footbal
 
 https://github.com/user-attachments/assets/600275c4-3ed7-4149-a791-79d24828c0b8
 
-As you can see (from the pain in my eyes), the real-time models struggled to identify what was happening. 
+As you can see (from the pain in my eyes), the real-time models struggled to identify what was happening.
 
-Initially, the system also required explicitly prompting the model every time we wanted commentary, which made the experience feel unresponsive and unnatural. 
+Initially, the system also required explicitly prompting the model every time we wanted commentary, which made the experience feel unresponsive and unnatural.
 
-It took around 0.5 seconds to get the first token from OpenAI, and the output was inaccurate. Occasionally, it got match events right by sheer luck, but it was wrong more than half the time. 
+It took around 0.5 seconds to get the first token from OpenAI, and the output was inaccurate. Occasionally, it got match events right by sheer luck, but it was wrong more than half the time.
 
 The model also appeared to be making a judgment based on a very small number of frames rather than looking at the overall context — e.g. if a shot appeared to be in progress when the prompt was sent, the model chose to reply based on a couple of frames rather than the overall context.
 
@@ -134,12 +134,12 @@ async def on_detection_completed(event: roboflow.DetectionCompletedEvent):
 
     logger.info("⚽ Triggering commentary")
     last_comment_time = now
-    await agent.simple_response(
+    await agent.responses.create(
         "Describe what's happening in one sentence."
     )
 ```
 
-Given that we were showing match footage where the ball was frequently detected in the frame, this effectively meant we were asking the real-time model to comment every five seconds. With response latency of several seconds, the game had often moved on by the time the commentary was delivered. 
+Given that we were showing match footage where the ball was frequently detected in the frame, this effectively meant we were asking the real-time model to comment every five seconds. With response latency of several seconds, the game had often moved on by the time the commentary was delivered.
 
 https://github.com/user-attachments/assets/339715d2-8eda-4ee5-97c5-1e8d75938855
 
@@ -164,12 +164,12 @@ Our sample footage was pretty low-quality and we only had short clips to test wi
         ball_detected = bool(
             [obj for obj in event.objects if obj["label"] == "sports ball"]
         )
-        
+
         # Trigger commentary when ball comes back after being gone
         if ball_detected and not ball_was_present and debouncer:
             # Pick a question randomly from the list
-            await agent.simple_response("A play has just been made! Describe what happened, and the outcome")
-        
+            await agent.responses.create("A play has just been made! Describe what happened, and the outcome")
+
         ball_was_present = ball_detected
 ```
 
@@ -243,7 +243,7 @@ Here are some of our hopes for 2026 model improvements:
 
 ## Summing Up
 
-This demo was a useful reality check and reflects the current state of the technology as of December 2025. The two-model architecture is sound and Vision Agents made iteration easy but current real-time models aren't ready for high-motion video. 
+This demo was a useful reality check and reflects the current state of the technology as of December 2025. The two-model architecture is sound and Vision Agents made iteration easy but current real-time models aren't ready for high-motion video.
 
 For now, [reliable sports commentary](https://getstream.io/blog/ai-sports-analytics/?utm_source=github.com&utm_medium=referral&utm_campaign=vision_agents) would need more intelligence in the detection layer: custom models to recognize game events, with more structured prompts and TTS for narration.
 

@@ -17,9 +17,9 @@ load_dotenv()
 """
 Store a router config, then transcribe through it.
 
-`routers/clinic.yaml` says who to try and what may happen to the audio afterwards, but
-never which model. `sync_routers` stores the directory and the router picks. The clip next
-to this file is streamed a chunk at a time, the way a call arrives.
+`routers/clinic/router.yaml` says who to try and what may happen to the audio afterwards,
+but never which model. Naming the config stores the folder and the router picks. The clip
+next to this file is streamed a chunk at a time, the way a call arrives.
 
 Needs a router: see acceleration/README.md, then point STREAM_ACCELERATION_URL at it.
 """
@@ -31,8 +31,6 @@ CALLER = Participant(original=None, user_id="caller", id="caller")
 
 
 async def main() -> None:
-    await acceleration.sync_routers(HERE / "routers")
-
     router = acceleration.Router("clinic")
     async with router.stt.realtime() as stt:
         async with recorded_call(AUDIO) as chunks:

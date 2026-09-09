@@ -552,6 +552,14 @@ tts:
         ]
       realtime: true
       tier: low-latency
+      # Their terms have Inputs and Outputs used "to train, enhance, evolve and improve"
+      # the models unless the account files the opt-out form, and Zero Data Retention -
+      # which does cover the text in and the audio out - is an Enterprise setting switched
+      # on per workspace rather than sent with a request. This is the self-serve default,
+      # and a deployment that has opted out or bought ZDR edits it to "no" and none.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
       price:
         per_million_chars: 50.0
 
@@ -608,6 +616,14 @@ tts:
         ]
       realtime: true
       tier: low-latency
+      # Zero Data Retention does cover the text in and the audio out, but it is arranged
+      # per workspace with their engineering team rather than sent with a request. On
+      # training their published terms only bind us - the acceptable use policy forbids
+      # training on their output - and say nothing about what they do with our text, so
+      # unknown is the honest half.
+      data_policy:
+        trains_on_data: unknown
+        retention: unspecified
       price:
         per_million_chars: 5.0
 
@@ -651,6 +667,15 @@ tts:
         ]
       realtime: true
       tier: low-latency
+      # Self-serve accounts are opted in: ElevenLabs "don't train on any data from our
+      # Enterprise customers", and everyone else shares until the Data use toggle is off.
+      # History is kept by default with no published window, and Zero Retention Mode -
+      # which would cover both halves for speech - is Enterprise-only, sent per request as
+      # enable_logging=false. The three ElevenLabs models below are the same account and
+      # the same answer.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
       price:
         per_million_chars: 50.0
 
@@ -694,6 +719,9 @@ tts:
         ]
       realtime: true
       tier: high-quality
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
       price:
         per_million_chars: 110.0
 
@@ -740,6 +768,9 @@ tts:
         ]
       realtime: true
       tier: high-quality
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
       price:
         per_million_chars: 110.0
 
@@ -771,6 +802,12 @@ tts:
         ]
       realtime: true
       tier: high-quality
+      # Their terms allow content and usage data to develop, train or enhance the models
+      # on every self-serve tier, and the privacy policy keeps content for as long as the
+      # service has a use for it. Zero data retention is an Enterprise line item.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
       price:
         per_million_chars: 15.0
 
@@ -802,6 +839,11 @@ tts:
         ]
       realtime: true
       tier: low-latency
+      # Our own deployment, so no vendor's terms reach the text: it is spoken on a GPU we
+      # rent and kept nowhere afterwards, as with Parakeet above.
+      data_policy:
+        trains_on_data: "no"
+        retention: none
       price:
         per_million_chars: 9.0
 
@@ -818,6 +860,10 @@ tts:
       languages: [en, zh]
       realtime: true
       tier: high-quality
+      # Our own deployment, as above.
+      data_policy:
+        trains_on_data: "no"
+        retention: none
       price:
         per_million_chars: 14.8
 
@@ -865,6 +911,9 @@ tts:
       realtime: false
       tier: high-quality
       supports: [speed, stability, format]
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
       price:
         per_million_chars: 110.0
 

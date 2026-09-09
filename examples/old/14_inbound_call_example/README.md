@@ -128,7 +128,7 @@ async def answer(call: InboundCall):
         llm=stream.Accelerated(config="john"),
     )
     async with agent.answer(call):
-        await agent.simple_response("greet the caller and ask how you can help")
+        await agent.responses.create("greet the caller and ask how you can help")
         await agent.finish()
 
 

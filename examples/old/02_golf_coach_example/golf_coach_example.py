@@ -30,7 +30,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     # join the call and open a demo env
     async with agent.join(call):
         # all LLMs support a simple_response method and a more advanced native method (so you can always use the latest LLM features)
-        await agent.simple_response(
+        await agent.responses.create(
             text="Say hi. After the user does their golf swing offer helpful feedback."
         )
         await agent.finish()  # run till the call ends

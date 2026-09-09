@@ -23,19 +23,27 @@ An agent can be written down as a directory:
 
 ```
 examples/agents/customer_support/
+  agent.yaml             what the agent is called
   instructions.md        the system prompt
   skills/refund.md       frontmatter (name, description, deadline) and a body
   knowledge/policy.md    what the agent may look things up in
 ```
 
-`sync_agent` pushes it to the acceleration backend and stores a config named after the
-directory. It sends a hash of the files with it, so a second run over the same files does
+`agent.yaml` is what makes the directory an agent, and naming the config is enough to store
+it: an agent finds its own directory on starting and pushes it to the acceleration backend.
+`.agent_sync` records the md5 of what was last stored, so a run over the same files does
 nothing:
 
 ```python
-await acceleration.sync_agent("customer_support")
-
 agent = Agent(config="customer_support")
+```
+
+A page published elsewhere lands in the same knowledge base, cut into the same passages, so
+one lookup mid-answer covers both. It is a subscription rather than a one-off: adding it
+again re-reads the page and replaces what it wrote last time.
+
+```python
+await agent.knowledge.add_url("https://visionagents.ai/introduction/quickstart")
 ```
 
 ## A response in writing
@@ -44,15 +52,29 @@ No call, nothing transcribed and nothing spoken, but the same instructions, skil
 knowledge base a call would have had:
 
 ```python
-async with acceleration.TextSession(config_id="customer_support") as session:
-    async for event in session.ask("how do refunds work?"):
-        if event.type == "delta":
+agent = Agent(config="customer_support")
+
+async with agent.chat():
+    async for event in agent.ask("how do refunds work?"):
+        if event.type == "agent_speech_delta":
             print(event.text, end="", flush=True)
+```
+
+Somebody writing to an agent's channel reaches it the same way. `dispatch` hands the message
+over, and the agent it keeps for that channel is the one that answered the last:
+
+```python
+@dispatch.wait_for_message()
+async def written(message: InboundMessage) -> None:
+    agent = await dispatch.get_or_create_agent(
+        message, lambda: Agent(config="customer_support")
+    )
+    await agent.responses.create(message.text)
 ```
 
 ## Voice
 
-`join` puts the agent in a Stream call and `simple_response` asks it to say something.
+`join` puts the agent in a Stream call and `responses.create` asks it to say something.
 Leaving the block waits for the call to end, so there is nothing to wait on by hand:
 
 ```python
@@ -60,7 +82,7 @@ agent = Agent(config="simple_voice_ai")
 
 call = await agent.create_call("default", "my-call")
 async with agent.join(call):
-    await agent.simple_response("greet the user in one short sentence")
+    await agent.responses.create("greet the user in one short sentence")
 ```
 
 Pass `wait_for_end=False` to hang up as soon as the block is done instead.
@@ -72,7 +94,7 @@ silence:
 
 ```python
 async with agent.outbound_call(from_="+15125551234", to="+15125555678"):
-    await agent.simple_response("greet the user and say you're an AI agent")
+    await agent.responses.create("greet the user and say you're an AI agent")
 ```
 
 Answering. The caller is already in the call, so `answer` attaches to theirs rather than
@@ -86,7 +108,7 @@ dispatch = acceleration.StreamDispatch()
 async def answer(call: InboundCall) -> None:
     agent = Agent(config="john")
     async with agent.answer(call):
-        await agent.simple_response("greet the caller and ask how you can help")
+        await agent.responses.create("greet the caller and ask how you can help")
 ```
 
 Both need a router with a telephony vendor configured and a number bought from it, and

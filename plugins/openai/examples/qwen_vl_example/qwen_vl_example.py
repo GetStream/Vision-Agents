@@ -24,9 +24,9 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),
         agent_user=User(name="Video Assistant", id="agent"),
         instructions="""
-        You're a helpful video AI assistant. 
-        Analyze the video frames and respond to user questions about what you see. 
-        Keep responses to one sentence. 
+        You're a helpful video AI assistant.
+        Analyze the video frames and respond to user questions about what you see.
+        Keep responses to one sentence.
         Be concise and direct.
         """,
         llm=llm,
@@ -44,7 +44,7 @@ async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> Non
     async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
         if event.participant.user.id != "agent":
             await asyncio.sleep(2)
-            await agent.simple_response("Describe what you currently see")
+            await agent.responses.create("Describe what you currently see")
 
     async with agent.join(call):
         # The agent will automatically process video frames and respond to user input

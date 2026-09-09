@@ -518,6 +518,10 @@ type VoiceBinding struct {
 	Error     string    `bun:"error,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
+	// SyncedAt is when this provider last came back with a voice that can be spoken in,
+	// and nil until one does. UpdatedAt cannot answer that: it moves again when the
+	// binding goes back to pending.
+	SyncedAt *time.Time `bun:"synced_at,nullzero"`
 }
 
 // Which way a call went.

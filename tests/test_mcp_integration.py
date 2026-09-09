@@ -361,7 +361,7 @@ async def test_openai_llm_mcp_weather_integration():
         assert len(mcp_functions) > 0, "No MCP tools registered"
 
         # Test function calling
-        response = await agent.simple_response(
+        response = await agent.responses.create(
             text="What's the weather like in London?",
         )
 

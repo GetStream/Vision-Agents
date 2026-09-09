@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 import pytest
@@ -14,6 +15,14 @@ SETTLE = 2.0
 # A job the fake finishes on the first ask, so a test polling it takes one turn of the
 # loop rather than a real interval.
 QUICK_POLL = 0.01
+
+
+def write_router(directory: Path, name: str, described: str) -> Path:
+    """A router folder, as the convention has it."""
+    folder = directory / name
+    folder.mkdir(parents=True)
+    (folder / "router.yaml").write_text(described)
+    return folder
 
 
 class Router:
@@ -31,6 +40,7 @@ class Router:
         self.speeches: list[dict[str, Any]] = []
         self.searches: list[dict[str, Any]] = []
         self.configs: list[dict[str, Any]] = []
+        self.writes = 0
         self.url = ""
         # failing makes the next job fail, which is the other half of what a job does.
         self.failing = False
@@ -133,12 +143,14 @@ class Router:
 
     async def _create_config(self, request: web.Request) -> web.Response:
         body = await request.json()
+        self.writes += 1
         stored = dict(body, id=f"config-{len(self.configs) + 1}", **self._stamps())
         self.configs.append(stored)
         return web.json_response(status=201, data=stored)
 
     async def _update_config(self, request: web.Request) -> web.Response:
         body = await request.json()
+        self.writes += 1
         held = request.match_info["id"]
         stored = dict(body, id=held, **self._stamps())
         self.configs = [stored if one["id"] == held else one for one in self.configs]
@@ -391,28 +403,93 @@ class TestRouter:
         with pytest.raises(ValueError, match="retention"):
             await router.configure_stt(retention="none")
 
-    async def test_a_directory_of_yaml_becomes_one_config_each(
-        self, backend: Router, tmp_path
+    async def test_configure_tts_stores_a_priority_list_a_policy_and_an_overwrite(
+        self, router: stream.Router, backend: Router
     ):
-        (tmp_path / "healthcare.yaml").write_text(
+        stored = await router.configure_tts(
+            providers=["elevenlabs", "en-low-latency"],
+            voice="custom:receptionist",
+            data_policy={"allow_training": False, "retention": "none"},
+            overwrites={"elevenlabs": {"voice_id": "el-1"}},
+        )
+
+        assert stored.tts.providers == ["elevenlabs", "en-low-latency"]
+        assert stored.tts.voice == "custom:receptionist"
+        assert stored.tts.data_policy.allow_training is False
+        assert stored.tts.data_policy.retention == "none"
+        assert stored.tts.overwrites.to_dict() == {"elevenlabs": {"voice_id": "el-1"}}
+
+    async def test_configure_tts_carries_the_other_modalities_forward(
+        self, router: stream.Router, backend: Router
+    ):
+        await stream.define_router(
+            "healthcare",
+            stt={"target": "en-recorded"},
+            search={"depth": "standard"},
+            url=backend.url,
+            customer_id="acme",
+        )
+
+        stored = await router.configure_tts(providers=["elevenlabs"])
+
+        assert stored.tts.providers == ["elevenlabs"]
+        assert stored.stt.target == "en-recorded", (
+            "writing how a config speaks should not drop how it hears"
+        )
+        assert stored.search.depth == "standard"
+        assert len(backend.configs) == 1
+
+    async def test_configure_tts_needs_a_named_router(self, backend: Router):
+        unnamed = stream.Router(url=backend.url, customer_id="acme")
+
+        with pytest.raises(ValueError, match="needs a name"):
+            await unnamed.configure_tts(providers=["elevenlabs"])
+
+    async def test_configure_tts_refuses_an_option_a_voice_does_not_take(
+        self, router: stream.Router
+    ):
+        with pytest.raises(ValueError, match="diarize"):
+            await router.configure_tts(diarize=True)
+
+    @pytest.fixture
+    def two_routers(self, tmp_path):
+        write_router(
+            tmp_path,
+            "healthcare",
             "tags:\n"
             "  team: clinical\n"
             "stt:\n"
             "  providers: [deepgram, parakeet]\n"
             "  data_policy:\n"
             "    allow_training: false\n"
-            "    retention: none\n"
+            "    retention: none\n",
         )
-        (tmp_path / "support.yaml").write_text(
-            "name: support-desk\nstt:\n  providers: [grok]\n"
+        write_router(
+            tmp_path, "support", "name: support-desk\nstt:\n  providers: [grok]\n"
         )
+        return tmp_path
 
+    @pytest.fixture
+    def one_router(self, tmp_path):
+        return write_router(
+            tmp_path, "healthcare", "stt:\n  providers: [deepgram]\n"
+        ).parent
+
+    @pytest.fixture
+    def misspelt_router(self, tmp_path):
+        return write_router(
+            tmp_path, "healthcare", "sst:\n  providers: [deepgram]\n"
+        ).parent
+
+    async def test_a_directory_of_router_folders_becomes_one_config_each(
+        self, backend: Router, two_routers
+    ):
         stored = await stream.sync_routers(
-            tmp_path, url=backend.url, customer_id="acme"
+            two_routers, url=backend.url, customer_id="acme"
         )
 
         assert [config.name for config in stored] == ["healthcare", "support-desk"], (
-            "a file names its config, and its own filename does when it does not"
+            "router.yaml names its config, and the folder it is in does when it does not"
         )
         assert stored[0].stt.providers == ["deepgram", "parakeet"]
         assert stored[0].stt.data_policy.retention == "none"
@@ -420,30 +497,99 @@ class TestRouter:
         assert stored[1].stt.providers == ["grok"]
 
     async def test_syncing_the_same_directory_twice_edits_what_is_stored(
-        self, backend: Router, tmp_path
+        self, backend: Router, one_router
     ):
-        (tmp_path / "healthcare.yaml").write_text("stt:\n  providers: [deepgram]\n")
-        first = await stream.sync_routers(tmp_path, url=backend.url, customer_id="acme")
+        first = await stream.sync_routers(
+            one_router, url=backend.url, customer_id="acme"
+        )
 
-        (tmp_path / "healthcare.yaml").write_text("stt:\n  providers: [grok]\n")
-        again = await stream.sync_routers(tmp_path, url=backend.url, customer_id="acme")
+        (one_router / "healthcare" / "router.yaml").write_text(
+            "stt:\n  providers: [grok]\n"
+        )
+        again = await stream.sync_routers(
+            one_router, url=backend.url, customer_id="acme"
+        )
 
         assert again[0].id == first[0].id
         assert len(backend.configs) == 1
         assert again[0].stt.providers == ["grok"]
 
     async def test_a_misspelt_modality_in_a_file_is_refused(
-        self, backend: Router, tmp_path
+        self, backend: Router, misspelt_router
     ):
-        (tmp_path / "healthcare.yaml").write_text("sst:\n  providers: [deepgram]\n")
-
         with pytest.raises(ValueError, match="sst"):
-            await stream.sync_routers(tmp_path, url=backend.url, customer_id="acme")
+            await stream.sync_routers(
+                misspelt_router, url=backend.url, customer_id="acme"
+            )
 
-    async def test_a_directory_with_no_yaml_in_it_is_refused(
+    async def test_a_directory_with_no_router_folders_in_it_is_refused(
         self, backend: Router, tmp_path
     ):
-        (tmp_path / "notes.txt").write_text("nothing to route")
+        (tmp_path / "healthcare.yaml").write_text("stt:\n  providers: [deepgram]\n")
 
-        with pytest.raises(ValueError, match="no .yaml"):
+        with pytest.raises(ValueError, match="router.yaml"):
             await stream.sync_routers(tmp_path, url=backend.url, customer_id="acme")
+
+    @pytest.fixture
+    def launched_from(self, tmp_path, monkeypatch):
+        """A router folder, and the directory an example naming it is run from."""
+        folder = write_router(
+            tmp_path / "routers", "clinic", "stt:\n  providers: [deepgram]\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        return folder
+
+    async def test_naming_a_router_stores_the_folder_behind_it(
+        self, backend: Router, launched_from
+    ):
+        router = stream.Router("clinic", url=backend.url, customer_id="acme")
+        async with router.stt.realtime():
+            pass
+
+        assert [config["name"] for config in backend.configs] == ["clinic"]
+        assert backend.configs[0]["stt"]["providers"] == ["deepgram"]
+
+    async def test_a_launch_for_an_untouched_folder_stores_nothing(
+        self, backend: Router, launched_from
+    ):
+        async with stream.Router(
+            "clinic", url=backend.url, customer_id="acme"
+        ).stt.realtime():
+            pass
+
+        backend.writes = 0
+        async with stream.Router(
+            "clinic", url=backend.url, customer_id="acme"
+        ).tts.realtime():
+            pass
+
+        assert backend.writes == 0, (
+            ".router_sync should answer for a folder nothing has touched"
+        )
+
+    async def test_a_launch_after_an_edit_stores_the_folder_again(
+        self, backend: Router, launched_from
+    ):
+        async with stream.Router(
+            "clinic", url=backend.url, customer_id="acme"
+        ).stt.realtime():
+            pass
+
+        (launched_from / "router.yaml").write_text("stt:\n  providers: [grok]\n")
+        async with stream.Router(
+            "clinic", url=backend.url, customer_id="acme"
+        ).stt.realtime():
+            pass
+
+        assert len(backend.configs) == 1
+        assert backend.configs[0]["stt"]["providers"] == ["grok"]
+
+    async def test_a_name_with_no_folder_behind_it_is_left_alone(
+        self, backend: Router, launched_from
+    ):
+        async with stream.Router(
+            "nowhere", url=backend.url, customer_id="acme"
+        ).stt.realtime():
+            pass
+
+        assert backend.configs == []

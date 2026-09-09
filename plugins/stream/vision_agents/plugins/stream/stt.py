@@ -9,6 +9,7 @@ from vision_agents.core.stt import TranscriptResponse
 from vision_agents.core.utils.utils import cancel_and_wait
 
 from ._backend import Backend
+from ._routerconfig import ensure_router
 from ._socket import Socket
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ class STT(stt.STT):
     async def start(self):
         """Open the socket and start reading transcripts off it."""
         await super().start()
+        await ensure_router(self.config_id, self.backend)
         self._socket = Socket(
             self.backend.socket("/v1/stt/stream"), self.backend.headers
         )

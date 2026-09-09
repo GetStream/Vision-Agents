@@ -203,6 +203,12 @@ func (s *Store) SaveVoiceBinding(ctx context.Context, binding *VoiceBinding) err
 		binding.ID = newID()
 		binding.CreatedAt = now
 	}
+	// Only a binding that can be spoken in has been synced. A pending one keeps whatever
+	// the last successful preparation wrote, so re-preparing a voice does not make the
+	// provider look as though it never had it.
+	if binding.State == VoiceReady {
+		binding.SyncedAt = &now
+	}
 
 	_, err := s.db.NewInsert().Model(binding).
 		On("CONFLICT (voice_id, provider) DO UPDATE").
@@ -210,6 +216,7 @@ func (s *Store) SaveVoiceBinding(ctx context.Context, binding *VoiceBinding) err
 		Set("state = EXCLUDED.state").
 		Set("error = EXCLUDED.error").
 		Set("updated_at = EXCLUDED.updated_at").
+		Set("synced_at = COALESCE(EXCLUDED.synced_at, vb.synced_at)").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: save voice binding: %w", err)
