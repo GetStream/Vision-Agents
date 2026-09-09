@@ -6,6 +6,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"
 export GOPRIVATE="${GOPRIVATE:-github.com/GetStream/*}"
 export GONOSUMDB="${GONOSUMDB:-github.com/GetStream/*}"
+export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
+if [ -n "${GH_TOKEN:-}" ]; then
+  git config --global "url.https://x-access-token:${GH_TOKEN}@github.com/GetStream/getstream-go-webrtc.insteadOf" \
+    "https://github.com/GetStream/getstream-go-webrtc"
+fi
 
 sudo service postgresql start
 sudo service redis-server start
