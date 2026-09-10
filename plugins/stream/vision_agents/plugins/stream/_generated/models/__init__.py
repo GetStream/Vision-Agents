@@ -122,6 +122,7 @@ from .stats_bucket import StatsBucket
 from .stt_options import SttOptions
 from .stt_options_overwrites import SttOptionsOverwrites
 from .sync_agent_request import SyncAgentRequest
+from .sync_agent_request_tags import SyncAgentRequestTags
 from .sync_agent_result import SyncAgentResult
 from .tag_stats_bucket import TagStatsBucket
 from .tier import Tier
@@ -270,6 +271,7 @@ __all__ = (
     "SttOptions",
     "SttOptionsOverwrites",
     "SyncAgentRequest",
+    "SyncAgentRequestTags",
     "SyncAgentResult",
     "TagStatsBucket",
     "Tier",

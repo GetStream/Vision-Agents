@@ -329,9 +329,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Store an agent directory's instructions, skills and knowledge
-         * @description Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
-         *     Models, voice and the rest of a config are left alone. This path only writes what a directory can hold.
+         * Store an agent directory's instructions, skills, knowledge and settings
+         * @description Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
+         *     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["syncAgent"];
@@ -1956,6 +1956,7 @@ export interface components {
             /** @description The URL the browser should open to finish the login. */
             authorize_url: string;
         };
+        /** @description An agent directory as it is on disk. Everything after the knowledge is what the directory's declaration decides rather than what it holds, and a setting left out leaves whatever is stored, so a model chosen in the dashboard survives a sync that says nothing about it. */
         SyncAgentRequest: {
             /** @description What the config is called, which is also the directory's name. */
             name: string;
@@ -1964,6 +1965,20 @@ export interface components {
             instructions?: string;
             skills?: components["schemas"]["SkillRequest"][];
             knowledge?: components["schemas"]["KnowledgeDocument"][];
+            mode?: components["schemas"]["AgentMode"];
+            stt?: string;
+            tts?: string;
+            voice?: string;
+            llm?: string;
+            subagent?: string;
+            search?: string;
+            greeting?: string;
+            plugins?: string[];
+            keyterms?: string[];
+            sandbox?: components["schemas"]["Sandbox"];
+            tags?: {
+                [key: string]: string;
+            };
         };
         SyncAgentResult: {
             /** @description True when the hash matched and nothing was written. */

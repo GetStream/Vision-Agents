@@ -65,6 +65,58 @@ class TestFolder:
 
         assert load(root).name == "jean"
 
+    def test_the_declaration_says_what_the_agent_runs_on(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(
+            root,
+            "agent.yaml",
+            "name: jean\n"
+            "mode: text\n"
+            "llm: llm-fast\n"
+            "subagent: llm-thinking\n"
+            "sandbox: daytona\n"
+            "greeting: Hello.\n"
+            "keyterms:\n  - Vision Agents\n  - ''\n"
+            "tags:\n  team: support\n",
+        )
+
+        settings = load(root).settings
+
+        assert settings.mode == "text"
+        assert settings.llm == "llm-fast"
+        assert settings.subagent == "llm-thinking"
+        assert settings.sandbox == "daytona"
+        assert settings.greeting == "Hello."
+        assert settings.keyterms == ["Vision Agents"]
+        assert settings.tags == {"team": "support"}
+
+    def test_a_declaration_that_names_no_model_decides_nothing(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\ndescription: the receptionist\n")
+
+        settings = load(root).settings
+
+        assert settings.llm == ""
+        assert settings.sandbox == ""
+        assert settings.plugins == []
+        assert settings.tags == {}
+
+    def test_a_key_nobody_knows_is_refused(self, tmp_path: Path):
+        # A misspelled llm that went quietly would leave the agent running on a model the
+        # file does not name.
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nlmm: llm-fast\n")
+
+        with pytest.raises(ValueError, match="lmm"):
+            load(root)
+
+    def test_a_list_setting_given_as_one_word_is_refused(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\nkeyterms: Vision Agents\n")
+
+        with pytest.raises(ValueError, match="keyterms"):
+            load(root)
+
     def test_a_directory_without_a_name_is_called_after_itself(self, tmp_path: Path):
         root = tmp_path / "jean"
         write(root, "agent.yaml", "description: the receptionist\n")

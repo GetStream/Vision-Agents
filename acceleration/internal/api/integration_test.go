@@ -1034,6 +1034,71 @@ func (s *APIIntegrationSuite) TestSyncingAnAgentStoresItsInstructionsAndSkills()
 	s.Equal("Be even briefer.", *third.Config.Instructions)
 }
 
+func (s *APIIntegrationSuite) TestSyncingAnAgentStoresWhatItsDeclarationRunsItOn() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/sync", `{
+		"name":"analyst","hash":"v1","mode":"text",
+		"llm":"llm-fast","subagent":"llm-best","tts":"en-low-latency","voice":"aurora",
+		"greeting":"Hello.","keyterms":["Vision Agents"],"sandbox":"daytona",
+		"tags":{"project":"analyst"}
+	}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var result SyncAgentResult
+	s.Require().NoError(json.Unmarshal(payload, &result))
+	s.Equal(AgentModeText, result.Config.Mode)
+	s.Require().NotNil(result.Config.Llm)
+	s.Equal("llm-fast", *result.Config.Llm)
+	s.Require().NotNil(result.Config.Subagent)
+	s.Equal("llm-best", *result.Config.Subagent)
+	s.Require().NotNil(result.Config.Voice)
+	s.Equal("aurora", *result.Config.Voice)
+	s.Require().NotNil(result.Config.Greeting)
+	s.Equal("Hello.", *result.Config.Greeting)
+	s.Require().NotNil(result.Config.Keyterms)
+	s.Equal([]string{"Vision Agents"}, *result.Config.Keyterms)
+	s.Require().NotNil(result.Config.Sandbox)
+	s.Equal(Daytona, *result.Config.Sandbox)
+	s.Require().NotNil(result.Config.Tags)
+	s.Equal("analyst", (*result.Config.Tags)["project"])
+}
+
+func (s *APIIntegrationSuite) TestASyncThatNamesNoModelLeavesTheOneStored() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/sync",
+		`{"name":"switchboard","hash":"v1","llm":"llm-fast","sandbox":"daytona"}`)
+	var first SyncAgentResult
+	s.Require().NoError(json.Unmarshal(payload, &first))
+
+	// A directory that says nothing about a model should not blank the one the dashboard
+	// chose, so only what the declaration named is written.
+	response, payload := s.do(http.MethodPost, "/v1/agents/sync",
+		`{"name":"switchboard","hash":"v2","instructions":"Be brief."}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var second SyncAgentResult
+	s.Require().NoError(json.Unmarshal(payload, &second))
+	s.Equal(first.Config.Id, second.Config.Id)
+	s.Require().NotNil(second.Config.Llm)
+	s.Equal("llm-fast", *second.Config.Llm)
+	s.Require().NotNil(second.Config.Sandbox)
+	s.Equal(Daytona, *second.Config.Sandbox)
+}
+
+func (s *APIIntegrationSuite) TestASyncNamingASandboxNobodyRunsIsRefused() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/sync",
+		`{"name":"analyst","hash":"v1","sandbox":"docker"}`)
+
+	s.Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+	s.Contains(string(payload), "docker")
+}
+
+func (s *APIIntegrationSuite) TestASyncNamingAModeNobodyRunsIsRefused() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/sync",
+		`{"name":"analyst","hash":"v1","mode":"txt"}`)
+
+	s.Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+	s.Contains(string(payload), "text")
+}
+
 // campaign creates a campaign over a stored config and returns it.
 func (s *APIIntegrationSuite) campaign(concurrency int) Campaign {
 	_, payload := s.do(http.MethodPost, "/v1/agents/configs", `{"name":"winback","llm":"llm-fast"}`)

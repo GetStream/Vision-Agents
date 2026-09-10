@@ -706,15 +706,16 @@ paths:
     post:
       operationId: syncAgent
       x-server-side-only: true
-      summary: Store an agent directory's instructions, skills and knowledge
+      summary: Store an agent directory's instructions, skills, knowledge and settings
       description: >
-        Reads as "this is what the agent is", from a directory of instructions.md,
-        skills/ and knowledge/. The hash is a fingerprint of that directory: a second
-        call with the same hash does nothing, so a process that syncs on startup is
-        cheap when nothing has changed.
+        Reads as "this is what the agent is", from a directory of agent.yaml,
+        instructions.md, skills/ and knowledge/. The hash is a fingerprint of that
+        directory: a second call with the same hash does nothing, so a process that syncs
+        on startup is cheap when nothing has changed.
 
-        Models, voice and the rest of a config are left alone. This path only writes
-        what a directory can hold.
+        agent.yaml decides the models, the voice and the rest of a config, so an agent
+        kept in a repository needs nothing written by hand. A setting it leaves out is
+        left alone rather than blanked.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an
         end user's device.
@@ -3666,6 +3667,11 @@ components:
     SyncAgentRequest:
       type: object
       required: [name, hash]
+      description: >
+        An agent directory as it is on disk. Everything after the knowledge is what the
+        directory's declaration decides rather than what it holds, and a setting left out
+        leaves whatever is stored, so a model chosen in the dashboard survives a sync that
+        says nothing about it.
       properties:
         name:
           type: string
@@ -3685,6 +3691,36 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/KnowledgeDocument"
+        mode:
+          $ref: "#/components/schemas/AgentMode"
+        stt:
+          type: string
+        tts:
+          type: string
+        voice:
+          type: string
+        llm:
+          type: string
+        subagent:
+          type: string
+        search:
+          type: string
+        greeting:
+          type: string
+        plugins:
+          type: array
+          items:
+            type: string
+        keyterms:
+          type: array
+          items:
+            type: string
+        sandbox:
+          $ref: "#/components/schemas/Sandbox"
+        tags:
+          type: object
+          additionalProperties:
+            type: string
 
     SyncAgentResult:
       type: object

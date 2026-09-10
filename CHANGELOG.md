@@ -135,6 +135,28 @@ file read rather than a request. `sync_agent` and `sync_routers` are unchanged a
 there for storing a directory ahead of time; `ensure_agent(name)` is the new form that
 answers out of the stamp.
 
+### `agent.yaml` says what the agent runs on
+
+The declaration used to carry only a name. It now decides the models too, so an agent that
+lives in a repository no longer needs `define_agent` to pick them:
+
+```yaml
+name: analyst
+mode: text
+llm: llm-fast
+subagent: llm-thinking
+sandbox: daytona
+```
+
+`mode`, `stt`, `tts`, `voice`, `llm`, `subagent`, `search`, `greeting`, `plugins`,
+`keyterms`, `sandbox` and `tags` are all read and sent with the directory. Everything but
+the name is optional, and a setting the file leaves out leaves whatever is stored, so a
+model chosen in the dashboard survives a sync that says nothing about it. A key nobody
+knows is refused rather than dropped.
+
+`POST /v1/agents/sync` takes the same fields, so the Go SDK and any other client store a
+directory in one request.
+
 ### Speech-to-text routing: a priority list, a data policy, and configs from YAML
 
 `SttOptions` now says more about where a transcript may come from than which model to ask.

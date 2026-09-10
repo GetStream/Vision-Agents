@@ -3,12 +3,15 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-// SyncAgent stores an agent directory's instructions, skills and knowledge.
+// SyncAgent stores an agent directory: its instructions, skills and knowledge, and the
+// settings its declaration decided.
 //
 // The hash is a fingerprint of that directory. A second call with the same hash does
 // nothing, so a process that syncs on startup is cheap when nothing has changed.
@@ -33,6 +36,9 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 
 	if s.store == nil {
 		return SyncAgent400JSONResponse{badRequest(noConfigs)}, nil
+	}
+	if message, ok := syncComplaint(body); !ok {
+		return SyncAgent400JSONResponse{badRequest(message)}, nil
 	}
 
 	existing, found, err := s.store.AgentConfigByName(ctx, customerID, name)
@@ -69,6 +75,7 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 	config.Skills = named
 	config.KnowledgeNamespace = namespace
 	config.SyncHash = hash
+	applySettings(&config, body)
 
 	if found {
 		if err := s.store.UpdateAgentConfig(ctx, &config); err != nil {
@@ -88,6 +95,66 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 		}
 	}
 	return SyncAgent200JSONResponse{Unchanged: false, Config: agentConfigOf(config)}, nil
+}
+
+// syncComplaint reports what is wrong with the settings a directory declared, if
+// anything. It is the same reading configComplaint does, since a directory decides the
+// same things a config written by hand does.
+func syncComplaint(body SyncAgentRequest) (string, bool) {
+	if _, ok := modeOf(body.Mode); !ok {
+		return fmt.Sprintf("an agent is either %s or %s", store.AgentModeVoice, store.AgentModeText), false
+	}
+	if len(keytermsOf(body.Keyterms)) > stt.MaxKeyterms {
+		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false
+	}
+	if _, ok := sandboxOf(body.Sandbox); !ok {
+		return fmt.Sprintf("there is no sandbox provider called %q", *body.Sandbox), false
+	}
+	return "", true
+}
+
+// applySettings writes onto a config what the directory's declaration decided. Only what
+// was sent is applied: a directory that says nothing about a model leaves the one already
+// stored, so a target chosen in the dashboard survives a sync.
+func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
+	if body.Mode != nil && *body.Mode != "" {
+		mode, _ := modeOf(body.Mode)
+		config.Mode = mode
+	}
+	if body.Stt != nil {
+		config.STT = *body.Stt
+	}
+	if body.Tts != nil {
+		config.TTS = *body.Tts
+	}
+	if body.Voice != nil {
+		config.Voice = *body.Voice
+	}
+	if body.Llm != nil {
+		config.LLM = *body.Llm
+	}
+	if body.Subagent != nil {
+		config.Subagent = *body.Subagent
+	}
+	if body.Search != nil {
+		config.Search = *body.Search
+	}
+	if body.Greeting != nil {
+		config.Greeting = *body.Greeting
+	}
+	if body.Plugins != nil {
+		config.Plugins = *body.Plugins
+	}
+	if body.Keyterms != nil {
+		config.Keyterms = keytermsOf(body.Keyterms)
+	}
+	if body.Sandbox != nil {
+		box, _ := sandboxOf(body.Sandbox)
+		config.Sandbox = box
+	}
+	if body.Tags != nil {
+		config.Tags = *body.Tags
+	}
 }
 
 func skillsOf(list *[]SkillRequest) []SkillRequest {

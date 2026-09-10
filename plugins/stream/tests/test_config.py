@@ -13,6 +13,10 @@ EXPLAIN = Skill(
     deadline_seconds=25,
 )
 
+# What a sync request carries because the directory holds it, as opposed to what the
+# declaration decided. Everything else in the body is a setting.
+DIRECTORY_CONTENTS = {"name", "hash", "instructions", "skills", "knowledge"}
+
 
 class Router:
     """A stand-in for the acceleration router, storing configs and skills by name.
@@ -94,15 +98,22 @@ class Router:
         if body.get("knowledge"):
             self.knowledge.append(body["knowledge"])
 
+        # What the declaration named is applied over what is already stored, the way the
+        # router does it: a directory that names no model leaves the one it found.
+        declared = {
+            key: value for key, value in body.items() if key not in DIRECTORY_CONTENTS
+        }
         stored = self._store(
             self.configs,
             {
-                "name": body["name"],
                 "mode": "voice",
+                **self.configs.get(existing_id, {}),
+                "name": body["name"],
                 "instructions": body.get("instructions", ""),
                 "skills": [skill["name"] for skill in skills],
                 "knowledge_namespace": body["name"] if body.get("knowledge") else "",
                 "sync_hash": body["hash"],
+                **declared,
             },
             existing_id,
         )
@@ -364,6 +375,70 @@ class TestSyncAgent:
         assert stored.unchanged is False
         assert router.configs[stored.config.id]["instructions"] == "Be brief."
         assert router.syncs == 2
+
+    async def test_a_declaration_says_what_the_agent_runs_on(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\n"
+            "mode: text\n"
+            "llm: llm-fast\n"
+            "subagent: llm-thinking\n"
+            "stt: stt-fast\n"
+            "tts: tts-fast\n"
+            "voice: nova\n"
+            "search: search-fast\n"
+            "greeting: Hello.\n"
+            "sandbox: daytona\n"
+            "plugins:\n  - gmail\n"
+            "keyterms:\n  - Vision Agents\n"
+            "tags:\n  team: support\n"
+        )
+
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        stored = router.configs[result.config.id]
+        assert stored["mode"] == "text"
+        assert stored["llm"] == "llm-fast"
+        assert stored["subagent"] == "llm-thinking"
+        assert stored["stt"] == "stt-fast"
+        assert stored["tts"] == "tts-fast"
+        assert stored["voice"] == "nova"
+        assert stored["search"] == "search-fast"
+        assert stored["greeting"] == "Hello."
+        assert stored["sandbox"] == "daytona"
+        assert stored["plugins"] == ["gmail"]
+        assert stored["keyterms"] == ["Vision Agents"]
+        assert stored["tags"] == {"team": "support"}
+
+    async def test_a_setting_the_declaration_leaves_out_is_not_sent(
+        self, router: Router, support_dir
+    ):
+        # A directory that says nothing about a model should not blank one the dashboard
+        # chose, so the request leaves it out rather than sending it empty.
+        result = await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        stored = router.configs[result.config.id]
+        assert "llm" not in stored
+        assert "sandbox" not in stored
+        assert stored["mode"] == "voice"
+
+    async def test_editing_a_model_stores_the_directory_again(
+        self, router: Router, launched_from
+    ):
+        first = await stream.ensure_agent("support", url=router.url, customer_id="acme")
+        assert first is not None
+
+        (launched_from / "agent.yaml").write_text("name: support\nllm: llm-smart\n")
+        again = await stream.ensure_agent("support", url=router.url, customer_id="acme")
+
+        assert again is not None
+        assert again.config.id == first.config.id
+        assert router.configs[again.config.id]["llm"] == "llm-smart"
 
     async def test_a_name_with_no_directory_behind_it_is_left_alone(
         self, router: Router, launched_from

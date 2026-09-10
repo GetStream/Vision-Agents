@@ -64,6 +64,34 @@ from vision_agents.core import Agent
 agent = Agent(config="customer_support")
 ```
 
+`agent.yaml` also says what the agent runs on, so the models are decided on disk with
+everything else:
+
+```yaml
+name: customer_support
+description: Support for a subscription business.
+mode: voice
+llm: llm-fast
+subagent: llm-thinking
+stt: stt-fast
+tts: tts-fast
+voice: aurora
+search: search-fast
+greeting: Thanks for calling, how can I help?
+sandbox: daytona
+plugins:
+  - gmail
+keyterms:
+  - Vision Agents
+tags:
+  project: support
+```
+
+Everything but the name is optional, and a setting the file leaves out leaves whatever is
+stored, so a model chosen in the dashboard survives a sync that says nothing about it. A key
+nobody knows is refused rather than dropped: a misspelled `llm` that went quietly would
+leave the agent running on a model the file does not name.
+
 `.agent_sync` next to `agent.yaml` records the md5 of what was last stored, so a run that
 changed nothing costs a file read rather than a request. `sync_agent("customer_support")`
 is still there for storing a directory ahead of time, without joining anything.

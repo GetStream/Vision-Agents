@@ -75,17 +75,20 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
 ) -> Response[Error | SyncAgentResult]:
-    """Store an agent directory's instructions, skills and knowledge
+    """Store an agent directory's instructions, skills, knowledge and settings
 
-     Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/.
-    The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a
-    process that syncs on startup is cheap when nothing has changed.
-    Models, voice and the rest of a config are left alone. This path only writes what a directory can
-    hold.
+     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and
+    knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does
+    nothing, so a process that syncs on startup is cheap when nothing has changed.
+    agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
+    needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (SyncAgentRequest):
+        body (SyncAgentRequest): An agent directory as it is on disk. Everything after the
+            knowledge is what the directory's declaration decides rather than what it holds, and a
+            setting left out leaves whatever is stored, so a model chosen in the dashboard survives a
+            sync that says nothing about it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -111,17 +114,20 @@ def sync(
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
 ) -> Error | SyncAgentResult | None:
-    """Store an agent directory's instructions, skills and knowledge
+    """Store an agent directory's instructions, skills, knowledge and settings
 
-     Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/.
-    The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a
-    process that syncs on startup is cheap when nothing has changed.
-    Models, voice and the rest of a config are left alone. This path only writes what a directory can
-    hold.
+     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and
+    knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does
+    nothing, so a process that syncs on startup is cheap when nothing has changed.
+    agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
+    needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (SyncAgentRequest):
+        body (SyncAgentRequest): An agent directory as it is on disk. Everything after the
+            knowledge is what the directory's declaration decides rather than what it holds, and a
+            setting left out leaves whatever is stored, so a model chosen in the dashboard survives a
+            sync that says nothing about it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -142,17 +148,20 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
 ) -> Response[Error | SyncAgentResult]:
-    """Store an agent directory's instructions, skills and knowledge
+    """Store an agent directory's instructions, skills, knowledge and settings
 
-     Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/.
-    The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a
-    process that syncs on startup is cheap when nothing has changed.
-    Models, voice and the rest of a config are left alone. This path only writes what a directory can
-    hold.
+     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and
+    knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does
+    nothing, so a process that syncs on startup is cheap when nothing has changed.
+    agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
+    needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (SyncAgentRequest):
+        body (SyncAgentRequest): An agent directory as it is on disk. Everything after the
+            knowledge is what the directory's declaration decides rather than what it holds, and a
+            setting left out leaves whatever is stored, so a model chosen in the dashboard survives a
+            sync that says nothing about it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,17 +185,20 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: SyncAgentRequest,
 ) -> Error | SyncAgentResult | None:
-    """Store an agent directory's instructions, skills and knowledge
+    """Store an agent directory's instructions, skills, knowledge and settings
 
-     Reads as "this is what the agent is", from a directory of instructions.md, skills/ and knowledge/.
-    The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a
-    process that syncs on startup is cheap when nothing has changed.
-    Models, voice and the rest of a config are left alone. This path only writes what a directory can
-    hold.
+     Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and
+    knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does
+    nothing, so a process that syncs on startup is cheap when nothing has changed.
+    agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
+    needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        body (SyncAgentRequest):
+        body (SyncAgentRequest): An agent directory as it is on disk. Everything after the
+            knowledge is what the directory's declaration decides rather than what it holds, and a
+            setting left out leaves whatever is stored, so a model chosen in the dashboard survives a
+            sync that says nothing about it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

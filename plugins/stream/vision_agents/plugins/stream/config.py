@@ -18,14 +18,25 @@ from ._generated.api.default import (
 from ._generated.models import (
     AgentConfig,
     AgentConfigRequest,
+    AgentMode,
     Error,
     KnowledgeDocument,
     SkillRequest,
     SyncAgentRequest,
+    SyncAgentRequestTags,
     SyncAgentResult,
 )
 from ._generated.models import Sandbox as SandboxProvider
-from .folder import AGENT_STAMP, Folder, find, load, read_stamp, resolve, write_stamp
+from .folder import (
+    AGENT_STAMP,
+    Folder,
+    Settings,
+    find,
+    load,
+    read_stamp,
+    resolve,
+    write_stamp,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +49,11 @@ async def sync_agent(
     url: Optional[str] = None,
     customer_id: Optional[str] = None,
 ) -> SyncAgentResult:
-    """Store an agent directory's instructions, skills and knowledge.
+    """Store an agent directory's instructions, skills, knowledge and settings.
 
     Reads `examples/agents/{name}/` (or `path`) and writes what it holds to the
-    acceleration server. A hash of the directory is sent with it: a second call with
+    acceleration server. What `agent.yaml` declares goes with it, so the models an agent
+    runs on are decided on disk. A hash of the directory is sent too: a second call with
     the same files does nothing.
 
     This always asks the server. `ensure_agent` is the one that answers out of
@@ -84,6 +96,7 @@ async def sync_agent(
         body.skills = skills
     if knowledge:
         body.knowledge = knowledge
+    _declare_settings(body, folder.settings)
 
     result = _answer(await sync_agent_request.asyncio(client=client, body=body))
     await asyncio.to_thread(write_stamp, folder.path, AGENT_STAMP, fingerprint)
@@ -256,6 +269,40 @@ async def define_skills(
             _answer(await create_skill.asyncio(client=client, body=body))
     logger.info("stored %d skills", len(skills))
     return skills
+
+
+def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
+    """Carry what `agent.yaml` declared onto the sync request.
+
+    Only what the file names is sent. A setting it says nothing about is left out rather
+    than sent blank, so the router leaves whatever is already stored.
+    """
+    if settings.mode:
+        body.mode = AgentMode(settings.mode)
+    if settings.stt:
+        body.stt = settings.stt
+    if settings.tts:
+        body.tts = settings.tts
+    if settings.voice:
+        body.voice = settings.voice
+    if settings.llm:
+        body.llm = settings.llm
+    if settings.subagent:
+        body.subagent = settings.subagent
+    if settings.search:
+        body.search = settings.search
+    if settings.greeting:
+        body.greeting = settings.greeting
+    if settings.plugins:
+        body.plugins = settings.plugins
+    if settings.keyterms:
+        body.keyterms = settings.keyterms
+    if settings.sandbox:
+        body.sandbox = SandboxProvider(settings.sandbox)
+    if settings.tags:
+        tags = SyncAgentRequestTags()
+        tags.additional_properties = dict(settings.tags)
+        body.tags = tags
 
 
 def _answer(answer: Union[T, Error, None]) -> T:
