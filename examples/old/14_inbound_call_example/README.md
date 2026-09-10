@@ -117,7 +117,7 @@ It waits. Ring the number from a phone, and the agent answers.
 A dispatch worker waits for calls and runs a handler for each one:
 
 ```python
-dispatch = stream.StreamDispatch()
+dispatch = stream.Dispatch()
 
 
 @dispatch.wait_for_call()
@@ -144,7 +144,7 @@ The handler runs as its own task, so a second caller is answered while the first
 talking. How many at once is up to the worker:
 
 ```python
-dispatch = stream.StreamDispatch(capacity=8)
+dispatch = stream.Dispatch(capacity=8)
 ```
 
 The router passes over a worker that is full rather than queueing behind it, so `capacity` is

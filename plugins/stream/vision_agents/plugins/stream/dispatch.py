@@ -23,7 +23,7 @@ MessageHandler = Callable[[InboundMessage], Awaitable[None]]
 AgentFactory = Callable[[], Union[Agent, Awaitable[Agent]]]
 
 
-class StreamDispatch:
+class Dispatch:
     """Waits for inbound calls and messages, and runs a handler for each one.
 
     Neither arrives here first: a caller reached a Stream call over SIP, or somebody wrote in
@@ -39,7 +39,7 @@ class StreamDispatch:
 
     Example:
         ```python
-        dispatch = StreamDispatch()
+        dispatch = Dispatch()
 
 
         @dispatch.wait_for_call()

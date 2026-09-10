@@ -60,7 +60,7 @@ sequenceDiagram
 | [api/sessionws.go](../../acceleration/internal/api/sessionws.go)    | The event socket, hand-written                   |
 | [api/streamws.go](../../acceleration/internal/api/streamws.go)      | One socket per modality, for pipelines that stay in Python |
 | [sandbox/](../../acceleration/internal/sandbox)                     | Where the subagent runs code it writes           |
-| [plugins/stream](../../plugins/stream)                              | The Python side: `Accelerated`, `STT`, `TTS`, `LLM`, `Router`, `StreamDispatch` |
+| [plugins/stream](../../plugins/stream)                              | The Python side: `Accelerated`, `STT`, `TTS`, `LLM`, `Router`, `Dispatch` |
 
 ## The LLM slot holds a pipeline
 
@@ -99,7 +99,7 @@ and waits for the SIP participant. Both are context managers for the same reason
 the interesting thing is what happens inside the call, and leaving it should not be something
 a caller remembers to do.
 
-The dispatch worker is the one piece with no equivalent in the Go SDK. `StreamDispatch` holds
+The dispatch worker is the one piece with no equivalent in the Go SDK. `Dispatch` holds
 a socket, reports its load and runs a handler per arriving call — see
 [dispatch](dispatch.md).
 

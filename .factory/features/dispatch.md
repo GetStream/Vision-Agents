@@ -67,7 +67,7 @@ still on the line.
 ## In Python
 
 ```python
-dispatch = stream.StreamDispatch()
+dispatch = stream.Dispatch()
 
 @dispatch.wait_for_call()
 async def answer(call: InboundCall) -> None:

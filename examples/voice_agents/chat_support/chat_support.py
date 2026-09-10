@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 
 load_dotenv()
 
-dispatch = acceleration.StreamDispatch()
+dispatch = acceleration.Dispatch()
 
 
 async def create_agent() -> Agent:

@@ -101,7 +101,7 @@ Answering. The caller is already in the call, so `answer` attaches to theirs rat
 making one, and dispatch runs the handler once per call:
 
 ```python
-dispatch = acceleration.StreamDispatch()
+dispatch = acceleration.Dispatch()
 
 
 @dispatch.wait_for_call()

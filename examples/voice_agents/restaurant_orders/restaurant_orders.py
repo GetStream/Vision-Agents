@@ -15,7 +15,7 @@ An agent that answers the restaurant's phone and takes orders from the menu in
 this directory, which is stored on the first call rather than by hand.
 """
 
-dispatch = acceleration.StreamDispatch()
+dispatch = acceleration.Dispatch()
 
 
 @dispatch.wait_for_call()

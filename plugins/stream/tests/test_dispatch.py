@@ -156,7 +156,7 @@ MESSAGE = {
 }
 
 
-class TestStreamDispatch:
+class TestDispatch:
     @pytest.fixture
     async def router(self) -> AsyncIterator[Router]:
         fake = Router()
@@ -172,10 +172,8 @@ class TestStreamDispatch:
         return asyncio.Queue()
 
     @pytest.fixture
-    def dispatch(
-        self, router: Router, answered: asyncio.Queue
-    ) -> stream.StreamDispatch:
-        worker = stream.StreamDispatch(
+    def dispatch(self, router: Router, answered: asyncio.Queue) -> stream.Dispatch:
+        worker = stream.Dispatch(
             url=router.url, customer_id="acme", capacity=3, report_every=0.05
         )
 
@@ -187,8 +185,8 @@ class TestStreamDispatch:
 
     @pytest.fixture
     async def waiting(
-        self, dispatch: stream.StreamDispatch
-    ) -> AsyncIterator[stream.StreamDispatch]:
+        self, dispatch: stream.Dispatch
+    ) -> AsyncIterator[stream.Dispatch]:
         """A worker connected and waiting for calls, torn down afterwards."""
         running = asyncio.create_task(dispatch.run())
         yield dispatch
@@ -196,7 +194,7 @@ class TestStreamDispatch:
         await asyncio.gather(running, return_exceptions=True)
 
     async def test_a_worker_says_how_many_calls_it_can_hold(
-        self, router: Router, waiting: stream.StreamDispatch
+        self, router: Router, waiting: stream.Dispatch
     ):
         # The router passes over a full worker rather than queueing behind it, so this is a
         # promise about the process rather than a hint.
@@ -205,7 +203,7 @@ class TestStreamDispatch:
         assert router.capacity == "3"
 
     async def test_a_worker_learns_what_the_router_calls_it(
-        self, router: Router, waiting: stream.StreamDispatch
+        self, router: Router, waiting: stream.Dispatch
     ):
         await asyncio.wait_for(router._connected.wait(), SETTLE)
 
@@ -217,7 +215,7 @@ class TestStreamDispatch:
         assert waiting.worker_id == "worker-7"
 
     async def test_an_arriving_call_reaches_the_handler(
-        self, router: Router, waiting: stream.StreamDispatch, answered: asyncio.Queue
+        self, router: Router, waiting: stream.Dispatch, answered: asyncio.Queue
     ):
         await router.hand_over(CALL)
 
@@ -232,7 +230,7 @@ class TestStreamDispatch:
         assert call.at.year == 2026
 
     async def test_a_call_that_was_handled_is_reported_as_accepted(
-        self, router: Router, waiting: stream.StreamDispatch, answered: asyncio.Queue
+        self, router: Router, waiting: stream.Dispatch, answered: asyncio.Queue
     ):
         await router.hand_over(CALL)
         await asyncio.wait_for(answered.get(), SETTLE)
@@ -242,7 +240,7 @@ class TestStreamDispatch:
         assert accepted["call_id"] == "phone-+15125551234"
 
     async def test_a_handler_that_failed_is_reported_as_rejected(
-        self, router: Router, dispatch: stream.StreamDispatch
+        self, router: Router, dispatch: stream.Dispatch
     ):
         # A rejection is worth sending because the caller heard a ringing phone that
         # nothing answered, and that is not visible from the router otherwise.
@@ -262,7 +260,7 @@ class TestStreamDispatch:
         assert "no model configured" in rejected["reason"]
 
     async def test_a_failed_call_does_not_stop_the_next_one(
-        self, router: Router, dispatch: stream.StreamDispatch
+        self, router: Router, dispatch: stream.Dispatch
     ):
         seen: list[str] = []
 
@@ -285,7 +283,7 @@ class TestStreamDispatch:
         assert seen == ["call-1", "call-2"]
 
     async def test_two_calls_are_handled_at_once(
-        self, router: Router, dispatch: stream.StreamDispatch
+        self, router: Router, dispatch: stream.Dispatch
     ):
         # Reading the socket is also what delivers the next call, so answering one caller
         # in line would leave the next listening to a ringing phone.
@@ -312,7 +310,7 @@ class TestStreamDispatch:
         assert started == 2
 
     async def test_a_worker_reports_what_it_is_doing(
-        self, router: Router, waiting: stream.StreamDispatch
+        self, router: Router, waiting: stream.Dispatch
     ):
         load = await router.told_of_type("load")
 
@@ -322,7 +320,7 @@ class TestStreamDispatch:
         assert "latency_ms" in load
 
     async def test_a_report_counts_the_calls_being_handled(
-        self, router: Router, dispatch: stream.StreamDispatch
+        self, router: Router, dispatch: stream.Dispatch
     ):
         holding = asyncio.Event()
 
@@ -349,7 +347,7 @@ class TestStreamDispatch:
         assert load["active_agents"] == 1
 
     async def test_a_worker_times_its_own_round_trip(
-        self, router: Router, waiting: stream.StreamDispatch
+        self, router: Router, waiting: stream.Dispatch
     ):
         # Measured from this side because this is the side the call's audio has to cross.
         await router.told_of_type("ping")
@@ -363,7 +361,7 @@ class TestStreamDispatch:
 
     async def test_running_without_a_handler_is_refused(self, router: Router):
         # A call would otherwise be taken out of the router's rotation and dropped.
-        worker = stream.StreamDispatch(url=router.url, customer_id="acme")
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
 
         with pytest.raises(RuntimeError, match="wait_for_call"):
             await worker.run()
@@ -371,17 +369,17 @@ class TestStreamDispatch:
     async def test_the_refusal_says_a_message_handler_would_also_do(
         self, router: Router
     ):
-        worker = stream.StreamDispatch(url=router.url, customer_id="acme")
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
 
         with pytest.raises(RuntimeError, match="wait_for_message"):
             await worker.run()
 
     async def test_a_worker_that_can_hold_no_calls_is_refused(self, router: Router):
         with pytest.raises(ValueError, match="cannot answer"):
-            stream.StreamDispatch(url=router.url, customer_id="acme", capacity=0)
+            stream.Dispatch(url=router.url, customer_id="acme", capacity=0)
 
     async def test_the_router_closing_ends_the_wait(
-        self, router: Router, dispatch: stream.StreamDispatch
+        self, router: Router, dispatch: stream.Dispatch
     ):
         running = asyncio.create_task(dispatch.run())
         await asyncio.wait_for(router._connected.wait(), SETTLE)
@@ -391,7 +389,7 @@ class TestStreamDispatch:
         await asyncio.wait_for(running, SETTLE)
 
     async def test_a_call_still_being_answered_is_waited_for(
-        self, router: Router, dispatch: stream.StreamDispatch
+        self, router: Router, dispatch: stream.Dispatch
     ):
         # Dropping it would hang up on whoever is talking.
         finished = asyncio.Event()
@@ -419,7 +417,7 @@ class TestStreamDispatch:
         assert finished.is_set()
 
     async def test_a_call_with_no_custom_data_or_time_is_still_answered(
-        self, router: Router, waiting: stream.StreamDispatch, answered: asyncio.Queue
+        self, router: Router, waiting: stream.Dispatch, answered: asyncio.Queue
     ):
         await router.hand_over({"type": "call", "call_id": "phone-+15125551234"})
 
@@ -432,7 +430,7 @@ class TestStreamDispatch:
         )
 
     async def test_a_frame_the_worker_does_not_understand_is_ignored(
-        self, router: Router, waiting: stream.StreamDispatch, answered: asyncio.Queue
+        self, router: Router, waiting: stream.Dispatch, answered: asyncio.Queue
     ):
         await router.hand_over({"type": "something-new"})
         await router.hand_over(CALL)
@@ -442,7 +440,7 @@ class TestStreamDispatch:
         assert call.call_id == "phone-+15125551234"
 
     async def test_an_arriving_message_reaches_the_message_handler(
-        self, router: Router, dispatch: stream.StreamDispatch
+        self, router: Router, dispatch: stream.Dispatch
     ):
         written: asyncio.Queue = asyncio.Queue()
 
@@ -469,7 +467,7 @@ class TestStreamDispatch:
         assert message.at.year == 2026
 
     async def test_the_channel_a_message_arrived_on_is_the_agent_to_answer_as(
-        self, router: Router, dispatch: stream.StreamDispatch
+        self, router: Router, dispatch: stream.Dispatch
     ):
         # Passing this to a new session is what puts the answer back in the conversation
         # the question was asked in.
@@ -490,7 +488,7 @@ class TestStreamDispatch:
         assert message.agent_id == "call-1"
 
     async def test_a_message_is_ignored_by_a_worker_that_only_answers_calls(
-        self, router: Router, waiting: stream.StreamDispatch, answered: asyncio.Queue
+        self, router: Router, waiting: stream.Dispatch, answered: asyncio.Queue
     ):
         # Nothing is reported back: there is no line anybody is waiting on, unlike a call.
         await router.hand_over(MESSAGE)
@@ -501,7 +499,7 @@ class TestStreamDispatch:
         assert call.call_id == "phone-+15125551234"
 
     async def test_a_message_handler_that_failed_does_not_stop_the_next_one(
-        self, router: Router, dispatch: stream.StreamDispatch
+        self, router: Router, dispatch: stream.Dispatch
     ):
         seen: list[str] = []
         both = asyncio.Event()
@@ -529,9 +527,7 @@ class TestStreamDispatch:
         self, router: Router
     ):
         # An agent that only answers in writing has no reason to be handed a phone call.
-        worker = stream.StreamDispatch(
-            url=router.url, customer_id="acme", report_every=0.05
-        )
+        worker = stream.Dispatch(url=router.url, customer_id="acme", report_every=0.05)
         written: asyncio.Queue = asyncio.Queue()
 
         @worker.wait_for_message()
@@ -557,7 +553,7 @@ class TestStreamDispatch:
         monkeypatch.setenv("STREAM_API_SECRET", "secret")
 
     async def answering(
-        self, router: Router, dispatch: stream.StreamDispatch, *channels: str
+        self, router: Router, dispatch: stream.Dispatch, *channels: str
     ) -> list[Agent]:
         """The agent each of those channels was answered by, in order."""
         answered: asyncio.Queue[Agent] = asyncio.Queue()
@@ -582,7 +578,7 @@ class TestStreamDispatch:
             await asyncio.gather(running, return_exceptions=True)
 
     async def test_an_agent_answers_in_the_channel_the_message_was_written_in(
-        self, router: Router, dispatch: stream.StreamDispatch, acceleration: None
+        self, router: Router, dispatch: stream.Dispatch, acceleration: None
     ):
         # The channel is the agent id, which is what puts the answer back in the
         # conversation the question was asked in.
@@ -594,7 +590,7 @@ class TestStreamDispatch:
         assert router.sessions[0]["config_id"] == "config-7"
 
     async def test_a_second_message_on_a_channel_goes_to_the_agent_that_answered_the_first(
-        self, router: Router, dispatch: stream.StreamDispatch, acceleration: None
+        self, router: Router, dispatch: stream.Dispatch, acceleration: None
     ):
         # Starting a second agent would answer as though the first exchange never happened.
         first, second = await self.answering(router, dispatch, "call-1", "call-1")
@@ -603,7 +599,7 @@ class TestStreamDispatch:
         assert len(router.sessions) == 1
 
     async def test_another_channel_is_another_conversation(
-        self, router: Router, dispatch: stream.StreamDispatch, acceleration: None
+        self, router: Router, dispatch: stream.Dispatch, acceleration: None
     ):
         first, second = await self.answering(router, dispatch, "call-1", "call-2")
 
@@ -614,7 +610,7 @@ class TestStreamDispatch:
         ]
 
     async def test_a_message_still_being_answered_is_waited_for(
-        self, router: Router, dispatch: stream.StreamDispatch
+        self, router: Router, dispatch: stream.Dispatch
     ):
         finished = asyncio.Event()
         release = asyncio.Event()

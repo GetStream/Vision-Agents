@@ -88,7 +88,7 @@ class TestInboundCalling:
     async def waiting(self) -> AsyncIterator[asyncio.Queue]:
         """A worker connected to the router and waiting for calls."""
         arrived: asyncio.Queue[InboundCall] = asyncio.Queue()
-        worker = stream.StreamDispatch(capacity=1)
+        worker = stream.Dispatch(capacity=1)
 
         @worker.wait_for_call()
         async def answer(call: InboundCall) -> None:

@@ -342,12 +342,12 @@ See `examples/voice_agents/`.
 
 ### Inbound calling: wait for a call and answer it
 
-`stream.StreamDispatch()` connects out to the acceleration backend and waits;
+`stream.Dispatch()` connects out to the acceleration backend and waits;
 the router pushes an arriving call down that connection, so nothing in your
 process has to be publicly reachable.
 
 ```python
-dispatch = StreamDispatch()
+dispatch = Dispatch()
 
 
 @dispatch.wait_for_call()

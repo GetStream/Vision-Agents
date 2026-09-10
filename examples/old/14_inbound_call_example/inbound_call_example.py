@@ -43,7 +43,7 @@ INSTRUCTIONS = (
 )
 
 
-dispatch = stream.StreamDispatch()
+dispatch = stream.Dispatch()
 
 
 @dispatch.wait_for_call()
