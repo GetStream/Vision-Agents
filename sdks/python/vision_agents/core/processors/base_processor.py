@@ -80,6 +80,14 @@ class VideoProcessor(Processor, metaclass=abc.ABCMeta):
         """
         pass
 
+    def state(self) -> dict[str, object]:
+        """What this processor currently sees, for the LLM's ``get_video_state`` tool.
+
+        Empty until the processor has produced something. Detection plugins
+        return labels, counts and bounding boxes.
+        """
+        return {}
+
 
 class VideoProcessorPublisher(VideoProcessor, VideoPublisher, metaclass=abc.ABCMeta):
     """

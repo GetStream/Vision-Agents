@@ -1,16 +1,18 @@
 import SwiftUI
 import VisionAgentsCore
 
-/// The controls for a spoken conversation: mute and hang up.
+/// The controls for a spoken conversation: mute, camera, and hang up.
 ///
 /// It draws no transcript. Showing what was said is the UI package's job, over the same
 /// `session` the voice session holds, so a host can put the two together however it likes.
 /// There is nothing here for playing the agent: joining the call is what does that.
 public struct VoiceCallView: View {
     private let voice: VoiceSession
+    private let camera: Bool
 
-    public init(voice: VoiceSession) {
+    public init(voice: VoiceSession, camera: Bool = false) {
         self.voice = voice
+        self.camera = camera
     }
 
     public var body: some View {
@@ -39,8 +41,24 @@ public struct VoiceCallView: View {
                 .clipShape(.circle)
                 .disabled(voice.call == nil)
 
+                if camera {
+                    Button {
+                        Task { await voice.setCameraEnabled(!voice.isCameraEnabled) }
+                    } label: {
+                        Image(
+                            systemName: voice.isCameraEnabled
+                                ? "video.fill" : "video.slash.fill"
+                        )
+                        .font(.title2)
+                        .frame(width: 56, height: 56)
+                    }
+                    .buttonStyle(.bordered)
+                    .clipShape(.circle)
+                    .disabled(voice.call == nil)
+                }
+
                 Button {
-                    Task { await voice.leave() }
+                    Task { await voice.end() }
                 } label: {
                     Image(systemName: "phone.down.fill")
                         .font(.title2)
@@ -51,6 +69,6 @@ public struct VoiceCallView: View {
                 .clipShape(.circle)
             }
         }
-        .task { await voice.join() }
+        .task { await voice.join(camera: camera) }
     }
 }

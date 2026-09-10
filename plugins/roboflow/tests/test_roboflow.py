@@ -5,10 +5,12 @@ import pathlib
 from unittest.mock import MagicMock
 
 import aiofiles
+import numpy as np
 import PIL.Image
 import pytest
 from av import VideoFrame
 from rfdetr import RFDETRSegPreview
+from conftest import skip_blockbuster
 from vision_agents.core import Agent
 from vision_agents.core.events import EventManager
 from vision_agents.core.utils.video_track import QueuedVideoTrack
@@ -16,7 +18,9 @@ from vision_agents.plugins.roboflow import (
     DetectionCompletedEvent,
     RoboflowCloudDetectionProcessor,
     RoboflowLocalDetectionProcessor,
+    RoboflowStreamingProcessor,
 )
+from vision_agents.plugins.roboflow.roboflow_streaming_processor import ManualSource
 
 
 @pytest.fixture()
@@ -300,4 +304,112 @@ class TestRoboflowCloudDetectionProcessor:
 
         # Close the processor and check that the output track is stopped
         await processor.close()
+        assert output_track.stopped
+
+
+class TestRoboflowStreamingProcessor:
+    def test_requires_model_or_workflow(self):
+        with pytest.raises(ValueError, match="model_id or workflow_id"):
+            RoboflowStreamingProcessor(api_key="test-key")
+
+    def test_rejects_both_model_and_workflow(self):
+        with pytest.raises(ValueError, match="not both"):
+            RoboflowStreamingProcessor(
+                model_id="rfdetr-nano",
+                workflow_id="wf",
+                workspace="ws",
+                api_key="test-key",
+            )
+
+    def test_workflow_needs_workspace(self):
+        with pytest.raises(ValueError, match="workspace"):
+            RoboflowStreamingProcessor(workflow_id="wf", api_key="test-key")
+
+    def test_state_starts_empty(self):
+        processor = RoboflowStreamingProcessor(
+            model_id="rfdetr-nano", api_key="test-key"
+        )
+        snapshot = processor.state()
+        assert snapshot["objects"] == []
+        assert snapshot["counts"] == {}
+
+    async def test_incoming_frames_are_published_with_boxes(self):
+        processor = RoboflowStreamingProcessor(
+            model_id="rfdetr-nano", api_key="test-key"
+        )
+        processor._on_predictions(
+            {
+                "predictions": [
+                    {
+                        "class": "cat",
+                        "class_id": 0,
+                        "x": 40,
+                        "y": 40,
+                        "width": 40,
+                        "height": 40,
+                        "confidence": 0.9,
+                    }
+                ]
+            }
+        )
+        assert processor.state()["counts"] == {"cat": 1}
+        blank = VideoFrame.from_ndarray(
+            np.zeros((80, 80, 3), dtype=np.uint8), format="bgr24"
+        )
+        await processor._send_frame(blank)
+        output = await asyncio.wait_for(processor.publish_video_track().recv(), 1)
+        assert (output.to_ndarray() != 0).any()
+
+    @pytest.mark.skipif(
+        ManualSource is not None, reason="inference-sdk[webrtc] is installed"
+    )
+    async def test_start_requires_webrtc_extra(self):
+        processor = RoboflowStreamingProcessor(
+            model_id="rfdetr-nano", api_key="test-key"
+        )
+        with pytest.raises(ImportError, match="webrtc"):
+            await processor.start()
+
+
+@skip_blockbuster
+@pytest.mark.integration
+@pytest.mark.skipif(
+    ManualSource is None,
+    reason="inference-sdk[webrtc] is not installed",
+)
+@pytest.mark.skipif(
+    not os.getenv("ROBOFLOW_API_KEY"),
+    reason="ROBOFLOW_API_KEY environment variable not set",
+)
+class TestRoboflowStreamingProcessorLive:
+    @pytest.mark.timeout(120)
+    async def test_rfdetr_nano_updates_state_and_returns_a_frame(
+        self, cat_video_track, agent_mock, events_manager
+    ):
+        processor = RoboflowStreamingProcessor(model_id="rfdetr-nano", fps=1)
+        processor.attach_agent(agent_mock)
+
+        future = asyncio.Future()
+
+        @events_manager.subscribe
+        async def on_event(event: DetectionCompletedEvent):
+            if not future.done():
+                future.set_result(event)
+
+        output_track = processor.publish_video_track()
+        await processor.start()
+        await processor.process_video(cat_video_track, "user_id")
+        try:
+            # Serverless Video Streaming can take up to a minute to ramp.
+            await asyncio.wait_for(future, 60)
+            detection = future.result()
+            assert detection.objects
+            snapshot = processor.state()
+            assert snapshot["objects"]
+            assert snapshot["counts"]
+            output_frame = await output_track.recv()
+            assert output_frame.width > 0
+            assert output_frame.height > 0
+        finally:
+            await processor.close()
         assert output_track.stopped

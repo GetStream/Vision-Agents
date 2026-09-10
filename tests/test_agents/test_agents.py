@@ -14,11 +14,15 @@ from vision_agents.core.agents.events import UserTranscriptEvent
 from vision_agents.core.agents.inference import AudioOutputChunk, AudioOutputStream
 from vision_agents.core.avatars import Avatar
 from vision_agents.core.edge import Call, EdgeTransport
+from vision_agents.core.edge.types import Participant, TrackType
 from vision_agents.core.events import EventManager
 from vision_agents.core.harness import DefaultHarness
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent, OmniLLM
 from vision_agents.core.llm.remote import KnowledgePage, RemoteCall, RemoteEvent
-from vision_agents.core.processors.base_processor import AudioPublisher
+from vision_agents.core.processors.base_processor import (
+    AudioPublisher,
+    VideoProcessorPublisher,
+)
 from vision_agents.core.stt import STT as BaseSTT
 from vision_agents.core.telephony import InboundCall, OutboundCall, PlacedCall
 from vision_agents.core.tts import TTS
@@ -101,9 +105,14 @@ class DummyEdge(EdgeTransport):
         self.exc_on_publish_tracks = exc_on_publish_tracks
         self.authenticate_call_count = 0
         self.created_calls: list[str] = []
+        self.join_count = 0
+        self.join_kwargs: dict[str, Any] = {}
+        self.authenticated_users: list[str] = []
+        self.published_tracks: list[tuple[object, object]] = []
 
     async def authenticate(self, user: User) -> None:
         self.authenticate_call_count += 1
+        self.authenticated_users.append(user.id)
         self._authenticated = True
 
     async def create_call(
@@ -126,11 +135,14 @@ class DummyEdge(EdgeTransport):
         pass
 
     async def join(self, *args, **kwargs):
+        self.join_count += 1
+        self.join_kwargs = kwargs
         await asyncio.sleep(1)
         if self.exc_on_join:
             raise self.exc_on_join
 
     async def publish_tracks(self, audio_track, video_track):
+        self.published_tracks.append((audio_track, video_track))
         await asyncio.sleep(1)
         if self.exc_on_publish_tracks:
             raise self.exc_on_publish_tracks
@@ -139,7 +151,7 @@ class DummyEdge(EdgeTransport):
         pass
 
     def add_track_subscriber(self, track_id: str):
-        pass
+        return QueuedVideoTrack()
 
     async def send_custom_event(self, data: dict) -> None:
         self.last_custom_event = data
@@ -313,6 +325,29 @@ class WriteRecordingTrack:
 
     async def write(self, data: PcmData) -> None:
         self.writes.append(data)
+
+
+class DummyVideoProcessor(VideoProcessorPublisher):
+    name = "dummy_video"
+
+    def __init__(self):
+        super().__init__()
+        self.track = QueuedVideoTrack()
+        self._snapshot: dict[str, object] = {}
+        self.incoming_track = None
+
+    def state(self) -> dict[str, object]:
+        return self._snapshot
+
+    async def process_video(self, track, participant_id, shared_forwarder=None):
+        self.incoming_track = track
+        return None
+
+    async def stop_processing(self) -> None:
+        return None
+
+    def publish_video_track(self) -> QueuedVideoTrack:
+        return self.track
 
 
 class DummyAudioPublisher(AudioPublisher):
@@ -1224,6 +1259,100 @@ class TestAgent:
             seen = await asyncio.wait_for(written, timeout=5)
 
         assert seen == []
+
+    async def test_registers_get_video_state_from_processors(self):
+        processor = DummyVideoProcessor()
+        processor._snapshot = {"objects": [{"label": "rose"}]}
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            processors=[processor],
+        )
+
+        result = await agent.llm.call_function("get_video_state", {})
+        assert result == {"dummy_video": {"objects": [{"label": "rose"}]}}
+
+    async def test_skips_get_video_state_without_processors(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        assert "get_video_state" not in agent.llm.function_registry.list_functions()
+
+    async def test_remote_join_skips_local_media_without_video_processors(
+        self, call: Call
+    ):
+        llm = DummyRemotePipeline()
+        edge = DummyEdge()
+        agent = Agent(llm=llm, edge=edge, agent_user=User(name="test"))
+
+        async with agent.join(call, wait_for_end=False, participant_wait_timeout=0):
+            pass
+
+        assert llm.joined is not None
+        assert edge.join_count == 0
+        assert edge.published_tracks == []
+
+    async def test_remote_join_also_joins_locally_when_video_processors_are_present(
+        self, call: Call
+    ):
+        llm = DummyRemotePipeline()
+        edge = DummyEdge()
+        processor = DummyVideoProcessor()
+        agent = Agent(
+            llm=llm,
+            edge=edge,
+            agent_user=User(name="test", id="agent"),
+            processors=[processor],
+        )
+
+        async with agent.join(call, wait_for_end=False, participant_wait_timeout=0):
+            pass
+
+        assert llm.joined is not None
+        assert edge.join_count == 1
+        assert edge.published_tracks == [(None, processor.track)]
+        assert edge.join_kwargs.get("subscribe_audio") is False
+        assert edge.authenticated_users[-1] == "agent-video"
+
+    async def test_remote_join_starts_a_video_override_without_a_camera(
+        self, call: Call, assets_dir
+    ):
+        llm = DummyRemotePipeline()
+        edge = DummyEdge()
+        processor = DummyVideoProcessor()
+        agent = Agent(
+            llm=llm,
+            edge=edge,
+            agent_user=User(name="test", id="agent"),
+            processors=[processor],
+        )
+        agent.set_video_track_override_path(f"{assets_dir}/bunny_3s.mp4")
+
+        async with agent.join(call, wait_for_end=False, participant_wait_timeout=0):
+            pass
+
+        assert processor.incoming_track is not None
+
+    async def test_ignores_a_track_it_already_has(self):
+        processor = DummyVideoProcessor()
+        agent = Agent(
+            llm=DummyLLM(),
+            edge=DummyEdge(),
+            agent_user=User(name="test", id="agent"),
+            processors=[processor],
+        )
+        camera = Participant(original=None, user_id="alice", id="alice")
+        await agent._on_track_added("cam", TrackType.VIDEO, camera)
+        first = processor.incoming_track
+        assert first is not None
+        await agent._on_track_added("cam", TrackType.VIDEO, camera)
+        assert processor.incoming_track is first
 
 
 class TestOpenUI:

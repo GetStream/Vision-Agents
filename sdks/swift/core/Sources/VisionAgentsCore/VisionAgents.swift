@@ -153,6 +153,30 @@ public struct VisionAgents: Sendable {
         }
     }
 
+    /// Follows a session that already exists, without creating one.
+    ///
+    /// Use this when something else started the agent — a Python process, another
+    /// device — and this one should listen to the same conversation.
+    public func attach(sessionID: String, tools: [AgentTool] = []) async throws -> AgentSession {
+        let session = try await session(id: sessionID)
+        return await AgentSession(backend: backend, session: session, tools: tools)
+    }
+
+    /// The session the router holds by this id.
+    private func session(id: String) async throws -> Session {
+        let output = try await call { try await $0.getSession(path: .init(id: id)) }
+        switch output {
+        case .ok(let response):
+            return Session(try response.body.json)
+        case .unauthorized(let response):
+            throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .notFound(let response):
+            throw AgentsError.http(status: 404, message: try response.body.json.error)
+        case .undocumented(let status, _):
+            throw AgentsError.http(status: status, message: "unexpected")
+        }
+    }
+
     /// Credentials for joining the Stream call an agent is on.
     ///
     /// `sessionID` is the session's own id, not its call id. The token names the call to join.

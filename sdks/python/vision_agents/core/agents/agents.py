@@ -238,10 +238,11 @@ class Agent:
             turn_detection: Turn detector for managing conversational turns.
                 Not needed when using a realtime LLM.
             processors: Processors that run alongside the agent (e.g. video analysis,
-                data fetching). Their state is passed to the LLM. Audio and video
-                frames are dispatched to processors in list order; their
-                lifecycle hooks (``start`` / ``close``) run concurrently, so
-                processors must not depend on one another's startup or shutdown.
+                data fetching). Video processors' ``state()`` is offered to the
+                LLM as the ``get_video_state`` tool. Audio and video frames are
+                dispatched to processors in list order; their lifecycle hooks
+                (``start`` / ``close``) run concurrently, so processors must not
+                depend on one another's startup or shutdown.
             avatar: Optional avatar plugin. When set, the avatar owns the
                 agent's outbound video/audio tracks and the agent's
                 audio output is routed through the avatar for lip-sync.
@@ -375,6 +376,8 @@ class Agent:
         # Attach processors that need agent reference
         for processor in self.processors:
             processor.attach_agent(self)
+
+        self._register_processor_state_tool()
 
         # Track metadata: track_id -> TrackInfo
         self._active_video_tracks: dict[str, TrackInfo] = {}
@@ -513,6 +516,23 @@ class Agent:
                 self._call_ended_event.set()
 
             await self.close()
+
+    def _register_processor_state_tool(self) -> None:
+        """Offer one function the model can call to read what the video processors see."""
+        if not self.video_processors:
+            return
+
+        @self.llm.register_function(
+            name="get_video_state",
+            description=(
+                "What the video processors currently see: detected objects, "
+                "labels and counts. Call this when asked what is on camera."
+            ),
+        )
+        async def get_video_state() -> dict[str, object]:
+            return {
+                processor.name: processor.state() for processor in self.video_processors
+            }
 
     async def say(self, text: str, interrupt: bool = False) -> None:
         """Speak ``text`` directly through TTS, bypassing the LLM.
@@ -1044,10 +1064,10 @@ class Agent:
     async def _join_remote(self, pipeline: RemotePipeline, call: Call) -> None:
         """Hand the call to an LLM that is really a pipeline running elsewhere.
 
-        Nothing local joins the call: no tracks are published, no audio is consumed,
-        and the inference flow never starts. What the agent keeps is the conversation
-        and the transcripts, written from the events the pipeline sends back, so
-        observability reads the same either way.
+        Voice stays on the remote pipeline: no local audio is consumed and the
+        inference flow never starts. When video processors are attached, this
+        process also joins the call as a video worker so it can subscribe to
+        participant video, run the processors, and publish an annotated track.
         """
         await self._start_components()
 
@@ -1063,6 +1083,8 @@ class Agent:
 
         with self.span("llm.join_remote"):
             await pipeline.join_remote(self._remote_call(call.id))
+        if self.video_processors:
+            await self._join_video_worker(call)
         self.logger.info(f"🤖 Agent joined call remotely: {call.id}")
         self.events.send(events.AgentJoinedCallEvent(call=call))
 
@@ -1084,6 +1106,34 @@ class Agent:
             cost_tracking=self.cost_tracking,
             memory_filter=self.memory_filter,
         )
+
+    async def _join_video_worker(self, call: Call) -> None:
+        """Join the call locally to run video processors. Voice stays remote.
+
+        The remote pipeline already occupies the agent's user id, so this joins as
+        ``{agent_user_id}-video`` and publishes the annotated track only.
+        """
+        video_user = User(
+            id=f"{self._agent_user_id}-video",
+            name=f"{self.agent_user.name} video",
+        )
+        await self.edge.authenticate(video_user)
+        with self.span("edge.join"):
+            self._connection = await self.edge.join(self, call, subscribe_audio=False)
+
+        video_track = self._video_track if self.publish_video else None
+        if video_track:
+            with self.span("edge.publish_tracks"):
+                await self.edge.publish_tracks(None, video_track)
+        if self._video_track_override_path is not None:
+            # Dashboard and other audio-only UIs never publish camera, so the
+            # override has to start here rather than waiting for a track event.
+            await self._on_track_added(
+                "video-override",
+                TrackType.VIDEO,
+                Participant(original=None, user_id="override", id="override"),
+            )
+        self.logger.info("🎥 Joined the call for video processing as %s", video_user.id)
 
     async def _consume_remote_events(self, pipeline: RemotePipeline) -> None:
         """Record what the remote pipeline did until the call ends."""
@@ -1622,6 +1672,9 @@ class Agent:
             return
 
         if not self._needs_video():
+            return
+
+        if track_id in self._active_video_tracks:
             return
 
         self.logger.info(
