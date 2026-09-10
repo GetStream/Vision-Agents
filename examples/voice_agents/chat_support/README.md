@@ -4,7 +4,7 @@ Answers support questions written into an agent's Stream Chat channel, using the
 handbook in this directory.
 
 ```bash
-cd examples/agents/chat_support
+cd examples/voice_agents/chat_support
 uv sync
 uv run chat_support.py
 ```

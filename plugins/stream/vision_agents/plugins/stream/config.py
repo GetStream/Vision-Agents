@@ -51,7 +51,7 @@ async def sync_agent(
 ) -> SyncAgentResult:
     """Store an agent directory's instructions, skills, knowledge and settings.
 
-    Reads `examples/agents/{name}/` (or `path`) and writes what it holds to the
+    Reads `examples/voice_agents/{name}/` (or `path`) and writes what it holds to the
     acceleration server. What `agent.yaml` declares goes with it, so the models an agent
     runs on are decided on disk. A hash of the directory is sent too: a second call with
     the same files does nothing.
@@ -61,7 +61,7 @@ async def sync_agent(
 
     Args:
         name: What the agent is called, which is also its directory's name.
-        path: The directory to read. Defaults to `examples/agents/{name}` walking up
+        path: The directory to read. Defaults to `examples/voice_agents/{name}` walking up
             from the current working directory.
         url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
         customer_id: Who the work is billed to. Defaults to

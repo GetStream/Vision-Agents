@@ -5,7 +5,7 @@ from pathlib import Path
 
 from vision_agents.plugins import openai, stream
 
-# As-shipped acceleration pipeline, matching examples/agents/customer_support.
+# As-shipped acceleration pipeline, matching examples/voice_agents/customer_support.
 # The skills its subagent may run live under agents/accelerated/{pack}/skills/.
 DEFAULT_ACCELERATED_STT = "gemini/gemini-3.5-transcribe-live"
 DEFAULT_ACCELERATED_TTS = "inworld/inworld-tts-2-flash"

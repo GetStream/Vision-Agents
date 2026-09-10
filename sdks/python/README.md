@@ -5,7 +5,7 @@ uv add vision-agents
 ```
 
 The examples below are cut down to the part worth reading. Complete, runnable versions of
-each live in [examples/agents](https://github.com/GetStream/Vision-Agents/tree/main/examples/agents).
+each live in [examples/voice_agents](https://github.com/GetStream/Vision-Agents/tree/main/examples/voice_agents).
 
 ## Initializing the agent
 
@@ -22,7 +22,7 @@ agent = Agent(config="simple_voice_ai")
 An agent can be written down as a directory:
 
 ```
-examples/agents/customer_support/
+examples/voice_agents/customer_support/
   agent.yaml             what the agent is called
   instructions.md        the system prompt
   skills/refund.md       frontmatter (name, description, deadline) and a body

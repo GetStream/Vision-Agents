@@ -23,7 +23,7 @@ docker compose up --build
 Store the agent. This is the Go SDK doing the things a phone is not allowed to do:
 
 ```bash
-cd examples/agents/swift_demo
+cd examples/voice_agents/swift_demo
 STREAM_ACCELERATION_URL=http://localhost:8080 \
 STREAM_ACCELERATION_CUSTOMER_ID=examples \
 go run ./configure

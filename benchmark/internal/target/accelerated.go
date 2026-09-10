@@ -8,7 +8,7 @@ import (
 
 const defaultAccelURL = "http://127.0.0.1:8080"
 
-// As-shipped acceleration pipeline, matching examples/agents/customer_support.
+// As-shipped acceleration pipeline, matching examples/voice_agents/customer_support.
 const (
 	DefaultAcceleratedSTT      = "gemini/gemini-3.5-transcribe-live"
 	DefaultAcceleratedTTS      = "inworld/inworld-tts-2-flash"

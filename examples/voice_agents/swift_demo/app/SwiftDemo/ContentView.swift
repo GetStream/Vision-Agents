@@ -30,7 +30,7 @@ struct ContentView: View {
             ContentUnavailableView {
                 Label("No agents yet", systemImage: "person.crop.circle.badge.questionmark")
             } description: {
-                Text("Run `go run ./configure` in examples/agents/swift_demo first.")
+                Text("Run `go run ./configure` in examples/voice_agents/swift_demo first.")
             }
         } else {
             List(configs) { config in

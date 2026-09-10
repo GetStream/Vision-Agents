@@ -4,7 +4,7 @@ Joins a call as the agent `agent.yaml` names, storing this directory on the acce
 server on the way in.
 
 ```bash
-cd examples/agents/customer_support
+cd examples/voice_agents/customer_support
 uv sync
 uv run customer_support.py
 ```

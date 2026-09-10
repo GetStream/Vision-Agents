@@ -3,7 +3,7 @@
 Answers the restaurant's number and takes an order from the menu in this directory.
 
 ```bash
-cd examples/agents/restaurant_orders
+cd examples/voice_agents/restaurant_orders
 uv sync
 uv run restaurant_orders.py
 ```

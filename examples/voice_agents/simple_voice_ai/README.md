@@ -36,7 +36,7 @@ A running acceleration router: see [acceleration/README.md](../../../acceleratio
 ## Run
 
 ```bash
-cd examples/agents/simple_voice_ai
+cd examples/voice_agents/simple_voice_ai
 uv sync
 uv run simple_voice_ai.py run
 ```

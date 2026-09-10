@@ -125,7 +125,7 @@ func run(ctx context.Context, dir string) error {
 	if result.Unchanged {
 		fmt.Println("\nthe directory has not changed since the last sync")
 	}
-	fmt.Printf("\nopen       examples/agents/swift_demo/app/SwiftDemo.xcodeproj and run it\n")
+	fmt.Printf("\nopen       examples/voice_agents/swift_demo/app/SwiftDemo.xcodeproj and run it\n")
 	return nil
 }
 

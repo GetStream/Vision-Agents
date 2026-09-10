@@ -4,7 +4,7 @@ Rings a candidate and screens them. Set `OUTBOUND_FROM` (one of your numbers) an
 `OUTBOUND_TO` (the handset to ring).
 
 ```bash
-cd examples/agents/recruiter_voice
+cd examples/voice_agents/recruiter_voice
 uv sync
 uv run recruiter_voice.py
 ```

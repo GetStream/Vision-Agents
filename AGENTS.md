@@ -9,7 +9,7 @@
 | `sdks/python/`    | The Python SDK: `Agent`, `Runner`, the plugin contracts                  |
 | `plugins/`        | 44 Python packages, one per provider. `plugins/stream` is the client for `acceleration/` |
 | `sdks/swift/`     | Three iOS packages: `core` (state and API), `ui` (SwiftUI), `rtc` (voice over Stream Video) |
-| `examples/agents/`| Runnable agents. `simple_voice_ai` is the smallest one                   |
+| `examples/voice_agents/` | Runnable agents. `simple_voice_ai` is the smallest one                  |
 | `sdks/go/`, `benchmark/` | The Go SDK and the voice benchmark. `go.work` ties the Go modules together |
 
 ## Local dev
@@ -39,7 +39,7 @@ npm run dev                    # in dashboard/, needs node >= 20.9
 An agent, once the router is up:
 
 ```bash
-cd examples/agents/simple_voice_ai
+cd examples/voice_agents/simple_voice_ai
 uv sync && uv run simple_voice_ai.py run
 ```
 

@@ -3,6 +3,6 @@ go 1.26
 use (
 	./acceleration
 	./benchmark
-	./examples/agents/swift_demo/configure
+	./examples/voice_agents/swift_demo/configure
 	./sdks/go
 )

@@ -305,7 +305,7 @@ let chat = try await agents.chat(agent: "swift_demo")
 ```
 
 Configuring an agent is not in them: those operations are marked `x-server-side-only`, and
-the generator refuses to emit a method for one. `examples/agents/swift_demo` shows both halves
+the generator refuses to emit a method for one. `examples/voice_agents/swift_demo` shows both halves
 — a Go program that syncs the agent directory, and an iOS app that talks to what it left
 behind.
 
@@ -323,7 +323,7 @@ error.
 
 ### `sync_agent`: push an agent directory to the acceleration server
 
-`stream.sync_agent("customer_support")` reads `examples/agents/customer_support/`
+`stream.sync_agent("customer_support")` reads `examples/voice_agents/customer_support/`
 (instructions.md, skills/, knowledge/) and stores them on the Go backend. A hash
 of the directory is sent with it, so a second call with the same files does
 nothing. `Agent(config="customer_support")` then runs that config: the backend
@@ -338,7 +338,7 @@ await acceleration.sync_agent("customer_support")
 agent = Agent(config="customer_support")
 ```
 
-See `examples/agents/`.
+See `examples/voice_agents/`.
 
 ### Inbound calling: wait for a call and answer it
 
@@ -484,7 +484,7 @@ rather than by name has none to fill, and an agent whose pipeline runs here has 
 Two runnable examples of a conversation held in writing rather than on a call. `docs_agent`
 answers out of a knowledge directory and a page on the docs site, both under one namespace.
 `analyst` hands arithmetic to a subagent with a VM. `sync_agent(name)` now finds an agent
-directory anywhere under `examples/`, not only in `examples/agents/`.
+directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 

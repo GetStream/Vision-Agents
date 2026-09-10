@@ -92,7 +92,7 @@ Python SDK writes them.
 for dispatched calls are marked `x-server-side-only` in the spec, and the router answers a
 device 403 for all of them. `generate.py` asserts that none of them are in the client, so the
 SDK cannot grow a method that only ever fails. Use the Go or Python SDK from your backend —
-[`examples/agents/swift_demo`](../../examples/agents/swift_demo) shows both halves.
+[`examples/voice_agents/swift_demo`](../../examples/voice_agents/swift_demo) shows both halves.
 
 Every request and socket handshake sends `Stream-Auth-Type: jwt`, which is what declares this
 caller a device. It is sent even against a local router with no proxy in front, where the

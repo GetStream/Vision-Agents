@@ -151,7 +151,7 @@ def resolve(name: str, start: Path | None = None) -> Path:
     found = find(name, start)
     if found is None:
         raise FileNotFoundError(
-            f"no agent directory called {name!r}; expected examples/agents/{name}/"
+            f"no agent directory called {name!r}; expected examples/voice_agents/{name}/"
             f"{AGENT_FILE} or a sibling of it"
         )
     return found
@@ -173,7 +173,7 @@ def find(name: str, start: Path | None = None) -> Path | None:
         return here
 
     while True:
-        # Every kind of example is looked under rather than only examples/agents, since
+        # Every kind of example is looked under rather than only examples/voice_agents, since
         # which folder an agent was filed in says nothing about how it is loaded.
         for candidate in (
             *sorted((here / "examples").glob("*/" + name)),

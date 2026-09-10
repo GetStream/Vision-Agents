@@ -97,7 +97,7 @@ changed nothing costs a file read rather than a request. `sync_agent("customer_s
 is still there for storing a directory ahead of time, without joining anything.
 
 `Agent(config=)` fills in the edge, the remote pipeline and a phone, so the Go
-backend handles routing. See `examples/agents/` for customer support, an outbound
+backend handles routing. See `examples/voice_agents/` for customer support, an outbound
 recruiter and an inbound restaurant.
 
 ## A conversation held in writing

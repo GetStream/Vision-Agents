@@ -146,10 +146,10 @@ class TestFolder:
             "reference/api.md"
         ]
 
-    def test_resolve_finds_examples_agents(
+    def test_resolve_finds_examples_voice_agents(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        agent = tmp_path / "examples" / "agents" / "support"
+        agent = tmp_path / "examples" / "voice_agents" / "support"
         write(agent, "agent.yaml", "name: support\n")
         write(agent, "instructions.md", "Help.\n")
         monkeypatch.chdir(tmp_path)
@@ -172,7 +172,9 @@ class TestFolder:
         # Instructions alone no longer make a directory an agent: agent.yaml is what says
         # so, and without it a name belongs to whatever is stored on the router.
         write(
-            tmp_path / "examples" / "agents" / "support", "instructions.md", "Help.\n"
+            tmp_path / "examples" / "voice_agents" / "support",
+            "instructions.md",
+            "Help.\n",
         )
         monkeypatch.chdir(tmp_path)
 
