@@ -297,6 +297,7 @@ type RouterConfig struct {
 	STT    options.STT    `bun:"stt,type:jsonb"`
 	TTS    options.TTS    `bun:"tts,type:jsonb"`
 	LLM    options.LLM    `bun:"llm,type:jsonb"`
+	STS    options.STS    `bun:"sts,type:jsonb"`
 	Search options.Search `bun:"search,type:jsonb"`
 	// Tags are cost labels carried onto every request made under this config.
 	Tags      map[string]string `bun:"tags,type:jsonb"`

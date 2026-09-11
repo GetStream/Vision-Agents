@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
@@ -158,6 +159,14 @@ func (s *Server) routerConfigComplaint(request RouterConfigRequest) (string, boo
 	if message, ok := s.ttsComplaint(voice); !ok {
 		return message, false
 	}
+
+	conversation := stsOptionsOf(request.Sts)
+	if err := conversation.Validate(); err != nil {
+		return err.Error(), false
+	}
+	if message, ok := s.stsComplaint(conversation); !ok {
+		return message, false
+	}
 	return "", true
 }
 
@@ -228,6 +237,41 @@ func (s *Server) ttsComplaint(held options.TTS) (string, bool) {
 	return "", true
 }
 
+// stsComplaint is sttComplaint for the speech-to-speech half, asked of that router's own
+// config. Frames are checked here too: a config that says it will send them and names no
+// model that sees would fail every request made under it.
+func (s *Server) stsComplaint(held options.STS) (string, bool) {
+	conversing, ok := s.routerFor(Modality(routing.STS))
+	if !ok {
+		return "", true
+	}
+	config := conversing.Config()
+
+	for _, target := range held.Providers {
+		if !config.Names(target) {
+			return fmt.Sprintf(
+				"%q is not a provider, a provider/model or a capability shortcut this deployment offers", target), false
+		}
+	}
+	if !config.Meets(held.DataPolicy) {
+		return "no speech-to-speech model this deployment offers meets that data policy", false
+	}
+	if !config.Expresses(held.Terms()) {
+		return "no speech-to-speech model this deployment offers can serve every option in this config", false
+	}
+	if modalities := held.InputModalities(); len(modalities) > 0 && !slices.ContainsFunc(config.Providers, func(provider routing.ProviderConfig) bool {
+		return provider.Sees(modalities)
+	}) {
+		return "no speech-to-speech model this deployment offers sees images", false
+	}
+	for vendor := range held.Overwrites {
+		if !config.Declares(vendor) {
+			return fmt.Sprintf("there are overwrites for %q, which this deployment has no speech-to-speech model for", vendor), false
+		}
+	}
+	return "", true
+}
+
 // storedRouterConfig turns a request into a row. The customer comes from the trusted
 // header rather than the body, the same way an agent config's does.
 func storedRouterConfig(request RouterConfigRequest, customerID string) store.RouterConfig {
@@ -237,6 +281,7 @@ func storedRouterConfig(request RouterConfigRequest, customerID string) store.Ro
 		STT:        sttOptionsOf(request.Stt),
 		TTS:        ttsOptionsOf(request.Tts),
 		LLM:        llmOptionsOf(request.Llm),
+		STS:        stsOptionsOf(request.Sts),
 		Search:     searchOptionsOf(request.Search),
 	}
 	if request.Tags != nil {
@@ -254,6 +299,7 @@ func routerConfigOf(config store.RouterConfig) RouterConfig {
 		Stt:       sttOptionsFor(config.STT),
 		Tts:       ttsOptionsFor(config.TTS),
 		Llm:       llmOptionsFor(config.LLM),
+		Sts:       stsOptionsFor(config.STS),
 		Search:    searchOptionsFor(config.Search),
 		CreatedAt: config.CreatedAt,
 		UpdatedAt: config.UpdatedAt,
@@ -314,6 +360,7 @@ const (
 	sttDefaultTarget = "en-low-latency"
 	ttsDefaultTarget = "en-low-latency"
 	llmDefaultTarget = "llm-fast"
+	stsDefaultTarget = "sts-fast"
 )
 
 // targeted returns the options with a target filled in, since routing has to be told

@@ -37,6 +37,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/cartesia"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/elevenlabs"
@@ -306,6 +307,22 @@ func run(logger *slog.Logger) error {
 		defer chat.Close()
 		routers[routing.LLM] = chat
 		streams.LLM = chat
+	}
+
+	if section, ok := config[routing.STS]; ok {
+		conversing, err := stsrouter.New(stsrouter.Options{
+			Config:   section,
+			Registry: stsrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer conversing.Close()
+		routers[routing.STS] = conversing
+		streams.STS = conversing
 	}
 
 	// Search is routed like the three above, so a deployment with no key for any of the
