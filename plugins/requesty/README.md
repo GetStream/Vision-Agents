@@ -40,14 +40,27 @@ agent = Agent(
 Set your API key via the `REQUESTY_API_KEY` environment variable (get one at
 [app.requesty.ai/api-keys](https://app.requesty.ai/api-keys)). Models are named
 `provider/model`; browse the catalog at
-[app.requesty.ai/router/list](https://app.requesty.ai/router/list).
+[app.requesty.ai/router/list](https://app.requesty.ai/router/list) or query
+`GET https://router.requesty.ai/v1/models/managed` for the curated list of
+managed policies (short ids such as `claude-sonnet-4-5` or `gpt-5.4-mini` that
+can be passed as `model` directly).
+
+To keep traffic in a specific region, pass a regional `base_url` (the same key
+works on all of them):
+
+```python
+llm = requesty.LLM(
+    model="openai/gpt-4o-mini",
+    base_url="https://router.eu.requesty.ai/v1",  # EU (Frankfurt); also .us / .ap
+)
+```
 
 ## Configuration
 
 | Parameter  | Description                               | Accepted Values                                                                                                                          |
 |------------|-------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|
 | `api_key`  | Requesty API key                          | `str \| None`. If not provided, uses `REQUESTY_API_KEY` environment variable                                                             |
-| `base_url` | Requesty API base URL                     | `str`. Default: `"https://router.requesty.ai/v1"`                                                                                       |
+| `base_url` | Requesty API base URL                     | `str`. Default: `"https://router.requesty.ai/v1"`. Regional: `"https://router.eu.requesty.ai/v1"`, `.us`, `.ap`                          |
 | `model`    | Model identifier to use                   | `str`. Default: `"openai/gpt-4o-mini"`. Examples: `"anthropic/claude-sonnet-4-5"`, `"google/gemini-2.5-flash"`, `"openai/gpt-4o"`        |
 | `max_tokens` | Upper limit on generated tokens         | `int \| None`                                                                                                                            |
 | `tools_max_rounds` | Max rounds for multi-hop tool calls | `int`. Default: `3`                                                                                                                      |

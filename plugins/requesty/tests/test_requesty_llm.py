@@ -5,12 +5,23 @@ import os
 import pytest
 from dotenv import load_dotenv
 from vision_agents.core.agents.conversation import InMemoryConversation
-from vision_agents.core.instructions import Instructions
 from vision_agents.plugins.requesty import LLM
 
 from vision_agents.testing import collect_simple_response
 
 load_dotenv()
+
+
+def _require_requesty_api_key() -> str:
+    api_key = os.getenv("REQUESTY_API_KEY")
+    if not api_key:
+        pytest.fail(
+            "Requesty integration tests require REQUESTY_API_KEY. "
+            "Set REQUESTY_API_KEY in the environment or in a .env file before "
+            "running tests marked with @pytest.mark.integration.",
+            pytrace=False,
+        )
+    return api_key
 
 
 @pytest.fixture()
@@ -74,12 +85,25 @@ class TestRequestyLLM:
         assert func.get("strict") is None
         assert func["parameters"].get("additionalProperties") is None
 
+    async def test_convert_tools_does_not_mutate_input_schema(self, llm_factory):
+        """Converting tools must not write strict-mode keys back into the shared schema."""
+        llm = llm_factory(model="google/gemini-2.5-flash")
+        schema = {
+            "type": "object",
+            "properties": {"foo": {"type": "string"}},
+            "required": ["foo"],
+        }
+        tools = [{"name": "test_tool", "description": "A test", "parameters": schema}]
+        llm._convert_tools_to_provider_format(tools)
+        assert "additionalProperties" not in schema
 
-@pytest.mark.skipif(
-    not os.getenv("REQUESTY_API_KEY"), reason="REQUESTY_API_KEY not set"
-)
+
 @pytest.mark.integration
 class TestRequestyLLMIntegration:
+    @pytest.fixture(autouse=True)
+    def require_api_key(self) -> str:
+        return _require_requesty_api_key()
+
     async def test_simple_response(self, llm_factory):
         """Test simple response yields deltas and a final."""
         llm = llm_factory()
@@ -106,7 +130,7 @@ class TestRequestyLLMIntegration:
     async def test_instruction_following(self, llm_factory):
         """Test that the LLM follows system instructions."""
         llm = llm_factory(model="anthropic/claude-sonnet-4-5")
-        llm.set_instructions(Instructions("Only reply in 2 letter country shortcuts"))
+        llm.set_instructions("Only reply in 2 letter country shortcuts")
 
         _, final = await collect_simple_response(
             llm.simple_response(

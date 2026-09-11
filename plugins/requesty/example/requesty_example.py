@@ -41,7 +41,7 @@ async def create_agent(**kwargs) -> Agent:
 
     # Register local functions that the LLM can call
     @llm.register_function(description="Get current weather for a location")
-    async def get_weather(location: str):
+    async def get_weather(location: str) -> dict[str, str]:
         """Get the current weather for a location."""
         return {
             "location": location,
@@ -51,7 +51,7 @@ async def create_agent(**kwargs) -> Agent:
         }
 
     @llm.register_function(description="Calculate the sum of two numbers")
-    async def calculate_sum(a: int, b: int):
+    async def calculate_sum(a: int, b: int) -> int:
         """Calculate the sum of two numbers."""
         return a + b
 

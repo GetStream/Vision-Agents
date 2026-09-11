@@ -157,9 +157,9 @@ class RequestyLLM(LLM):
         for t in tools or []:
             name = t.get("name", "unnamed_tool")
             description = t.get("description", "") or ""
-            params = t.get("parameters_schema") or t.get("parameters") or {}
-            if not isinstance(params, dict):
-                params = {}
+            # Copy so the shared schema from get_available_functions() is not mutated
+            raw_params = t.get("parameters_schema") or t.get("parameters") or {}
+            params = dict(raw_params) if isinstance(raw_params, dict) else {}
             params.setdefault("type", "object")
             params.setdefault("properties", {})
 
@@ -263,7 +263,7 @@ class RequestyLLM(LLM):
                     sequence_number += 1
 
             if finish_reason:
-                if finish_reason in ("length", "content"):
+                if finish_reason in ("length", "content_filter"):
                     logger.warning(
                         f'The model finished the response due to reason "{finish_reason}"'
                     )
