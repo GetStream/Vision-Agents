@@ -1,9 +1,12 @@
 package openai
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
 type OpenAISuite struct {
@@ -66,4 +69,51 @@ func (s *OpenAISuite) TestAModelIsRecognisedByItsFamily() {
 	s.Equal(modelCapabilities["gpt-5.6"].ReasoningEfforts,
 		capabilitiesFor("gpt-5.6-sol-2026-02-11").ReasoningEfforts)
 	s.Equal(fallbackCapabilities, capabilitiesFor("some-future-model"))
+}
+
+func (s *OpenAISuite) TestAModelAcceptsImages() {
+	s.Contains(capabilitiesFor("gpt-5.6-luna").InputModalities, "image")
+	s.Contains(capabilitiesFor("gpt-5.5-chat").InputModalities, "image")
+}
+
+func (s *OpenAISuite) TestAnImagePartIsSentAsInputImage() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	items := provider.input(llm.ResponseParams{Input: []llm.Message{{
+		Role: llm.User,
+		Parts: []llm.ContentPart{
+			{Text: "what flower"},
+			{Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8}, Detail: "low"}},
+		},
+	}}})
+	s.Require().Len(items, 1)
+
+	raw, err := json.Marshal(items[0])
+	s.Require().NoError(err)
+	s.Contains(string(raw), `"type":"input_image"`)
+	s.Contains(string(raw), `"detail":"low"`)
+	s.Contains(string(raw), "data:image/jpeg;base64,")
+	s.Contains(string(raw), `"type":"input_text"`)
+}
+
+func (s *OpenAISuite) TestAToolResultImageGoesInFunctionCallOutput() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	items := provider.input(llm.ResponseParams{Input: []llm.Message{{
+		Role:       llm.ToolResult,
+		ToolCallID: "call-1",
+		Parts: []llm.ContentPart{
+			{Text: "2 roses"},
+			{Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff}}},
+		},
+	}}})
+	s.Require().Len(items, 1)
+
+	raw, err := json.Marshal(items[0])
+	s.Require().NoError(err)
+	s.Contains(string(raw), `"type":"function_call_output"`)
+	s.Contains(string(raw), `"type":"input_image"`)
+	s.Contains(string(raw), "2 roses")
 }

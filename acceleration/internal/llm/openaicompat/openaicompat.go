@@ -299,19 +299,31 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 	if request.Instructions != "" {
 		messages = append(messages, openai.SystemMessage(request.Instructions))
 	}
+	var pendingImages []openai.ChatCompletionContentPartUnionParam
 	for _, message := range request.Input {
+		if message.Role != llm.ToolResult && len(pendingImages) > 0 {
+			messages = append(messages, openai.UserMessage(pendingImages))
+			pendingImages = nil
+		}
 		switch message.Role {
 		case llm.System:
-			messages = append(messages, openai.SystemMessage(message.Content))
+			messages = append(messages, openai.SystemMessage(messageText(message)))
 		case llm.Assistant:
 			messages = append(messages, assistantMessage(message))
 		case llm.ToolResult:
-			messages = append(messages, openai.ToolMessage(message.Content, message.ToolCallID))
+			messages = append(messages, openai.ToolMessage(messageText(message), message.ToolCallID))
+			if message.HasImage() {
+				pendingImages = append(pendingImages, openai.TextContentPart("Images from tool result "+message.ToolCallID))
+				pendingImages = append(pendingImages, chatImages(message.Parts)...)
+			}
 		default:
-			messages = append(messages, openai.UserMessage(message.Content))
+			messages = append(messages, userMessage(message))
 		}
 	}
 
+	if len(pendingImages) > 0 {
+		messages = append(messages, openai.UserMessage(pendingImages))
+	}
 	params := openai.ChatCompletionNewParams{
 		Model:    l.options.Model,
 		Messages: messages,
@@ -390,12 +402,57 @@ func assistantMessage(message llm.Message) openai.ChatCompletionMessageParamUnio
 	}
 
 	assistant := openai.ChatCompletionAssistantMessageParam{ToolCalls: calls}
-	if message.Content != "" {
+	if text := messageText(message); text != "" {
 		assistant.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
-			OfString: param.NewOpt(message.Content),
+			OfString: param.NewOpt(text),
 		}
 	}
 	return openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant}
+}
+
+func userMessage(message llm.Message) openai.ChatCompletionMessageParamUnion {
+	if len(message.Parts) == 0 {
+		return openai.UserMessage(message.Content)
+	}
+	return openai.UserMessage(chatParts(message.Parts))
+}
+
+func chatParts(parts []llm.ContentPart) []openai.ChatCompletionContentPartUnionParam {
+	rendered := make([]openai.ChatCompletionContentPartUnionParam, 0, len(parts))
+	for _, part := range parts {
+		if part.Image != nil {
+			rendered = append(rendered, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+				URL:    part.Image.DataURI(),
+				Detail: part.Image.Detail,
+			}))
+			continue
+		}
+		if part.Text != "" {
+			rendered = append(rendered, openai.TextContentPart(part.Text))
+		}
+	}
+	return rendered
+}
+
+func chatImages(parts []llm.ContentPart) []openai.ChatCompletionContentPartUnionParam {
+	var images []openai.ChatCompletionContentPartUnionParam
+	for _, part := range parts {
+		if part.Image == nil {
+			continue
+		}
+		images = append(images, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+			URL:    part.Image.DataURI(),
+			Detail: part.Image.Detail,
+		}))
+	}
+	return images
+}
+
+func messageText(message llm.Message) string {
+	if message.Content != "" {
+		return message.Content
+	}
+	return llm.TextOf(message.Parts)
 }
 
 // requestOptions applies the request fields outside the OpenAI schema.

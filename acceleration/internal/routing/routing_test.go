@@ -984,3 +984,30 @@ func (s *RoutingSuite) TestTierDefaultsToLowLatency() {
 	s.Equal(LowLatency, ProviderConfig{}.tier())
 	s.Equal(HighQuality, ProviderConfig{Tier: HighQuality}.tier())
 }
+
+func (s *RoutingSuite) TestSeeingDropsModelsThatCannotTakeAnImage() {
+	candidates := []Candidate{
+		{Config: ProviderConfig{Provider: "quick", Model: "text", Languages: []string{"en"}}},
+		{Config: ProviderConfig{Provider: "lush", Model: "vision", Languages: []string{"en"}, InputModalities: []string{"image"}}},
+	}
+
+	kept, err := seeing(candidates, []string{"image"})
+	s.Require().NoError(err)
+	s.Equal([]string{"lush/vision"}, names(kept))
+
+	_, err = seeing(candidates[:1], []string{"image"})
+	s.ErrorContains(err, "no provider accepts image input")
+}
+
+func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIAndGemini() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	for _, provider := range config[LLM].Providers {
+		if provider.Provider == "openai" || provider.Provider == "gemini" {
+			s.Containsf(provider.InputModalities, "image", "%s should accept images", provider.Name())
+			continue
+		}
+		s.Emptyf(provider.InputModalities, "%s is text-only", provider.Name())
+	}
+}

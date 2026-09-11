@@ -172,6 +172,9 @@ type ProviderConfig struct {
 	// a model that meets it.
 	DataPolicy options.DataHandling `yaml:"data_policy"`
 	Price      Price                `yaml:"price"`
+	// InputModalities are extra input kinds this model accepts, e.g. "image". Empty
+	// means text only, and a request carrying anything else is not routed here.
+	InputModalities []string `yaml:"input_modalities"`
 }
 
 // Supports reports whether this model can express every term a request named.
@@ -202,6 +205,19 @@ func (p ProviderConfig) Speaks(languages []string) bool {
 	return true
 }
 
+// Sees reports whether the model accepts every requested input kind besides text.
+func (p ProviderConfig) Sees(modalities []string) bool {
+	for _, wanted := range modalities {
+		if wanted == "" || wanted == "text" {
+			continue
+		}
+		if !slices.Contains(p.InputModalities, wanted) {
+			return false
+		}
+	}
+	return true
+}
+
 // tier returns the declared tier, defaulting to low-latency.
 func (p ProviderConfig) tier() Tier {
 	if p.Tier == "" {
@@ -214,6 +230,7 @@ func (p ProviderConfig) tier() Tier {
 // provider must meet, so the candidate list follows from the config rather than from a
 // hand-maintained list of names.
 type Alias struct {
+	RequireInputModalities []string `yaml:"require_input_modalities"`
 	// Only names the candidates outright, for the shortcut whose members have nothing
 	// declarable in common. It is the exception to everything above: a name here is a
 	// judgement about which models are wanted rather than a fact about what they can do,
@@ -255,7 +272,7 @@ func (a Alias) matches(provider ProviderConfig) bool {
 	if a.Tier != "" && provider.tier() != a.Tier {
 		return false
 	}
-	return provider.Speaks(a.Languages)
+	return provider.Speaks(a.Languages) && provider.Sees(a.RequireInputModalities)
 }
 
 // ModalityConfig is the capability configuration for one modality.

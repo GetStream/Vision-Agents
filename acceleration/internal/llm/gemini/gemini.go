@@ -88,7 +88,14 @@ func capabilitiesFor(model string) llm.Capabilities {
 	if best == "" {
 		return fallbackCapabilities
 	}
-	return modelCapabilities[best]
+	return withVision(modelCapabilities[best])
+}
+
+func withVision(c llm.Capabilities) llm.Capabilities {
+	if len(c.InputModalities) == 0 {
+		c.InputModalities = []string{llm.ModalityImage}
+	}
+	return c
 }
 
 // New builds the provider, reading the API key from the environment when it is not given.

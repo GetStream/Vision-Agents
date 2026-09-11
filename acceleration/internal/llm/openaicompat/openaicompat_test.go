@@ -785,6 +785,76 @@ func (s *OpenAICompatSuite) TestAToolResultIsSentWithTheCallItAnswers() {
 	s.Equal("transferred", messages[2]["content"])
 }
 
+func (s *OpenAICompatSuite) TestAnImagePartIsSentAsAnImageURL() {
+	s.frames = []string{textFrame("a rose"), usageFrame(5, 0, 1, 0, "stop")}
+	provider := s.provider(Options{Capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}}})
+
+	s.ask(provider, llm.ResponseParams{Input: []llm.Message{{
+		Role: llm.User,
+		Parts: []llm.ContentPart{
+			{Text: "what flower"},
+			{Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8}, Detail: "low"}},
+		},
+	}}})
+
+	messages := s.sentMessages(0)
+	s.Require().Len(messages, 1)
+	s.Equal("user", messages[0]["role"])
+
+	content, ok := messages[0]["content"].([]any)
+	s.Require().True(ok, "mixed text and image have to travel as parts, not a string")
+	s.Require().Len(content, 2)
+
+	text, ok := content[0].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("text", text["type"])
+	s.Equal("what flower", text["text"])
+
+	image, ok := content[1].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("image_url", image["type"])
+	url, ok := image["image_url"].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("low", url["detail"])
+	s.Contains(url["url"], "data:image/jpeg;base64,")
+}
+
+func (s *OpenAICompatSuite) TestAToolResultImageRidesAsAFollowUpUserTurn() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+	provider := s.provider(Options{Capabilities: llm.Capabilities{InputModalities: []string{llm.ModalityImage}}})
+
+	s.ask(provider, llm.ResponseParams{Input: []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "look"}}},
+		{Role: llm.ToolResult, ToolCallID: "call-1", Parts: []llm.ContentPart{
+			{Text: "2 roses"},
+			{Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff}}},
+		}},
+	}})
+
+	messages := s.sentMessages(0)
+	s.Require().Len(messages, 3)
+	s.Equal("tool", messages[1]["role"])
+	s.Equal("2 roses", messages[1]["content"])
+	s.Equal("user", messages[2]["role"])
+	content, ok := messages[2]["content"].([]any)
+	s.Require().True(ok)
+	image, ok := content[1].(map[string]any)
+	s.Require().True(ok)
+	s.Equal("image_url", image["type"])
+}
+
+func (s *OpenAICompatSuite) TestAnImageIsRefusedWhenTheModelCannotSee() {
+	provider := s.provider(Options{})
+
+	_, err := provider.Create(context.Background(), llm.ResponseParams{Input: []llm.Message{{
+		Role:  llm.User,
+		Parts: []llm.ContentPart{{Image: &llm.ImagePart{MIME: "image/jpeg", Data: []byte{1}}}},
+	}}})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "does not accept image input")
+}
+
 // sentMessages returns the messages from the nth recorded request.
 func (s *OpenAICompatSuite) sentMessages(index int) []map[string]any {
 	s.Require().Greater(len(s.requests), index)
@@ -810,4 +880,23 @@ func (s *OpenAICompatSuite) modelSentBy(provider *LLM) string {
 	model, ok := s.requests[0]["model"].(string)
 	s.Require().True(ok)
 	return model
+}
+
+func (s *OpenAICompatSuite) TestImagesFollowAllToolResultsInABatch() {
+	s.frames = []string{textFrame("ok"), usageFrame(5, 0, 1, 0, "stop")}
+	provider := s.provider(Options{Capabilities: llm.Capabilities{InputModalities: []string{"image"}}})
+	s.ask(provider, llm.ResponseParams{Input: []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "one", Name: "look"}, {ID: "two", Name: "look"}}},
+		{Role: llm.ToolResult, ToolCallID: "one", Parts: []llm.ContentPart{{Image: &llm.ImagePart{URL: "https://example.com/one.png"}}}},
+		{Role: llm.ToolResult, ToolCallID: "two", Parts: []llm.ContentPart{{Image: &llm.ImagePart{URL: "https://example.com/two.png"}}}},
+	}})
+	messages := s.sentMessages(0)
+	s.Require().Len(messages, 4)
+	s.Equal("tool", messages[1]["role"])
+	s.Equal("tool", messages[2]["role"])
+	s.Equal("user", messages[3]["role"])
+	encoded, err := json.Marshal(messages[3]["content"])
+	s.Require().NoError(err)
+	s.Contains(string(encoded), "one.png")
+	s.Contains(string(encoded), "two.png")
 }

@@ -80,15 +80,13 @@ var modelCapabilities = map[string]llm.Capabilities{
 		Store:            true,
 		Conversations:    true,
 		PromptCacheKey:   true,
+		InputModalities:  []string{llm.ModalityImage},
 	},
 }
 
-// fallbackCapabilities is what a model this table has never heard of is assumed to do.
-// Storing and caching are safe to assume on this API; reasoning is not.
+// fallbackCapabilities does not assume image support for unknown model families.
 var fallbackCapabilities = llm.Capabilities{
-	Store:          true,
-	Conversations:  true,
-	PromptCacheKey: true,
+	Store: true, Conversations: true, PromptCacheKey: true,
 }
 
 // Options configures the provider.
@@ -258,7 +256,15 @@ func capabilitiesFor(model string) llm.Capabilities {
 	if best == "" {
 		return fallbackCapabilities
 	}
-	return modelCapabilities[best]
+	return withVision(modelCapabilities[best])
+}
+
+// withVision marks the known model families above as accepting images.
+func withVision(c llm.Capabilities) llm.Capabilities {
+	if len(c.InputModalities) == 0 {
+		c.InputModalities = []string{llm.ModalityImage}
+	}
+	return c
 }
 
 // puller turns the Responses stream events into what a Stream reports.
@@ -455,16 +461,13 @@ func (l *LLM) input(request llm.ResponseParams) responses.ResponseInputParam {
 	for _, message := range request.Input {
 		switch message.Role {
 		case llm.System:
-			items = append(items, responses.ResponseInputItemParamOfMessage(
-				message.Content, responses.EasyInputMessageRoleDeveloper))
+			items = append(items, userOrSystem(message, responses.EasyInputMessageRoleDeveloper)...)
 		case llm.Assistant:
 			items = append(items, assistant(message)...)
 		case llm.ToolResult:
-			items = append(items, responses.ResponseInputItemParamOfFunctionCallOutput(
-				message.ToolCallID, message.Content))
+			items = append(items, functionOutput(message))
 		default:
-			items = append(items, responses.ResponseInputItemParamOfMessage(
-				message.Content, responses.EasyInputMessageRoleUser))
+			items = append(items, userOrSystem(message, responses.EasyInputMessageRoleUser)...)
 		}
 	}
 	return items
@@ -488,15 +491,83 @@ func (l *LLM) instructions(request llm.ResponseParams) responses.ResponseInputIt
 // conversation where a result answers nothing.
 func assistant(message llm.Message) []responses.ResponseInputItemUnionParam {
 	items := make([]responses.ResponseInputItemUnionParam, 0, len(message.ToolCalls)+1)
-	if message.Content != "" {
+	if text := messageText(message); text != "" {
 		items = append(items, responses.ResponseInputItemParamOfMessage(
-			message.Content, responses.EasyInputMessageRoleAssistant))
+			text, responses.EasyInputMessageRoleAssistant))
 	}
 	for _, made := range message.ToolCalls {
 		items = append(items, responses.ResponseInputItemParamOfFunctionCall(
 			made.Arguments, made.ID, made.Name))
 	}
 	return items
+}
+
+// userOrSystem renders a turn that is words, or words and images.
+func userOrSystem(message llm.Message, role responses.EasyInputMessageRole) []responses.ResponseInputItemUnionParam {
+	if len(message.Parts) == 0 {
+		return []responses.ResponseInputItemUnionParam{
+			responses.ResponseInputItemParamOfMessage(message.Content, role),
+		}
+	}
+	return []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage(inputParts(message.Parts), role),
+	}
+}
+
+func functionOutput(message llm.Message) responses.ResponseInputItemUnionParam {
+	if len(message.Parts) == 0 {
+		return responses.ResponseInputItemParamOfFunctionCallOutput(
+			message.ToolCallID, message.Content)
+	}
+	items := make(responses.ResponseFunctionCallOutputItemListParam, 0, len(message.Parts))
+	for _, part := range message.Parts {
+		if part.Image != nil {
+			image := responses.ResponseInputImageContentParam{
+				ImageURL: param.NewOpt(part.Image.DataURI()),
+			}
+			if part.Image.Detail != "" {
+				image.Detail = responses.ResponseInputImageContentDetail(part.Image.Detail)
+			}
+			items = append(items, responses.ResponseFunctionCallOutputItemUnionParam{OfInputImage: &image})
+			continue
+		}
+		if part.Text != "" {
+			items = append(items, responses.ResponseFunctionCallOutputItemParamOfInputText(part.Text))
+		}
+	}
+	return responses.ResponseInputItemParamOfFunctionCallOutput(message.ToolCallID, items)
+}
+
+func inputParts(parts []llm.ContentPart) responses.ResponseInputMessageContentListParam {
+	rendered := make(responses.ResponseInputMessageContentListParam, 0, len(parts))
+	for _, part := range parts {
+		if part.Image != nil {
+			image := responses.ResponseInputImageParam{
+				ImageURL: param.NewOpt(part.Image.DataURI()),
+				Detail:   imageDetail(part.Image.Detail),
+			}
+			rendered = append(rendered, responses.ResponseInputContentUnionParam{OfInputImage: &image})
+			continue
+		}
+		if part.Text != "" {
+			rendered = append(rendered, responses.ResponseInputContentParamOfInputText(part.Text))
+		}
+	}
+	return rendered
+}
+
+func imageDetail(detail string) responses.ResponseInputImageDetail {
+	if detail == "" {
+		return responses.ResponseInputImageDetailAuto
+	}
+	return responses.ResponseInputImageDetail(detail)
+}
+
+func messageText(message llm.Message) string {
+	if message.Content != "" {
+		return message.Content
+	}
+	return llm.TextOf(message.Parts)
 }
 
 // tools renders the tools a request offers.

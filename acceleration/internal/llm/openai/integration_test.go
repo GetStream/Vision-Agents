@@ -3,7 +3,12 @@
 package openai
 
 import (
+	"bytes"
 	"context"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"os"
 	"strings"
 	"testing"
@@ -108,4 +113,21 @@ func (s *OpenAIIntegrationSuite) TestATruncatedAnswerSaysWhyItStopped() {
 	s.Equal(llm.StatusIncomplete, complete.Status)
 	s.Equal(llm.ReasonMaxOutputTokens, complete.IncompleteReason)
 	s.NotEmpty(complete.OutputText)
+}
+
+func (s *OpenAIIntegrationSuite) TestTwoImageInputsAreUnderstoodInOrder() {
+	provider := s.start(Options{})
+	parts := []llm.ContentPart{{Text: "Name the color of the first image, then the second. Reply only red, blue."}}
+	for _, c := range []color.Color{color.RGBA{R: 255, A: 255}, color.RGBA{B: 255, A: 255}} {
+		picture := image.NewRGBA(image.Rect(0, 0, 64, 64))
+		draw.Draw(picture, picture.Bounds(), image.NewUniform(c), image.Point{}, draw.Src)
+		var data bytes.Buffer
+		s.Require().NoError(png.Encode(&data, picture))
+		parts = append(parts, llm.ContentPart{Image: &llm.ImagePart{MIME: "image/png", Data: data.Bytes()}})
+	}
+	complete, _ := s.ask(provider, llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Parts: parts}}, MaxOutputTokens: 128})
+	answer := strings.ToLower(complete.OutputText)
+	s.Contains(answer, "red")
+	s.Contains(answer, "blue")
+	s.Less(strings.Index(answer, "red"), strings.Index(answer, "blue"))
 }

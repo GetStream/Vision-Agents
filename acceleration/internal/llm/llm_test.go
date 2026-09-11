@@ -332,3 +332,60 @@ func (s *LLMSuite) TestUnfenceReadsJSONAModelWrappedInACodeFence() {
 	s.Equal(`{"ok":true}`, Unfence("```json\n{\"ok\":true}\n```"))
 	s.Equal(`{"ok":true}`, Unfence(`{"ok":true}`))
 }
+
+func (s *LLMSuite) TestCapabilitiesRefuseAnImageAModelCannotSee() {
+	image := ResponseParams{Input: []Message{{
+		Role:  User,
+		Parts: []ContentPart{{Image: &ImagePart{MIME: "image/jpeg", Data: []byte{1}}}},
+	}}}
+
+	err := Capabilities{}.Validate(image)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "does not accept image input")
+	s.NoError(Capabilities{InputModalities: []string{ModalityImage}}.Validate(image))
+	s.NoError(Capabilities{}.Validate(ResponseParams{Input: []Message{{Role: User, Content: "hi"}}}))
+}
+
+func (s *LLMSuite) TestOmitImagesLeavesAPlaceholderATextModelCanRead() {
+	message := Message{Role: User, Parts: []ContentPart{
+		{Text: "what is this"},
+		{Image: &ImagePart{MIME: "image/jpeg", Data: []byte{1}}},
+	}}
+
+	omitted := OmitImages([]Message{message})
+
+	s.Equal(OmittedImage, omitted[0].Parts[1].Text)
+	s.Nil(omitted[0].Parts[1].Image)
+}
+
+func (s *LLMSuite) TestSameMessageComparesImageBytes() {
+	first := Message{Role: User, Parts: []ContentPart{
+		{Image: &ImagePart{MIME: "image/jpeg", Data: []byte{1, 2}}},
+	}}
+	same := Message{Role: User, Parts: []ContentPart{
+		{Image: &ImagePart{MIME: "image/jpeg", Data: []byte{1, 2}}},
+	}}
+	different := Message{Role: User, Parts: []ContentPart{
+		{Image: &ImagePart{MIME: "image/jpeg", Data: []byte{1, 3}}},
+	}}
+
+	s.True(SameMessage(first, same))
+	s.False(SameMessage(first, different))
+}
+
+func (s *LLMSuite) TestParseDataURIReadsBytesBack() {
+	part := ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+
+	parsed, err := ParseDataURI(part.DataURI())
+
+	s.Require().NoError(err)
+	s.Equal(part, parsed)
+}
+
+func (s *LLMSuite) TestParseDataURIRefusesAURL() {
+	_, err := ParseDataURI("https://example.com/flower.jpg")
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "data URI")
+}

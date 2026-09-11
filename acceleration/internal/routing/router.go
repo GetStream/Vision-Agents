@@ -69,6 +69,7 @@ type VoiceResolver interface {
 // Options configures a Router. Store, Live and Voices are optional: without them the
 // router still routes, it just stops recording and stops resolving custom voices.
 type Options[P Provider] struct {
+	Validate func(P, ProviderConfig) error
 	Modality Modality
 	Config   ModalityConfig
 	Registry *Registry[P]
@@ -80,6 +81,7 @@ type Options[P Provider] struct {
 
 // Router selects providers and records per-request statistics.
 type Router[P Provider] struct {
+	validate func(P, ProviderConfig) error
 	modality Modality
 	config   ModalityConfig
 	registry *Registry[P]
@@ -113,6 +115,9 @@ type Request struct {
 	Realtime *bool
 	// LanguageHints narrow multilingual models.
 	LanguageHints []string
+	// InputModalities restrict candidates to models that accept those extra input kinds,
+	// the way LanguageHints restrict them to a language. Empty leaves text-only models in.
+	InputModalities []string
 	// Voice selects the speaker for modalities that produce audio.
 	Voice string
 	// Keyterms are the words a modality that recognises speech should expect.
@@ -160,6 +165,7 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 	}
 
 	return &Router[P]{
+		validate: options.Validate,
 		modality: options.Modality,
 		config:   options.Config,
 		registry: options.Registry,
@@ -258,6 +264,10 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 		return zero, ProviderConfig{}, err
 	}
 	candidates, err = permitted(candidates, request.DataPolicy)
+	if err != nil {
+		return zero, ProviderConfig{}, err
+	}
+	candidates, err = seeing(candidates, request.InputModalities)
 	if err != nil {
 		return zero, ProviderConfig{}, err
 	}
@@ -391,6 +401,12 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	}
 
 	startedAt := time.Now()
+	if r.validate != nil {
+		if err := r.validate(provider, candidate.Config); err != nil {
+			provider.Close()
+			return zero, err
+		}
+	}
 	if err := provider.Start(ctx); err != nil {
 		provider.Close()
 		r.recorder.Record(candidate.Config, Stat{
@@ -535,6 +551,41 @@ func permitted(candidates []Candidate, policy options.DataPolicy) ([]Candidate, 
 	}
 	return nil, fmt.Errorf("routing: no provider meets your data policy: none offers %s",
 		strings.Join(unmet, " and "))
+}
+
+// seeing narrows candidates to the ones that accept every extra input kind the request
+// named. A request carrying an image that is answered by a text-only model has been
+// answered wrongly in a way nothing about the transcript would show.
+func seeing(candidates []Candidate, modalities []string) ([]Candidate, error) {
+	if len(modalities) == 0 {
+		return candidates, nil
+	}
+
+	kept := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Config.Sees(modalities) {
+			kept = append(kept, candidate)
+		}
+	}
+	if len(kept) > 0 {
+		return kept, nil
+	}
+
+	var unmet []string
+	for _, modality := range modalities {
+		if modality == "" || modality == "text" {
+			continue
+		}
+		if !slices.ContainsFunc(candidates, func(candidate Candidate) bool {
+			return candidate.Config.Sees([]string{modality})
+		}) {
+			unmet = append(unmet, modality)
+		}
+	}
+	if len(unmet) == 0 {
+		unmet = []string{"that combination of input modalities"}
+	}
+	return nil, fmt.Errorf("routing: no provider accepts %s input", strings.Join(unmet, ", "))
 }
 
 // retentionUnmet names a retention requirement nothing offered, in the words it was asked

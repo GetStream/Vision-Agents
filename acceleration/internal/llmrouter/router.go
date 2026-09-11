@@ -9,6 +9,7 @@ package llmrouter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -67,6 +68,8 @@ type Request struct {
 	Target string
 	// LanguageHints narrow the candidates to models that cover them.
 	LanguageHints []string
+	// InputModalities restrict candidates to models that accept those extra input kinds.
+	InputModalities []string
 }
 
 // Router selects an LLM provider and opens sessions.
@@ -77,6 +80,14 @@ type Router struct {
 // New validates the options and returns a Router.
 func New(options Options) (*Router, error) {
 	core, err := routing.New(routing.Options[Provider]{
+		Validate: func(provider Provider, config routing.ProviderConfig) error {
+			for _, modality := range config.InputModalities {
+				if !provider.Capabilities().Accepts(modality) {
+					return fmt.Errorf("%s declares unsupported input modality %s", config.Name(), modality)
+				}
+			}
+			return nil
+		},
 		Modality: routing.LLM,
 		Config:   options.Config,
 		Registry: options.Registry,
@@ -94,12 +105,13 @@ func New(options Options) (*Router, error) {
 // fails to build. One session answers many turns.
 func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	core := routing.Request{
-		CustomerID:    request.CustomerID,
-		AgentID:       request.AgentID,
-		CallID:        request.CallID,
-		Tags:          request.Tags,
-		Target:        request.Target,
-		LanguageHints: request.LanguageHints,
+		CustomerID:      request.CustomerID,
+		AgentID:         request.AgentID,
+		CallID:          request.CallID,
+		Tags:            request.Tags,
+		Target:          request.Target,
+		LanguageHints:   request.LanguageHints,
+		InputModalities: request.InputModalities,
 	}
 	provider, config, err := r.Select(ctx, core)
 	if err != nil {

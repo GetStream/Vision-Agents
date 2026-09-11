@@ -37,6 +37,9 @@ type Capabilities struct {
 	// CacheTTLs are the cache lifetimes the provider accepts. Empty means it caches on
 	// its own terms or not at all, and a requested TTL is dropped.
 	CacheTTLs []time.Duration
+	// InputModalities are the input kinds this model accepts besides text, e.g. "image".
+	// Empty means text-only, and input carrying anything else is refused.
+	InputModalities []string
 }
 
 // Validate reports whether a request asks for something this model does not do.
@@ -63,7 +66,36 @@ func (c Capabilities) Validate(params ResponseParams) error {
 	if params.Conversation != "" && params.PreviousResponseID != "" {
 		return fmt.Errorf("llm: a response continues from a conversation or from a previous response, not both")
 	}
+	for _, message := range params.Input {
+		if message.Content != "" && len(message.Parts) > 0 {
+			return fmt.Errorf("llm: content and parts are mutually exclusive")
+		}
+		if message.HasImage() && message.Role != User && message.Role != ToolResult {
+			return fmt.Errorf("llm: images are supported only in user and tool messages")
+		}
+		for _, part := range message.Parts {
+			if part.Image != nil {
+				if part.Text != "" {
+					return fmt.Errorf("llm: a part cannot contain both text and image")
+				}
+				if err := part.Image.Validate(); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if params.HasImage() && !c.Accepts(ModalityImage) {
+		return fmt.Errorf("llm: this model does not accept %s input", ModalityImage)
+	}
 	return nil
+}
+
+// Accepts reports whether this model takes that input kind. Text is implicit.
+func (c Capabilities) Accepts(modality string) bool {
+	if modality == "" || modality == "text" {
+		return true
+	}
+	return slices.Contains(c.InputModalities, modality)
 }
 
 // Effort is the reasoning effort to send, which is the request's when it named one and the

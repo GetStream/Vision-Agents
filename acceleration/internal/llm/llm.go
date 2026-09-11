@@ -30,15 +30,33 @@ const (
 	ToolResult Role = "tool"
 )
 
+// ContentPart is one piece of a message. Exactly one of Text or Image is set.
+type ContentPart struct {
+	Text  string
+	Image *ImagePart
+}
+
+// ImagePart is an image carried inline. Bytes, not base64: each provider encodes its own way.
+type ImagePart struct {
+	URL    string // HTTP(S) source; mutually exclusive with Data.
+	MIME   string // image/jpeg, image/png, image/webp
+	Data   []byte
+	Detail string // "", "auto", "low", "high" — dropped where the provider prices no such choice
+}
+
 // Message is one turn of a conversation, and one item of a request's input.
 //
 // The Responses API models a call and its result as items of their own rather than as
 // fields on a message. They are kept on the message here because the providers reached
 // over an OpenAI-compatible chat endpoint need that shape anyway, and because the history
 // this comes from is held as turns everywhere else in the agent.
+//
+// Content is the text-only shorthand. Parts is set instead when the turn carries media.
+// The two are never both set.
 type Message struct {
 	Role    Role
 	Content string
+	Parts   []ContentPart
 	// ToolCalls are what an assistant turn asked to have run. A turn that called a tool
 	// has to be replayed with them, because the provider rejects a tool result that
 	// answers nothing.

@@ -966,6 +966,7 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
+      input_modalities: [image]
       price:
         per_million_input_tokens: 0.20
         per_million_cached_input_tokens: 0.02
@@ -980,6 +981,7 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
+      input_modalities: [image]
       price:
         per_million_input_tokens: 0.75
         per_million_cached_input_tokens: 0.075
@@ -1027,6 +1029,7 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
+      input_modalities: [image]
       price:
         per_million_input_tokens: 2.00
         per_million_cached_input_tokens: 0.20
@@ -1040,6 +1043,7 @@ llm:
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
+      input_modalities: [image]
       price:
         per_million_input_tokens: 5.00
         per_million_cached_input_tokens: 0.50
@@ -1063,6 +1067,10 @@ llm:
     multilingual-high-accuracy:
       multilingual: true
       tier: high-quality
+
+    vlm:
+      require_input_modalities: [image]
+      prefer: openai/gpt-5.6-luna
 
     # A fast answer, in whatever language. The shorthand a caller reaches for when the only
     # thing that matters is that the answer starts arriving.

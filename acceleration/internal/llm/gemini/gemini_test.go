@@ -141,3 +141,10 @@ func (s *GeminiSuite) TestChatCompletionsCannotStoreAResponseToContinueFrom() {
 	s.False(provider.Capabilities().Store)
 	s.False(provider.Capabilities().PromptCacheKey)
 }
+
+func (s *GeminiSuite) TestAModelAcceptsImages() {
+	provider, err := New(Options{APIKey: "k"})
+	s.Require().NoError(err)
+
+	s.Contains(provider.Capabilities().InputModalities, "image")
+}

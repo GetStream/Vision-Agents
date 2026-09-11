@@ -368,7 +368,9 @@ func (s *LLMRouterSuite) TestStartFailsOverToTheNextCandidate() {
 		return nil, errors.New("no credentials")
 	})
 	registry.Register("openai", func(routing.Spec) (Provider, error) {
-		return Started[llm.LLM](newStubLLM(), nil)
+		provider := newStubLLM()
+		provider.capabilities.InputModalities = []string{llm.ModalityImage}
+		return Started[llm.LLM](provider, nil)
 	})
 
 	router, err := New(Options{Config: config[routing.LLM], Registry: registry})
@@ -380,4 +382,28 @@ func (s *LLMRouterSuite) TestStartFailsOverToTheNextCandidate() {
 	s.T().Cleanup(func() { session.Close() })
 
 	s.Equal("openai", session.Provider(), "the candidate that could be built served the turn")
+}
+
+func (s *LLMRouterSuite) TestVisionFailoverRejectsContradictoryAdapterCapabilities() {
+	config := routing.ModalityConfig{
+		Providers: []routing.ProviderConfig{
+			{Provider: "text", Model: "model", Languages: []string{"en"}, InputModalities: []string{"image"}},
+			{Provider: "vision", Model: "model", Languages: []string{"en"}, InputModalities: []string{"image"}},
+		},
+		Aliases: map[string]routing.Alias{"vlm": {RequireInputModalities: []string{"image"}}},
+	}
+	registry := NewRegistry()
+	registry.Register("text", func(routing.Spec) (Provider, error) { return Started[llm.LLM](newStubLLM(), nil) })
+	registry.Register("vision", func(routing.Spec) (Provider, error) {
+		p := newStubLLM()
+		p.capabilities.InputModalities = []string{"image"}
+		return Started[llm.LLM](p, nil)
+	})
+	router, err := New(Options{Config: config, Registry: registry})
+	s.Require().NoError(err)
+	defer router.Close()
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "vlm"})
+	s.Require().NoError(err)
+	defer session.Close()
+	s.Equal("vision", session.Provider())
 }
