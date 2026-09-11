@@ -120,13 +120,10 @@ public final class AgentSession {
     /// nonisolated async closure, so its body does not run on the main actor even though this
     /// call site is on it.
     private func answer(_ call: AgentEvent.ToolCall) {
-        let tool = tools[call.name]
+        // Session events are broadcast to observers as well as tool owners. A Python
+        // video worker may own this request; an observer must not resolve it first.
+        guard let tool = tools[call.name] else { return }
         Task { [socket] in
-            guard let tool else {
-                try? await socket.send(
-                    .toolResult(id: call.id, output: nil, error: "no tool called \(call.name)"))
-                return
-            }
             do {
                 let output = try await tool.run(call.argumentValues)
                 try await socket.send(.toolResult(id: call.id, output: output, error: nil))
