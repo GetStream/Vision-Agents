@@ -1254,8 +1254,9 @@ export interface paths {
         /**
          * Route one modality over a socket, for a pipeline running elsewhere
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does, offered a piece at a time: a caller running its own pipeline sends audio or text and gets transcripts, audio or completions back, and the request is failed over and billed exactly as it would be inside a session.
-         *     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to take the options from, or the options outright; naming both overrides that config field by field. What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice, `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a conversation and `tags` to bill it.
-         *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off. All three report failures as `error` frames and end with `closed`.
+         *     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to take the options from, or the options outright; naming both overrides that config field by field. What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id` and `call_id` to attribute the work to a conversation and `tags` to bill it.
+         *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
+         *     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started` and `speech_stopped` when the model's own detector hears the caller begin and finish, `input_transcript` and `output_transcript` for what it heard and said, `response_started` and `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much of the reply the listener heard. What the routed model cannot do is refused with an `error` frame rather than dropped. All four report failures as `error` frames and end with `closed`.
          *     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held open between them. Memory and phone are recorded rather than routed, so they are not served either.
          */
         get: operations["streamModality"];
@@ -1556,6 +1557,7 @@ export interface components {
             stt?: components["schemas"]["SttOptions"];
             tts?: components["schemas"]["TtsOptions"];
             llm?: components["schemas"]["LlmOptions"];
+            sts?: components["schemas"]["StsOptions"];
             search?: components["schemas"]["SearchOptions"];
         };
         RouterConfig: {
@@ -1567,6 +1569,7 @@ export interface components {
             stt?: components["schemas"]["SttOptions"];
             tts?: components["schemas"]["TtsOptions"];
             llm?: components["schemas"]["LlmOptions"];
+            sts?: components["schemas"]["StsOptions"];
             search?: components["schemas"]["SearchOptions"];
             /** Format: date-time */
             created_at: string;
@@ -1737,6 +1740,63 @@ export interface components {
              * @example {
              *       "elevenlabs": {
              *         "voice_id": "21m00Tcm4TlvDq8ikWAM"
+             *       }
+             *     }
+             */
+            overwrites?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it. */
+        StsOptions: {
+            /**
+             * @description A provider/model or a capability shortcut.
+             * @example sts-fast
+             */
+            target?: string;
+            /**
+             * @description A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
+             * @example [
+             *       "openai",
+             *       "sts-fast"
+             *     ]
+             */
+            providers?: string[];
+            /** @description The system prompt the model converses under. */
+            instructions?: string;
+            /**
+             * @description The vendor's own name for a voice, such as marin at OpenAI or Kore at Google. None of these models takes one of your own voices, so the name is passed on as given rather than looked up.
+             * @example marin
+             */
+            voice?: string;
+            languages?: string[];
+            /**
+             * @description What decides the caller has finished: a silence timer, a model reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default. Only some models read the words, so semantic is a term.
+             * @enum {string}
+             */
+            turn_detection?: "server_vad" | "semantic" | "none";
+            /** @description How long a pause ends the turn, for a silence timer. */
+            silence_ms?: number;
+            /** @description How much audio before the detected speech is kept, for a silence timer. */
+            prefix_padding_ms?: number;
+            /** @description Whether the model cuts its own reply off when it hears the caller. Omitting it leaves the vendor's default; false is for a speaker close enough to the microphone that the model would otherwise interrupt itself. */
+            interrupt_response?: boolean;
+            /** @description Ask the model to write down what it heard. */
+            input_transcript?: boolean;
+            /** @description Ask the model to write down what it said. */
+            output_transcript?: boolean;
+            /** @description The session will hand the model functions to call. */
+            tools?: boolean;
+            /** @description The session will inject typed turns. */
+            text?: boolean;
+            /** @description The session will send the model frames, so it is routed only to a model that sees, the way vlm routes a text model. */
+            images?: boolean;
+            data_policy?: components["schemas"]["DataPolicy"];
+            /**
+             * @description Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"openai": {"eagerness": "high"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
+             * @example {
+             *       "openai": {
+             *         "eagerness": "high"
              *       }
              *     }
              */
@@ -2688,11 +2748,11 @@ export interface components {
             };
         };
         /**
-         * @description What kind of work was done. The first four are routed across providers. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+         * @description What kind of work was done. The first five are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
          * @example tts
          * @enum {string}
          */
-        Modality: "stt" | "tts" | "llm" | "search" | "memory" | "knowledge" | "phone";
+        Modality: "stt" | "tts" | "llm" | "sts" | "search" | "memory" | "knowledge" | "phone";
         /**
          * @default hourly
          * @enum {string}

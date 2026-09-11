@@ -73,8 +73,8 @@ def sync_detailed(
     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
     take the options from, or the options outright; naming both overrides that config field by field.
     What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
-    for a voice, `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a
-    conversation and `tags` to bill it.
+    for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
+    and `call_id` to attribute the work to a conversation and `tags` to bill it.
     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
     audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
@@ -87,16 +87,29 @@ def sync_detailed(
     to select image-capable models. A model that does not accept images is refused with an `error` frame
     naming the model and the modality, before anything is billed. An `interrupt` frame naming
     `response_ids` abandons responses still being generated, which still settle and are still billed for
-    what they produced before being cut off. All three report failures as `error` frames and end with
-    `closed`.
+    what they produced before being cut off.
+    Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
+    and `speech_stopped` when the model's own detector hears the caller begin and finish,
+    `input_transcript` and `output_transcript` for what it heard and said, `response_started` and
+    `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function
+    run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a
+    uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a
+    client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-
+    stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the
+    model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
+    `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
+    of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
+    rather than dropped. All four report failures as `error` frames and end with `closed`.
     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
     open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
     Args:
-        modality (Modality): What kind of work was done. The first four are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+        modality (Modality): What kind of work was done. The first five are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. Memory, knowledge and phone are recorded but not routed, since
+            there is one memory store, one knowledge base and one vendor per number, so the provider
+            paths do not serve them while the statistics paths do.
              Example: tts.
 
     Raises:
@@ -132,8 +145,8 @@ def sync(
     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
     take the options from, or the options outright; naming both overrides that config field by field.
     What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
-    for a voice, `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a
-    conversation and `tags` to bill it.
+    for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
+    and `call_id` to attribute the work to a conversation and `tags` to bill it.
     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
     audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
@@ -146,16 +159,29 @@ def sync(
     to select image-capable models. A model that does not accept images is refused with an `error` frame
     naming the model and the modality, before anything is billed. An `interrupt` frame naming
     `response_ids` abandons responses still being generated, which still settle and are still billed for
-    what they produced before being cut off. All three report failures as `error` frames and end with
-    `closed`.
+    what they produced before being cut off.
+    Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
+    and `speech_stopped` when the model's own detector hears the caller begin and finish,
+    `input_transcript` and `output_transcript` for what it heard and said, `response_started` and
+    `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function
+    run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a
+    uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a
+    client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-
+    stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the
+    model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
+    `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
+    of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
+    rather than dropped. All four report failures as `error` frames and end with `closed`.
     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
     open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
     Args:
-        modality (Modality): What kind of work was done. The first four are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+        modality (Modality): What kind of work was done. The first five are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. Memory, knowledge and phone are recorded but not routed, since
+            there is one memory store, one knowledge base and one vendor per number, so the provider
+            paths do not serve them while the statistics paths do.
              Example: tts.
 
     Raises:
@@ -186,8 +212,8 @@ async def asyncio_detailed(
     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
     take the options from, or the options outright; naming both overrides that config field by field.
     What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
-    for a voice, `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a
-    conversation and `tags` to bill it.
+    for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
+    and `call_id` to attribute the work to a conversation and `tags` to bill it.
     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
     audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
@@ -200,16 +226,29 @@ async def asyncio_detailed(
     to select image-capable models. A model that does not accept images is refused with an `error` frame
     naming the model and the modality, before anything is billed. An `interrupt` frame naming
     `response_ids` abandons responses still being generated, which still settle and are still billed for
-    what they produced before being cut off. All three report failures as `error` frames and end with
-    `closed`.
+    what they produced before being cut off.
+    Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
+    and `speech_stopped` when the model's own detector hears the caller begin and finish,
+    `input_transcript` and `output_transcript` for what it heard and said, `response_started` and
+    `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function
+    run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a
+    uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a
+    client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-
+    stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the
+    model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
+    `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
+    of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
+    rather than dropped. All four report failures as `error` frames and end with `closed`.
     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
     open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
     Args:
-        modality (Modality): What kind of work was done. The first four are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+        modality (Modality): What kind of work was done. The first five are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. Memory, knowledge and phone are recorded but not routed, since
+            there is one memory store, one knowledge base and one vendor per number, so the provider
+            paths do not serve them while the statistics paths do.
              Example: tts.
 
     Raises:
@@ -243,8 +282,8 @@ async def asyncio(
     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to
     take the options from, or the options outright; naming both overrides that config field by field.
     What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions`
-    for a voice, `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a
-    conversation and `tags` to bill it.
+    for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id`
+    and `call_id` to attribute the work to a conversation and `tags` to bill it.
     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
     default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary
     audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian
@@ -257,16 +296,29 @@ async def asyncio(
     to select image-capable models. A model that does not accept images is refused with an `error` frame
     naming the model and the modality, before anything is billed. An `interrupt` frame naming
     `response_ids` abandons responses still being generated, which still settle and are still billed for
-    what they produced before being cut off. All three report failures as `error` frames and end with
-    `closed`.
+    what they produced before being cut off.
+    Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by
+    default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started`
+    and `speech_stopped` when the model's own detector hears the caller begin and finish,
+    `input_transcript` and `output_transcript` for what it heard and said, `response_started` and
+    `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function
+    run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a
+    uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a
+    client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-
+    stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the
+    model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with
+    `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much
+    of the reply the listener heard. What the routed model cannot do is refused with an `error` frame
+    rather than dropped. All four report failures as `error` frames and end with `closed`.
     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held
     open between them. Memory and phone are recorded rather than routed, so they are not served either.
 
     Args:
-        modality (Modality): What kind of work was done. The first four are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+        modality (Modality): What kind of work was done. The first five are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. Memory, knowledge and phone are recorded but not routed, since
+            there is one memory store, one knowledge base and one vendor per number, so the provider
+            paths do not serve them while the statistics paths do.
              Example: tts.
 
     Raises:

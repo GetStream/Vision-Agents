@@ -29,6 +29,7 @@ from ._generated.models import (
     Speech,
     SpeechRequest,
     SpeechRequestTags,
+    StsOptions,
     SttOptions,
     Transcription,
     TranscriptionRequest,
@@ -51,6 +52,7 @@ from ._routerconfig import (
 )
 from .folder import write_stamp
 from .llm import LLM
+from .sts import STS
 from .stt import STT
 from .tts import TTS
 
@@ -59,7 +61,7 @@ logger = logging.getLogger(__name__)
 # ORDER is which modality a name is tried against first, for `resolve`. Speech models are
 # the ones named by hand most often, and the model that answers is usually asked for by
 # capability.
-ORDER = (Modality.TTS, Modality.STT, Modality.LLM)
+ORDER = (Modality.TTS, Modality.STT, Modality.STS, Modality.LLM)
 
 # POLL is how often a recording job is asked whether it is done. Transcription runs faster
 # than real time, so a feature-length recording is minutes rather than hours, and asking
@@ -70,9 +72,10 @@ POLL = 1.0
 class Router:
     """Everything the acceleration backend routes, configured once.
 
-    A router is a config plus four namespaces. Each of the three streaming modalities has
-    a `realtime()` session and a `recording()` job, and search has neither because a
-    question and its answer are one round trip.
+    A router is a config plus five namespaces. Each of the three streaming modalities has
+    a `realtime()` session and a `recording()` job, a speech-to-speech conversation has
+    only a `realtime()` session, and search has neither because a question and its answer
+    are one round trip.
 
     ```python
     router = Router("healthcare")
@@ -116,6 +119,7 @@ class Router:
         self.stt = SpeechToText(self)
         self.tts = TextToSpeech(self)
         self.llm = Completions(self)
+        self.sts = SpeechToSpeech(self)
 
     async def configure_stt(self, **options) -> RouterConfig:
         """Store how this router transcribes.
@@ -160,7 +164,58 @@ class Router:
         # Carried forward rather than restated: a config is one row, and writing the
         # speech half of it should not silently drop the voice half.
         if stored is not None:
-            wanted.tts, wanted.llm, wanted.search = (
+            wanted.tts, wanted.llm, wanted.search, wanted.sts = (
+                stored.tts,
+                stored.llm,
+                stored.search,
+                stored.sts,
+            )
+            if not isinstance(stored.tags, Unset):
+                wanted.tags = RouterConfigRequestTags.from_dict(stored.tags.to_dict())
+        if self.tags:
+            wanted.tags = RouterConfigRequestTags.from_dict(self.tags)
+
+        return await store(client, wanted, stored)
+
+    async def configure_sts(self, **options) -> RouterConfig:
+        """Store how this router holds a conversation with one native audio model.
+
+        ```python
+        await Router("healthcare").configure_sts(
+            target="sts-fast",
+            voice="Kore",
+            data_policy={"allow_training": False},
+        )
+        ```
+
+        Args:
+            **options: Any field of the sts block - `target`, `providers`, `instructions`,
+                `voice`, `languages`, `turn_detection`, `silence_ms`, `interrupt_response`,
+                `input_transcript`, `output_transcript`, `tools`, `text`, `images`,
+                `data_policy`, `overwrites`.
+
+        Returns:
+            The stored config.
+
+        Raises:
+            ValueError: if this router was not named, or an option is not one a
+                speech-to-speech model takes.
+            RuntimeError: if the router refuses the config, which is what it does with a
+                provider it does not have or a term nothing it offers can serve.
+        """
+        if not self.config:
+            raise ValueError(
+                "configure_sts writes a named config, so the router needs a name: "
+                'Router("healthcare").configure_sts(...)'
+            )
+
+        client = self.client()
+        stored = await find(client, self.config)
+
+        wanted = RouterConfigRequest(name=self.config, sts=block(StsOptions, options))
+        if stored is not None:
+            wanted.stt, wanted.tts, wanted.llm, wanted.search = (
+                stored.stt,
                 stored.tts,
                 stored.llm,
                 stored.search,
@@ -211,10 +266,11 @@ class Router:
 
         wanted = RouterConfigRequest(name=self.config, tts=block(TtsOptions, options))
         if stored is not None:
-            wanted.stt, wanted.llm, wanted.search = (
+            wanted.stt, wanted.llm, wanted.search, wanted.sts = (
                 stored.stt,
                 stored.llm,
                 stored.search,
+                stored.sts,
             )
             if not isinstance(stored.tags, Unset):
                 wanted.tags = RouterConfigRequestTags.from_dict(stored.tags.to_dict())
@@ -290,6 +346,7 @@ async def define_router(
     stt: Optional[dict[str, Any]] = None,
     tts: Optional[dict[str, Any]] = None,
     llm: Optional[dict[str, Any]] = None,
+    sts: Optional[dict[str, Any]] = None,
     search: Optional[dict[str, Any]] = None,
     tags: Optional[dict[str, str]] = None,
     url: Optional[str] = None,
@@ -306,6 +363,7 @@ async def define_router(
         stt: How it transcribes.
         tts: How it speaks.
         llm: How it answers.
+        sts: How it holds a conversation with one native audio model.
         search: How it looks things up.
         tags: Cost labels carried onto everything routed under it.
         url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
@@ -320,7 +378,15 @@ async def define_router(
     """
     client = Backend(url=url, customer_id=customer_id).client()
     request = wanted(
-        name, {"stt": stt, "tts": tts, "llm": llm, "search": search, "tags": tags}
+        name,
+        {
+            "stt": stt,
+            "tts": tts,
+            "llm": llm,
+            "sts": sts,
+            "search": search,
+            "tags": tags,
+        },
     )
     return await store(client, request, await find(client, name))
 
@@ -529,6 +595,39 @@ class TextToSpeech:
         if callback:
             return job
         return await _until_done(job, lambda: get_speech.asyncio(job.id, client=client))
+
+
+class SpeechToSpeech:
+    """A conversation with one native audio model.
+
+    There is no `recording()` here: a conversation is live or it is not one.
+    """
+
+    def __init__(self, router: Router):
+        self._router = router
+
+    def realtime(self, **options) -> STS:
+        """A speech-to-speech session, configured and not yet started.
+
+        Hand it to an `Agent` as its `llm`: it is a `Realtime`, so the agent runs no
+        transcriber, turn detector or voice of its own, and the model on the other end of
+        the socket does all three.
+
+        Args:
+            **options: Any field of the config's sts block - `target`, `instructions`,
+                `voice`, `languages`, `turn_detection`, `silence_ms`, `interrupt_response`,
+                `input_transcript`, `output_transcript`, `tools`, `text`, `images`.
+
+        Raises:
+            ValueError: if an option is not one a speech-to-speech model takes.
+        """
+        return STS(
+            config_id=self._router.config,
+            options=block(StsOptions, options).to_dict(),
+            tags=self._router.tags,
+            url=self._router.backend.url,
+            customer_id=self._router.backend.customer_id,
+        )
 
 
 class Completions:

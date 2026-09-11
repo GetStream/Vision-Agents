@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.llm_options import LlmOptions
     from ..models.router_config_request_tags import RouterConfigRequestTags
     from ..models.search_options import SearchOptions
+    from ..models.sts_options import StsOptions
     from ..models.stt_options import SttOptions
     from ..models.tts_options import TtsOptions
 
@@ -36,6 +37,10 @@ class RouterConfigRequest:
             says it cannot.
         llm (LlmOptions | Unset): How this config answers. The names are the response parameters the router already
             speaks rather than a second vocabulary for the same things.
+        sts (StsOptions | Unset): How this config holds a conversation with one native audio model, in place of a
+            transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a
+            term, and a request naming a term is routed to a model that declared it or refused, never served by one that
+            ignores it.
         search (SearchOptions | Unset): How this config finds out today's answers.
     """
 
@@ -44,6 +49,7 @@ class RouterConfigRequest:
     stt: SttOptions | Unset = UNSET
     tts: TtsOptions | Unset = UNSET
     llm: LlmOptions | Unset = UNSET
+    sts: StsOptions | Unset = UNSET
     search: SearchOptions | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -66,6 +72,10 @@ class RouterConfigRequest:
         if not isinstance(self.llm, Unset):
             llm = self.llm.to_dict()
 
+        sts: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.sts, Unset):
+            sts = self.sts.to_dict()
+
         search: dict[str, Any] | Unset = UNSET
         if not isinstance(self.search, Unset):
             search = self.search.to_dict()
@@ -85,6 +95,8 @@ class RouterConfigRequest:
             field_dict["tts"] = tts
         if llm is not UNSET:
             field_dict["llm"] = llm
+        if sts is not UNSET:
+            field_dict["sts"] = sts
         if search is not UNSET:
             field_dict["search"] = search
 
@@ -97,6 +109,7 @@ class RouterConfigRequest:
             RouterConfigRequestTags,
         )
         from ..models.search_options import SearchOptions
+        from ..models.sts_options import StsOptions
         from ..models.stt_options import SttOptions
         from ..models.tts_options import TtsOptions
 
@@ -131,6 +144,13 @@ class RouterConfigRequest:
         else:
             llm = LlmOptions.from_dict(_llm)
 
+        _sts = d.pop("sts", UNSET)
+        sts: StsOptions | Unset
+        if isinstance(_sts, Unset):
+            sts = UNSET
+        else:
+            sts = StsOptions.from_dict(_sts)
+
         _search = d.pop("search", UNSET)
         search: SearchOptions | Unset
         if isinstance(_search, Unset):
@@ -144,6 +164,7 @@ class RouterConfigRequest:
             stt=stt,
             tts=tts,
             llm=llm,
+            sts=sts,
             search=search,
         )
 

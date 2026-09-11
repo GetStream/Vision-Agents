@@ -23,6 +23,7 @@ from ._generated.models import (
     RouterConfigRequest,
     RouterConfigRequestTags,
     SearchOptions,
+    StsOptions,
     SttOptions,
     TtsOptions,
 )
@@ -34,7 +35,7 @@ T = TypeVar("T")
 
 # Block is one modality's option block, which are the same shape for a stored config, a
 # start frame and a recording job.
-Block = TypeVar("Block", SttOptions, TtsOptions, LlmOptions, SearchOptions)
+Block = TypeVar("Block", SttOptions, TtsOptions, LlmOptions, StsOptions, SearchOptions)
 
 # ROUTER_FILE is what makes a directory a router config, and ROUTER_STAMP is what it was
 # last stored as, so a launch that changed nothing costs a file read.
@@ -149,6 +150,8 @@ def wanted(name: str, described: dict[str, Any]) -> RouterConfigRequest:
         request.tts = block(TtsOptions, described["tts"])
     if described.get("llm"):
         request.llm = block(LlmOptions, described["llm"])
+    if described.get("sts"):
+        request.sts = block(StsOptions, described["sts"])
     if described.get("search"):
         request.search = block(SearchOptions, described["search"])
     if described.get("tags"):

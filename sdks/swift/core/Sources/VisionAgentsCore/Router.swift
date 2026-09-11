@@ -56,6 +56,10 @@ public struct Router: Sendable {
     /// The model that answers.
     public var llm: Answering { Answering(router: self) }
 
+    /// A whole conversation with one native audio model, in place of a transcriber, a text
+    /// model and a voice.
+    public var sts: Conversing { Conversing(router: self) }
+
     /// Answers one question out of what is true now.
     public func search(
         _ query: String,
@@ -110,7 +114,9 @@ public struct Router: Sendable {
         return ModalitySocket(
             url: backend.socketURL(path: "/v1/\(modality)/stream"),
             headers: backend.headers,
-            urlSession: backend.urlSession)
+            urlSession: backend.urlSession,
+            audioHeader: modality == "sts"
+                ? SpokenAudio.conversationHeader : SpokenAudio.voiceHeader)
     }
 
     /// The start frame a modality socket opens with.
@@ -314,6 +320,139 @@ public struct Answering: Sendable {
         return Model(
             socket: socket,
             start: router.startFrame(modality: "llm", block: options.frame))
+    }
+}
+
+/// A whole conversation with one native audio model.
+public struct Conversing: Sendable {
+    let router: Router
+
+    /// Opens a conversation socket, configured and ready for the caller's audio.
+    ///
+    /// Tools are given here rather than afterwards because some models take them only as the
+    /// session opens; naming any routes the conversation to a model that calls them.
+    public func realtime(
+        _ options: ConversationOptions = ConversationOptions(),
+        tools: [ConversationTool] = []
+    ) throws -> Dialogue {
+        let socket = try router.open(modality: "sts", target: options.target)
+        var start = router.startFrame(modality: "sts", block: options.frame)
+        if !tools.isEmpty {
+            start["tools"] = .array(tools.map(\.frame))
+        }
+        return Dialogue(socket: socket, start: start)
+    }
+}
+
+/// A function a speech-to-speech model may call.
+public struct ConversationTool: Sendable, Hashable {
+    public var name: String
+    public var description: String
+    /// A JSON Schema object describing the arguments.
+    public var parameters: [String: JSONValue]
+
+    public init(name: String, description: String = "", parameters: [String: JSONValue] = [:]) {
+        self.name = name
+        self.description = description
+        self.parameters = parameters
+    }
+
+    var frame: JSONValue {
+        var fields: [String: JSONValue] = ["name": .string(name)]
+        if !description.isEmpty { fields["description"] = .string(description) }
+        if !parameters.isEmpty { fields["parameters"] = .object(parameters) }
+        return .object(fields)
+    }
+}
+
+/// One open conversation socket.
+///
+/// Both directions carry audio and frames at once: the caller's PCM goes up alongside typed
+/// turns and tool results, and the model's voice comes down alongside what it heard, what it
+/// said and what it wants run. The model owns its own turns, so there is no turn detector or
+/// transcriber on this side of the socket.
+public actor Dialogue {
+    private let socket: ModalitySocket
+    private let start: [String: JSONValue]
+
+    init(socket: ModalitySocket, start: [String: JSONValue]) {
+        self.socket = socket
+        self.start = start
+    }
+
+    /// Opens the socket and yields everything the model does until it closes.
+    ///
+    /// Audio arrives as `.audio` with the reply's generation on it; a `response_complete`
+    /// frame with `interrupted` true is the one signal to drop audio of that generation still
+    /// arriving. An `error` frame is a refusal of one thing asked for, not the end of the
+    /// conversation, so it is yielded rather than thrown.
+    public func events() async throws -> AsyncThrowingStream<RoutedMessage, any Error> {
+        let messages = await socket.open()
+        try await socket.send(start)
+
+        return AsyncThrowingStream { continuation in
+            let pump = Task {
+                do {
+                    for try await message in messages {
+                        if case .frame(let frame) = message, frame.kind == .closed {
+                            continuation.finish()
+                            return
+                        }
+                        continuation.yield(message)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in pump.cancel() }
+        }
+    }
+
+    /// Hands over 16 kHz mono signed 16-bit PCM of the caller's speech.
+    public func send(_ pcm: Data) async throws {
+        try await socket.send(audio: pcm)
+    }
+
+    /// Injects a typed turn, which the model answers as it would a spoken one.
+    public func say(_ text: String) async throws {
+        try await socket.send(["type": .string("text"), "text": .string(text)])
+    }
+
+    /// Changes the system prompt, on the models that allow it mid-session.
+    public func instruct(_ instructions: String) async throws {
+        try await socket.send([
+            "type": .string("instructions"), "instructions": .string(instructions),
+        ])
+    }
+
+    /// Returns what a tool produced against the call that asked for it.
+    public func answer(callID: String, output: String) async throws {
+        try await socket.send([
+            "type": .string("tool_result"), "tool_call_id": .string(callID),
+            "output": .string(output),
+        ])
+    }
+
+    /// Tells the model a tool did not work, and why.
+    public func fail(callID: String, reason: String) async throws {
+        try await socket.send([
+            "type": .string("tool_result"), "tool_call_id": .string(callID),
+            "error": .string(reason),
+        ])
+    }
+
+    /// Stops the reply in flight. `playedMs` is how much of it the listener heard, so the
+    /// model's own record ends where the listener's does; nil leaves it to the router.
+    public func interrupt(playedMs: Int? = nil) async throws {
+        var frame: [String: JSONValue] = ["type": .string("interrupt")]
+        if let playedMs { frame["played_ms"] = .number(Double(playedMs)) }
+        try await socket.send(frame)
+    }
+
+    /// Closes the socket. Safe to call more than once.
+    public func close() async {
+        await socket.close()
     }
 }
 

@@ -154,16 +154,16 @@ func (e DecisionKind) Valid() bool {
 
 // Defines values for Endpointing.
 const (
-	Semantic Endpointing = "semantic"
-	Silence  Endpointing = "silence"
+	EndpointingSemantic Endpointing = "semantic"
+	EndpointingSilence  Endpointing = "silence"
 )
 
 // Valid indicates whether the value is a known member of the Endpointing enum.
 func (e Endpointing) Valid() bool {
 	switch e {
-	case Semantic:
+	case EndpointingSemantic:
 		return true
-	case Silence:
+	case EndpointingSilence:
 		return true
 	default:
 		return false
@@ -333,6 +333,7 @@ const (
 	Memory    Modality = "memory"
 	Phone     Modality = "phone"
 	Search    Modality = "search"
+	Sts       Modality = "sts"
 	Stt       Modality = "stt"
 	Tts       Modality = "tts"
 )
@@ -349,6 +350,8 @@ func (e Modality) Valid() bool {
 	case Phone:
 		return true
 	case Search:
+		return true
+	case Sts:
 		return true
 	case Stt:
 		return true
@@ -713,6 +716,27 @@ func (e SimulationRunState) Valid() bool {
 	case SimulationRunStatePassed:
 		return true
 	case SimulationRunStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StsOptionsTurnDetection.
+const (
+	StsOptionsTurnDetectionNone      StsOptionsTurnDetection = "none"
+	StsOptionsTurnDetectionSemantic  StsOptionsTurnDetection = "semantic"
+	StsOptionsTurnDetectionServerVad StsOptionsTurnDetection = "server_vad"
+)
+
+// Valid indicates whether the value is a known member of the StsOptionsTurnDetection enum.
+func (e StsOptionsTurnDetection) Valid() bool {
+	switch e {
+	case StsOptionsTurnDetectionNone:
+		return true
+	case StsOptionsTurnDetectionSemantic:
+		return true
+	case StsOptionsTurnDetectionServerVad:
 		return true
 	default:
 		return false
@@ -1511,7 +1535,7 @@ type MessageContent0 = string
 // MessageContent1 defines model for MessageContent.1.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first four are routed across providers. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first five are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 //
 // Example: tts
 type Modality string
@@ -1722,6 +1746,9 @@ type RouterConfig struct {
 	// Search How this config finds out today's answers.
 	Search *SearchOptions `json:"search,omitempty"`
 
+	// Sts How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
+	Sts *StsOptions `json:"sts,omitempty"`
+
 	// Stt How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently.
 	Stt  *SttOptions        `json:"stt,omitempty"`
 	Tags *map[string]string `json:"tags,omitempty"`
@@ -1741,6 +1768,9 @@ type RouterConfigRequest struct {
 
 	// Search How this config finds out today's answers.
 	Search *SearchOptions `json:"search,omitempty"`
+
+	// Sts How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
+	Sts *StsOptions `json:"sts,omitempty"`
 
 	// Stt How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently.
 	Stt *SttOptions `json:"stt,omitempty"`
@@ -2229,6 +2259,69 @@ type StatsBucket struct {
 	// Uptime Successes over total requests in the bucket.
 	Uptime *float64 `json:"uptime,omitempty"`
 }
+
+// StsOptions How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
+type StsOptions struct {
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
+
+	// Images The session will send the model frames, so it is routed only to a model that sees, the way vlm routes a text model.
+	Images *bool `json:"images,omitempty"`
+
+	// InputTranscript Ask the model to write down what it heard.
+	InputTranscript *bool `json:"input_transcript,omitempty"`
+
+	// Instructions The system prompt the model converses under.
+	Instructions *string `json:"instructions,omitempty"`
+
+	// InterruptResponse Whether the model cuts its own reply off when it hears the caller. Omitting it leaves the vendor's default; false is for a speaker close enough to the microphone that the model would otherwise interrupt itself.
+	InterruptResponse *bool     `json:"interrupt_response,omitempty"`
+	Languages         *[]string `json:"languages,omitempty"`
+
+	// OutputTranscript Ask the model to write down what it said.
+	OutputTranscript *bool `json:"output_transcript,omitempty"`
+
+	// Overwrites Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"openai": {"eagerness": "high"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
+	//
+	//
+	// Example: {"openai":{"eagerness":"high"}}
+	Overwrites *map[string]interface{} `json:"overwrites,omitempty"`
+
+	// PrefixPaddingMs How much audio before the detected speech is kept, for a silence timer.
+	PrefixPaddingMs *int `json:"prefix_padding_ms,omitempty"`
+
+	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
+	//
+	//
+	// Example: ["openai","sts-fast"]
+	Providers *[]string `json:"providers,omitempty"`
+
+	// SilenceMs How long a pause ends the turn, for a silence timer.
+	SilenceMs *int `json:"silence_ms,omitempty"`
+
+	// Target A provider/model or a capability shortcut.
+	//
+	// Example: sts-fast
+	Target *string `json:"target,omitempty"`
+
+	// Text The session will inject typed turns.
+	Text *bool `json:"text,omitempty"`
+
+	// Tools The session will hand the model functions to call.
+	Tools *bool `json:"tools,omitempty"`
+
+	// TurnDetection What decides the caller has finished: a silence timer, a model reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default. Only some models read the words, so semantic is a term.
+	TurnDetection *StsOptionsTurnDetection `json:"turn_detection,omitempty"`
+
+	// Voice The vendor's own name for a voice, such as marin at OpenAI or Kore at Google. None of these models takes one of your own voices, so the name is passed on as given rather than looked up.
+	//
+	//
+	// Example: marin
+	Voice *string `json:"voice,omitempty"`
+}
+
+// StsOptionsTurnDetection What decides the caller has finished: a silence timer, a model reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default. Only some models read the words, so semantic is a term.
+type StsOptionsTurnDetection string
 
 // SttOptions How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently.
 type SttOptions struct {

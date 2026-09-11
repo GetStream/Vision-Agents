@@ -10,6 +10,7 @@ from .knowledge import Knowledge
 from .llm import LLM
 from .phone import Phone
 from .router import Router, define_router, sync_routers
+from .sts import STS
 from .stt import STT
 from .tts import TTS
 
@@ -26,6 +27,7 @@ __all__ = [
     "MessageContext",
     "Phone",
     "Router",
+    "STS",
     "STT",
     "TTS",
     "define_agent",

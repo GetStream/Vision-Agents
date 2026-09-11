@@ -131,6 +131,9 @@ from .speech import Speech
 from .speech_request import SpeechRequest
 from .speech_request_tags import SpeechRequestTags
 from .stats_bucket import StatsBucket
+from .sts_options import StsOptions
+from .sts_options_overwrites import StsOptionsOverwrites
+from .sts_options_turn_detection import StsOptionsTurnDetection
 from .stt_options import SttOptions
 from .stt_options_overwrites import SttOptionsOverwrites
 from .sync_agent_request import SyncAgentRequest
@@ -297,6 +300,9 @@ __all__ = (
     "SpeechRequest",
     "SpeechRequestTags",
     "StatsBucket",
+    "StsOptions",
+    "StsOptionsOverwrites",
+    "StsOptionsTurnDetection",
     "SttOptions",
     "SttOptionsOverwrites",
     "SyncAgentRequest",
