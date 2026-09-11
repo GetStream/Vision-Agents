@@ -50,18 +50,29 @@ const (
 	Verbatim        Term = "verbatim"
 	Smart           Term = "smart"
 	ProfanityFilter Term = "profanity_filter"
-	Speed          Term = "speed"
-	Volume         Term = "volume"
-	Emotion        Term = "emotion"
-	Stability      Term = "stability"
-	Pronunciations Term = "pronunciations"
-	ChunkSchedule  Term = "chunk_schedule"
-	Domains        Term = "domains"
-	Category       Term = "category"
-	Recency        Term = "recency"
-	Location       Term = "location"
-	Contents       Term = "contents"
-	OutputSchema   Term = "output_schema"
+	Speed           Term = "speed"
+	Volume          Term = "volume"
+	Emotion         Term = "emotion"
+	Stability       Term = "stability"
+	Pronunciations  Term = "pronunciations"
+	ChunkSchedule   Term = "chunk_schedule"
+	Domains         Term = "domains"
+	Category        Term = "category"
+	Recency         Term = "recency"
+	Location        Term = "location"
+	Contents        Term = "contents"
+	OutputSchema    Term = "output_schema"
+	// The speech-to-speech terms. A native audio model owns its own turn-taking, so
+	// which kind of turn detector it has is a term rather than a setting: a caller who
+	// asked for semantic turns and got a silence timer cannot hear the difference. Tools
+	// and typed turns are terms because one of the vendors has neither, and a tool
+	// definition that was accepted and never called is worse than one that was refused.
+	SemanticTurns    Term = "semantic_turns"
+	ManualTurns      Term = "manual_turns"
+	Tools            Term = "tools"
+	TextInput        Term = "text"
+	InputTranscript  Term = "input_transcript"
+	OutputTranscript Term = "output_transcript"
 )
 
 // Transcription modes. Verbatim keeps what was said; Smart tidies it.
@@ -69,6 +80,18 @@ const (
 	ModeVerbatim = "verbatim"
 	ModeSmart    = "smart"
 )
+
+// Turn detection modes for a speech-to-speech model: a silence timer, a model reading the
+// words, or nothing at all, which leaves the turns to the caller.
+const (
+	TurnServerVAD = "server_vad"
+	TurnSemantic  = "semantic"
+	TurnManual    = "none"
+)
+
+// ModalityImage is the input kind a speech-to-speech model that sees is asked for. It is
+// the same word the LLM router uses, so one config vocabulary covers both.
+const ModalityImage = "image"
 
 // Claim is a yes, a no, or nobody having said.
 //
@@ -551,6 +574,145 @@ func (o Search) Route() string {
 	default:
 		return "search-fast"
 	}
+}
+
+// STS is how a caller wants a speech-to-speech model to hold a conversation: one native
+// audio model that hears the caller and speaks back, in place of a transcriber, a text
+// model and a voice.
+//
+// The pointers are what tells "say nothing about this" from "turn this off", as for STT.
+// What every vendor takes - a voice, instructions, some turn detector - is a plain field.
+// What only some take is a term, so a request asking for it is routed to a model that can
+// serve it or refused. Temperature and its relatives are absent on purpose: one vendor in
+// five accepts them on a live session, and a knob four of five ignore in silence is worse
+// than one that is not there.
+type STS struct {
+	Target string `json:"target,omitempty"`
+	// Providers is a priority list of where to try, in the order given, on the same terms
+	// as the other modalities. Empty leaves the choice to Target.
+	Providers []string `json:"providers,omitempty"`
+	// Instructions is the system prompt the model converses under.
+	Instructions string `json:"instructions,omitempty"`
+	// Voice is the vendor's own name for a voice, since none of these models takes a
+	// cloned one. It is not resolved against the voice catalogue.
+	Voice     string   `json:"voice,omitempty"`
+	Languages []string `json:"languages,omitempty"`
+	// TurnDetection is TurnServerVAD, TurnSemantic or TurnManual. Empty leaves the model's
+	// own default, which is a silence timer everywhere but at OpenAI.
+	TurnDetection string `json:"turn_detection,omitempty"`
+	// SilenceMs and PrefixPaddingMs tune a silence timer: how long a pause ends the turn,
+	// and how much audio before the detected speech is kept. Either raises Endpointing.
+	SilenceMs       *int `json:"silence_ms,omitempty"`
+	PrefixPaddingMs *int `json:"prefix_padding_ms,omitempty"`
+	// InterruptResponse is whether the model cuts its own reply off when it hears the
+	// caller. Nil leaves the vendor's default; false is for a speaker close enough to the
+	// microphone that the model would otherwise interrupt itself.
+	InterruptResponse *bool `json:"interrupt_response,omitempty"`
+	// InputTranscript and OutputTranscript ask the model to write down what it heard and
+	// what it said. Both are terms, since one vendor cannot turn its off and two give
+	// only finals.
+	InputTranscript  *bool `json:"input_transcript,omitempty"`
+	OutputTranscript *bool `json:"output_transcript,omitempty"`
+	// Tools says the session will hand the model functions to call, Text that it will
+	// inject typed turns, Images that it will send frames. Each narrows the candidates to
+	// the models that can, so a tool definition is never accepted by a model that will
+	// never call it.
+	Tools  *bool `json:"tools,omitempty"`
+	Text   *bool `json:"text,omitempty"`
+	Images *bool `json:"images,omitempty"`
+	// DataPolicy is what the caller requires of what happens to the caller's voice.
+	DataPolicy DataPolicy `json:"data_policy,omitempty"`
+	// Overwrites are settings for one provider that the vocabulary above has no word for,
+	// keyed by provider name, on the same terms as the speech ones.
+	Overwrites map[string]json.RawMessage `json:"overwrites,omitempty"`
+}
+
+// Merge returns these options with everything the other one names written over them.
+func (o STS) Merge(over STS) STS {
+	merged := o
+	overwrite(&merged.Target, over.Target)
+	overwriteSlice(&merged.Providers, over.Providers)
+	overwrite(&merged.Instructions, over.Instructions)
+	overwrite(&merged.Voice, over.Voice)
+	overwriteSlice(&merged.Languages, over.Languages)
+	overwrite(&merged.TurnDetection, over.TurnDetection)
+	overwritePointer(&merged.SilenceMs, over.SilenceMs)
+	overwritePointer(&merged.PrefixPaddingMs, over.PrefixPaddingMs)
+	overwritePointer(&merged.InterruptResponse, over.InterruptResponse)
+	overwritePointer(&merged.InputTranscript, over.InputTranscript)
+	overwritePointer(&merged.OutputTranscript, over.OutputTranscript)
+	overwritePointer(&merged.Tools, over.Tools)
+	overwritePointer(&merged.Text, over.Text)
+	overwritePointer(&merged.Images, over.Images)
+	overwritePointer(&merged.DataPolicy.AllowTraining, over.DataPolicy.AllowTraining)
+	overwrite((*string)(&merged.DataPolicy.Retention), string(over.DataPolicy.Retention))
+	// Per provider rather than wholesale, so a call can change one vendor's setting
+	// without restating what the config said about the others.
+	if len(over.Overwrites) > 0 {
+		merged.Overwrites = make(map[string]json.RawMessage, len(o.Overwrites)+len(over.Overwrites))
+		maps.Copy(merged.Overwrites, o.Overwrites)
+		maps.Copy(merged.Overwrites, over.Overwrites)
+	}
+	return merged
+}
+
+// Validate reports the first thing about these options a model could not be asked for.
+func (o STS) Validate() error {
+	switch o.TurnDetection {
+	case "", TurnServerVAD, TurnSemantic, TurnManual:
+	default:
+		return fmt.Errorf("options: turn_detection is %s, %s or %s, not %q",
+			TurnServerVAD, TurnSemantic, TurnManual, o.TurnDetection)
+	}
+	// A silence threshold only means something to a silence timer. A model reading the
+	// words does not wait out a pause, so a threshold it was given would be a setting that
+	// was accepted and changed nothing.
+	if o.TurnDetection != "" && o.TurnDetection != TurnServerVAD && (o.SilenceMs != nil || o.PrefixPaddingMs != nil) {
+		return fmt.Errorf("options: silence_ms and prefix_padding_ms tune a %s turn detector, not %s",
+			TurnServerVAD, o.TurnDetection)
+	}
+	if o.SilenceMs != nil && *o.SilenceMs < 0 {
+		return fmt.Errorf("options: silence_ms cannot be negative, got %d", *o.SilenceMs)
+	}
+	if o.PrefixPaddingMs != nil && *o.PrefixPaddingMs < 0 {
+		return fmt.Errorf("options: prefix_padding_ms cannot be negative, got %d", *o.PrefixPaddingMs)
+	}
+	if !o.DataPolicy.Valid() {
+		return fmt.Errorf("options: retention is none or a duration such as 30d, not %q", o.DataPolicy.Retention)
+	}
+	for provider, block := range o.Overwrites {
+		if provider == "" {
+			return errors.New("options: an overwrite has to name the provider it is for")
+		}
+		if !json.Valid(block) {
+			return fmt.Errorf("options: the overwrites for %s are not valid JSON", provider)
+		}
+	}
+	return nil
+}
+
+// Terms is what these options ask of a speech-to-speech model. Only what is turned on
+// counts, as for the other modalities. Images is not a term: it is an input modality, and
+// routing narrows on those the way it does on a language.
+func (o STS) Terms() []Term {
+	var asked []Term
+	asked = appendIf(asked, SemanticTurns, o.TurnDetection == TurnSemantic)
+	asked = appendIf(asked, ManualTurns, o.TurnDetection == TurnManual)
+	asked = appendIf(asked, Endpointing, o.SilenceMs != nil || o.PrefixPaddingMs != nil)
+	asked = appendIf(asked, Tools, on(o.Tools))
+	asked = appendIf(asked, TextInput, on(o.Text))
+	asked = appendIf(asked, InputTranscript, on(o.InputTranscript))
+	asked = appendIf(asked, OutputTranscript, on(o.OutputTranscript))
+	return asked
+}
+
+// InputModalities is what these options ask the model to see besides audio, in the words
+// routing narrows candidates by.
+func (o STS) InputModalities() []string {
+	if on(o.Images) {
+		return []string{ModalityImage}
+	}
+	return nil
 }
 
 // Expressible reports whether every term asked for is among the ones declared. A model

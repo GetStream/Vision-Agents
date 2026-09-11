@@ -16,8 +16,8 @@
 # The list is what the code behind the model actually sends upstream, so adding a term here
 # is a claim about the provider package as much as about the vendor.
 #
-# data_policy is what happens to what a model is sent, and every speech model must declare
-# it. Like the price it is config rather than fact: what a vendor does with our audio
+# data_policy is what happens to what a model is sent, and every model that hears or speaks
+# must declare it. Like the price it is config rather than fact: what a vendor does with our audio
 # depends on which plan we are on, which flags we send and whether an admin switched zero
 # retention on, and none of that is in a vendor's documentation. trains_on_data is yes, no
 # or unknown, and retention is none, a duration such as 30d, unspecified for a provider
@@ -945,6 +945,127 @@ tts:
       multilingual: true
       require_realtime: true
       tier: high-quality
+
+# Speech to speech: one native audio model that hears the caller and speaks back, in place
+# of a transcriber, a text model and a voice. Every entry is realtime, because there is no
+# batch half of a conversation. The terms are the ones a model can be asked for beyond a
+# voice and instructions: semantic_turns is a turn detector that reads the words rather than
+# waiting out a pause, endpointing a pause whose length can be set, tools and text the
+# ability to call a function or take a typed turn, and the two transcripts whether the model
+# writes down what it heard and what it said.
+#
+# Prices are estimates. These models bill audio in, audio out and text at three different
+# rates, and Price has one token bucket, so the audio rates are applied to every token and
+# the split is lost. It is the perplexity/sonar treatment, and the same caveat: what makes
+# it an estimate is the shape of Price, not the vendor's list.
+sts:
+  providers:
+    # Gemini 3.1 Flash Live, which replaced the 2.5 native audio preview: Google's
+    # highest-quality audio model and, at well under a second to first audio, what sts-fast
+    # prefers. Its function calling is synchronous only, so a tool that takes a while holds
+    # the conversation while it runs. Audio in at $3/1M tokens and out at $12/1M, roughly
+    # 25 tokens a second of speech, to be checked against the model's own page once it is
+    # generally available. Google do not train on Developer API traffic, and there is no
+    # zero-retention path on it, so this cannot serve a request naming a retention ceiling.
+    - provider: gemini
+      model: gemini-3.1-flash-live-preview
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      supports: [endpointing, tools, text, input_transcript, output_transcript]
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 3.0
+        per_million_output_tokens: 12.0
+
+    # GPT-Realtime-2. The only model here with a semantic turn detector. Audio in at
+    # $32/1M tokens, $0.40/1M cached, out at $64/1M. OpenAI do not train on API traffic
+    # and keep it thirty days for abuse monitoring; zero retention is an enterprise setting.
+    - provider: openai
+      model: gpt-realtime-2
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      supports: [semantic_turns, endpointing, tools, text, input_transcript, output_transcript]
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+      price:
+        per_million_input_tokens: 32.0
+        per_million_cached_input_tokens: 0.40
+        per_million_output_tokens: 64.0
+
+    # xAI's Grok Voice over its OpenAI-compatible socket. It does not see, and it reports
+    # no usage, so it is priced by the caller's audio: $0.05 a minute of conversation on
+    # the launch pricing, which undercounts the model's own speaking time. xAI's API terms
+    # match their transcription ones: no training, thirty days.
+    - provider: xai
+      model: grok-voice-think-fast-2.0
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      supports: [endpointing, tools, text, input_transcript, output_transcript]
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+      price:
+        per_audio_hour: 3.0
+
+    # Alibaba's Qwen 3.5 Omni, top of the Artificial Analysis quality board and by far the
+    # cheapest, at $0.03 an hour of input on that board. It takes no tools and no typed
+    # turns, and its session is configured once, before the first audio. Alibaba have
+    # published nothing this deployment can read about training or retention.
+    - provider: qwen
+      model: qwen3.5-omni-plus-realtime
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      supports: [endpointing, input_transcript, output_transcript]
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: unknown
+        retention: unknown
+      price:
+        per_audio_hour: 0.03
+
+  aliases:
+    en-low-latency:
+      languages: [en]
+      require_realtime: true
+      tier: low-latency
+
+    multilingual-low-latency:
+      multilingual: true
+      require_realtime: true
+      tier: low-latency
+
+    en-high-accuracy:
+      languages: [en]
+      require_realtime: true
+      tier: high-quality
+
+    multilingual-high-accuracy:
+      multilingual: true
+      require_realtime: true
+      tier: high-quality
+
+    # The shorthand a conversation gets when nobody said which model they wanted: the one
+    # quickest to answer, pinned to Gemini 3.1 Flash Live for as long as it is up, with the
+    # rest of the tier behind it.
+    sts-fast:
+      require_realtime: true
+      tier: low-latency
+      prefer: gemini/gemini-3.1-flash-live-preview
+
+    # A conversation the model can watch as well as hear. Pinned to GPT-Realtime-2, which
+    # is what vlm pins for the same reason.
+    sts-vision:
+      require_input_modalities: [image]
+      prefer: openai/gpt-realtime-2
 
 llm:
   providers:
