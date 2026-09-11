@@ -249,8 +249,12 @@ class RequestyLLM(LLM):
                     first_token_time = time.perf_counter()
                     ttft_ms = (first_token_time - request_start_time) * 1000
 
-                text_chunks.append(content)
+                # Narration that arrives after a tool_call delta is neither
+                # yielded nor included in the final text, so consumers that
+                # replace streamed deltas with LLMResponseFinal.text see the
+                # same content either way.
                 if not has_tool_call_delta_seen:
+                    text_chunks.append(content)
                     yield LLMResponseDelta(
                         content_index=None,
                         item_id=chunk.id,

@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 
-async def create_agent(**kwargs) -> Agent:
+async def create_agent(**kwargs: object) -> Agent:
     """Create the agent with Requesty LLM, function calling, and optional MCP."""
     # Requesty uses Chat Completions API for all models.
     # Any model available on Requesty can be used here.
@@ -95,7 +95,9 @@ Available: get_weather, calculate_sum, get_me, list_pull_requests, search_reposi
     return agent
 
 
-async def join_call(agent: Agent, call_type: str, call_id: str, **kwargs) -> None:
+async def join_call(
+    agent: Agent, call_type: str, call_id: str, **kwargs: object
+) -> None:
     """Join the call and start the agent."""
     # Create a call
     call = await agent.create_call(call_type, call_id)
