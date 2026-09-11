@@ -113,8 +113,10 @@ func (ResponseDelta) isAgentEvent() {}
 
 // Responded means the model finished. The reply may still be being spoken.
 type Responded struct {
-	TurnID string
-	Text   string
+	// PendingWork says this model reply is followed by tools or delegated work.
+	PendingWork bool
+	TurnID      string
+	Text        string
 	// TimeToFirstTokenMs is how long the participant waited for the model to start.
 	TimeToFirstTokenMs float64
 }
@@ -168,8 +170,9 @@ func (Turn) isAgentEvent() {}
 // Delegated means the model handed a piece of work to the subagent and carried on
 // talking. The caller hears the filler around it, never the request itself.
 type Delegated struct {
-	TaskID string
-	Skill  string
+	StartedAt time.Time
+	TaskID    string
+	Skill     string
 	// Prompt is what was handed over.
 	Prompt string
 	// TurnID is the reply the request was made in.
@@ -207,7 +210,19 @@ func (TaskCancelled) isAgentEvent() {}
 // ToolRan means the model asked for a tool and it has been carried out, or tried. It is
 // reported whether or not it worked, because a tool that failed still changed what the
 // agent goes on to say.
+type ToolStarted struct {
+	Product   string
+	SDK       string
+	ID        string
+	TurnID    string
+	Tool      string
+	StartedAt time.Time
+}
+
+func (ToolStarted) isAgentEvent() {}
+
 type ToolRan struct {
+	ID     string
 	TurnID string
 	Tool   string
 	// Arguments is the JSON the model filled in, as it wrote it.

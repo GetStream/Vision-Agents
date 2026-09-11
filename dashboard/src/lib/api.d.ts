@@ -1083,6 +1083,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/conversations/{cid}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a persistent text conversation */
+        get: operations["getConversationMessages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/sessions": {
         parameters: {
             query?: never;
@@ -1210,7 +1227,8 @@ export interface paths {
         /**
          * Watch the conversation and answer the model's tool calls
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
-         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded`, `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `error` and `left`.
+         *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `research_progress` (tool_call_id, phase, elapsed_ms, verified_citations), `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `error` and `left`.
+         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
          *     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
          *     Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
          *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`, `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be answered: everything else is a report.
@@ -1475,6 +1493,8 @@ export interface components {
             keyterms?: string[];
             /** @description What the agent may look things up in. Empty means it knows only what it was told. */
             knowledge_namespace?: string;
+            /** @description Backend-managed research profile, scoped to this customer and agent. */
+            sandbox_profile?: string;
             sandbox?: components["schemas"]["Sandbox"];
             /** @description Cost labels, carried onto every request a session using it makes. */
             tags?: {
@@ -1497,6 +1517,8 @@ export interface components {
             plugins?: string[];
             keyterms?: string[];
             knowledge_namespace?: string;
+            /** @description Backend-managed research profile, scoped to this customer and agent. */
+            sandbox_profile?: string;
             sandbox?: components["schemas"]["Sandbox"];
             tags?: {
                 [key: string]: string;
@@ -1820,6 +1842,11 @@ export interface components {
          */
         RecordingStatus: "queued" | "running" | "completed" | "failed";
         TranscriptionRequest: {
+            /**
+             * @description Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+             * @default false
+             */
+            inline: boolean;
             /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
             config_id?: string;
             source: components["schemas"]["RecordingSource"];
@@ -1884,6 +1911,11 @@ export interface components {
             end_ms?: number;
         };
         SpeechRequest: {
+            /**
+             * @description Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+             * @default false
+             */
+            inline: boolean;
             /** @description A stored router config to take the options from. Anything named here as well overrides that one field of it. */
             config_id?: string;
             /** @description What to say. Whole paragraphs rather than the sentence at a time a socket takes. */
@@ -1975,6 +2007,8 @@ export interface components {
             greeting?: string;
             plugins?: string[];
             keyterms?: string[];
+            /** @description Backend-managed research profile, scoped to this customer and agent. */
+            sandbox_profile?: string;
             sandbox?: components["schemas"]["Sandbox"];
             tags?: {
                 [key: string]: string;
@@ -2449,6 +2483,12 @@ export interface components {
          */
         DecisionKind: "ask" | "wait" | "ignore" | "answer" | "queue" | "interrupt" | "shorten" | "backchannel" | "supersede" | "compact" | "delegate" | "settle" | "fail";
         CreateSessionRequest: {
+            /** @description Stream Chat CID to resume; returned for persistent text sessions. */
+            conversation_id?: string;
+            /** @description Persist a text conversation in Stream Chat, creating a channel when no CID is supplied. */
+            persist_conversation?: boolean;
+            /** @description Older history was omitted from the model context. */
+            context_truncated?: boolean;
             /** @description The call to join. Required unless the session is text. */
             call_id?: string;
             /**
@@ -2496,6 +2536,8 @@ export interface components {
             max_tokens?: number;
             /** @description How much delegated work may run at once. */
             tasks?: number;
+            /** @description Backend-managed research profile, scoped to this customer and agent. */
+            sandbox_profile?: string;
             sandbox?: components["schemas"]["Sandbox"];
             /**
              * @description Murmur while a participant is still talking, the way a person does.
@@ -2522,6 +2564,12 @@ export interface components {
             phone?: components["schemas"]["SessionPhone"];
         };
         Session: {
+            /** @description Stream Chat CID to resume; returned for persistent text sessions. */
+            conversation_id?: string;
+            /** @description Persist a text conversation in Stream Chat, creating a channel when no CID is supplied. */
+            persist_conversation?: boolean;
+            /** @description Older history was omitted from the model context. */
+            context_truncated?: boolean;
             id: string;
             /** @description Empty for a text session, which joins no call. */
             call_id: string;
@@ -4937,6 +4985,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChatToken"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getConversationMessages: {
+        parameters: {
+            query: {
+                agent_id: string;
+                before?: string;
+            };
+            header?: never;
+            path: {
+                cid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conversation messages, oldest first, with an older-page cursor */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             400: components["responses"]["BadRequest"];

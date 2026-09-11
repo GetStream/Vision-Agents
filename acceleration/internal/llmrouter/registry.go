@@ -1,6 +1,7 @@
 package llmrouter
 
 import (
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/cerebras"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/deepseek"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/gemini"
@@ -36,5 +37,8 @@ func DefaultRegistry() *Registry {
 		return Started(cerebras.New(cerebras.Options{Model: spec.Model, Logger: spec.Logger}))
 	})
 
+	registry.Register(anthropic.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(anthropic.New(anthropic.Options{Model: spec.Model, Logger: spec.Logger}))
+	})
 	return registry
 }

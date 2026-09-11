@@ -119,6 +119,47 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+### Accelerate LLM request fallback and Claude support
+
+The Go backend can route to Anthropic's OpenAI-compatible Claude endpoint using
+`ANTHROPIC_API_KEY`. Alias sessions try another eligible model when a request fails
+before streaming, retaining its conversation input, tools and cost tags. Cancellation,
+HTTP 400 rejections, partial output and provider-held continuation IDs are not replayed.
+Text sessions no longer acquire an implicit subagent when none was requested.
+
+### Organization-scoped support memory
+
+Support conversations use the existing session memory identity to recall facts across
+chats for the same organization. Persisted channels retain their original memory
+scope and reject resuming under a different identity. Sessions without an explicit
+memory user no longer fall back to shared customer memories; requesting memory when
+the backend provider is unavailable returns a clear error.
+Mem0 startup recall now supplies a general context query when the conversation has
+no question yet, avoiding the provider's rejection of blank search queries.
+
+### Shared SDK repositories in managed research workspaces
+
+Managed sandbox repositories can declare additional product/SDK `scopes`, so one
+clone serves multiple SDKs without mixing their routing. Preparation clones up to
+three repositories concurrently. The bounded source index reserves space for every
+repository and supports Go, Python, Kotlin, Java, Dart, C#, C/C++, Objective-C, PHP,
+and Ruby alongside Swift and JavaScript/TypeScript. Source permissions and exact
+commit-linked quote verification apply to all supported languages.
+
+### Conversation activity in the call dashboard
+
+Call pages now include Stream Chat. Persistent support conversations display thinking,
+queue and execution timers, tool summaries, Markdown answers, and save status. The
+browser can submit questions and cancel responses while the TUI handles local tools;
+saved conversation links remain readable after the session ends.
+
+- Persistent Stream Chat text conversations with resumable history, thinking/tool activity, immutable tool timestamps, and a durable local write retry queue. The Go SDK exposes conversation binding and history.
+- Synchronous short STT/TTS requests work without a database; text agents can delegate product skills and cancel active tools.
+
+
+- Backend-managed Daytona research profiles keep a source workspace and Cursor process warm. Agent configs and session requests accept `sandbox_profile`; Go agents select it with `ManagedSandbox`, and receive `research_progress` events.
+- Daytona Python sandboxes use the official Go SDK, serialize concurrent creation and retain identity after failed deletion.
+
 ### An agent or router stores its own directory on starting
 
 `Agent(config="customer_support")` and `Router("clinic")` now find the directory behind the
@@ -487,6 +528,17 @@ answers out of a knowledge directory and a page on the docs site, both under one
 directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
+
+- Chat readers are explicitly added to existing agent channels before their token is
+  issued, so opening a members-only transcript no longer fails with `ReadChannel`.
+
+- Managed research workspaces resume stopped Daytona VMs in place, refresh preview access and recover worker processes before research; pinned source revisions are preserved.
+
+- OpenAI streamed tool arguments now retain their output item identity when text or multiple tool calls precede them.
+
+- Text agents continue answering after sequential tool calls, so a docs lookup followed by source research no longer leaves the session waiting silently.
+
+- The Go SDK logs text session creation as `opened a text session`, instead of claiming it joined a call.
 
 ### Together's speech models: a question no longer settles as its last word
 

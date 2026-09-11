@@ -148,6 +148,7 @@ func routableConfig() routing.ModalityConfig {
 			Realtime:  true,
 		}},
 		Aliases: map[string]routing.Alias{
+			"llm-flow":       {Languages: []string{"en"}, RequireRealtime: true},
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
 		},
 	}
@@ -276,7 +277,11 @@ func (s *SessionAPISuite) creates(request CreateSessionRequest) Session {
 	}
 
 	response := s.send(http.MethodPost, "/v1/agents/sessions", "acme", request)
-	s.Require().Equal(http.StatusCreated, response.StatusCode)
+	if response.StatusCode != http.StatusCreated {
+		var failure Error
+		s.decodeBody(response, &failure)
+		s.T().Fatalf("create session: %s", failure.Error)
+	}
 
 	var created Session
 	s.decodeBody(response, &created)
@@ -347,7 +352,11 @@ func (s *SessionAPISuite) TestATextSessionNeedsNoCallAndNoSpeechTargets() {
 	response := s.send(http.MethodPost, "/v1/agents/sessions", "acme",
 		CreateSessionRequest{Text: &text, Llm: &target})
 
-	s.Require().Equal(http.StatusCreated, response.StatusCode)
+	if response.StatusCode != http.StatusCreated {
+		var failure Error
+		s.decodeBody(response, &failure)
+		s.T().Fatalf("create session: %s", failure.Error)
+	}
 	var created Session
 	s.decodeBody(response, &created)
 	s.Empty(created.CallId, "a conversation in writing joins no call")

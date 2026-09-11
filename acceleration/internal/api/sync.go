@@ -148,6 +148,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Keyterms != nil {
 		config.Keyterms = keytermsOf(body.Keyterms)
 	}
+	if body.SandboxProfile != nil {
+		config.SandboxProfile = *body.SandboxProfile
+	}
 	if body.Sandbox != nil {
 		box, _ := sandboxOf(body.Sandbox)
 		config.Sandbox = box

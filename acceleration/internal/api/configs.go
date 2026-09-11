@@ -334,6 +334,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Greeting:           value(request.Greeting),
 		KnowledgeNamespace: value(request.KnowledgeNamespace),
 		Sandbox:            box,
+		SandboxProfile:     value(request.SandboxProfile),
 	}
 	if request.Skills != nil {
 		config.Skills = *request.Skills
@@ -379,6 +380,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.Instructions = optional(config.Instructions)
 	rendered.Greeting = optional(config.Greeting)
 	rendered.KnowledgeNamespace = optional(config.KnowledgeNamespace)
+	rendered.SandboxProfile = optional(config.SandboxProfile)
 	if config.Sandbox != "" {
 		box := Sandbox(config.Sandbox)
 		rendered.Sandbox = &box

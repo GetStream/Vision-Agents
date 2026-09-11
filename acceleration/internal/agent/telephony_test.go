@@ -421,6 +421,25 @@ func (s *AgentSuite) TestWhatAToolFoundOutIsSpokenRatherThanWaitedOn() {
 	}, "the caller was left in silence by a tool that worked")
 }
 
+func (s *AgentSuite) TestTextToolFollowUpStillProducesAFinalAnswer() {
+	s.ownsTools("The source returns the ChatContext value.")
+	s.joinText()
+	s.model.reply = []string{"It returns the ChatContext value."}
+	call := llm.ToolCall{ID: "research-after-docs", Name: "lookup_order", Arguments: `{}`}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{
+		{Role: llm.User, Content: "What does useChatContext return?"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{call}},
+	}
+	s.agent.mu.Unlock()
+	// A tool requested while answering an earlier tool uses the tool turn prefix.
+	s.agent.runTool(harness.ToolRequested{TurnID: toolPrefix + "after-docs", Call: call})
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "source research left the text session silent")
+	response, _ := firstOf[Responded](s.reported())
+	s.Equal("It returns the ChatContext value.", response.Text)
+	s.False(response.PendingWork)
+}
+
 func (s *AgentSuite) TestAToolReachedForWithoutAWordStillTellsTheCallerToWait() {
 	// The fast models do not reliably say anything before they call a tool, and the
 	// caller cannot hear one running. Without this they ask a question and get silence,
@@ -564,4 +583,44 @@ func (s *AgentSuite) history() []llm.Message {
 	s.agent.mu.Lock()
 	defer s.agent.mu.Unlock()
 	return append([]llm.Message(nil), s.agent.history...)
+}
+
+type cancellationTool struct {
+	began   chan struct{}
+	stopped chan struct{}
+}
+
+func (r *cancellationTool) Run(ctx context.Context, _ llm.ToolCall) (string, error) {
+	close(r.began)
+	<-ctx.Done()
+	close(r.stopped)
+	return "", ctx.Err()
+}
+func (s *AgentSuite) TestInterruptCancelsActiveTextToolWithoutFollowingUp() {
+	s.ownsTools("")
+	runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}
+	s.joinText()
+	s.agent.options.ToolRunner = runner
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.agent.runTool(harness.ToolRequested{TurnID: "active-research", Call: llm.ToolCall{ID: "research", Name: "lookup_order", Arguments: `{}`}})
+	}()
+	select {
+	case <-runner.began:
+	case <-time.After(time.Second):
+		s.FailNow("tool did not start")
+	}
+	s.agent.Interrupt()
+	select {
+	case <-runner.stopped:
+	case <-time.After(time.Second):
+		s.FailNow("tool context was not cancelled")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		s.FailNow("tool did not finish")
+	}
+	s.Zero(countOf[Responded](s.reported()), "cancelled research must not produce an unsolicited follow-up")
 }

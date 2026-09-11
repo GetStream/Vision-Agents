@@ -533,25 +533,13 @@ func (s *OpenAICompatSuite) TestClosingAStreamTwiceIsSafe() {
 	s.NoError(stream.Close())
 }
 
-func (s *OpenAICompatSuite) TestAFailedRequestStillSettlesTheResponse() {
-	// A caller waiting for a response to settle must never be left hanging, or a turn
-	// never ends and the conversation stops.
+func (s *OpenAICompatSuite) TestARejectedHTTPRequestReturnsBeforeStreaming() {
 	s.status = http.StatusUnauthorized
 	provider := s.provider(Options{})
-
-	response, events := s.ask(provider, hello())
-
-	s.Empty(response.OutputText)
-	s.Equal(llm.StatusFailed, response.Status)
-
-	var failures []llm.ResponseFailed
-	for _, event := range events {
-		if failure, ok := event.(llm.ResponseFailed); ok {
-			failures = append(failures, failure)
-		}
-	}
-	s.Require().NotEmpty(failures, "the failure has to be reported so it can be recorded")
-	s.Equal("stream", failures[0].Context)
+	stream, err := provider.Create(context.Background(), hello())
+	s.Nil(stream)
+	s.Require().Error(err)
+	s.Contains(err.Error(), "401")
 }
 
 func (s *OpenAICompatSuite) TestARequestWithNoInputIsRefused() {

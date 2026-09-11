@@ -223,6 +223,8 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	spec.CallID = value(request.CallId)
 	spec.CustomerID = customerID
 	spec.Text = value(request.Text)
+	spec.PersistConversation = value(request.PersistConversation)
+	spec.ConversationID = value(request.ConversationId)
 
 	spec.CallType = override(spec.CallType, request.CallType)
 	spec.UserID = override(spec.UserID, request.UserId)
@@ -243,6 +245,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	spec.Backchannel = override(spec.Backchannel, request.Backchannel)
 	spec.MinConfidence = override(spec.MinConfidence, request.MinConfidence)
 
+	spec.SandboxProfile = override(spec.SandboxProfile, request.SandboxProfile)
 	if request.Sandbox != nil {
 		spec.Sandbox = string(*request.Sandbox)
 	}
@@ -313,6 +316,7 @@ func sessionOf(found *session.Session) Session {
 	instructions := spec.Instructions
 
 	rendered := Session{
+		ConversationId: &spec.ConversationID, ContextTruncated: &spec.ContextTruncated,
 		Id:        found.ID(),
 		CallId:    spec.CallID,
 		CallType:  spec.CallType,

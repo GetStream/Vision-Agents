@@ -1025,3 +1025,24 @@ func awaitToolCall(events <-chan Event) *ToolCall {
 		}
 	}
 }
+
+func (s *SessionSuite) TestUnidentifiedSessionsDoNotRecallSharedCustomerMemory() {
+	s.remembers = &stubMemory{}
+	s.manages()
+	s.joins(Spec{})
+	s.Equal(memory.Scope{}, s.remembers.scopedTo())
+}
+
+func (s *SessionSuite) TestRequestedMemoryRequiresAConfiguredProvider() {
+	s.manages()
+	_, err := s.manager.Create(s.ctx, Spec{Text: true, CustomerID: "acme", Memory: MemorySpec{UserID: "organization-cats"}})
+	s.Require().ErrorContains(err, "memory is unavailable")
+}
+
+func (s *SessionSuite) TestTextSessionDoesNotAcquireAnImplicitSubagent() {
+	s.thinks = true
+	s.manages()
+	created := s.writes(Spec{})
+	s.Empty(created.Spec().SubagentTarget)
+	s.Empty(row(created).Subagent)
+}

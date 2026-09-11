@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 )
 
@@ -90,6 +91,7 @@ type Session struct {
 	created time.Time
 	logger  *slog.Logger
 
+	persisted  *persistent.Conversation
 	voiceAgent *agent.Agent
 	tools      *bridge
 	transcript Transcript
@@ -207,8 +209,14 @@ func (s *Session) Watch() (<-chan Event, func()) {
 	return attached.events, func() {
 		s.mu.Lock()
 		delete(s.watchers, id)
+		detached := len(s.watchers) == 0 && s.persisted != nil
 		s.mu.Unlock()
 		attached.close()
+		// Persistent text clients own no call; a disconnected operator leaves no tool host.
+		// End this session so the saved channel can be reopened after a terminal crash.
+		if detached {
+			go func() { s.Interrupt(); _ = s.Close() }()
+		}
 	}
 }
 
@@ -219,7 +227,16 @@ func (s *Session) Say(ctx context.Context, text string) error {
 
 // Respond answers a piece of text through the model, as though a participant had said it.
 func (s *Session) Respond(ctx context.Context, text string) error {
-	return s.voiceAgent.SimpleResponse(ctx, text)
+	if s.persisted != nil {
+		if err := s.persisted.Begin(text); err != nil {
+			return err
+		}
+	}
+	err := s.voiceAgent.SimpleResponse(ctx, text)
+	if err != nil && s.persisted != nil {
+		s.persisted.Cancel()
+	}
+	return err
 }
 
 // Ask answers a piece of text in writing, without speaking any of it, and writes the answer
@@ -240,7 +257,12 @@ func (s *Session) Ask(ctx context.Context, text string) (string, error) {
 }
 
 // Interrupt abandons the reply being spoken.
-func (s *Session) Interrupt() { s.voiceAgent.Interrupt() }
+func (s *Session) Interrupt() {
+	s.voiceAgent.Interrupt()
+	if s.persisted != nil {
+		s.persisted.Cancel()
+	}
+}
 
 // Busy reports whether the agent still has something to finish, which is how anything
 // driving a conversation knows a turn is over rather than merely answered once.
@@ -307,6 +329,9 @@ func (s *Session) consume() {
 	defer s.running.Done()
 
 	for event := range s.voiceAgent.Events() {
+		if s.persisted != nil {
+			s.persisted.Observe(event)
+		}
 		if s.transcript != nil {
 			s.transcript.Record(event)
 		}
@@ -396,7 +421,7 @@ func (s *Session) askTool(call ToolCall) error {
 // deployment cannot route is a refusal, but a deployment routing no thinking model should
 // still take calls: that agent answers everything itself, the way it goes without search.
 func (m *Manager) think(ctx context.Context, spec *Spec) {
-	if spec.SubagentTarget != "" {
+	if spec.Text || spec.SubagentTarget != "" {
 		return
 	}
 	if _, err := m.options.LLM.Resolve(ctx, defaultSubagentTarget, spec.LanguageHints); err != nil {

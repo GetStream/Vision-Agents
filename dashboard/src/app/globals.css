@@ -32,3 +32,13 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+.conversation-markdown { overflow-wrap: anywhere; }
+.conversation-markdown > * + * { margin-top: 0.8rem; }
+.conversation-markdown a { color: #0284c7; text-decoration: underline; text-underline-offset: 3px; }
+.conversation-markdown pre { overflow-x: auto; padding: 1rem; border-radius: 0.75rem; background: var(--background); border: 1px solid var(--border); font-size: 0.8rem; line-height: 1.6; }
+.conversation-markdown :not(pre) > code { padding: 0.1rem 0.3rem; background: var(--background); border-radius: 0.25rem; font-size: 0.85em; }
+.conversation-markdown ul { list-style: disc; padding-left: 1.5rem; }
+.conversation-markdown ol { list-style: decimal; padding-left: 1.5rem; }
+.conversation-markdown table { display: block; overflow-x: auto; border-collapse: collapse; }
+.conversation-markdown th, .conversation-markdown td { border: 1px solid var(--border); padding: 0.4rem 0.7rem; text-align: left; }

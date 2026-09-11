@@ -145,3 +145,16 @@ func parseSkills(raw []byte) (Skills, error) {
 	skills.Normalize()
 	return skills, nil
 }
+
+// TextPrompt offers native skills for matching written requests, including complete questions.
+func (s Skills) TextPrompt() string {
+	if len(s.Skills) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Use the appropriate skill when a written request matches its description or explicitly names it. To run a skill, write <ask skill=\"name\">the task and relevant context</ask>. The harness runs this directive privately and returns the result; do not merely claim to have used the skill. Give a brief visible progress update, then wait for the result before answering. Do not re-delegate a result you just received. Use <drop skill=\"name\"/> to cancel work no longer needed. Available skills:\n")
+	for _, skill := range s.Skills {
+		fmt.Fprintf(&b, "- %s: %s\n", skill.Name, skill.Description)
+	}
+	return strings.TrimSpace(b.String())
+}

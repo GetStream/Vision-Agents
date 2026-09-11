@@ -3,6 +3,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { use } from "react";
 
+import { AgentChat } from "@/components/AgentChat";
+import { SupportConversation } from "@/components/SupportConversation";
 import { DecisionLog } from "@/components/DecisionLog";
 import { JoinCall } from "@/components/JoinCall";
 import { LatencyPanel } from "@/components/LatencyPanel";
@@ -24,11 +26,31 @@ import { useSession } from "@/lib/useSession";
 
 export default function CallPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = use(params);
+  const query = use(searchParams);
+  const get = (key: string) =>
+    typeof query[key] === "string" ? (query[key] as string) : undefined;
+  if (get("conversation") && get("agent")) {
+    return (
+      <SupportConversation
+        key={`${id}:${get("conversation")}`}
+        sessionID={id}
+        cid={get("conversation")!}
+        agentID={get("agent")!}
+        backend={get("router")}
+        customer={get("customer")}
+      />
+    );
+  }
+  return <VoiceCallPage id={id} />;
+}
 
+function VoiceCallPage({ id }: { id: string }) {
   const call = useQuery({
     queryKey: ["call", id],
     queryFn: () => router.call(id),
@@ -150,6 +172,16 @@ export default function CallPage({
         live={session.decisions}
         fallback={timeline.data ?? []}
       />
+
+      <Panel
+        title="Chat"
+        className="mb-6"
+        aside={
+          <span className="text-xs text-muted">Live from Stream Chat</span>
+        }
+      >
+        <AgentChat agentID={call.data.agent_id} />
+      </Panel>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Transcript running={running} stored={transcript.data ?? []} />

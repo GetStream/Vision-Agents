@@ -25,6 +25,11 @@ class TranscriptionRequest:
         source (RecordingSource): Where the audio to work on comes from. A URL is what every vendor's batch API takes
             and what anything longer than a clip should use; inline bytes save a caller with a short local file from having
             to host it somewhere first.
+        inline (bool | Unset): Complete this short request synchronously without storing a recording job or audio. The
+            202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database
+            is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8
+            MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+             Default: False.
         config_id (str | Unset): A stored router config to take the options from. Anything named here as well overrides
             that one field of it.
         options (SttOptions | Unset): How this config transcribes, live or from a recording. A field that only means
@@ -37,6 +42,7 @@ class TranscriptionRequest:
     """
 
     source: RecordingSource
+    inline: bool | Unset = False
     config_id: str | Unset = UNSET
     options: SttOptions | Unset = UNSET
     callback: str | Unset = UNSET
@@ -45,6 +51,8 @@ class TranscriptionRequest:
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source.to_dict()
+
+        inline = self.inline
 
         config_id = self.config_id
 
@@ -65,6 +73,8 @@ class TranscriptionRequest:
                 "source": source,
             }
         )
+        if inline is not UNSET:
+            field_dict["inline"] = inline
         if config_id is not UNSET:
             field_dict["config_id"] = config_id
         if options is not UNSET:
@@ -87,6 +97,8 @@ class TranscriptionRequest:
         d = dict(src_dict)
         source = RecordingSource.from_dict(d.pop("source"))
 
+        inline = d.pop("inline", UNSET)
+
         config_id = d.pop("config_id", UNSET)
 
         _options = d.pop("options", UNSET)
@@ -107,6 +119,7 @@ class TranscriptionRequest:
 
         transcription_request = cls(
             source=source,
+            inline=inline,
             config_id=config_id,
             options=options,
             callback=callback,

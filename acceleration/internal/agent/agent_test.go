@@ -573,6 +573,10 @@ func (s *AgentSuite) joinText() {
 	if s.knows != nil {
 		reading = s.knows
 	}
+	var running ToolRunner
+	if s.runner != nil {
+		running = s.runner
+	}
 
 	agent, err := New(Options{
 		Text:               true,
@@ -582,6 +586,7 @@ func (s *AgentSuite) joinText() {
 		SubagentTarget:     subagentTarget,
 		Skills:             s.skills,
 		Tools:              s.tools,
+		ToolRunner:         running,
 		LLM:                s.reasoner(logger),
 		LLMTarget:          "en-low-latency",
 		Knowledge:          reading,

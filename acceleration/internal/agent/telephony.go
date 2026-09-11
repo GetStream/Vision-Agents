@@ -98,13 +98,35 @@ type pressArguments struct {
 // conversation, and a model that is told the transfer did not go through can apologise for
 // it instead of waiting for a caller who is no longer being handed anywhere.
 func (a *Agent) runTool(requested harness.ToolRequested) {
-	result, left, err := a.callTool(requested.Call)
+	a.mu.Lock()
+	parent := a.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	if a.toolCancels == nil {
+		a.toolCancels = map[string]context.CancelFunc{}
+	}
+	a.toolCancels[requested.Call.ID] = cancel
+	if _, abandoned := a.abandoned[requested.TurnID]; abandoned {
+		cancel()
+	}
+	a.mu.Unlock()
+	defer func() { cancel(); a.mu.Lock(); delete(a.toolCancels, requested.Call.ID); a.mu.Unlock() }()
+	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, StartedAt: time.Now().UTC()}
+	started.Product, started.SDK = toolScope(requested.Call)
+	if a.options.OnToolStarted != nil {
+		a.options.OnToolStarted(started)
+	}
+	a.emitter.Send(started)
+	result, left, err := a.callTool(ctx, requested.Call)
 	if err != nil {
 		result = fmt.Sprintf("That did not work: %s. Tell the caller, in your own words.", err)
 	}
 	a.resolveTool(requested.Call, result)
 
 	a.emitter.Send(ToolRan{
+		ID:        requested.Call.ID,
 		TurnID:    requested.TurnID,
 		Tool:      requested.Call.Name,
 		Arguments: requested.Call.Arguments,
@@ -112,6 +134,9 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 		Err:       err,
 	})
 	a.noteToolDone()
+	if ctx.Err() != nil {
+		return
+	}
 	if !left {
 		// A tool result is not something the caller can hear. Whether it worked or not,
 		// somebody asked a question and is waiting on the answer, so the agent says it
@@ -121,10 +146,11 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 		// tool and the menu is what answers next, so talking over it would be talking to
 		// nobody.
 		//
-		// A turn that is itself the answer to a tool does not get another, or a model
-		// that responds to a broken trunk by trying it again would keep the call and the
-		// bill going without the caller hearing a word.
-		if requested.Call.Name != toolPress && !strings.HasPrefix(requested.TurnID, toolPrefix) {
+		// Voice calls stop automatic follow-ups after one tool round, so a broken
+		// transfer cannot keep the phone line open by retrying itself. Text sessions
+		// must continue: a docs lookup can lead to source research, whose result still
+		// needs a final answer even though it was requested in a tool follow-up turn.
+		if requested.Call.Name != toolPress && (a.options.Text || !strings.HasPrefix(requested.TurnID, toolPrefix)) {
 			a.queueToolReply()
 		}
 		return
@@ -140,12 +166,9 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 
 // callTool runs one tool, reporting what to tell the model and whether the agent has left
 // the call.
-func (a *Agent) callTool(call llm.ToolCall) (string, bool, error) {
-	a.mu.Lock()
-	ctx := a.ctx
-	a.mu.Unlock()
-	if ctx == nil {
-		return "", false, errors.New("agent: not joined")
+func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
 	}
 
 	if telephonyTool(call.Name) {
@@ -335,4 +358,26 @@ func (a *Agent) arrived(known map[string]struct{}) bool {
 		}
 	}
 	return false
+}
+
+// toolScope deliberately extracts only recognized routing labels, never raw arguments.
+func toolScope(call llm.ToolCall) (string, string) {
+	var scope struct {
+		Product string
+		SDK     string
+	}
+	if json.Unmarshal([]byte(call.Arguments), &scope) != nil {
+		return "", ""
+	}
+	switch scope.Product {
+	case "chat", "video", "moderation", "feeds":
+	default:
+		return "", ""
+	}
+	switch scope.SDK {
+	case "react", "ios-swiftui", "ios", "react-native", "android", "flutter", "javascript", "unity", "unreal", "go", "python":
+	default:
+		return scope.Product, ""
+	}
+	return scope.Product, scope.SDK
 }

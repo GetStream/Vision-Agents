@@ -12,19 +12,23 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/managed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
+	"os"
 )
 
 // EdgeFactory opens the transport a session's agent talks over.
@@ -71,15 +75,17 @@ type ManagerOptions struct {
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 
-	Store  *store.Store
-	Live   *live.Client
-	Logger *slog.Logger
+	Research *managed.Manager
+	Store    *store.Store
+	Live     *live.Client
+	Logger   *slog.Logger
 }
 
 // Manager owns the sessions this process is running.
 type Manager struct {
-	options ManagerOptions
-	logger  *slog.Logger
+	conversations *persistent.Service
+	options       ManagerOptions
+	logger        *slog.Logger
 	// calls records conversations so they can be found after this process is gone. Nil
 	// without a store, in which case a call is only ever what is happening now.
 	calls *callRecorder
@@ -118,6 +124,11 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		manager.calls = newCallRecorder(options.Store, options.Logger)
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 	}
+	if os.Getenv("CHAT_OUTBOX_DIR") != "" {
+		if _, err := manager.Conversations(); err != nil {
+			return nil, err
+		}
+	}
 	return manager, nil
 }
 
@@ -138,6 +149,58 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	m.mu.Unlock()
 
+	var workspace *managed.Workspace
+	if spec.SandboxProfile != "" {
+		if spec.Sandbox != "" {
+			return nil, errors.New("session: choose Python sandbox or managed research profile")
+		}
+		for _, tool := range spec.Tools {
+			if tool.Name == "investigate_sdk" {
+				return nil, errors.New("session: investigate_sdk is reserved by the managed profile")
+			}
+		}
+		if m.options.Research == nil {
+			return nil, errors.New("session: managed sandbox profiles unavailable")
+		}
+		var err error
+		workspace, err = m.options.Research.Find(spec.SandboxProfile, spec.CustomerID, spec.AgentID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var remembering memory.Store
+	if spec.Memory.UserID != "" {
+		if m.options.Memory == nil {
+			return nil, errors.New("session: memory is unavailable; configure the backend memory provider")
+		}
+		remembering = m.options.Memory
+	}
+
+	opened := false
+	var conv *persistent.Conversation
+	var previous []llm.Message
+	if spec.PersistConversation {
+		if !spec.Text {
+			return nil, errors.New("persistent conversations require text mode")
+		}
+		service, err := m.Conversations()
+		if err != nil {
+			return nil, err
+		}
+		var truncated bool
+		conv, previous, truncated, err = service.Open(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		if err != nil {
+			return nil, err
+		}
+		spec.ConversationID = conv.CID()
+		spec.ContextTruncated = truncated
+		defer func() {
+			if !opened {
+				conv.Release()
+			}
+		}()
+	}
 	m.supersede(spec)
 	m.think(ctx, &spec)
 
@@ -171,13 +234,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	created := &Session{
-		id:       newID(),
-		spec:     spec,
-		created:  time.Now(),
-		logger:   m.logger,
-		watchers: map[uint64]*watcher{},
-		state:    Live,
-		skills:   skills,
+		persisted: conv,
+		id:        newID(),
+		spec:      spec,
+		created:   time.Now(),
+		logger:    m.logger,
+		watchers:  map[uint64]*watcher{},
+		state:     Live,
+		skills:    skills,
 	}
 	created.tools = newBridge(
 		time.Duration(spec.ToolTimeoutMs)*time.Millisecond,
@@ -204,7 +268,21 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		created.closers = append(created.closers, mcp.Close)
 	}
 
+	if workspace != nil {
+		tools = append(tools, researchTool(workspace.Profile))
+		research := &researchRunner{workspace: workspace, next: runner, emit: created.broadcast}
+		if conv != nil {
+			research.progress = conv.Progress
+		}
+		runner = research
+	}
+
+	var toolStarted func(agent.ToolStarted)
+	if conv != nil {
+		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
+	}
 	created.voiceAgent, err = agent.New(agent.Options{
+		OnToolStarted:      toolStarted,
 		Edge:               edge,
 		Text:               spec.Text,
 		Instructions:       spec.prompt(),
@@ -232,7 +310,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		LanguageHints:      spec.LanguageHints,
 		Keyterms:           spec.Keyterms,
 		MaxTokens:          spec.MaxTokens,
-		Memory:             m.options.Memory,
+		Memory:             remembering,
 		Knowledge:          m.options.Knowledge,
 		KnowledgeNamespace: spec.KnowledgeNamespace,
 		Search:             m.options.Search,
@@ -257,7 +335,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		})
 	}
 
-	if m.options.Transcript != nil {
+	if m.options.Transcript != nil && conv == nil {
 		// A transcript that cannot be opened is not a reason to refuse the call. What was
 		// said is worth keeping; it is not worth not having the conversation for.
 		transcript, err := m.options.Transcript(spec, m.logger)
@@ -270,6 +348,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			created.transcript = transcript
 			created.closers = append(created.closers, transcript.Close)
 		}
+	}
+
+	if conv != nil {
+		created.voiceAgent.RestoreHistory(previous)
+		conv.Attach(func(update persistent.Updated) { created.broadcast(update) })
+		created.closers = append(created.closers, conv.Release)
 	}
 
 	// The fan-out starts before joining so nothing said between joining and the first
@@ -317,6 +401,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 
 	m.logger.Info("session joined",
 		"session", created.id, "call", spec.CallID, "customer", spec.CustomerID)
+	opened = true
 	return created, nil
 }
 
@@ -456,6 +541,9 @@ func (m *Manager) Shutdown() error {
 		m.reviews.Close()
 		m.calls.Close()
 	}
+	if m.conversations != nil {
+		m.conversations.Close()
+	}
 	return errors.Join(failures...)
 }
 
@@ -512,4 +600,17 @@ func newID() string {
 	// checked: the alternative would be a session that could not be created.
 	_, _ = rand.Read(raw)
 	return hex.EncodeToString(raw)
+}
+
+func (m *Manager) Conversations() (*persistent.Service, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.conversations == nil {
+		var err error
+		m.conversations, err = persistent.New(os.Getenv("CHAT_OUTBOX_DIR"))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return m.conversations, nil
 }

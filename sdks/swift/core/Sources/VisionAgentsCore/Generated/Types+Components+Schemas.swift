@@ -280,6 +280,10 @@ extension Components {
             internal var keyterms: [Swift.String]?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/knowledge_namespace`.
             internal var knowledgeNamespace: Swift.String?
+            /// Backend-managed research profile, scoped to this customer and agent.
+            ///
+            /// - Remark: Generated from `#/components/schemas/AgentConfig/sandbox_profile`.
+            internal var sandboxProfile: Swift.String?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/sandbox`.
             internal var sandbox: Components.Schemas.Sandbox?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/tags`.
@@ -329,6 +333,7 @@ extension Components {
             ///   - plugins:
             ///   - keyterms:
             ///   - knowledgeNamespace:
+            ///   - sandboxProfile: Backend-managed research profile, scoped to this customer and agent.
             ///   - sandbox:
             ///   - tags:
             ///   - syncHash: Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
@@ -350,6 +355,7 @@ extension Components {
                 plugins: [Swift.String]? = nil,
                 keyterms: [Swift.String]? = nil,
                 knowledgeNamespace: Swift.String? = nil,
+                sandboxProfile: Swift.String? = nil,
                 sandbox: Components.Schemas.Sandbox? = nil,
                 tags: Components.Schemas.AgentConfig.TagsPayload? = nil,
                 syncHash: Swift.String? = nil,
@@ -371,6 +377,7 @@ extension Components {
                 self.plugins = plugins
                 self.keyterms = keyterms
                 self.knowledgeNamespace = knowledgeNamespace
+                self.sandboxProfile = sandboxProfile
                 self.sandbox = sandbox
                 self.tags = tags
                 self.syncHash = syncHash
@@ -393,6 +400,7 @@ extension Components {
                 case plugins
                 case keyterms
                 case knowledgeNamespace = "knowledge_namespace"
+                case sandboxProfile = "sandbox_profile"
                 case sandbox
                 case tags
                 case syncHash = "sync_hash"
@@ -1395,6 +1403,11 @@ extension Components {
         }
         /// - Remark: Generated from `#/components/schemas/TranscriptionRequest`.
         internal struct TranscriptionRequest: Codable, Hashable, Sendable {
+            /// Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/TranscriptionRequest/inline`.
+            internal var inline: Swift.Bool?
             /// A stored router config to take the options from. Anything named here as well overrides that one field of it.
             ///
             ///
@@ -1436,18 +1449,21 @@ extension Components {
             /// Creates a new `TranscriptionRequest`.
             ///
             /// - Parameters:
+            ///   - inline: Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
             ///   - configId: A stored router config to take the options from. Anything named here as well overrides that one field of it.
             ///   - source:
             ///   - options:
             ///   - callback: A URL the finished job is POSTed to, so a caller does not have to poll. The body is the same Transcription this returns.
             ///   - tags: Cost labels for this job.
             internal init(
+                inline: Swift.Bool? = nil,
                 configId: Swift.String? = nil,
                 source: Components.Schemas.RecordingSource,
                 options: Components.Schemas.SttOptions? = nil,
                 callback: Swift.String? = nil,
                 tags: Components.Schemas.TranscriptionRequest.TagsPayload? = nil
             ) {
+                self.inline = inline
                 self.configId = configId
                 self.source = source
                 self.options = options
@@ -1455,6 +1471,7 @@ extension Components {
                 self.tags = tags
             }
             internal enum CodingKeys: String, CodingKey {
+                case inline
                 case configId = "config_id"
                 case source
                 case options
@@ -1665,6 +1682,11 @@ extension Components {
         }
         /// - Remark: Generated from `#/components/schemas/SpeechRequest`.
         internal struct SpeechRequest: Codable, Hashable, Sendable {
+            /// Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/SpeechRequest/inline`.
+            internal var inline: Swift.Bool?
             /// A stored router config to take the options from. Anything named here as well overrides that one field of it.
             ///
             ///
@@ -1703,18 +1725,21 @@ extension Components {
             /// Creates a new `SpeechRequest`.
             ///
             /// - Parameters:
+            ///   - inline: Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
             ///   - configId: A stored router config to take the options from. Anything named here as well overrides that one field of it.
             ///   - text: What to say. Whole paragraphs rather than the sentence at a time a socket takes.
             ///   - options:
             ///   - callback: A URL the finished job is POSTed to, so a caller does not have to poll.
             ///   - tags:
             internal init(
+                inline: Swift.Bool? = nil,
                 configId: Swift.String? = nil,
                 text: Swift.String,
                 options: Components.Schemas.TtsOptions? = nil,
                 callback: Swift.String? = nil,
                 tags: Components.Schemas.SpeechRequest.TagsPayload? = nil
             ) {
+                self.inline = inline
                 self.configId = configId
                 self.text = text
                 self.options = options
@@ -1722,6 +1747,7 @@ extension Components {
                 self.tags = tags
             }
             internal enum CodingKeys: String, CodingKey {
+                case inline
                 case configId = "config_id"
                 case text
                 case options
@@ -2261,6 +2287,18 @@ extension Components {
         }
         /// - Remark: Generated from `#/components/schemas/CreateSessionRequest`.
         internal struct CreateSessionRequest: Codable, Hashable, Sendable {
+            /// Stream Chat CID to resume; returned for persistent text sessions.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/conversation_id`.
+            internal var conversationId: Swift.String?
+            /// Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/persist_conversation`.
+            internal var persistConversation: Swift.Bool?
+            /// Older history was omitted from the model context.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/context_truncated`.
+            internal var contextTruncated: Swift.Bool?
             /// The call to join. Required unless the session is text.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/call_id`.
@@ -2343,6 +2381,10 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tasks`.
             internal var tasks: Swift.Int?
+            /// Backend-managed research profile, scoped to this customer and agent.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/sandbox_profile`.
+            internal var sandboxProfile: Swift.String?
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/sandbox`.
             internal var sandbox: Components.Schemas.Sandbox?
             /// Murmur while a participant is still talking, the way a person does.
@@ -2400,6 +2442,9 @@ extension Components {
             /// Creates a new `CreateSessionRequest`.
             ///
             /// - Parameters:
+            ///   - conversationId: Stream Chat CID to resume; returned for persistent text sessions.
+            ///   - persistConversation: Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
+            ///   - contextTruncated: Older history was omitted from the model context.
             ///   - callId: The call to join. Required unless the session is text.
             ///   - text: Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
             ///   - configId: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
@@ -2420,6 +2465,7 @@ extension Components {
             ///   - keyterms: Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
             ///   - maxTokens:
             ///   - tasks: How much delegated work may run at once.
+            ///   - sandboxProfile: Backend-managed research profile, scoped to this customer and agent.
             ///   - sandbox:
             ///   - backchannel: Murmur while a participant is still talking, the way a person does.
             ///   - minConfidence: How sure the transcriber must be before the agent answers rather than checks what was meant.
@@ -2431,6 +2477,9 @@ extension Components {
             ///   - memory:
             ///   - phone:
             internal init(
+                conversationId: Swift.String? = nil,
+                persistConversation: Swift.Bool? = nil,
+                contextTruncated: Swift.Bool? = nil,
                 callId: Swift.String? = nil,
                 text: Swift.Bool? = nil,
                 configId: Swift.String? = nil,
@@ -2451,6 +2500,7 @@ extension Components {
                 keyterms: [Swift.String]? = nil,
                 maxTokens: Swift.Int? = nil,
                 tasks: Swift.Int? = nil,
+                sandboxProfile: Swift.String? = nil,
                 sandbox: Components.Schemas.Sandbox? = nil,
                 backchannel: Swift.Bool? = nil,
                 minConfidence: Swift.Double? = nil,
@@ -2462,6 +2512,9 @@ extension Components {
                 memory: Components.Schemas.SessionMemory? = nil,
                 phone: Components.Schemas.SessionPhone? = nil
             ) {
+                self.conversationId = conversationId
+                self.persistConversation = persistConversation
+                self.contextTruncated = contextTruncated
                 self.callId = callId
                 self.text = text
                 self.configId = configId
@@ -2482,6 +2535,7 @@ extension Components {
                 self.keyterms = keyterms
                 self.maxTokens = maxTokens
                 self.tasks = tasks
+                self.sandboxProfile = sandboxProfile
                 self.sandbox = sandbox
                 self.backchannel = backchannel
                 self.minConfidence = minConfidence
@@ -2494,6 +2548,9 @@ extension Components {
                 self.phone = phone
             }
             internal enum CodingKeys: String, CodingKey {
+                case conversationId = "conversation_id"
+                case persistConversation = "persist_conversation"
+                case contextTruncated = "context_truncated"
                 case callId = "call_id"
                 case text
                 case configId = "config_id"
@@ -2514,6 +2571,7 @@ extension Components {
                 case keyterms
                 case maxTokens = "max_tokens"
                 case tasks
+                case sandboxProfile = "sandbox_profile"
                 case sandbox
                 case backchannel
                 case minConfidence = "min_confidence"
@@ -2528,6 +2586,18 @@ extension Components {
         }
         /// - Remark: Generated from `#/components/schemas/Session`.
         internal struct Session: Codable, Hashable, Sendable {
+            /// Stream Chat CID to resume; returned for persistent text sessions.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/conversation_id`.
+            internal var conversationId: Swift.String?
+            /// Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/persist_conversation`.
+            internal var persistConversation: Swift.Bool?
+            /// Older history was omitted from the model context.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/context_truncated`.
+            internal var contextTruncated: Swift.Bool?
             /// - Remark: Generated from `#/components/schemas/Session/id`.
             internal var id: Swift.String
             /// Empty for a text session, which joins no call.
@@ -2569,6 +2639,9 @@ extension Components {
             /// Creates a new `Session`.
             ///
             /// - Parameters:
+            ///   - conversationId: Stream Chat CID to resume; returned for persistent text sessions.
+            ///   - persistConversation: Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
+            ///   - contextTruncated: Older history was omitted from the model context.
             ///   - id:
             ///   - callId: Empty for a text session, which joins no call.
             ///   - text: The conversation is held in writing rather than on a call.
@@ -2583,6 +2656,9 @@ extension Components {
             ///   - subagent: The provider and model delegated work runs on.
             ///   - instructions:
             internal init(
+                conversationId: Swift.String? = nil,
+                persistConversation: Swift.Bool? = nil,
+                contextTruncated: Swift.Bool? = nil,
                 id: Swift.String,
                 callId: Swift.String,
                 text: Swift.Bool? = nil,
@@ -2597,6 +2673,9 @@ extension Components {
                 subagent: Swift.String? = nil,
                 instructions: Swift.String? = nil
             ) {
+                self.conversationId = conversationId
+                self.persistConversation = persistConversation
+                self.contextTruncated = contextTruncated
                 self.id = id
                 self.callId = callId
                 self.text = text
@@ -2612,6 +2691,9 @@ extension Components {
                 self.instructions = instructions
             }
             internal enum CodingKeys: String, CodingKey {
+                case conversationId = "conversation_id"
+                case persistConversation = "persist_conversation"
+                case contextTruncated = "context_truncated"
                 case id
                 case callId = "call_id"
                 case text

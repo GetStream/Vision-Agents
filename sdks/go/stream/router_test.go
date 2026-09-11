@@ -348,3 +348,39 @@ func TestASearchAnswersOutOfWhatIsTrueNow(t *testing.T) {
 		t.Errorf("the question was asked as %+v", asked)
 	}
 }
+
+func TestInlineAudioCompletesWithoutPolling(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("inline result must not be polled")
+			w.WriteHeader(500)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body["inline"] != true {
+			t.Error("inline flag missing")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(202)
+		_, _ = w.Write([]byte(`{"id":"ephemeral","status":"completed","created_at":"2026-09-10T00:00:00Z","updated_at":"2026-09-10T00:00:00Z","text":"hello","audio":"YXVkaW8="}`))
+	}))
+	defer server.Close()
+	router := Router{Backend: Backend{URL: server.URL, CustomerID: "customer"}}
+	transcript, err := router.STT().Recording(t.Context(), Recorded{Audio: []byte("recording"), Inline: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transcript.Text == nil || *transcript.Text != "hello" {
+		t.Fatal("missing transcript")
+	}
+	speech, err := router.TTS().InlineRecording(t.Context(), "hello", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if speech.Audio == nil || string(*speech.Audio) != "audio" {
+		t.Fatal("missing audio")
+	}
+}

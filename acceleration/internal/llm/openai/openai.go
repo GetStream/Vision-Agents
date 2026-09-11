@@ -194,6 +194,12 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 	l.mu.Unlock()
 
 	upstream := l.client.Responses.NewStreaming(requestCtx, l.params(params))
+	if err := upstream.Err(); err != nil {
+		_ = upstream.Close()
+		cancel()
+		l.forget(id)
+		return nil, err
+	}
 	return llm.NewStream(
 		llm.StreamOptions{
 			ResponseID: params.ID,
@@ -300,7 +306,7 @@ func (p *puller) Advance(w *llm.ResponseWriter) bool {
 
 	case "response.output_item.added":
 		if event.Item.Type == "function_call" {
-			p.remember(event.ItemID, event.OutputIndex, event.Item.CallID, event.Item.Name)
+			p.remember(event.Item.ID, event.OutputIndex, event.Item.CallID, event.Item.Name)
 			w.FunctionCall(event.OutputIndex, event.Item.CallID, event.Item.Name, "", "")
 		}
 

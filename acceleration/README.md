@@ -1052,3 +1052,78 @@ server-side only makes that check in its own handler rather than in the middlewa
 - **Failover happens at session start.** A candidate that fails to start is recorded and
   the next one is tried; a provider that keeps failing falls down the ranking.
 - **`customer_id` is a trusted header.** Real authentication is not part of this version.
+
+## Managed research sandboxes
+
+`RESEARCH_PROFILES` names an operator-owned YAML file containing `profiles` with
+`name`, `customer_id`, `agent_id`, `image`, `model` and `repositories`. Each repository
+has `id`, HTTPS GitHub `url`, `product`, `sdk` and optional branch/tag `ref`.
+`image: build` requires `RESEARCH_WORKER_BINARY`, a Linux/amd64 build of
+`./cmd/research-worker`; it builds the pinned Cursor image through Daytona's SDK.
+`RESEARCH_DEPLOYMENT_ID` identifies the single backend process's owned resources.
+
+The optional `sandbox_profile` on configs and session requests selects one named
+profile and is checked against the authenticated customer and requested agent.
+It exposes `investigate_sdk` directly, with additive `research_progress` events
+(tool_call_id, phase, elapsed_ms, verified_citations). The Go SDK selects it with
+`agents.ManagedSandbox("support")`. Existing `agents.Daytona()` / `sandbox: daytona`
+continues to provide delegated Python execution.
+
+Profiles are prepared eagerly and kept until process shutdown. A single worker
+serializes research, with eight queue slots, fresh Cursor ACP sessions, a 60-second
+active deadline, exact source-quote validation and immutable commit citations.
+Changes require restart/rebuild; there is no per-request repository fetch. Same-host
+starts for the same deployment are locked; multi-host ownership is not supported.
+Private worker HTTP requires Daytona preview authentication and a separate random token.
+Clean shutdown waits for deletion; failures retain the sandbox identity for retry.
+The five-minute auto-stop is a crash fallback, not normal idle behavior.
+
+See `../../artemis-impl` in the sibling workspace for the runnable support
+application, its two-repository configuration and the explicit docs compiler contract.
+
+## Persistent text conversations
+
+A text session can set `persist_conversation: true` and optionally `conversation_id`
+to bind to a Stream Chat `agent:support-<uuid>` channel. The configured agent ID is
+preserved; the backend verifies the channel's customer and agent ownership on
+resume and on `GET /v1/agents/conversations/{cid}/messages?agent_id=...&before=...`.
+This endpoint returns up to 100 messages and a `before` cursor. Completed ordinary
+user/assistant messages restore model context, capped at 100 messages and 60,000
+characters. `context_truncated` reports the bound. Stored tool attachments are
+never executed or restored as system instructions.
+
+`conversation_updated` WebSocket events carry a cumulative visible message snapshot:
+`id`, `question_id`, `state`, `response_started_at`, `state_started_at`, final
+`finished_at`/`duration_ms`, text, attachments and `saved`/`persistence_error`.
+States are `thinking`, `queued`, `tools`, `writing`, `completed`, `failed`,
+`cancelled`, or `interrupted`. Thinking conveys activity, not private reasoning.
+Each `tool_calling` attachment has an immutable backend `started_at`, stable
+`tool_call_id`, name/title, status/phase, structured summary, optional
+`execution_started_at`, and final `finished_at`/`duration_ms`. Raw tool arguments
+and results are excluded. Internal model turns remain bound to the original
+question so a late interruption cannot cancel its successor.
+
+The backend owns all Chat writes. Initial messages, tool starts/completions and
+final results use durable writes; intermediate cumulative snapshots use
+`EphemeralMessageUpdate`, throttled to 200 ms when changed. A local write-ahead
+outbox retains retries with stable message IDs. Set `CHAT_OUTBOX_DIR` to a private
+persistent local directory; setting it also enables eager restart reconciliation.
+Pending data stays visibly unsaved and is overlaid on resumed history. Abandoned
+work is marked interrupted on restart. Stream credentials are required; Postgres
+and Redis are not. This implementation assumes one backend process owns the local
+outbox. Closing the last client of a persisted text session ends that session;
+the saved channel and managed research workspace remain available.
+
+The Go SDK exposes `agents.ChatOptions{Persist: true, ConversationID: cid}`,
+`Session.ConversationID()`, `Session.ContextTruncated()`,
+`stream.Backend.ConversationHistory`, and `Event.ConversationMessage`.
+Nonpersistent sessions retain their existing behavior. Text-mode native skills
+use task-oriented delegation; voice sessions retain their speech-repair policy.
+
+STT/TTS recording requests may explicitly set `inline: true` to complete a short
+request synchronously without a database. The usual 202 response contains a
+completed/failed result, not a pollable job. Audio is not stored. Inline requests
+reject callbacks, transcription URLs, audio over 8 MiB and text over 16,000
+characters; the request's cancellation propagates and execution is bounded to
+90 seconds. Existing asynchronous recording behavior is unchanged. In Go use
+`Recorded{Audio: clip, Inline: true}` or `TTS().InlineRecording(...)`.

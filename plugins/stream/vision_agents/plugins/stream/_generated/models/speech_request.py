@@ -22,6 +22,11 @@ class SpeechRequest:
     """
     Attributes:
         text (str): What to say. Whole paragraphs rather than the sentence at a time a socket takes.
+        inline (bool | Unset): Complete this short request synchronously without storing a recording job or audio. The
+            202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database
+            is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8
+            MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+             Default: False.
         config_id (str | Unset): A stored router config to take the options from. Anything named here as well overrides
             that one field of it.
         options (TtsOptions | Unset): How this config speaks. A provider that cannot express a term refuses the request
@@ -32,6 +37,7 @@ class SpeechRequest:
     """
 
     text: str
+    inline: bool | Unset = False
     config_id: str | Unset = UNSET
     options: TtsOptions | Unset = UNSET
     callback: str | Unset = UNSET
@@ -40,6 +46,8 @@ class SpeechRequest:
 
     def to_dict(self) -> dict[str, Any]:
         text = self.text
+
+        inline = self.inline
 
         config_id = self.config_id
 
@@ -60,6 +68,8 @@ class SpeechRequest:
                 "text": text,
             }
         )
+        if inline is not UNSET:
+            field_dict["inline"] = inline
         if config_id is not UNSET:
             field_dict["config_id"] = config_id
         if options is not UNSET:
@@ -78,6 +88,8 @@ class SpeechRequest:
 
         d = dict(src_dict)
         text = d.pop("text")
+
+        inline = d.pop("inline", UNSET)
 
         config_id = d.pop("config_id", UNSET)
 
@@ -99,6 +111,7 @@ class SpeechRequest:
 
         speech_request = cls(
             text=text,
+            inline=inline,
             config_id=config_id,
             options=options,
             callback=callback,

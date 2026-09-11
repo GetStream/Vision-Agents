@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -240,6 +241,8 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 // with the SDKs: a field renamed in Go should break this function, not a client.
 func frameOf(event session.Event) (frame, bool) {
 	switch typed := event.(type) {
+	case session.ResearchProgress:
+		return frame{"type": "research_progress", "tool_call_id": typed.ToolCallID, "phase": typed.Phase, "elapsed_ms": typed.ElapsedMS, "verified_citations": typed.VerifiedCitations}, true
 	case session.ToolCall:
 		return frame{
 			"type":      "tool_call",
@@ -306,6 +309,7 @@ func frameOf(event session.Event) (frame, bool) {
 
 	case agent.Responded:
 		return frame{
+			"pending_work":           typed.PendingWork,
 			"type":                   "responded",
 			"turn_id":                typed.TurnID,
 			"text":                   typed.Text,
@@ -363,14 +367,19 @@ func frameOf(event session.Event) (frame, bool) {
 			"reason":  typed.Reason,
 		}, true
 
+	case conversation.Updated:
+		return frame{"type": "conversation_updated", "conversation_id": typed.CID, "message": typed.Message}, true
+	case agent.ToolStarted:
+		return frame{"type": "tool_started", "tool_call_id": typed.ID, "tool": typed.Tool, "turn_id": typed.TurnID, "started_at": typed.StartedAt}, true
 	case agent.ToolRan:
 		return frame{
-			"type":      "tool_ran",
-			"turn_id":   typed.TurnID,
-			"tool":      typed.Tool,
-			"arguments": typed.Arguments,
-			"result":    typed.Result,
-			"error":     errorText(typed.Err),
+			"type":         "tool_ran",
+			"tool_call_id": typed.ID,
+			"turn_id":      typed.TurnID,
+			"tool":         typed.Tool,
+			"arguments":    typed.Arguments,
+			"result":       typed.Result,
+			"error":        errorText(typed.Err),
 		}, true
 
 	case agent.Transferred:

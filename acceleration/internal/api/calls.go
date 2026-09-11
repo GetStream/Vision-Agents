@@ -187,7 +187,8 @@ func (s *Server) CreateChatToken(ctx context.Context, request CreateChatTokenReq
 
 	if _, err := client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{
 		Users: map[string]getstream.UserRequest{
-			userID: {ID: userID, Name: &userName},
+			agentID: {ID: agentID},
+			userID:  {ID: userID, Name: &userName},
 		},
 	}); err != nil {
 		return nil, err
@@ -199,10 +200,17 @@ func (s *Server) CreateChatToken(ctx context.Context, request CreateChatTokenReq
 	if _, err := client.Chat().GetOrCreateChannel(ctx, chatlog.ChannelType, agentID,
 		&getstream.GetOrCreateChannelRequest{
 			Data: &getstream.ChannelInput{
-				CreatedByID: &userID,
+				CreatedByID: &agentID,
 				Members:     []getstream.ChannelMemberRequest{{UserID: userID}},
 			},
 		}); err != nil {
+		return nil, err
+	}
+
+	// Members in creation data are ignored when the channel already exists.
+	// Add the reader explicitly before minting a token for a members-only channel.
+	if _, err := client.Chat().UpdateChannel(ctx, chatlog.ChannelType, agentID,
+		&getstream.UpdateChannelRequest{AddMembers: []getstream.ChannelMemberRequest{{UserID: userID}}}); err != nil {
 		return nil, err
 	}
 

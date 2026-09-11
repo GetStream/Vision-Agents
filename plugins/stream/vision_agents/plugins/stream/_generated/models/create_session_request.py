@@ -25,6 +25,10 @@ T = TypeVar("T", bound="CreateSessionRequest")
 class CreateSessionRequest:
     """
     Attributes:
+        conversation_id (str | Unset): Stream Chat CID to resume; returned for persistent text sessions.
+        persist_conversation (bool | Unset): Persist a text conversation in Stream Chat, creating a channel when no CID
+            is supplied.
+        context_truncated (bool | Unset): Older history was omitted from the model context.
         call_id (str | Unset): The call to join. Required unless the session is text.
         text (bool | Unset): Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing
             is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is
@@ -56,6 +60,7 @@ class CreateSessionRequest:
             terms, and providers that cannot be told about vocabulary ignore them.
         max_tokens (int | Unset):
         tasks (int | Unset): How much delegated work may run at once.
+        sandbox_profile (str | Unset): Backend-managed research profile, scoped to this customer and agent.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
@@ -74,6 +79,9 @@ class CreateSessionRequest:
         phone (SessionPhone | Unset): The number the session acts from, which is what turns transferring on.
     """
 
+    conversation_id: str | Unset = UNSET
+    persist_conversation: bool | Unset = UNSET
+    context_truncated: bool | Unset = UNSET
     call_id: str | Unset = UNSET
     text: bool | Unset = False
     config_id: str | Unset = UNSET
@@ -94,6 +102,7 @@ class CreateSessionRequest:
     keyterms: list[str] | Unset = UNSET
     max_tokens: int | Unset = UNSET
     tasks: int | Unset = UNSET
+    sandbox_profile: str | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     backchannel: bool | Unset = False
     min_confidence: float | Unset = UNSET
@@ -107,6 +116,12 @@ class CreateSessionRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        conversation_id = self.conversation_id
+
+        persist_conversation = self.persist_conversation
+
+        context_truncated = self.context_truncated
+
         call_id = self.call_id
 
         text = self.text
@@ -151,6 +166,8 @@ class CreateSessionRequest:
 
         tasks = self.tasks
 
+        sandbox_profile = self.sandbox_profile
+
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
             sandbox = self.sandbox.value
@@ -194,6 +211,12 @@ class CreateSessionRequest:
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
+        if conversation_id is not UNSET:
+            field_dict["conversation_id"] = conversation_id
+        if persist_conversation is not UNSET:
+            field_dict["persist_conversation"] = persist_conversation
+        if context_truncated is not UNSET:
+            field_dict["context_truncated"] = context_truncated
         if call_id is not UNSET:
             field_dict["call_id"] = call_id
         if text is not UNSET:
@@ -234,6 +257,8 @@ class CreateSessionRequest:
             field_dict["max_tokens"] = max_tokens
         if tasks is not UNSET:
             field_dict["tasks"] = tasks
+        if sandbox_profile is not UNSET:
+            field_dict["sandbox_profile"] = sandbox_profile
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if backchannel is not UNSET:
@@ -268,6 +293,12 @@ class CreateSessionRequest:
         from ..models.session_tool import SessionTool
 
         d = dict(src_dict)
+        conversation_id = d.pop("conversation_id", UNSET)
+
+        persist_conversation = d.pop("persist_conversation", UNSET)
+
+        context_truncated = d.pop("context_truncated", UNSET)
+
         call_id = d.pop("call_id", UNSET)
 
         text = d.pop("text", UNSET)
@@ -307,6 +338,8 @@ class CreateSessionRequest:
         max_tokens = d.pop("max_tokens", UNSET)
 
         tasks = d.pop("tasks", UNSET)
+
+        sandbox_profile = d.pop("sandbox_profile", UNSET)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
@@ -363,6 +396,9 @@ class CreateSessionRequest:
             phone = SessionPhone.from_dict(_phone)
 
         create_session_request = cls(
+            conversation_id=conversation_id,
+            persist_conversation=persist_conversation,
+            context_truncated=context_truncated,
             call_id=call_id,
             text=text,
             config_id=config_id,
@@ -383,6 +419,7 @@ class CreateSessionRequest:
             keyterms=keyterms,
             max_tokens=max_tokens,
             tasks=tasks,
+            sandbox_profile=sandbox_profile,
             sandbox=sandbox,
             backchannel=backchannel,
             min_confidence=min_confidence,

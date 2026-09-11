@@ -110,6 +110,18 @@ func (s *Mem0Suite) TestRecallReturnsWhatIsKnownMostRelevantFirst() {
 	s.Equal("Allergic to nuts", recalled[1].Text)
 }
 
+func (s *Mem0Suite) TestJoiningWithoutAQuestionUsesANonemptyRecallQuery() {
+	s.platform.respond = `{"results":[{"id":"app","memory":"Building a social network for cats"}]}`
+	for _, question := range []string{"", " \n "} {
+		recalled, err := s.store.Recall(s.ctx, memory.Query{Scope: s.scope, Text: question})
+		s.Require().NoError(err)
+		s.NotEmpty(s.platform.body["query"])
+		s.Equal(map[string]any{"user_id": "acme", "app_id": "router"}, s.platform.body["filters"])
+		s.Require().Len(recalled, 1)
+		s.Equal("Building a social network for cats", recalled[0].Text)
+	}
+}
+
 func (s *Mem0Suite) TestRecallWithoutAUserIsRejectedBeforeTheNetwork() {
 	_, err := s.store.Recall(s.ctx, memory.Query{Text: "anything"})
 

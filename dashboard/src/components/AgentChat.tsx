@@ -8,8 +8,12 @@ import {
   MessageComposer,
   MessageList,
   Window,
+  useMessageContext,
+  useChannelStateContext,
 } from "stream-chat-react";
 
+import { ConversationMessage } from "@/components/ConversationMessage";
+import type { ConversationMessage as ActivityMessage } from "@/lib/conversation";
 import { Failure } from "@/components/ui";
 import { router } from "@/lib/router";
 
@@ -38,12 +42,16 @@ export function AgentChat({ agentID }: { agentID: string }) {
         return;
       }
 
-      const chat = StreamChat.getInstance(credentials.api_key);
+      const chat = new StreamChat(credentials.api_key);
+      connected = chat;
       await chat.connectUser(
         { id: credentials.user_id, name: credentials.user_name },
         credentials.token,
       );
-      connected = chat;
+      if (!live) {
+        await chat.disconnectUser();
+        return;
+      }
 
       const watching = chat.channel(
         credentials.channel_type,
@@ -84,11 +92,55 @@ export function AgentChat({ agentID }: { agentID: string }) {
       <Chat client={client}>
         <Channel channel={channel}>
           <Window>
-            <MessageList />
+            <MessageList Message={ChatMessage} />
             <MessageComposer />
           </Window>
         </Channel>
       </Chat>
+    </div>
+  );
+}
+
+function ChatMessage() {
+  const { message } = useMessageContext();
+  const { channel } = useChannelStateContext();
+  const custom = message as typeof message & {
+    support_message?: ActivityMessage;
+    generating?: boolean;
+    source?: string;
+  };
+  const metadata = custom.support_message;
+  const start = message.created_at?.toISOString() ?? "";
+  const generating = custom.generating === true;
+  const activity: ActivityMessage = metadata ?? {
+    id: message.id,
+    role:
+      custom.source === "agent" || message.user?.id === channel.id
+        ? "assistant"
+        : "user",
+    text: message.text ?? "",
+    state: generating ? (message.text ? "writing" : "thinking") : "completed",
+    response_started_at: start,
+    state_started_at: start,
+    finished_at: generating
+      ? undefined
+      : (message.updated_at?.toISOString() ?? start),
+    saved: !generating,
+  };
+  return (
+    <div className="w-full px-4 py-2">
+      <ConversationMessage
+        message={activity}
+        showPersistence={!!metadata}
+        showTiming={!!metadata}
+        speaker={
+          metadata
+            ? undefined
+            : activity.role === "assistant"
+              ? "Agent"
+              : message.user?.name || message.user?.id
+        }
+      />
     </div>
   );
 }

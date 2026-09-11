@@ -105,3 +105,13 @@ func (s *SkillsSuite) TestASubagentThatNeedsSomethingIsRecognised() {
 	s.Equal("It is 12.63.", text)
 	s.Empty(question)
 }
+
+func (s *SkillsSuite) TestTextSkillsAcceptCompleteWrittenRequests() {
+	skills := Skills{Skills: []Skill{{Name: "sales-chat", Description: "Chat product evaluation"}, {Name: "sales-video", Description: "Video product evaluation"}}}
+	prompt := skills.TextPrompt()
+	s.Contains(prompt, `<ask skill="name">`)
+	s.Contains(prompt, "sales-chat")
+	s.Contains(prompt, "sales-video")
+	s.NotContains(prompt, "truncated")
+	s.Contains(skills.Prompt(), "truncated", "voice behavior is preserved")
+}

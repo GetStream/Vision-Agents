@@ -2155,6 +2155,34 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/agents/conversations/{cid}/messages:
+    get:
+      operationId: getConversationMessages
+      summary: Read a persistent text conversation
+      parameters:
+        - name: cid
+          in: path
+          required: true
+          schema: {type: string}
+        - name: agent_id
+          in: query
+          required: true
+          schema: {type: string}
+        - name: before
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Conversation messages, oldest first, with an older-page cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/agents/sessions:
     get:
       operationId: listSessions
@@ -2330,10 +2358,19 @@ paths:
         objects carrying a `type` and the fields of that event.
 
         The server sends what the conversation did: `joined`, `heard`, `responding`,
-        `response_delta`, `responded`, `spoke`, `turn`, `decision`, `delegated`,
-        `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`, `transferred`,
+        `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`,
+        `task_settled`, `task_cancelled`, `research_progress` (tool_call_id, phase, elapsed_ms, verified_citations), `tool_call`, `tool_ran`, `transferred`,
         `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
         `conversation_compacted`, `error` and `left`.
+
+        Persistent text sessions also emit `conversation_updated` with conversation_id
+        and a complete message snapshot: id, role, text, state, response_started_at,
+        state_started_at, finished_at, duration_ms, saved, persistence_error and
+        attachments. Each tool_calling attachment has tool_call_id, name, title,
+        status, phase, summary, immutable started_at, execution_started_at, finished_at
+        and duration_ms. Activity states are thinking, queued, tools, writing,
+        completed, failed and cancelled. tool_started includes tool_call_id, tool,
+        turn_id and started_at; tool_ran also includes tool_call_id.
 
         A `decision` frame is one judgement the conversation made, carrying the same
         fields as a CallEvent. Together they are why the call went the way it did, and
@@ -2876,6 +2913,9 @@ components:
           description: >
             What the agent may look things up in. Empty means it knows only what it was
             told.
+        sandbox_profile:
+          type: string
+          description: Backend-managed research profile, scoped to this customer and agent.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
         tags:
@@ -2924,6 +2964,9 @@ components:
             type: string
         knowledge_namespace:
           type: string
+        sandbox_profile:
+          type: string
+          description: Backend-managed research profile, scoped to this customer and agent.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
         tags:
@@ -3430,6 +3473,15 @@ components:
       type: object
       required: [source]
       properties:
+        inline:
+          type: boolean
+          default: false
+          description: >
+            Complete this short request synchronously without storing a recording job or audio.
+            The 202 response contains the completed or failed result and its ephemeral ID cannot
+            be retrieved later. No database is required. Cancelling the request cancels the work.
+            Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or
+            16000 characters of speech text. Default false retains asynchronous stored jobs.
         config_id:
           type: string
           description: >
@@ -3544,6 +3596,15 @@ components:
       type: object
       required: [text]
       properties:
+        inline:
+          type: boolean
+          default: false
+          description: >
+            Complete this short request synchronously without storing a recording job or audio.
+            The 202 response contains the completed or failed result and its ephemeral ID cannot
+            be retrieved later. No database is required. Cancelling the request cancels the work.
+            Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or
+            16000 characters of speech text. Default false retains asynchronous stored jobs.
         config_id:
           type: string
           description: >
@@ -3715,6 +3776,9 @@ components:
           type: array
           items:
             type: string
+        sandbox_profile:
+          type: string
+          description: Backend-managed research profile, scoped to this customer and agent.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
         tags:
@@ -4581,6 +4645,15 @@ components:
     CreateSessionRequest:
       type: object
       properties:
+        conversation_id:
+          type: string
+          description: Stream Chat CID to resume; returned for persistent text sessions.
+        persist_conversation:
+          type: boolean
+          description: Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
+        context_truncated:
+          type: boolean
+          description: Older history was omitted from the model context.
         call_id:
           type: string
           description: The call to join. Required unless the session is text.
@@ -4668,6 +4741,9 @@ components:
         tasks:
           type: integer
           description: How much delegated work may run at once.
+        sandbox_profile:
+          type: string
+          description: Backend-managed research profile, scoped to this customer and agent.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
         backchannel:
@@ -4714,6 +4790,15 @@ components:
       type: object
       required: [id, call_id, call_type, user_id, agent_id, state, created_at]
       properties:
+        conversation_id:
+          type: string
+          description: Stream Chat CID to resume; returned for persistent text sessions.
+        persist_conversation:
+          type: boolean
+          description: Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
+        context_truncated:
+          type: boolean
+          description: Older history was omitted from the model context.
         id:
           type: string
         call_id:

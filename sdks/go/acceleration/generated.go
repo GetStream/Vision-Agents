@@ -789,11 +789,14 @@ type AgentConfig struct {
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox  *Sandbox  `json:"sandbox,omitempty"`
-	Search   *string   `json:"search,omitempty"`
-	Skills   *[]string `json:"skills,omitempty"`
-	Stt      *string   `json:"stt,omitempty"`
-	Subagent *string   `json:"subagent,omitempty"`
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
+	// SandboxProfile Backend-managed research profile, scoped to this customer and agent.
+	SandboxProfile *string   `json:"sandbox_profile,omitempty"`
+	Search         *string   `json:"search,omitempty"`
+	Skills         *[]string `json:"skills,omitempty"`
+	Stt            *string   `json:"stt,omitempty"`
+	Subagent       *string   `json:"subagent,omitempty"`
 
 	// SyncHash Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
 	SyncHash  *string            `json:"sync_hash,omitempty"`
@@ -828,6 +831,9 @@ type AgentConfigRequest struct {
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
+	// SandboxProfile Backend-managed research profile, scoped to this customer and agent.
+	SandboxProfile *string `json:"sandbox_profile,omitempty"`
 
 	// Search What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
 	Search *string `json:"search,omitempty"`
@@ -1135,6 +1141,12 @@ type CreateSessionRequest struct {
 	// ConfigId An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
 	ConfigId *string `json:"config_id,omitempty"`
 
+	// ContextTruncated Older history was omitted from the model context.
+	ContextTruncated *bool `json:"context_truncated,omitempty"`
+
+	// ConversationId Stream Chat CID to resume; returned for persistent text sessions.
+	ConversationId *string `json:"conversation_id,omitempty"`
+
 	// Greeting Said on joining without going through the model. Empty means the agent waits to be spoken to.
 	Greeting     *string `json:"greeting,omitempty"`
 	Instructions *string `json:"instructions,omitempty"`
@@ -1158,11 +1170,17 @@ type CreateSessionRequest struct {
 	// Navigating The agent placed this call, so let recordings finish and answer their menus.
 	Navigating *bool `json:"navigating,omitempty"`
 
+	// PersistConversation Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
+	PersistConversation *bool `json:"persist_conversation,omitempty"`
+
 	// Phone The number the session acts from, which is what turns transferring on.
 	Phone *SessionPhone `json:"phone,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
+	// SandboxProfile Backend-managed research profile, scoped to this customer and agent.
+	SandboxProfile *string `json:"sandbox_profile,omitempty"`
 
 	// Search Omit it and the config decides, or search-fast when there is no config.
 	Search *string `json:"search,omitempty"`
@@ -1694,14 +1712,23 @@ type Session struct {
 	AgentId string `json:"agent_id"`
 
 	// CallId Empty for a text session, which joins no call.
-	CallId       string    `json:"call_id"`
-	CallType     string    `json:"call_type"`
-	CreatedAt    time.Time `json:"created_at"`
-	Id           string    `json:"id"`
-	Instructions *string   `json:"instructions,omitempty"`
+	CallId   string `json:"call_id"`
+	CallType string `json:"call_type"`
+
+	// ContextTruncated Older history was omitted from the model context.
+	ContextTruncated *bool `json:"context_truncated,omitempty"`
+
+	// ConversationId Stream Chat CID to resume; returned for persistent text sessions.
+	ConversationId *string   `json:"conversation_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	Id             string    `json:"id"`
+	Instructions   *string   `json:"instructions,omitempty"`
 
 	// Llm The provider and model answering, once routing has picked one.
 	Llm *string `json:"llm,omitempty"`
+
+	// PersistConversation Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
+	PersistConversation *bool `json:"persist_conversation,omitempty"`
 
 	// State Whether the agent is still in the call.
 	State SessionState `json:"state"`
@@ -1992,6 +2019,9 @@ type SpeechRequest struct {
 	// ConfigId A stored router config to take the options from. Anything named here as well overrides that one field of it.
 	ConfigId *string `json:"config_id,omitempty"`
 
+	// Inline Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+	Inline *bool `json:"inline,omitempty"`
+
 	// Options How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
 	Options *TtsOptions        `json:"options,omitempty"`
 	Tags    *map[string]string `json:"tags,omitempty"`
@@ -2140,14 +2170,17 @@ type SyncAgentRequest struct {
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox  *Sandbox           `json:"sandbox,omitempty"`
-	Search   *string            `json:"search,omitempty"`
-	Skills   *[]SkillRequest    `json:"skills,omitempty"`
-	Stt      *string            `json:"stt,omitempty"`
-	Subagent *string            `json:"subagent,omitempty"`
-	Tags     *map[string]string `json:"tags,omitempty"`
-	Tts      *string            `json:"tts,omitempty"`
-	Voice    *string            `json:"voice,omitempty"`
+	Sandbox *Sandbox `json:"sandbox,omitempty"`
+
+	// SandboxProfile Backend-managed research profile, scoped to this customer and agent.
+	SandboxProfile *string            `json:"sandbox_profile,omitempty"`
+	Search         *string            `json:"search,omitempty"`
+	Skills         *[]SkillRequest    `json:"skills,omitempty"`
+	Stt            *string            `json:"stt,omitempty"`
+	Subagent       *string            `json:"subagent,omitempty"`
+	Tags           *map[string]string `json:"tags,omitempty"`
+	Tts            *string            `json:"tts,omitempty"`
+	Voice          *string            `json:"voice,omitempty"`
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -2283,6 +2316,9 @@ type TranscriptionRequest struct {
 
 	// ConfigId A stored router config to take the options from. Anything named here as well overrides that one field of it.
 	ConfigId *string `json:"config_id,omitempty"`
+
+	// Inline Complete this short request synchronously without storing a recording job or audio. The 202 response contains the completed or failed result and its ephemeral ID cannot be retrieved later. No database is required. Cancelling the request cancels the work. Incompatible with callback; deadline 90 seconds. Maximum 8 MiB of input audio or 16000 characters of speech text. Default false retains asynchronous stored jobs.
+	Inline *bool `json:"inline,omitempty"`
 
 	// Options How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently.
 	Options *SttOptions `json:"options,omitempty"`
@@ -2502,6 +2538,12 @@ type ListCallsParams struct {
 type GetCallEventsParams struct {
 	// Limit How many to return, oldest first.
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetConversationMessagesParams defines parameters for GetConversationMessages.
+type GetConversationMessagesParams struct {
+	AgentId string  `form:"agent_id" json:"agent_id"`
+	Before  *string `form:"before,omitempty" json:"before,omitempty"`
 }
 
 // ListKnowledgeUrlsParams defines parameters for ListKnowledgeUrls.
@@ -3027,6 +3069,11 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 	AuthorizePlugin(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetConversationMessages Read a persistent text conversation
+	//
+	// Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
+	GetConversationMessages(ctx context.Context, cid string, params *GetConversationMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestKnowledgeWithBody Fill a knowledge base with what the business wrote down
 	//
@@ -4276,6 +4323,21 @@ func (c *Client) AuthorizePluginWithBody(ctx context.Context, id ResourceID, plu
 // Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 func (c *Client) AuthorizePlugin(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizePluginRequest(c.Server, id, pluginId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetConversationMessages Read a persistent text conversation
+//
+// Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
+func (c *Client) GetConversationMessages(ctx context.Context, cid string, params *GetConversationMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConversationMessagesRequest(c.Server, cid, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6844,6 +6906,75 @@ func NewAuthorizePluginRequestWithBody(server string, id ResourceID, pluginId Pl
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetConversationMessagesRequest constructs an http.Request for the GetConversationMessages method
+func NewGetConversationMessagesRequest(server string, cid string, params *GetConversationMessagesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "cid", cid, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/conversations/%s/messages", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Before != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "before", *params.Before, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -9981,6 +10112,13 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 	AuthorizePluginWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
+	// GetConversationMessagesWithResponse Read a persistent text conversation
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
+	GetConversationMessagesWithResponse(ctx context.Context, cid string, params *GetConversationMessagesParams, reqEditors ...RequestEditorFn) (*GetConversationMessagesResponse, error)
+
 	// IngestKnowledgeWithBodyWithResponse Fill a knowledge base with what the business wrote down
 	//
 	// The writing half of the lookup a config's knowledge_namespace gives an agent. Each document is cut into passages here rather than by the caller, so a file read off disk by the command and one posted by an SDK are cut the same way and can replace each other.
@@ -12189,6 +12327,61 @@ func (r AuthorizePluginResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AuthorizePluginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetConversationMessagesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConversationMessagesResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetConversationMessagesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetConversationMessagesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConversationMessagesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConversationMessagesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConversationMessagesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConversationMessagesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -16396,6 +16589,19 @@ func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, i
 	return ParseAuthorizePluginResponse(rsp)
 }
 
+// GetConversationMessagesWithResponse Read a persistent text conversation
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
+func (c *ClientWithResponses) GetConversationMessagesWithResponse(ctx context.Context, cid string, params *GetConversationMessagesParams, reqEditors ...RequestEditorFn) (*GetConversationMessagesResponse, error) {
+	rsp, err := c.GetConversationMessages(ctx, cid, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConversationMessagesResponse(rsp)
+}
+
 // IngestKnowledgeWithBodyWithResponse Fill a knowledge base with what the business wrote down
 //
 // The writing half of the lookup a config's knowledge_namespace gives an agent. Each document is cut into passages here rather than by the caller, so a file read off disk by the command and one posted by an SDK are cut the same way and can replace each other.
@@ -18798,6 +19004,46 @@ func ParseAuthorizePluginResponse(rsp *http.Response) (*AuthorizePluginResponse,
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetConversationMessagesResponse parses an HTTP response from a GetConversationMessagesWithResponse call
+func ParseGetConversationMessagesResponse(rsp *http.Response) (*GetConversationMessagesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConversationMessagesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	}
 

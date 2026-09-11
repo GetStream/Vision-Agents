@@ -82,9 +82,18 @@ def sync_detailed(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded`, `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`,
-    `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`,
-    `overlap_decided`, `conversation_compacted`, `error` and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
+    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `research_progress`
+    (tool_call_id, phase, elapsed_ms, verified_citations), `tool_call`, `tool_ran`, `transferred`,
+    `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `error` and `left`.
+    Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
+    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
+    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
+    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
+    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
+    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
+    includes tool_call_id.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
@@ -133,9 +142,18 @@ def sync(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded`, `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`,
-    `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`,
-    `overlap_decided`, `conversation_compacted`, `error` and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
+    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `research_progress`
+    (tool_call_id, phase, elapsed_ms, verified_citations), `tool_call`, `tool_ran`, `transferred`,
+    `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `error` and `left`.
+    Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
+    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
+    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
+    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
+    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
+    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
+    includes tool_call_id.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
@@ -179,9 +197,18 @@ async def asyncio_detailed(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded`, `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`,
-    `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`,
-    `overlap_decided`, `conversation_compacted`, `error` and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
+    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `research_progress`
+    (tool_call_id, phase, elapsed_ms, verified_citations), `tool_call`, `tool_ran`, `transferred`,
+    `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `error` and `left`.
+    Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
+    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
+    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
+    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
+    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
+    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
+    includes tool_call_id.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
@@ -228,9 +255,18 @@ async def asyncio(
      A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
-    `responded`, `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`,
-    `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`,
-    `overlap_decided`, `conversation_compacted`, `error` and `left`.
+    `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
+    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `research_progress`
+    (tool_call_id, phase, elapsed_ms, verified_citations), `tool_call`, `tool_ran`, `transferred`,
+    `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
+    `error` and `left`.
+    Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
+    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
+    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
+    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
+    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
+    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
+    includes tool_call_id.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.

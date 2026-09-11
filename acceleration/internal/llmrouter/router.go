@@ -8,6 +8,7 @@ package llmrouter
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -104,5 +105,46 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newSession(provider, config, core.Owner(), r.Recorder()), nil
+
+	session := newSession(provider, config, core.Owner(), r.Recorder())
+	session.fallback = func(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+		candidates, err := r.Resolve(ctx, request.Target, request.LanguageHints)
+		if err != nil {
+			return nil, err
+		}
+		var failures []error
+		for _, candidate := range candidates {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if candidate.Config.Name() == config.Name() {
+				continue
+			}
+			alternative := core
+			alternative.Target = candidate.Config.Name()
+			provider, selected, err := r.Select(ctx, alternative)
+			if err != nil {
+				failures = append(failures, err)
+				continue
+			}
+			child := newSession(provider, selected, core.Owner(), r.Recorder())
+			if !session.addChild(child) {
+				_ = child.Close()
+				return nil, errors.New("llmrouter: session is closed")
+			}
+			stream, err := child.create(ctx, params)
+			if err != nil {
+				session.releaseChild(child)
+				failures = append(failures, err)
+				continue
+			}
+			return stream.Observe(func(event llm.Event) {
+				if _, done := event.(llm.ResponseCompleted); done {
+					session.releaseChild(child)
+				}
+			}), nil
+		}
+		return nil, errors.Join(append(failures, errors.New("llmrouter: no fallback provider available"))...)
+	}
+	return session, nil
 }

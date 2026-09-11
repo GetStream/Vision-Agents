@@ -2,6 +2,7 @@ package harness
 
 import (
 	"errors"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -18,8 +19,9 @@ type Event interface {
 // Delegated means the fast model handed a piece of work to the subagent, and is free to
 // keep talking to the caller while it runs.
 type Delegated struct {
-	TaskID string
-	Skill  string
+	StartedAt time.Time
+	TaskID    string
+	Skill     string
 	// Prompt is what was handed over. It was never spoken.
 	Prompt string
 	// TurnID is the reply the request was made in.

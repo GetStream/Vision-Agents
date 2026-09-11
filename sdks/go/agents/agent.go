@@ -128,12 +128,17 @@ func (a *Agent) Join(ctx context.Context, call edge.Call) (*Session, error) {
 // No call is joined, nothing is transcribed and nothing is spoken. Everything between
 // hearing a question and answering it is unchanged: the same instructions, the same skills
 // handed to the same slower model and the same knowledge base a call would have had.
-func (a *Agent) Chat(ctx context.Context) (*Session, error) {
-	return a.join(ctx, edge.Call{}, nil, false)
+type ChatOptions struct {
+	Persist        bool
+	ConversationID string
+}
+
+func (a *Agent) Chat(ctx context.Context, options ...ChatOptions) (*Session, error) {
+	return a.join(ctx, edge.Call{}, nil, false, options...)
 }
 
 // join renders the agent's configuration into a session and opens it.
-func (a *Agent) join(ctx context.Context, call edge.Call, phone *acceleration.SessionPhone, navigating bool) (*Session, error) {
+func (a *Agent) join(ctx context.Context, call edge.Call, phone *acceleration.SessionPhone, navigating bool, options ...ChatOptions) (*Session, error) {
 	remote := stream.Call{
 		ID:           call.ID,
 		Type:         call.Type,
@@ -145,6 +150,10 @@ func (a *Agent) join(ctx context.Context, call edge.Call, phone *acceleration.Se
 		Memory:       memoryOf(a.options.MemoryFilter),
 		Phone:        phone,
 		Navigating:   navigating,
+	}
+	if len(options) > 0 {
+		remote.PersistConversation = options[0].Persist
+		remote.ConversationID = options[0].ConversationID
 	}
 	a.options.Harness.apply(&remote)
 
@@ -283,4 +292,14 @@ func userIDOf(name string) string {
 		return "vision-agent"
 	}
 	return id
+}
+
+func (s *Session) ConversationID() string {
+	if s.session.ConversationId == nil {
+		return ""
+	}
+	return *s.session.ConversationId
+}
+func (s *Session) ContextTruncated() bool {
+	return s.session.ContextTruncated != nil && *s.session.ContextTruncated
 }

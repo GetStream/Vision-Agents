@@ -120,6 +120,10 @@ func (t Transcribing) Recording(
 	}
 
 	body := acceleration.TranscribeRecordingJSONRequestBody{Source: source, Options: options}
+	if recording.Inline {
+		yes := true
+		body.Inline = &yes
+	}
 	t.router.name(&body.ConfigId)
 	t.router.label(&body.Tags)
 	setString(&body.Callback, recording.Callback)
@@ -184,12 +188,23 @@ func (s Speaking) Recording(
 	text string,
 	options *acceleration.TtsOptions,
 ) (*acceleration.Speech, error) {
+	return s.recording(ctx, text, options, false)
+}
+
+// InlineRecording synthesizes a short reply synchronously, without storing an audio job.
+func (s Speaking) InlineRecording(ctx context.Context, text string, options *acceleration.TtsOptions) (*acceleration.Speech, error) {
+	return s.recording(ctx, text, options, true)
+}
+func (s Speaking) recording(ctx context.Context, text string, options *acceleration.TtsOptions, inline bool) (*acceleration.Speech, error) {
 	client, err := s.router.client()
 	if err != nil {
 		return nil, err
 	}
 
 	body := acceleration.RecordSpeechJSONRequestBody{Text: text, Options: options}
+	if inline {
+		body.Inline = &inline
+	}
 	s.router.name(&body.ConfigId)
 	s.router.label(&body.Tags)
 
@@ -242,6 +257,8 @@ func (a Answering) Realtime(
 
 // Recorded is a whole recording to transcribe.
 type Recorded struct {
+	// Inline completes a short recording synchronously without a database or stored audio.
+	Inline bool
 	// URL is a fetchable audio or video file, which is what anything longer than a clip
 	// should be: the provider fetches it itself.
 	URL string

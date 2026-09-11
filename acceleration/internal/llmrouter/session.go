@@ -2,6 +2,9 @@ package llmrouter
 
 import (
 	"context"
+	"errors"
+	"github.com/openai/openai-go/v3"
+	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -11,6 +14,10 @@ import (
 // Session is a live model attached to one customer. It hands out the provider's streams
 // untouched apart from recording a stat row per response on the way past.
 type Session struct {
+	mu       sync.Mutex
+	closed   bool
+	children map[*Session]struct{}
+	fallback func(context.Context, llm.ResponseParams) (*llm.Stream, error)
 	provider Provider
 	// config is the routing identity of the provider. Stats and health are keyed by it,
 	// so a provider registered under a different name still aggregates coherently.
@@ -31,7 +38,7 @@ func newSession(
 // Create asks the selected provider for a response. The stream it returns records what the
 // response cost as it is drained, which is why a caller must drain it even after closing
 // it: an abandoned response still generated tokens.
-func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	startedAt := time.Now().UTC()
 
 	stream, err := s.provider.Create(ctx, params)
@@ -64,7 +71,20 @@ func (s *Session) Price() routing.Price { return s.config.Price }
 func (s *Session) LLM() llm.LLM { return s.provider }
 
 // Close ends the session, abandoning anything still in flight.
-func (s *Session) Close() error { return s.provider.Close() }
+func (s *Session) Close() error {
+	s.mu.Lock()
+	s.closed = true
+	children := make([]*Session, 0, len(s.children))
+	for child := range s.children {
+		children = append(children, child)
+	}
+	s.mu.Unlock()
+	var failures []error
+	for _, child := range children {
+		failures = append(failures, child.Close())
+	}
+	return errors.Join(append(failures, s.provider.Close())...)
+}
 
 // observe records statistics as a response settles.
 //
@@ -100,4 +120,47 @@ func errorCode(response llm.Response) string {
 		return ""
 	}
 	return "provider_error"
+}
+
+// Only requests that have not started streaming can be replayed safely. A partial
+// answer or tool call is never retried, and provider-held history cannot transfer.
+func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		return nil, errors.New("llmrouter: session is closed")
+	}
+	stream, err := s.create(ctx, params)
+	if err == nil || ctx.Err() != nil || s.fallback == nil || params.PreviousResponseID != "" || params.Conversation != "" {
+		return stream, err
+	}
+	var apiError *openai.Error
+	if errors.As(err, &apiError) && apiError.StatusCode < 500 && apiError.StatusCode != 401 && apiError.StatusCode != 403 && apiError.StatusCode != 404 && apiError.StatusCode != 408 && apiError.StatusCode != 429 {
+		return nil, err
+	}
+	alternate, fallbackErr := s.fallback(ctx, params)
+	if fallbackErr != nil {
+		return nil, errors.Join(err, fallbackErr)
+	}
+	return alternate, nil
+}
+
+func (s *Session) addChild(child *Session) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
+	}
+	if s.children == nil {
+		s.children = map[*Session]struct{}{}
+	}
+	s.children[child] = struct{}{}
+	return true
+}
+func (s *Session) releaseChild(child *Session) {
+	_ = child.Close()
+	s.mu.Lock()
+	delete(s.children, child)
+	s.mu.Unlock()
 }

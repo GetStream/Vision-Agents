@@ -158,6 +158,12 @@ func (l *LLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Strea
 	upstream := l.client.Chat.Completions.NewStreaming(
 		requestCtx, l.params(params), l.requestOptions(params)...,
 	)
+	if err := upstream.Err(); err != nil {
+		_ = upstream.Close()
+		cancel()
+		l.forget(id)
+		return nil, err
+	}
 	return llm.NewStream(
 		llm.StreamOptions{
 			ResponseID: params.ID,

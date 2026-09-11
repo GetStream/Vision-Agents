@@ -106,7 +106,8 @@ type Options struct {
 	Telephony Telephony
 	// ToolRunner carries out the tools that are not the two acting on the phone call,
 	// which is how a caller outside this process owns its own tools.
-	ToolRunner ToolRunner
+	ToolRunner    ToolRunner
+	OnToolStarted func(ToolStarted)
 	// Tools are what the voice model may do rather than say. Each is only offered when
 	// something on this call can run it: the telephony pair needs Telephony, and every
 	// other tool needs a ToolRunner.
@@ -186,6 +187,7 @@ type Agent struct {
 	// Interrupt used to Close only an existing stream, so a reply waiting on headers kept
 	// the event loop and the floor until Cerebras answered.
 	generatingCancel map[string]context.CancelFunc
+	toolCancels      map[string]context.CancelFunc
 	// pumps are the goroutines draining those streams into replies.
 	pumps sync.WaitGroup
 
@@ -500,6 +502,7 @@ func (a *Agent) Join(ctx context.Context) error {
 	a.startSearching(a.ctx)
 
 	a.harness, err = harness.New(harness.Options{
+		Text:       a.options.Text,
 		Model:      model,
 		Controller: controller,
 		Subagent:   subagent,
@@ -672,7 +675,13 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 func (a *Agent) Interrupt() {
 	a.mu.Lock()
 	participant := a.lastParticipant
+	turnID := a.speakingTurn
+	for _, cancel := range a.toolCancels {
+		cancel()
+	}
+	a.toolReply = false
 	a.mu.Unlock()
+	a.abandon(turnID)
 	a.interrupt(participant)
 }
 
@@ -1625,6 +1634,7 @@ func (a *Agent) finish(response llm.Response) {
 	}
 
 	a.emitter.Send(Responded{
+		PendingWork:        len(calls) > 0 || a.Busy(),
 		TurnID:             response.ID,
 		Text:               said,
 		TimeToFirstTokenMs: response.TimeToFirstTokenMs,
@@ -1763,10 +1773,11 @@ func (a *Agent) consumeHarness() {
 		case harness.Delegated:
 			a.converse.Delegating(typed.TaskID, typed.Skill, typed.Prompt, typed.TurnID)
 			a.emitter.Send(Delegated{
-				TaskID: typed.TaskID,
-				Skill:  typed.Skill,
-				Prompt: typed.Prompt,
-				TurnID: typed.TurnID,
+				StartedAt: typed.StartedAt,
+				TaskID:    typed.TaskID,
+				Skill:     typed.Skill,
+				Prompt:    typed.Prompt,
+				TurnID:    typed.TurnID,
 			})
 
 		case harness.ToolRequested:
@@ -2181,4 +2192,11 @@ func turnOf(synthesisID string) string {
 		return synthesisID[:index]
 	}
 	return synthesisID
+}
+
+// RestoreHistory seeds a new text session with previously completed conversation turns.
+func (a *Agent) RestoreHistory(history []llm.Message) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.history = append([]llm.Message(nil), history...)
 }

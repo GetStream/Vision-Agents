@@ -94,10 +94,15 @@ func (s *Store) Recall(ctx context.Context, query memory.Query) ([]memory.Memory
 	if limit <= 0 {
 		limit = defaultTopK
 	}
+	text := query.Text
+	if strings.TrimSpace(text) == "" {
+		// Joining recalls context before the first question; v3 rejects a blank query.
+		text = "Relevant facts, preferences, and context from previous conversations."
+	}
 
 	// v3 wants the entity ids inside filters; at the top level they are rejected.
 	body := searchRequest{
-		Query:   query.Text,
+		Query:   text,
 		Filters: filtersFor(query.Scope),
 		TopK:    limit,
 	}

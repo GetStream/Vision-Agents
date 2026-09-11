@@ -1,279 +1,119 @@
-// Package daytona runs code in a Daytona sandbox.
-//
-// Daytona publishes a Go SDK, but this speaks its REST API directly for the same reason
-// the other providers here do: two calls are wanted, and a dependency that pulls in a
-// client, a model layer and a config loader to make them is a poor trade.
-//
-// One sandbox is created on first use and kept for the life of the agent. Creating one
-// takes long enough to notice, and a conversation that delegates twice should not pay for
-// it twice.
+// Package daytona runs Python through Daytona's official Go SDK.
 package daytona
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
+
+	sdk "github.com/daytona/clients/sdk-go/pkg/daytona"
+	"github.com/daytona/clients/sdk-go/pkg/options"
+	"github.com/daytona/clients/sdk-go/pkg/types"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
 const apiKeyEnvVar = "DAYTONA_API_KEY"
+const defaultTimeout = 60 * time.Second
+const defaultRunTimeout = 30 * time.Second
 
-const (
-	defaultAPIURL   = "https://app.daytona.io/api"
-	defaultProxyURL = "https://proxy.app.daytona.io/toolbox"
-	// defaultTimeout bounds one call. Creating a sandbox is the slow one, and it is still
-	// meant to be quick: Daytona boots them in well under a second.
-	defaultTimeout = 60 * time.Second
-	// defaultRunTimeout is how long a piece of code may run before Daytona stops it.
-	defaultRunTimeout = 30 * time.Second
-	// language is what stateless code runs as. The sandbox is created for it, so it is
-	// fixed here rather than asked of the model, which would only get it wrong.
-	language = "python"
-)
-
-// errorBodyLimit caps how much of a failed response is read into an error message.
-const errorBodyLimit = 2048
-
-// Options configures a Sandbox. The key falls back to the environment, the way every
-// other provider in this service is configured.
 type Options struct {
-	// APIKey defaults to DAYTONA_API_KEY.
-	APIKey string
-	// APIURL is where sandboxes are created. It defaults to the hosted platform.
-	APIURL string
-	// ProxyURL is where code is run. It defaults to the hosted platform.
-	ProxyURL string
-	// Timeout bounds one HTTP call.
-	Timeout time.Duration
-	// RunTimeout is how long a piece of code may run.
-	RunTimeout time.Duration
-	// HTTPClient replaces the one built from Timeout.
-	HTTPClient *http.Client
-	Logger     *slog.Logger
+	APIKey, APIURL string
+	// Deprecated: the official SDK obtains the toolbox address from Daytona.
+	ProxyURL            string
+	Timeout, RunTimeout time.Duration
+	HTTPClient          *http.Client
+	Logger              *slog.Logger
 }
 
-// Sandbox runs code in Daytona. It satisfies sandbox.Sandbox.
+// A cancellable gate serializes creation, execution and deletion. Identity survives a
+// failed delete so Close can be retried; a closed sandbox can never create another VM.
 type Sandbox struct {
-	apiKey     string
-	apiURL     string
-	proxyURL   string
-	runTimeout time.Duration
-	client     *http.Client
-	logger     *slog.Logger
-
-	mu sync.Mutex
-	// id is the sandbox, created on first use and released by Close.
-	id     string
-	closed bool
+	client              *sdk.Client
+	box                 *sdk.Sandbox
+	gate                chan struct{}
+	closed              atomic.Bool
+	timeout, runTimeout time.Duration
 }
 
-// New validates the options and returns a Sandbox. It creates nothing: the sandbox is
-// made the first time code is run, so an agent that never delegates never pays for one.
-func New(options Options) (*Sandbox, error) {
-	if options.APIKey == "" {
-		options.APIKey = os.Getenv(apiKeyEnvVar)
+func New(o Options) (*Sandbox, error) {
+	if o.APIKey == "" {
+		o.APIKey = os.Getenv(apiKeyEnvVar)
 	}
-	if options.APIKey == "" {
-		return nil, errors.New("daytona: " + apiKeyEnvVar + " is required")
+	if o.APIKey == "" {
+		return nil, errors.New("daytona: DAYTONA_API_KEY is required")
 	}
-	if options.APIURL == "" {
-		options.APIURL = defaultAPIURL
+	if o.Timeout <= 0 {
+		o.Timeout = defaultTimeout
 	}
-	if options.ProxyURL == "" {
-		options.ProxyURL = defaultProxyURL
+	if o.RunTimeout <= 0 {
+		o.RunTimeout = defaultRunTimeout
 	}
-	if options.Timeout <= 0 {
-		options.Timeout = defaultTimeout
+	c, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: o.APIKey, APIUrl: o.APIURL, HTTPClient: o.HTTPClient})
+	if err != nil {
+		return nil, err
 	}
-	if options.RunTimeout <= 0 {
-		options.RunTimeout = defaultRunTimeout
-	}
-	if options.HTTPClient == nil {
-		options.HTTPClient = &http.Client{Timeout: options.Timeout}
-	}
-	if options.Logger == nil {
-		options.Logger = slog.Default()
-	}
-
-	return &Sandbox{
-		apiKey:     options.APIKey,
-		apiURL:     strings.TrimSuffix(options.APIURL, "/"),
-		proxyURL:   strings.TrimSuffix(options.ProxyURL, "/"),
-		runTimeout: options.RunTimeout,
-		client:     options.HTTPClient,
-		logger:     options.Logger,
-	}, nil
+	return &Sandbox{client: c, gate: make(chan struct{}, 1), timeout: o.Timeout, runTimeout: o.RunTimeout}, nil
 }
-
-// Configured reports whether a Daytona key is available, so a caller can offer code
-// execution when it can and stay quiet about it when it cannot.
 func Configured() bool { return os.Getenv(apiKeyEnvVar) != "" }
-
-// Run executes a piece of Python and returns what it printed.
 func (s *Sandbox) Run(ctx context.Context, code string) (sandbox.Result, error) {
 	if strings.TrimSpace(code) == "" {
-		return sandbox.Result{}, errors.New("daytona: there is no code to run")
+		return sandbox.Result{}, errors.New("daytona: no code to run")
 	}
-
-	id, err := s.sandbox(ctx)
-	if err != nil {
-		return sandbox.Result{}, err
+	select {
+	case s.gate <- struct{}{}:
+		defer func() { <-s.gate }()
+	case <-ctx.Done():
+		return sandbox.Result{}, ctx.Err()
 	}
-
-	body := runRequest{
-		Code:     code,
-		Language: language,
-		Timeout:  int(s.runTimeout.Seconds()),
+	if s.closed.Load() {
+		return sandbox.Result{}, errors.New("daytona: sandbox is closed")
 	}
-
-	var ran runResponse
-	path := "/" + id + "/process/code-run"
-	if err := s.call(ctx, http.MethodPost, s.proxyURL+path, body, &ran); err != nil {
-		return sandbox.Result{}, err
-	}
-	return sandbox.Result{Output: ran.Result, ExitCode: ran.ExitCode}, nil
-}
-
-// Close releases the sandbox. Safe to call twice.
-func (s *Sandbox) Close() error {
-	s.mu.Lock()
-	id := s.id
-	s.id = ""
-	s.closed = true
-	s.mu.Unlock()
-
-	if id == "" {
-		return nil
-	}
-
-	// The context is the sandbox's own rather than a caller's: this runs during shutdown,
-	// when whatever context the work had is already cancelled, and a sandbox left behind
-	// goes on being billed.
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
-
-	if err := s.call(ctx, http.MethodDelete, s.apiURL+"/sandbox/"+id, nil, nil); err != nil {
-		return fmt.Errorf("daytona: release sandbox %s: %w", id, err)
-	}
-	return nil
-}
-
-// sandbox returns the sandbox to run in, creating it the first time.
-func (s *Sandbox) sandbox(ctx context.Context) (string, error) {
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return "", errors.New("daytona: the sandbox is closed")
-	}
-	if s.id != "" {
-		id := s.id
-		s.mu.Unlock()
-		return id, nil
-	}
-	s.mu.Unlock()
-
-	var created sandboxResponse
-	if err := s.call(ctx, http.MethodPost, s.apiURL+"/sandbox",
-		sandboxRequest{Language: language}, &created); err != nil {
-		return "", err
-	}
-	if created.ID == "" {
-		return "", errors.New("daytona: the sandbox that was created has no id")
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Two delegations racing here each created one. The loser's is released rather than
-	// leaked, since only one can be remembered.
-	if s.id != "" {
-		go s.release(created.ID)
-		return s.id, nil
-	}
-	if s.closed {
-		go s.release(created.ID)
-		return "", errors.New("daytona: the sandbox is closed")
-	}
-	s.id = created.ID
-	s.logger.Debug("created a sandbox", "sandbox", created.ID)
-	return s.id, nil
-}
-
-// release deletes a sandbox nothing is going to use.
-func (s *Sandbox) release(id string) {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
-
-	if err := s.call(ctx, http.MethodDelete, s.apiURL+"/sandbox/"+id, nil, nil); err != nil {
-		s.logger.Error("could not release a sandbox", "sandbox", id, "error", err)
-	}
-}
-
-func (s *Sandbox) call(ctx context.Context, method, url string, body, into any) error {
-	var payload io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
+	if s.box == nil {
+		create, end := context.WithTimeout(ctx, s.timeout)
+		box, err := s.client.Create(create, types.SnapshotParams{SandboxBaseParams: types.SandboxBaseParams{Language: types.CodeLanguagePython}}, options.WithWaitForStart(false))
+		end()
 		if err != nil {
-			return fmt.Errorf("daytona: encode %s: %w", url, err)
+			return sandbox.Result{}, err
 		}
-		payload = bytes.NewReader(encoded)
+		s.box = box
 	}
-
-	request, err := http.NewRequestWithContext(ctx, method, url, payload)
+	ready, end := context.WithTimeout(ctx, s.timeout)
+	err := s.box.WaitForStart(ready, s.timeout)
+	end()
 	if err != nil {
-		return fmt.Errorf("daytona: %s: %w", url, err)
+		return sandbox.Result{}, err
 	}
-	request.Header.Set("Authorization", "Bearer "+s.apiKey)
-	request.Header.Set("Accept", "application/json")
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-
-	response, err := s.client.Do(request)
+	run, cancel := context.WithTimeout(ctx, s.runTimeout+5*time.Second)
+	defer cancel()
+	result, err := s.box.Process.CodeRun(run, code, options.WithCodeRunTimeout(s.runTimeout))
 	if err != nil {
-		return fmt.Errorf("daytona: %s: %w", url, err)
+		return sandbox.Result{}, err
 	}
-	defer response.Body.Close()
-
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return fmt.Errorf("daytona: %s: %s: %s", url, response.Status, strings.TrimSpace(string(detail)))
+	return sandbox.Result{Output: result.Result, ExitCode: result.ExitCode}, nil
+}
+func (s *Sandbox) Close() error {
+	s.closed.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	defer cancel()
+	select {
+	case s.gate <- struct{}{}:
+		defer func() { <-s.gate }()
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 
-	if into == nil {
-		return nil
+	if s.box == nil {
+		return s.client.Close(ctx)
 	}
-	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return fmt.Errorf("daytona: decode %s: %w", url, err)
+	if err := s.box.Delete(ctx); err != nil {
+		return err
 	}
-	return nil
-}
-
-type sandboxRequest struct {
-	Language string `json:"language"`
-}
-
-type sandboxResponse struct {
-	ID string `json:"id"`
-}
-
-type runRequest struct {
-	Code     string `json:"code"`
-	Language string `json:"language"`
-	Timeout  int    `json:"timeout"`
-}
-
-type runResponse struct {
-	// Result is everything the code printed, which Daytona returns as one stream.
-	Result   string `json:"result"`
-	ExitCode int    `json:"exitCode"`
+	s.box = nil
+	return s.client.Close(ctx)
 }

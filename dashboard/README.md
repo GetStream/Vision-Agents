@@ -46,3 +46,23 @@ npm run types
 ```
 
 CI regenerates it and fails on a diff, the same way it does for the Go and Python clients.
+
+## Support conversations
+
+From `../artemis-impl`, run `./support --dashboard`, or
+`./support --channel agent:support-<uuid> --dashboard` to resume. The generated
+`/calls/<session-id>` link binds the conversation CID, agent, customer, and local
+backend. The browser uses the backend's conversation history and live session feed;
+Stream Chat remains the persistent store. The text view offers browser submission,
+cancellation, and older-message pagination. Keep the TUI open for SDK-local tools.
+
+Activity is rendered from server timestamps: thinking, queued research, running
+tools, writing, completed, failed, and cancelled. Tool cards retain their original
+start, execution start, finish, and duration. Timers pause when disconnected and
+stop on completion; saving is reported separately. Historical voice messages that
+lack timing metadata show their text without inventing response durations.
+
+`npm test` checks activity states, timers, message merging, and local router scoping.
+`npx tsc --noEmit` and `npm run build` validate the dashboard. Existing call chat
+readers need membership in the agent channel; the backend chat-token endpoint now
+adds them explicitly even when that channel was created earlier.

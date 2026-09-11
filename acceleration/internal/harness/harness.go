@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -36,6 +37,8 @@ const defaultTasks = 3
 
 // Options configures a Harness.
 type Options struct {
+	// Text selects skill delegation for written requests instead of speech repair.
+	Text bool
 	// Model is the fast voice model. The harness holds it because a turn goes to the
 	// harness first and it is the harness that decides what to ask.
 	Model *llmrouter.Session
@@ -447,7 +450,7 @@ func (h *Harness) act(turnID string, found directive) {
 
 	h.mu.Lock()
 	history := append([]llm.Message(nil), h.history...)
-	complete := identifiersAlreadyComplete(history)
+	complete := !h.options.Text && identifiersAlreadyComplete(history)
 	if complete {
 		h.notes = append(h.notes, noted{text: "Those values are already complete. " +
 			"Call the tool yourself this turn; do not wait for a colleague."})
@@ -468,16 +471,18 @@ func (h *Harness) act(turnID string, found directive) {
 	}
 	h.mu.Unlock()
 
+	startedAt := time.Now().UTC()
 	taskID, err := h.tasks.Create(skill, found.body, history, turnID, false)
 	if err != nil {
 		h.logger.Error("could not delegate", "skill", skill.Name, "error", err)
 		return
 	}
 	h.emitter.Send(Delegated{
-		TaskID: taskID,
-		Skill:  skill.Name,
-		Prompt: found.body,
-		TurnID: turnID,
+		StartedAt: startedAt,
+		TaskID:    taskID,
+		Skill:     skill.Name,
+		Prompt:    found.body,
+		TurnID:    turnID,
 	})
 }
 
@@ -582,7 +587,11 @@ func (h *Harness) instructions(agent, note string) string {
 		parts = append(parts, agent)
 	}
 	if h.tasks != nil {
-		if index := h.options.Skills.Prompt(); index != "" {
+		index := h.options.Skills.Prompt()
+		if h.options.Text {
+			index = h.options.Skills.TextPrompt()
+		}
+		if index != "" {
 			parts = append(parts, index)
 		}
 	}

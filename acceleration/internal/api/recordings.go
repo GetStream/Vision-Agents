@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/google/uuid"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -40,7 +42,7 @@ func (s *Server) TranscribeRecording(ctx context.Context, request TranscribeReco
 	if s.streams == nil || s.streams.Transcriptions == nil {
 		return TranscribeRecording404JSONResponse{NotFoundJSONResponse{Error: noRecordings}}, nil
 	}
-	if s.store == nil {
+	if s.store == nil && (request.Body == nil || !truthy(request.Body.Inline)) {
 		return TranscribeRecording400JSONResponse{badRequest(noRecordingStore)}, nil
 	}
 	if request.Body == nil {
@@ -96,6 +98,20 @@ func (s *Server) TranscribeRecording(ctx context.Context, request TranscribeReco
 		Callback:   value(request.Body.Callback),
 		Tags:       tags,
 	}
+	if truthy(request.Body.Inline) {
+		if job.Callback != "" || len(source.Audio) > 8*1024*1024 || source.URL != "" {
+			return TranscribeRecording400JSONResponse{badRequest("inline transcription requires at most 8 MiB of audio and no URL or callback")}, nil
+		}
+		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel()
+		transcript, provider, failure := s.streams.Transcriptions.Transcribe(ctx, sttrouter.Recording{CustomerID: customerID, Tags: tags, Options: held, Source: source})
+		subtitles, subErr := stt.Subtitles(transcript, held.Output)
+		if failure == nil {
+			failure = subErr
+		}
+		raw, _ := json.Marshal(transcriptResult{Text: transcript.Text, Language: transcript.Language, Words: wordsOf(transcript.Words), Speakers: transcript.Speakers, Subtitles: subtitles, Summary: transcript.Summary, Entities: entitiesOf(transcript.Entities), AudioDurationMs: transcript.AudioDurationMs})
+		return TranscribeRecording202JSONResponse(transcriptionOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))), nil
+	}
 	if err := s.store.CreateRecording(ctx, &job); err != nil {
 		return nil, err
 	}
@@ -138,7 +154,7 @@ func (s *Server) RecordSpeech(ctx context.Context, request RecordSpeechRequestOb
 	if s.streams == nil || s.streams.Speech == nil {
 		return RecordSpeech404JSONResponse{NotFoundJSONResponse{Error: noRecordings}}, nil
 	}
-	if s.store == nil {
+	if s.store == nil && (request.Body == nil || !truthy(request.Body.Inline)) {
 		return RecordSpeech400JSONResponse{badRequest(noRecordingStore)}, nil
 	}
 	if request.Body == nil {
@@ -169,6 +185,16 @@ func (s *Server) RecordSpeech(ctx context.Context, request RecordSpeechRequestOb
 		TTS:        held,
 		Callback:   value(request.Body.Callback),
 		Tags:       tags,
+	}
+	if truthy(request.Body.Inline) {
+		if job.Callback != "" || utf8.RuneCountInString(job.Text) > 16000 {
+			return RecordSpeech400JSONResponse{badRequest("inline speech requires at most 16000 characters and no callback")}, nil
+		}
+		ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel()
+		audio, provider, failure := s.streams.Speech.Record(ctx, ttsrouter.Recording{CustomerID: customerID, Tags: tags, Options: held, Text: job.Text})
+		raw, _ := json.Marshal(speechResult{Audio: audio.Audio, Format: audio.Format, Characters: audio.Characters, AudioDurationMs: audio.AudioDurationMs})
+		return RecordSpeech202JSONResponse(speechOf(inlineResult(job, provider.Provider, provider.Model, raw, failure))), nil
 	}
 	if err := s.store.CreateRecording(ctx, &job); err != nil {
 		return nil, err
@@ -448,4 +474,22 @@ func count(number *int) int {
 // subtitled reports whether an output format has to be rendered from timings.
 func subtitled(output string) bool {
 	return output != "" && output != "json"
+}
+
+// inlineResult exists only for this HTTP response; no recording, audio or transcript is stored.
+func inlineResult(job store.Recording, provider, model string, result json.RawMessage, failure error) store.Recording {
+	now := time.Now().UTC()
+	job.ID = uuid.NewString()
+	job.Provider = provider
+	job.Model = model
+	job.Result = result
+	job.Status = "completed"
+	job.CreatedAt = now
+	job.UpdatedAt = now
+	job.CompletedAt = &now
+	if failure != nil {
+		job.Status = "failed"
+		job.Error = failure.Error()
+	}
+	return job
 }
