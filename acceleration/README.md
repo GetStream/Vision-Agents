@@ -22,6 +22,8 @@ and billing as a direct API call.
 | `internal/ttsrouter` | Text-to-speech providers and sessions                              |
 | `internal/llm`       | The LLM contract: messages in, streamed text and token counts out  |
 | `internal/llmrouter` | LLM providers and sessions                                         |
+| `internal/sts`       | The speech-to-speech contract: the caller's audio in, the model's voice, transcripts and tool calls out |
+| `internal/stsrouter` | Speech-to-speech providers and sessions                            |
 | `internal/search`    | The search contract: a question in, an answer and its sources out  |
 | `internal/searchrouter` | Search providers and sessions                                   |
 | `internal/agent`     | The conversation: transcribe, answer, speak, with barge-in          |
@@ -63,7 +65,9 @@ shortcut still resolves.
 All three LLM providers speak OpenAI-compatible chat completions, so they share one
 implementation in `internal/llm/openaicompat` and differ only in base URL, credentials and
 extra request fields. `deepseek` reaches Baseten's shared Model APIs, which need no
-deployment.
+deployment. The speech-to-speech providers split the same way: OpenAI, xAI and Alibaba
+send OpenAI's realtime events and share `internal/sts/openairealtime`, differing in how
+the session frame is spelled; Gemini Live is its own package under `internal/sts/gemini`.
 
 ## Build prerequisites
 
@@ -257,6 +261,30 @@ latency before the first word of the answer. The provider turns thinking off thr
 chat template, since that is the wrong trade for a live conversation; `Options.Thinking`
 turns it back on and the reasoning then arrives as `ReasoningDelta` events, separate from
 the answer.
+
+Speech to speech has two shortcuts of its own. `sts-fast` is the model quickest to answer,
+pinned to `gemini/gemini-3.1-flash-live-preview`, and `sts-vision` is a conversation the
+model can watch as well as hear, pinned to `openai/gpt-realtime-2` the way `vlm` is. A
+speech-to-speech model is the transcriber, the turn detector and the voice at once, so a
+session asks for one target rather than three, and the terms it can be asked for are its
+own: `semantic_turns` for a turn detector that reads the words, which only OpenAI has;
+`tools` and `text`, which Qwen lacks; `endpointing` for a silence timer whose length can be
+set; and the two transcripts. Frames are an input modality, gated by `input_modalities`,
+not a term. Which models the shortcuts reach, and what each is billed at:
+
+| Model                                     | Tier         | Billed by                                   |
+| ----------------------------------------- | ------------ | ------------------------------------------- |
+| `gemini/gemini-3.1-flash-live-preview`    | low-latency  | tokens: $3.00 in, $12.00 out per million     |
+| `xai/grok-voice-think-fast-2.0`           | low-latency  | the caller's audio: $3.00 an hour            |
+| `qwen/qwen3.5-omni-plus-realtime`         | low-latency  | the caller's audio: $0.03 an hour            |
+| `openai/gpt-realtime-2`                   | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
+
+These are estimates, and `router.yaml` says why: the vendors price audio in, audio out and
+text at three different rates, `Price` has one token bucket, so the audio rates are applied
+to every token. A reply is one row, settled when the model finishes it; the caller's audio
+since the last reply is the row's `audio_ms`, and the tokens are what the vendor reported.
+`stssuite` is what every one of these models is held to on a real call, the way `sttsuite`
+and `ttssuite` hold a transcriber and a voice. `.claude/skills/router-sts` is the vocabulary.
 
 Gemini is reached over Google's OpenAI-compatible endpoint, so it needs no implementation of
 its own. Every Gemini 3 model thinks and none of them can be told not to, so the provider
@@ -1044,6 +1072,14 @@ server-side only makes that check in its own handler rather than in the middlewa
 - **An audio chunk does not say whether it is the last.** A streaming voice only learns
   that after the fact, and buffering a chunk to find out would cost the latency the design
   is for, so `SynthesisComplete` is what ends an utterance.
+- **A speech-to-speech model owns its own turns.** It is the voice activity detector, the
+  turn detector, the transcriber and the voice at once, so nothing in front of it acts as
+  one. `SpeechStarted` says only that the model heard someone; `ResponseComplete` with
+  `Interrupted` is the one signal a consumer drops its buffer on, and the router session
+  drops any audio of that reply still arriving, because the model learns of a barge-in a
+  round trip after the caller. What a model cannot do is refused, never dropped: a typed
+  turn to a model that takes none, or instructions to one that took them at setup, comes
+  back as an error.
 - **Uptime and latency come from the same request rows** as billing, so there is no
   separate health-probe pipeline to keep in sync.
 - **Nothing a conversation does waits on a database.** Turns, transcripts and memories all go
