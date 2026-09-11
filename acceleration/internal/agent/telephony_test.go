@@ -82,14 +82,14 @@ type stubToolRunner struct {
 	runs []llm.ToolCall
 }
 
-func (r *stubToolRunner) Run(_ context.Context, call llm.ToolCall) (string, error) {
+func (r *stubToolRunner) Run(_ context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.runs = append(r.runs, call)
 	if r.err != nil {
-		return "", r.err
+		return nil, r.err
 	}
-	return r.result, nil
+	return llm.TextParts(r.result), nil
 }
 
 func (r *stubToolRunner) asked() []llm.ToolCall {

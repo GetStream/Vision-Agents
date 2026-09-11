@@ -9,9 +9,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -93,6 +95,7 @@ type Options struct {
 	// difference between them is which model, not which service. Empty means the agent
 	// answers everything itself.
 	SubagentTarget string
+	Subagents      map[string]string
 	// ControllerTarget routes the flow controller, a fast non-thinking classifier that
 	// only ever returns one small JSON object about who holds the floor. It is a target on
 	// the same router as LLMTarget. Empty falls back to LLMTarget, so a caller who names no
@@ -121,7 +124,9 @@ type Options struct {
 	Tasks int
 	// Duplex lets the agent listen and talk at the same time rather than strictly taking
 	// turns. Both halves of it are off by default.
-	Duplex DuplexOptions
+	Duplex         DuplexOptions
+	VideoSource    string
+	VideoMaxFrames int
 
 	// Voice selects the speaker. Its meaning is the text-to-speech provider's.
 	Voice string
@@ -447,14 +452,15 @@ func (a *Agent) Join(ctx context.Context) error {
 	a.joined = true
 	a.mu.Unlock()
 
-	model, err := a.options.LLM.Start(a.ctx, llmrouter.Request{
+	start := llmrouter.Request{
 		CustomerID:    a.options.CustomerID,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,
 		Tags:          a.options.Tags,
 		Target:        a.options.LLMTarget,
 		LanguageHints: a.options.LanguageHints,
-	})
+	}
+	model, err := a.options.LLM.Start(a.ctx, start)
 	if err != nil {
 		return fmt.Errorf("agent: start llm: %w", err)
 	}
@@ -480,20 +486,47 @@ func (a *Agent) Join(ctx context.Context) error {
 		return fmt.Errorf("agent: start flow controller: %w", err)
 	}
 
-	// The subagent is routed like anything else, so the work it does is failed over and
-	// billed the same way a turn is.
-	var subagent *llmrouter.Session
+	workers := map[string]func(context.Context) (*llmrouter.Session, error){}
+	targets := map[string]string{}
 	if a.options.SubagentTarget != "" {
-		subagent, err = a.options.LLM.Start(a.ctx, llmrouter.Request{
-			CustomerID:    a.options.CustomerID,
-			AgentID:       a.options.AgentID,
-			CallID:        a.options.CallID,
-			Tags:          a.options.Tags,
-			Target:        a.options.SubagentTarget,
-			LanguageHints: a.options.LanguageHints,
-		})
-		if err != nil {
-			return fmt.Errorf("agent: start subagent: %w", err)
+		targets["default"] = a.options.SubagentTarget
+	}
+	for name, target := range a.options.Subagents {
+		targets[name] = target
+	}
+	for name, target := range targets {
+		if target == "" {
+			continue
+		}
+		var modalities []string
+		for _, skill := range a.options.Skills.Skills {
+			binding := skill.Subagent
+			if binding == "" {
+				binding = "default"
+			}
+			if binding == name && skill.CaptureVideo {
+				modalities = []string{llm.ModalityImage}
+			}
+		}
+		workers[name] = func(ctx context.Context) (*llmrouter.Session, error) {
+			tags := maps.Clone(a.options.Tags)
+			if tags == nil {
+				tags = routing.Tags{}
+			}
+			tags["worker"] = name
+			return a.options.LLM.Start(ctx, llmrouter.Request{
+				CustomerID: a.options.CustomerID, AgentID: a.options.AgentID, CallID: a.options.CallID,
+				Tags: tags, Target: target, LanguageHints: a.options.LanguageHints, InputModalities: modalities,
+			})
+		}
+	}
+	for _, skill := range a.options.Skills.Skills {
+		binding := skill.Subagent
+		if binding == "" {
+			binding = "default"
+		}
+		if _, ok := workers[binding]; !ok {
+			return fmt.Errorf("agent: skill %s names unknown worker %s", skill.Name, binding)
 		}
 	}
 
@@ -505,7 +538,8 @@ func (a *Agent) Join(ctx context.Context) error {
 		Text:       a.options.Text,
 		Model:      model,
 		Controller: controller,
-		Subagent:   subagent,
+		Workers:    workers,
+		Capture:    a.captureVideo,
 		Skills:     a.options.Skills,
 		Tools:      a.availableTools(),
 		Sandbox:    a.options.Sandbox,
@@ -592,7 +626,55 @@ func (a *Agent) Join(ctx context.Context) error {
 // said it. It returns once the request is on its way: the reply arrives on Events and is
 // spoken as it streams.
 func (a *Agent) SimpleResponse(ctx context.Context, text string) error {
-	return a.respond(stt.Participant{ID: "caller"}, text, heard{at: time.Now()})
+	return a.RespondTo(ctx, text, nil)
+}
+
+// RespondTo answers a piece of text through the model, attaching images to that turn.
+func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePart) error {
+	if len(images) > 0 {
+		a.mu.Lock()
+		current := a.harness
+		a.mu.Unlock()
+		if current == nil {
+			return errors.New("agent: not joined")
+		}
+		id := replyPrefix + turnStamp()
+		parts := llm.TextParts(text)
+		for index, image := range images {
+			if err := image.Validate(); err != nil {
+				return err
+			}
+			image.Data = append([]byte(nil), image.Data...)
+			metadata, _ := json.Marshal(map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()})
+			parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
+		}
+		if _, err := current.Delegate("vision", text, id, parts); err != nil {
+			return err
+		}
+		return a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
+	}
+	return a.respond(stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, nil)
+}
+
+func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest) ([]llm.ContentPart, error) {
+	if a.options.ToolRunner == nil {
+		return nil, errors.New("agent: no video source is connected")
+	}
+	source, frames := request.Source, request.Frames
+	if source == "" {
+		source = a.options.VideoSource
+	}
+	if frames == 0 {
+		frames = a.options.VideoMaxFrames
+	}
+	if frames == 0 {
+		frames = 1
+	}
+	arguments, err := json.Marshal(map[string]any{"source": source, "at_ms": request.At.UnixMilli(), "limit": frames})
+	if err != nil {
+		return nil, err
+	}
+	return a.options.ToolRunner.Run(ctx, llm.ToolCall{ID: request.TaskID + "-capture", Name: "get_video_frames", Arguments: string(arguments)})
 }
 
 // Ask answers a piece of text in writing and says none of it.
@@ -620,7 +702,7 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		return "", errors.New("agent: not joined")
 	}
 	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
-	history := append([]llm.Message(nil), a.history...)
+	history := a.replayLocked()
 	instructions := a.instructions()
 	model := a.llm
 	a.mu.Unlock()
@@ -1113,7 +1195,7 @@ func (a *Agent) ask(ready candidate) {
 		a.mu.Unlock()
 		return
 	}
-	history := append([]llm.Message(nil), a.history...)
+	history := llm.OmitImages(append([]llm.Message(nil), a.history...))
 	instructions := a.instructions()
 	speaking := a.generating || a.utterances > 0
 	reply := a.saying
@@ -1210,8 +1292,8 @@ func lastAssistantSaid(history []llm.Message) string {
 func turnStamp() string { return strconv.FormatInt(time.Now().UnixNano(), 10) }
 
 // respond asks the harness to reply to a turn.
-func (a *Agent) respond(participant stt.Participant, text string, listened heard) error {
-	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "")
+func (a *Agent) respond(participant stt.Participant, text string, listened heard, images []llm.ImagePart) error {
+	return a.respondTurn(replyPrefix+turnStamp(), participant, text, listened, "", images)
 }
 
 // respondCandidate answers a settled turn. The note is what the conversation decided the
@@ -1221,7 +1303,7 @@ func (a *Agent) respondCandidate(ready candidate, note string) error {
 		at:           ready.ReadyAt,
 		sttLatencyMs: ready.STTLatencyMs,
 		confidence:   ready.Confidence,
-	}, note)
+	}, note, nil)
 }
 
 // noteToolDone records that one of the tools the current turn asked for has returned.
@@ -1264,7 +1346,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 		a.mu.Unlock()
 		return errors.New("agent: not joined")
 	}
-	history := append([]llm.Message(nil), a.history...)
+	history := a.replayLocked()
 	participant := a.lastParticipant
 	a.speakingTurn = turnID
 	a.generating = true
@@ -1288,14 +1370,15 @@ func (a *Agent) respondTurn(
 	text string,
 	listened heard,
 	note string,
+	images []llm.ImagePart,
 ) error {
 	a.mu.Lock()
 	if a.harness == nil {
 		a.mu.Unlock()
 		return errors.New("agent: not joined")
 	}
-	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
-	history := append([]llm.Message(nil), a.history...)
+	a.history = append(a.history, a.userTurnLocked(text, images))
+	history := a.replayLocked()
 
 	a.speakingTurn = turnID
 	a.generating = true
@@ -1312,6 +1395,14 @@ func (a *Agent) respondTurn(
 		History:      history,
 		Note:         joinNotes(note, a.duplex.Note(listened.confidence)),
 	})
+}
+
+func (a *Agent) userTurnLocked(text string, images []llm.ImagePart) llm.Message {
+	return llm.Message{Role: llm.User, Content: text}
+}
+
+func (a *Agent) replayLocked() []llm.Message {
+	return append([]llm.Message(nil), a.history...)
 }
 
 func joinNotes(notes ...string) string {
@@ -1793,6 +1884,7 @@ func (a *Agent) consumeHarness() {
 				})
 			} else {
 				a.emitter.Send(TaskSettled{
+					Evidence: typed.Evidence, Worker: typed.Worker,
 					TaskID:    typed.TaskID,
 					Skill:     typed.Skill,
 					Text:      typed.Text,
@@ -1838,12 +1930,7 @@ func (a *Agent) applyCompaction(compacted harness.Compacted) {
 // The comparison is field by field rather than whole-struct, because a message carries the
 // tool calls it made and a slice cannot be compared with ==.
 func sameMessages(first, second []llm.Message) bool {
-	return slices.EqualFunc(first, second, func(left, right llm.Message) bool {
-		return left.Role == right.Role &&
-			left.Content == right.Content &&
-			left.ToolCallID == right.ToolCallID &&
-			slices.Equal(left.ToolCalls, right.ToolCalls)
-	})
+	return slices.EqualFunc(first, second, llm.SameMessage)
 }
 
 // follow starts a turn nobody asked for, because work the caller was told was coming has
@@ -1885,7 +1972,7 @@ func (a *Agent) follow() error {
 		return nil
 	}
 	a.toolReply = false
-	history := append([]llm.Message(nil), a.history...)
+	history := a.replayLocked()
 	turnID := replyPrefix + turnStamp()
 	a.speakingTurn = turnID
 	a.generating = true

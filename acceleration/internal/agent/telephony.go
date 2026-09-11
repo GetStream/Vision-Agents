@@ -71,7 +71,7 @@ type Telephony interface {
 // so a runner that failed says so in a sentence rather than returning an error the caller
 // would never hear about.
 type ToolRunner interface {
-	Run(ctx context.Context, call llm.ToolCall) (string, error)
+	Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error)
 }
 
 // telephonyTool reports whether a tool is one of the two this package runs itself.
@@ -119,11 +119,18 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 		a.options.OnToolStarted(started)
 	}
 	a.emitter.Send(started)
-	result, left, err := a.callTool(ctx, requested.Call)
-	if err != nil {
-		result = fmt.Sprintf("That did not work: %s. Tell the caller, in your own words.", err)
+	parts, left, err := a.callTool(ctx, requested.Call)
+	if err == nil && llm.HasImage([]llm.Message{{Parts: parts}}) {
+		_, err = a.harness.Delegate("vision", "Analyze this tool result for the caller's current question.", requested.TurnID, parts)
+		if err == nil {
+			parts = llm.TextParts(llm.TextOf(parts) + "\nVisual analysis requested; wait for the vision findings before interpreting the images.")
+		}
 	}
-	a.resolveTool(requested.Call, result)
+	if err != nil {
+		parts = llm.TextParts(fmt.Sprintf("That did not work: %s. Tell the caller, in your own words.", err))
+	}
+	result := llm.TextOf(parts)
+	a.resolveTool(requested.Call, parts)
 
 	a.emitter.Send(ToolRan{
 		ID:        requested.Call.ID,
@@ -166,37 +173,44 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 
 // callTool runs one tool, reporting what to tell the model and whether the agent has left
 // the call.
-func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) (string, bool, error) {
+func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return "", false, err
+		return nil, false, err
 	}
 
 	if telephonyTool(call.Name) {
 		if a.options.Telephony == nil {
-			return "", false, errors.New("agent: this call has no telephony")
+			return nil, false, errors.New("agent: this call has no telephony")
 		}
+		var result string
+		var left bool
+		var err error
 		if call.Name == toolTransfer {
-			return a.transfer(ctx, call)
+			result, left, err = a.transfer(ctx, call)
+		} else {
+			result, left, err = a.press(ctx, call)
 		}
-		return a.press(ctx, call)
+		return llm.TextParts(result), left, err
 	}
 
 	if call.Name == toolLookup {
 		if a.knowledge == nil {
-			return "", false, errors.New("agent: this agent has no knowledge base")
+			return nil, false, errors.New("agent: this agent has no knowledge base")
 		}
-		return a.lookup(ctx, call)
+		result, left, err := a.lookup(ctx, call)
+		return llm.TextParts(result), left, err
 	}
 
 	if call.Name == toolSearch {
 		if a.searcher == nil {
-			return "", false, errors.New("agent: this agent cannot search")
+			return nil, false, errors.New("agent: this agent cannot search")
 		}
-		return a.search(ctx, call)
+		result, left, err := a.search(ctx, call)
+		return llm.TextParts(result), left, err
 	}
 
 	if a.options.ToolRunner == nil {
-		return "", false, fmt.Errorf("agent: %s is not a tool this agent can run", call.Name)
+		return nil, false, fmt.Errorf("agent: %s is not a tool this agent can run", call.Name)
 	}
 	// A remote tool cannot end the call: leaving is the transfer's business, and a runner
 	// that hung up would strand the conversation the agent is still holding history for.
@@ -298,13 +312,18 @@ func (a *Agent) press(ctx context.Context, call llm.ToolCall) (string, bool, err
 // The result is a message rather than a note because the model asked for it by name: a
 // provider matches every call against a result, and a conversation that replays the call
 // without one is refused.
-func (a *Agent) resolveTool(call llm.ToolCall, result string) {
+func (a *Agent) resolveTool(call llm.ToolCall, parts []llm.ContentPart) {
 	a.mu.Lock()
-	a.history = append(a.history, llm.Message{
+	message := llm.Message{
 		Role:       llm.ToolResult,
-		Content:    result,
 		ToolCallID: call.ID,
-	})
+	}
+	if llm.HasImage([]llm.Message{{Parts: parts}}) {
+		message.Parts = parts
+	} else {
+		message.Content = llm.TextOf(parts)
+	}
+	a.history = append(a.history, message)
 	a.mu.Unlock()
 }
 

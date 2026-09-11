@@ -18,6 +18,8 @@ const tagLimit = 256
 
 // directive is a request the model made of the harness rather than of the caller.
 type directive struct {
+	source string
+	frames string
 	// kind is ask or drop.
 	kind string
 	// skill names which skill the request is for.
@@ -156,7 +158,7 @@ func openTag(text string) (directive, string, tagState) {
 		return directive{}, "", tagIncomplete
 	}
 
-	found := directive{kind: kind, skill: attribute(head, "skill")}
+	found := directive{kind: kind, skill: attribute(head, "skill"), source: attribute(head, "source"), frames: attribute(head, "frames")}
 	if strings.HasSuffix(head, "/") {
 		return found, rest, tagSelfClosed
 	}

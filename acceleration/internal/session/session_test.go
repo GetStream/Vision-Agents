@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -112,6 +113,7 @@ type stubLLM struct {
 	asked []llm.ResponseParams
 	reply string
 	calls []llm.ToolCall
+	sees  bool
 }
 
 func (s *stubLLM) Start(context.Context) error { return nil }
@@ -140,10 +142,15 @@ func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Str
 	return script.Stream(), nil
 }
 
-func (s *stubLLM) Provider() string               { return "stub" }
-func (s *stubLLM) Model() string                  { return "stub-llm" }
-func (s *stubLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
-func (s *stubLLM) Close() error                   { return nil }
+func (s *stubLLM) Provider() string { return "stub" }
+func (s *stubLLM) Model() string    { return "stub-llm" }
+func (s *stubLLM) Capabilities() llm.Capabilities {
+	if s.sees {
+		return llm.Capabilities{InputModalities: []string{llm.ModalityImage}}
+	}
+	return llm.Capabilities{}
+}
+func (s *stubLLM) Close() error { return nil }
 
 func (s *stubLLM) requests() []llm.ResponseParams {
 	s.mu.Lock()
@@ -633,7 +640,7 @@ func (s *SessionSuite) TestATextSessionAnswersInWriting() {
 
 	events, detach := created.Watch()
 	defer detach()
-	s.Require().NoError(created.Respond(s.ctx, "hello"))
+	s.Require().NoError(created.Respond(s.ctx, "hello", nil))
 
 	s.Equal("Hello.", awaitReply(events))
 	s.Empty(s.voice.spoken(), "nothing is synthesised for a reader")
@@ -706,7 +713,7 @@ func (s *SessionSuite) TestACallersToolIsAskedForAndItsAnswerReachesTheModel() {
 
 	events, detach := created.Watch()
 	defer detach()
-	s.Require().NoError(created.Respond(s.ctx, "where is my order"))
+	s.Require().NoError(created.Respond(s.ctx, "where is my order", nil))
 
 	asked := awaitToolCall(events)
 	s.Require().NotNil(asked)
@@ -847,7 +854,7 @@ func (s *SessionSuite) TestChangingTheInstructionsAppliesToTheNextTurn() {
 	created := s.joins(Spec{Instructions: "be brief"})
 
 	created.SetInstructions("be thorough")
-	s.Require().NoError(created.Respond(s.ctx, "hello"))
+	s.Require().NoError(created.Respond(s.ctx, "hello", nil))
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
 	s.Equal("be thorough", s.model.requests()[0].Instructions)
@@ -965,7 +972,7 @@ func (s *SessionSuite) TestWhatWasSaidIsKeptSoTheCallCanBeReviewed() {
 	s.manages()
 	created := s.joins(Spec{})
 
-	s.Require().NoError(created.Respond(s.ctx, "where is my order"))
+	s.Require().NoError(created.Respond(s.ctx, "where is my order", nil))
 
 	s.eventually(func() bool { return len(created.conversation()) > 0 },
 		"the call left nothing to review")
@@ -986,6 +993,45 @@ func (s *SessionSuite) TestShutdownEndsEveryCallRatherThanDroppingIt() {
 	for _, edge := range s.edges {
 		s.True(edge.gone(), "a call was dropped rather than left")
 	}
+}
+
+func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
+	s.manages()
+	s.model.sees = true
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "get_video_frame", Arguments: "{}"}}
+	created := s.joins(Spec{
+		Tools: []harness.Tool{{Name: "get_video_frame", Description: "photograph the camera"}},
+	})
+
+	events, detach := created.Watch()
+	defer detach()
+	s.Require().NoError(created.Respond(s.ctx, "what is on camera", nil))
+
+	asked := awaitToolCall(events)
+	s.Require().NotNil(asked)
+	jpeg := []byte{0xff, 0xd8, 0xff}
+	s.True(created.ResolveToolParts(asked.ID, []llm.ContentPart{
+		{Text: "a cat"},
+		{Image: &llm.ImagePart{MIME: "image/jpeg", Data: jpeg}},
+	}, ""))
+
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			for _, message := range request.Input {
+				if message.ToolCallID == asked.ID && !message.HasImage() && strings.Contains(message.Content, "vision") {
+					return true
+				}
+			}
+		}
+		return false
+	}, "the failed vision delegation was not reported to the model")
+}
+
+func (s *SessionSuite) TestImagesRequireAVisionSkill() {
+	s.manages()
+	created := s.joins(Spec{})
+	err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{1, 2, 3}}})
+	s.ErrorContains(err, "vision")
 }
 
 // awaitToolCall waits for the model to ask for a tool, skipping the conversation events

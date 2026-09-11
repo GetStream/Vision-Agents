@@ -184,8 +184,10 @@ func (Delegated) isAgentEvent() {}
 // TaskSettled means delegated work finished and, if it produced anything the caller is
 // owed, the agent has started a turn to say so.
 type TaskSettled struct {
-	TaskID string
-	Skill  string
+	Evidence []string
+	Worker   string
+	TaskID   string
+	Skill    string
 	// Text is the answer, when there is one.
 	Text string
 	// Question is what the subagent needs asked before it can go further.

@@ -2383,8 +2383,18 @@ paths:
         drops `decision`.
 
         The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`,
-        `interrupt`, `instructions` or `close` to act on the session. A `tool_call` is the
-        only frame that must be answered: everything else is a report.
+        `interrupt`, `instructions` or `close` to act on the session. A `tool_call`
+        is the only frame that must be answered: everything else is a report.
+
+        `tool_result.output` is a string, or an array of parts `[{type: text|image_url,
+        ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of
+        `auto`, `low` or `high`. One socket message is at most
+        5 MB.
+
+        `respond` may carry `images: [{url, detail}]`. These schedule the vision skill;
+        the conversation receives the question and later the findings, without raw images.
+        Video capture uses task-correlated `get_video_frames` tool requests and `tool_result`
+        replies. Frames are never attached automatically to conversational turns.
       parameters:
         - $ref: "#/components/parameters/SessionID"
         - name: interim
@@ -2434,7 +2444,11 @@ paths:
         take `respond` frames, each naming an `id` and anything from `LlmOptions` for that
         one response along with its `tools`, and return `delta`, `reasoning_delta` and one
         `complete` per response; a `complete` reports the `status` the response ended in,
-        what it cost in tokens and how long the caller waited for the first of them. An
+        what it cost in tokens and how long the caller waited for the first of them.
+        `messages[].content` is a string, or an array of parts `[{type: text|image_url,
+        ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images
+        is refused with an `error` frame naming the model and the modality, before anything
+        is billed. An
         `interrupt` frame naming `response_ids` abandons responses still being generated,
         which still settle and are still billed for what they produced before being cut
         off. All three report failures as `error` frames and end with `closed`.
@@ -2787,6 +2801,12 @@ components:
         description:
           type: string
           description: The one line the fast model sees.
+        subagent:
+          type: string
+          description: Named worker binding; omitted uses default.
+        capture_video:
+          type: boolean
+          description: Capture task-scoped visual evidence before reasoning.
         instructions:
           type: string
           description: The full prompt, which only the subagent sees.
@@ -2872,6 +2892,13 @@ components:
         llm:
           type: string
           description: The model holding the conversation.
+        video:
+          $ref: "#/components/schemas/SessionVideo"
+        subagents:
+          type: object
+          additionalProperties:
+            type: string
+          description: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
         subagent:
           type: string
           description: >
@@ -2942,6 +2969,13 @@ components:
           type: string
         llm:
           type: string
+        video:
+          $ref: "#/components/schemas/SessionVideo"
+        subagents:
+          type: object
+          additionalProperties:
+            type: string
+          description: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
         subagent:
           type: string
         search:
@@ -3762,6 +3796,13 @@ components:
           type: string
         llm:
           type: string
+        video:
+          $ref: "#/components/schemas/SessionVideo"
+        subagents:
+          type: object
+          additionalProperties:
+            type: string
+          description: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
         subagent:
           type: string
         search:
@@ -3929,6 +3970,12 @@ components:
         description:
           type: string
           description: The one line the fast model sees.
+        subagent:
+          type: string
+          description: Named worker binding; omitted uses default.
+        capture_video:
+          type: boolean
+          description: Capture task-scoped visual evidence before reasoning.
         instructions:
           type: string
           description: The full prompt, which only the subagent sees.
@@ -3949,6 +3996,12 @@ components:
           type: string
         description:
           type: string
+        subagent:
+          type: string
+          description: Named worker binding; omitted uses default.
+        capture_video:
+          type: boolean
+          description: Capture task-scoped visual evidence before reasoning.
         instructions:
           type: string
         deadline_ms:
@@ -4712,6 +4765,11 @@ components:
           type: string
           description: >
             Omit it and the config decides, or en-low-latency when there is no config.
+        subagents:
+          type: object
+          additionalProperties:
+            type: string
+          description: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
         subagent:
           type: string
           description: >
@@ -4785,6 +4843,85 @@ components:
           $ref: "#/components/schemas/SessionMemory"
         phone:
           $ref: "#/components/schemas/SessionPhone"
+        video:
+          $ref: "#/components/schemas/SessionVideo"
+
+    SessionVideo:
+      type: object
+      properties:
+        source:
+          type: string
+          description: Track or processor source. Omitted requires one unambiguous available source.
+        max_frames:
+          type: integer
+          minimum: 1
+          maximum: 8
+          description: Number of recent frames captured for a visual task. Default one.
+
+    ImageSource:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          description: Absolute HTTP(S) URL or base64 image data URI.
+        detail:
+          type: string
+          enum: [auto, low, high]
+    TextContentPart:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          enum: [text]
+        text:
+          type: string
+    ImageContentPart:
+      type: object
+      required: [type, image_url]
+      properties:
+        type:
+          type: string
+          enum: [image_url]
+        image_url:
+          $ref: "#/components/schemas/ImageSource"
+    ContentPart:
+      oneOf:
+        - $ref: "#/components/schemas/TextContentPart"
+        - $ref: "#/components/schemas/ImageContentPart"
+    MessageContent:
+      oneOf:
+        - type: string
+        - type: array
+          items:
+            $ref: "#/components/schemas/ContentPart"
+    SessionRespondCommand:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          enum: [respond]
+        text:
+          type: string
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImageSource"
+    ToolResultCommand:
+      type: object
+      required: [type, tool_call_id]
+      properties:
+        type:
+          type: string
+          enum: [tool_result]
+        tool_call_id:
+          type: string
+        output:
+          $ref: "#/components/schemas/MessageContent"
+        error:
+          type: string
 
     Session:
       type: object
@@ -4830,6 +4967,13 @@ components:
         subagent:
           type: string
           description: The provider and model delegated work runs on.
+        subagents:
+          type: object
+          additionalProperties:
+            type: string
+          description: Configured worker targets, prepared asynchronously.
+        video:
+          $ref: "#/components/schemas/SessionVideo"
         instructions:
           type: string
 

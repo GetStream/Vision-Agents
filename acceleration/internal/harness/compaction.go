@@ -32,7 +32,7 @@ type compaction struct {
 // stopped paying for keeping the full transcript verbatim. It reports whether it started
 // any, so the conversation can record that its own memory was rewritten.
 func (h *Harness) MaybeCompact(history []llm.Message, inputTokens, cachedTokens int64) (bool, error) {
-	if h.tasks == nil || len(history) < compactionMinMessages || inputTokens < compactionMinTokens {
+	if h.tasks == nil || h.tasks.workers["default"] == nil || len(history) < compactionMinMessages || inputTokens < compactionMinTokens {
 		return false, nil
 	}
 	if float64(cachedTokens)/float64(inputTokens) >= compactionCacheRatio {

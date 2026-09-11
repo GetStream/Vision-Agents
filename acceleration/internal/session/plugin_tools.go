@@ -74,14 +74,15 @@ type pluginRunner struct {
 	next agent.ToolRunner
 }
 
-func (r *pluginRunner) Run(ctx context.Context, call llm.ToolCall) (string, error) {
+func (r *pluginRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
 	if r.mcp != nil && r.mcp.Owns(call.Name) {
-		return r.mcp.Call(ctx, call)
+		text, err := r.mcp.Call(ctx, call)
+		return llm.TextParts(text), err
 	}
 	if r.next != nil {
 		return r.next.Run(ctx, call)
 	}
-	return "", errUnknownTool(call.Name)
+	return nil, errUnknownTool(call.Name)
 }
 
 func errUnknownTool(name string) error {

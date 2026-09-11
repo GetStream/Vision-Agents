@@ -31,6 +31,25 @@ func TestServerSuite(t *testing.T) {
 	suite.Run(t, new(ServerSuite))
 }
 
+func (s *ServerSuite) TestVideoDefaultsRoundTripWithinSchemaBounds() {
+	for _, requested := range []int{0, 2} {
+		request := AgentConfigRequest{Name: "visual"}
+		if requested != 0 {
+			request.Video = &SessionVideo{MaxFrames: &requested}
+		}
+		response := agentConfigOf(storedConfig(request, "test"))
+		s.Require().NotNil(response.Video)
+		s.Require().NotNil(response.Video.MaxFrames)
+		expected := requested
+		if expected == 0 {
+			expected = 1
+		}
+		s.Equal(expected, *response.Video.MaxFrames)
+		replay := AgentConfigRequest{Name: response.Name, Video: response.Video}
+		s.Equal(expected, storedConfig(replay, "test").VideoMaxFrames)
+	}
+}
+
 func (s *ServerSuite) SetupTest() {
 	config, err := routing.DefaultConfig()
 	s.Require().NoError(err)

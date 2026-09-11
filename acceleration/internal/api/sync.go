@@ -101,6 +101,9 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 // anything. It is the same reading configComplaint does, since a directory decides the
 // same things a config written by hand does.
 func syncComplaint(body SyncAgentRequest) (string, bool) {
+	if err := workerConflict(body.Subagent, body.Subagents); err != nil {
+		return err.Error(), false
+	}
 	if _, ok := modeOf(body.Mode); !ok {
 		return fmt.Sprintf("an agent is either %s or %s", store.AgentModeVoice, store.AgentModeText), false
 	}
@@ -117,6 +120,18 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 // was sent is applied: a directory that says nothing about a model leaves the one already
 // stored, so a target chosen in the dashboard survives a sync.
 func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
+	if body.Subagents != nil {
+		if config.Subagents == nil {
+			config.Subagents = map[string]string{}
+		}
+		for name, target := range *body.Subagents {
+			config.Subagents[name] = target
+		}
+	}
+	if body.Video != nil {
+		config.VideoSource = override(config.VideoSource, body.Video.Source)
+		config.VideoMaxFrames = override(config.VideoMaxFrames, body.Video.MaxFrames)
+	}
 	if body.Mode != nil && *body.Mode != "" {
 		mode, _ := modeOf(body.Mode)
 		config.Mode = mode
@@ -135,6 +150,11 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	}
 	if body.Subagent != nil {
 		config.Subagent = *body.Subagent
+		if body.Subagents == nil {
+			delete(config.Subagents, "default")
+		} else if _, exists := (*body.Subagents)["default"]; !exists {
+			delete(config.Subagents, "default")
+		}
 	}
 	if body.Search != nil {
 		config.Search = *body.Search

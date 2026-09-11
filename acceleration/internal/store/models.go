@@ -243,14 +243,17 @@ type AgentConfig struct {
 	Mode string `bun:"mode,notnull"`
 	// STT, TTS, LLM, Subagent and Search are routing targets. Empty leaves the session
 	// default.
-	STT          string `bun:"stt,notnull"`
-	TTS          string `bun:"tts,notnull"`
-	Voice        string `bun:"voice,notnull"`
-	LLM          string `bun:"llm,notnull"`
-	Subagent     string `bun:"subagent,notnull"`
-	Search       string `bun:"search,notnull"`
-	Instructions string `bun:"instructions,notnull"`
-	Greeting     string `bun:"greeting,notnull"`
+	STT            string            `bun:"stt,notnull"`
+	TTS            string            `bun:"tts,notnull"`
+	Voice          string            `bun:"voice,notnull"`
+	LLM            string            `bun:"llm,notnull"`
+	Subagent       string            `bun:"subagent,notnull"`
+	Subagents      map[string]string `bun:"subagents,type:jsonb,notnull"`
+	VideoSource    string            `bun:"video_source,notnull"`
+	VideoMaxFrames int               `bun:"video_max_frames,notnull"`
+	Search         string            `bun:"search,notnull"`
+	Instructions   string            `bun:"instructions,notnull"`
+	Greeting       string            `bun:"greeting,notnull"`
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
@@ -368,6 +371,8 @@ const (
 // A skill belongs to one config rather than to the customer: two agents that both need
 // the same kind of work have one each, so editing either leaves the other alone.
 type Skill struct {
+	Subagent      string `bun:"subagent,notnull"`
+	CaptureVideo  bool   `bun:"capture_video,notnull"`
 	bun.BaseModel `bun:"table:skills,alias:sk"`
 
 	ID         string `bun:"id,pk"`

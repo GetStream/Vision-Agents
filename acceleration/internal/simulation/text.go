@@ -94,7 +94,7 @@ func (w *written) Opening() string { return w.opening }
 func (w *written) Say(ctx context.Context, text string) (store.SimulationLine, error) {
 	w.begin()
 
-	if err := w.created.Respond(ctx, text); err != nil {
+	if err := w.created.Respond(ctx, text, nil); err != nil {
 		return store.SimulationLine{}, err
 	}
 

@@ -21,6 +21,8 @@ class SkillRequest:
         name (str): How the config names it, which is unique among that config's own skills.
         description (str): The one line the fast model sees.
         instructions (str): The full prompt, which only the subagent sees.
+        subagent (str | Unset): Named worker binding; omitted uses default.
+        capture_video (bool | Unset): Capture task-scoped visual evidence before reasoning.
         deadline_ms (int | Unset): How long the work may run before it is abandoned. Zero is the default.
     """
 
@@ -28,6 +30,8 @@ class SkillRequest:
     name: str
     description: str
     instructions: str
+    subagent: str | Unset = UNSET
+    capture_video: bool | Unset = UNSET
     deadline_ms: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -39,6 +43,10 @@ class SkillRequest:
         description = self.description
 
         instructions = self.instructions
+
+        subagent = self.subagent
+
+        capture_video = self.capture_video
 
         deadline_ms = self.deadline_ms
 
@@ -52,6 +60,10 @@ class SkillRequest:
                 "instructions": instructions,
             }
         )
+        if subagent is not UNSET:
+            field_dict["subagent"] = subagent
+        if capture_video is not UNSET:
+            field_dict["capture_video"] = capture_video
         if deadline_ms is not UNSET:
             field_dict["deadline_ms"] = deadline_ms
 
@@ -68,6 +80,10 @@ class SkillRequest:
 
         instructions = d.pop("instructions")
 
+        subagent = d.pop("subagent", UNSET)
+
+        capture_video = d.pop("capture_video", UNSET)
+
         deadline_ms = d.pop("deadline_ms", UNSET)
 
         skill_request = cls(
@@ -75,6 +91,8 @@ class SkillRequest:
             name=name,
             description=description,
             instructions=instructions,
+            subagent=subagent,
+            capture_video=capture_video,
             deadline_ms=deadline_ms,
         )
 

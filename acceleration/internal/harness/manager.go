@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -38,6 +39,11 @@ const codeDeadline = 60 * time.Second
 // later.
 type manager struct {
 	subagent *llmrouter.Session
+	workers  map[string]*worker
+	capture  func(context.Context, CaptureRequest) ([]llm.ContentPart, error)
+	ctx      context.Context
+	cancel   context.CancelFunc
+	warming  sync.WaitGroup
 	// limit caps how much work may be in flight at once, because a model that asks for
 	// help on every sentence would otherwise open a session's worth of completions.
 	limit int
@@ -65,6 +71,12 @@ type manager struct {
 
 // task is one piece of delegated work in flight.
 type task struct {
+	ctx       context.Context
+	cancel    context.CancelFunc
+	worker    string
+	capture   bool
+	selection CaptureRequest
+	evidence  []string
 	id        string
 	skill     string
 	turnID    string
@@ -99,7 +111,9 @@ func newManager(
 	box sandbox.Sandbox,
 	logger *slog.Logger,
 ) *manager {
+	ctx, cancel := context.WithCancel(context.Background())
 	m := &manager{
+		ctx: ctx, cancel: cancel, workers: map[string]*worker{},
 		subagent: subagent,
 		limit:    limit,
 		box:      box,
@@ -107,6 +121,11 @@ func newManager(
 		results:  emit.New[Result](resultBuffer),
 		running:  map[string]*task{},
 		bySkill:  map[string]string{},
+	}
+	if subagent != nil {
+		ready := make(chan struct{})
+		close(ready)
+		m.workers["default"] = &worker{ready: ready, session: subagent}
 	}
 	return m
 }
@@ -128,6 +147,14 @@ func (m *manager) Create(
 		m.mu.Unlock()
 		return "", fmt.Errorf("harness: the conversation has ended")
 	}
+	binding := skill.Subagent
+	if binding == "" {
+		binding = "default"
+	}
+	if _, exists := m.workers[binding]; !exists {
+		m.mu.Unlock()
+		return "", fmt.Errorf("harness: no worker called %q", binding)
+	}
 	var superseded string
 	if existing, ok := m.bySkill[skill.Name]; ok && m.cancelLocked(existing, ReasonSuperseded) {
 		superseded = existing
@@ -139,7 +166,9 @@ func (m *manager) Create(
 	}
 
 	messages := append(append([]llm.Message(nil), history...), llm.Message{Role: llm.User, Content: prompt})
+	ctx, cancel := context.WithCancel(m.ctx)
 	created := &task{
+		ctx: ctx, cancel: cancel, worker: binding, capture: skill.CaptureVideo,
 		id:           fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), m.sequence.Add(1)),
 		skill:        skill.Name,
 		turnID:       turnID,
@@ -149,38 +178,72 @@ func (m *manager) Create(
 		instructions: skill.Instructions,
 		messages:     messages,
 	}
+	for _, message := range messages {
+		if message.HasImage() {
+			for _, part := range message.Parts {
+				if part.Text != "" {
+					created.evidence = append(created.evidence, part.Text)
+				}
+			}
+		}
+	}
+	created.selection = CaptureRequest{TaskID: created.id, At: created.startedAt, Source: skill.VideoSource, Frames: skill.VideoFrames}
 	created.deadline = time.AfterFunc(skill.Deadline, func() {
 		m.Cancel(created.id, ReasonDeadline)
 	})
 	m.running[created.id] = created
 	m.bySkill[skill.Name] = created.id
+	m.drainers.Add(1)
 	m.mu.Unlock()
 
 	m.abandon(superseded)
 
-	stream, err := m.ask(created.id, skill.Instructions, messages)
-	if err != nil {
-		m.forget(created.id)
-		return "", fmt.Errorf("harness: delegate %s: %w", skill.Name, err)
-	}
-	m.hold(created, stream)
-
-	m.drainers.Add(1)
-	go m.drain(created, stream)
+	go m.start(created)
 	return created.id, nil
 }
 
-// ask puts one question to the subagent.
-//
-// The context is the process rather than the call: a task outlives the turn that asked for
-// it by design, and what ends one early is its own deadline, a cancellation, or the session
-// being closed underneath it.
-func (m *manager) ask(id, instructions string, messages []llm.Message) (*llm.Stream, error) {
-	return m.subagent.Create(context.Background(), llm.ResponseParams{
-		ID:           id,
-		Instructions: instructions,
-		Input:        messages,
-		Tools:        m.tools(),
+func (m *manager) start(created *task) {
+	if created.capture && !llm.HasImage(created.messages) {
+		if m.capture == nil {
+			m.report(created, Result{State: Failed, Err: fmt.Errorf("harness: no video source")})
+			m.drainers.Done()
+			return
+		}
+		parts, err := m.capture(created.ctx, created.selection)
+		if err != nil {
+			m.report(created, Result{State: Failed, Err: err})
+			m.drainers.Done()
+			return
+		}
+		if !llm.HasImage([]llm.Message{{Parts: parts}}) {
+			m.report(created, Result{State: Done, Question: llm.TextOf(parts)})
+			m.drainers.Done()
+			return
+		}
+		for _, part := range parts {
+			if part.Text != "" {
+				created.evidence = append(created.evidence, part.Text)
+			}
+		}
+		created.messages = append(created.messages, llm.Message{Role: llm.User, Parts: parts})
+	}
+	stream, err := m.ask(created, created.messages)
+	if err != nil {
+		m.report(created, Result{State: Failed, Err: err})
+		m.drainers.Done()
+		return
+	}
+	m.hold(created, stream)
+	m.drain(created, stream)
+}
+
+func (m *manager) ask(running *task, messages []llm.Message) (*llm.Stream, error) {
+	model, err := m.model(running.ctx, running.worker)
+	if err != nil {
+		return nil, err
+	}
+	return model.Create(running.ctx, llm.ResponseParams{
+		ID: running.id, Instructions: running.instructions, Input: messages, Tools: m.tools(),
 	})
 }
 
@@ -305,15 +368,17 @@ func (m *manager) Results() <-chan Result { return m.results.Events() }
 func (m *manager) Close() error {
 	var err error
 	m.closeOnce.Do(func() {
-		m.CancelAll(ReasonClosed)
-
 		m.mu.Lock()
 		m.closed = true
 		m.mu.Unlock()
-
-		// Closing the session abandons whatever the provider is still generating, which
-		// is what lets every drainer reach the end of its stream and settle its task.
-		err = m.subagent.Close()
+		m.CancelAll(ReasonClosed)
+		m.cancel()
+		m.warming.Wait()
+		for _, w := range m.workers {
+			if w.session != nil {
+				err = errors.Join(err, w.session.Close())
+			}
+		}
 		m.drainers.Wait()
 		m.results.Close()
 	})
@@ -328,6 +393,7 @@ func (m *manager) cancelLocked(taskID, reason string) bool {
 		return false
 	}
 	running.reason = reason
+	running.cancel()
 	running.deadline.Stop()
 	// The skill is free again the moment its task is abandoned, so the next request for
 	// it is not mistaken for a supersession of one nobody is waiting on.
@@ -422,20 +488,21 @@ func (m *manager) advance(running *task, response llm.Response) (*llm.Stream, bo
 		m.mu.Unlock()
 		return m.resume(running, response)
 	}
+	reason, failure := running.reason, running.failure
 	m.mu.Unlock()
 
 	var result Result
 	switch {
-	case running.reason != "":
+	case reason != "":
 		result.State = Cancelled
-		result.Reason = running.reason
+		result.Reason = reason
 	case response.Status == llm.StatusCancelled:
 		// Nothing named this task, so the whole session was stopped.
 		result.State = Cancelled
 		result.Reason = ReasonClosed
-	case running.failure != nil:
+	case failure != nil:
 		result.State = Failed
-		result.Err = running.failure
+		result.Err = failure
 	default:
 		result.State = Done
 		result.Text, result.Question = answer(response.OutputText)
@@ -449,12 +516,22 @@ func (m *manager) advance(running *task, response llm.Response) (*llm.Stream, bo
 func (m *manager) report(finished *task, result Result) {
 	m.mu.Lock()
 	finished.deadline.Stop()
+	finished.cancel()
+	if finished.reason != "" {
+		result.State = Cancelled
+		result.Reason = finished.reason
+		result.Err = nil
+		result.Text = ""
+		result.Question = ""
+	}
 	delete(m.running, finished.id)
 	if m.bySkill[finished.skill] == finished.id {
 		delete(m.bySkill, finished.skill)
 	}
 	m.mu.Unlock()
 
+	result.Worker = finished.worker
+	result.Evidence = finished.evidence
 	result.TaskID = finished.id
 	result.Skill = finished.skill
 	result.ElapsedMs = float64(time.Since(finished.startedAt).Microseconds()) / 1000
@@ -467,7 +544,7 @@ func (m *manager) report(finished *task, result Result) {
 // The deadline is not restarted: running code is part of the work the task was given,
 // not licence to take longer over it.
 func (m *manager) resume(running *task, response llm.Response) (*llm.Stream, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), codeDeadline)
+	ctx, cancel := context.WithTimeout(running.ctx, codeDeadline)
 	defer cancel()
 
 	messages := append(running.messages, llm.Message{
@@ -485,7 +562,6 @@ func (m *manager) resume(running *task, response llm.Response) (*llm.Stream, boo
 
 	m.mu.Lock()
 	running.messages = messages
-	instructions := running.instructions
 	abandoned := running.reason
 	closed := m.closed
 	m.mu.Unlock()
@@ -501,7 +577,7 @@ func (m *manager) resume(running *task, response llm.Response) (*llm.Stream, boo
 		return nil, false
 	}
 
-	stream, err := m.ask(running.id, instructions, messages)
+	stream, err := m.ask(running, messages)
 	if err != nil {
 		m.report(running, Result{State: Failed,
 			Err: fmt.Errorf("harness: resume %s: %w", running.skill, err)})

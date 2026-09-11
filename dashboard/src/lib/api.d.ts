@@ -1232,6 +1232,8 @@ export interface paths {
          *     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
          *     Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
          *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`, `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be answered: everything else is a report.
+         *     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.
+         *     `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation receives the question and later the findings, without raw images. Video capture uses task-correlated `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically to conversational turns.
          */
         get: operations["watchSession"];
         put?: never;
@@ -1253,7 +1255,7 @@ export interface paths {
          * Route one modality over a socket, for a pipeline running elsewhere
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does, offered a piece at a time: a caller running its own pipeline sends audio or text and gets transcripts, audio or completions back, and the request is failed over and billed exactly as it would be inside a session.
          *     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to take the options from, or the options outright; naming both overrides that config field by field. What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice, `LlmOptions` for a model - plus `agent_id` and `call_id` to attribute the work to a conversation and `tags` to bill it.
-         *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off. All three report failures as `error` frames and end with `closed`.
+         *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off. All three report failures as `error` frames and end with `closed`.
          *     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held open between them. Memory and phone are recorded rather than routed, so they are not served either.
          */
         get: operations["streamModality"];
@@ -1429,6 +1431,10 @@ export interface components {
             name: string;
             /** @description The one line the fast model sees. */
             description: string;
+            /** @description Named worker binding; omitted uses default. */
+            subagent?: string;
+            /** @description Capture task-scoped visual evidence before reasoning. */
+            capture_video?: boolean;
             /** @description The full prompt, which only the subagent sees. */
             instructions: string;
             /**
@@ -1479,6 +1485,11 @@ export interface components {
             voice?: string;
             /** @description The model holding the conversation. */
             llm?: string;
+            video?: components["schemas"]["SessionVideo"];
+            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
+            subagents?: {
+                [key: string]: string;
+            };
             /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
             subagent?: string;
             /** @description What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way. */
@@ -1509,6 +1520,11 @@ export interface components {
             tts?: string;
             voice?: string;
             llm?: string;
+            video?: components["schemas"]["SessionVideo"];
+            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
+            subagents?: {
+                [key: string]: string;
+            };
             subagent?: string;
             search?: string;
             instructions?: string;
@@ -2002,6 +2018,11 @@ export interface components {
             tts?: string;
             voice?: string;
             llm?: string;
+            video?: components["schemas"]["SessionVideo"];
+            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
+            subagents?: {
+                [key: string]: string;
+            };
             subagent?: string;
             search?: string;
             greeting?: string;
@@ -2085,6 +2106,10 @@ export interface components {
             name: string;
             /** @description The one line the fast model sees. */
             description: string;
+            /** @description Named worker binding; omitted uses default. */
+            subagent?: string;
+            /** @description Capture task-scoped visual evidence before reasoning. */
+            capture_video?: boolean;
             /** @description The full prompt, which only the subagent sees. */
             instructions: string;
             /**
@@ -2098,6 +2123,10 @@ export interface components {
             config_id: string;
             name: string;
             description: string;
+            /** @description Named worker binding; omitted uses default. */
+            subagent?: string;
+            /** @description Capture task-scoped visual evidence before reasoning. */
+            capture_video?: boolean;
             instructions: string;
             /** Format: int64 */
             deadline_ms?: number;
@@ -2523,6 +2552,10 @@ export interface components {
             stt?: string;
             /** @description Omit it and the config decides, or en-low-latency when there is no config. */
             tts?: string;
+            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
+            subagents?: {
+                [key: string]: string;
+            };
             /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
             subagent?: string;
             /** @description Omit it and the config decides, or search-fast when there is no config. */
@@ -2562,6 +2595,44 @@ export interface components {
             };
             memory?: components["schemas"]["SessionMemory"];
             phone?: components["schemas"]["SessionPhone"];
+            video?: components["schemas"]["SessionVideo"];
+        };
+        SessionVideo: {
+            /** @description Track or processor source. Omitted requires one unambiguous available source. */
+            source?: string;
+            /** @description Number of recent frames captured for a visual task. Default one. */
+            max_frames?: number;
+        };
+        ImageSource: {
+            /** @description Absolute HTTP(S) URL or base64 image data URI. */
+            url: string;
+            /** @enum {string} */
+            detail?: "auto" | "low" | "high";
+        };
+        TextContentPart: {
+            /** @enum {string} */
+            type: "text";
+            text: string;
+        };
+        ImageContentPart: {
+            /** @enum {string} */
+            type: "image_url";
+            image_url: components["schemas"]["ImageSource"];
+        };
+        ContentPart: components["schemas"]["TextContentPart"] | components["schemas"]["ImageContentPart"];
+        MessageContent: string | components["schemas"]["ContentPart"][];
+        SessionRespondCommand: {
+            /** @enum {string} */
+            type: "respond";
+            text: string;
+            images?: components["schemas"]["ImageSource"][];
+        };
+        ToolResultCommand: {
+            /** @enum {string} */
+            type: "tool_result";
+            tool_call_id: string;
+            output?: components["schemas"]["MessageContent"];
+            error?: string;
         };
         Session: {
             /** @description Stream Chat CID to resume; returned for persistent text sessions. */
@@ -2589,6 +2660,11 @@ export interface components {
             stt?: string;
             /** @description The provider and model delegated work runs on. */
             subagent?: string;
+            /** @description Configured worker targets, prepared asynchronously. */
+            subagents?: {
+                [key: string]: string;
+            };
+            video?: components["schemas"]["SessionVideo"];
             instructions?: string;
         };
         SayRequest: {

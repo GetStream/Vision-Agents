@@ -206,6 +206,42 @@ func (e HealthStatusStatus) Valid() bool {
 	}
 }
 
+// Defines values for ImageContentPartType.
+const (
+	ImageUrl ImageContentPartType = "image_url"
+)
+
+// Valid indicates whether the value is a known member of the ImageContentPartType enum.
+func (e ImageContentPartType) Valid() bool {
+	switch e {
+	case ImageUrl:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImageSourceDetail.
+const (
+	ImageSourceDetailAuto ImageSourceDetail = "auto"
+	ImageSourceDetailHigh ImageSourceDetail = "high"
+	ImageSourceDetailLow  ImageSourceDetail = "low"
+)
+
+// Valid indicates whether the value is a known member of the ImageSourceDetail enum.
+func (e ImageSourceDetail) Valid() bool {
+	switch e {
+	case ImageSourceDetailAuto:
+		return true
+	case ImageSourceDetailHigh:
+		return true
+	case ImageSourceDetailLow:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for KnowledgeUrlState.
 const (
 	KnowledgeUrlStateFailed  KnowledgeUrlState = "failed"
@@ -515,6 +551,21 @@ func (e SearchOptionsContents) Valid() bool {
 	}
 }
 
+// Defines values for SessionRespondCommandType.
+const (
+	Respond SessionRespondCommandType = "respond"
+)
+
+// Valid indicates whether the value is a known member of the SessionRespondCommandType enum.
+func (e SessionRespondCommandType) Valid() bool {
+	switch e {
+	case Respond:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionState.
 const (
 	Ended SessionState = "ended"
@@ -668,6 +719,21 @@ func (e SimulationRunState) Valid() bool {
 	}
 }
 
+// Defines values for TextContentPartType.
+const (
+	TextContentPartTypeText TextContentPartType = "text"
+)
+
+// Valid indicates whether the value is a known member of the TextContentPartType enum.
+func (e TextContentPartType) Valid() bool {
+	switch e {
+	case TextContentPartTypeText:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Tier.
 const (
 	HighQuality Tier = "high-quality"
@@ -680,6 +746,21 @@ func (e Tier) Valid() bool {
 	case HighQuality:
 		return true
 	case LowLatency:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ToolResultCommandType.
+const (
+	ToolResult ToolResultCommandType = "tool_result"
+)
+
+// Valid indicates whether the value is a known member of the ToolResultCommandType enum.
+func (e ToolResultCommandType) Valid() bool {
+	switch e {
+	case ToolResult:
 		return true
 	default:
 		return false
@@ -798,11 +879,15 @@ type AgentConfig struct {
 	Stt            *string   `json:"stt,omitempty"`
 	Subagent       *string   `json:"subagent,omitempty"`
 
+	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
+	Subagents *map[string]string `json:"subagents,omitempty"`
+
 	// SyncHash Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
 	SyncHash  *string            `json:"sync_hash,omitempty"`
 	Tags      *map[string]string `json:"tags,omitempty"`
 	Tts       *string            `json:"tts,omitempty"`
 	UpdatedAt time.Time          `json:"updated_at"`
+	Video     *SessionVideo      `json:"video,omitempty"`
 	Voice     *string            `json:"voice,omitempty"`
 }
 
@@ -847,9 +932,13 @@ type AgentConfigRequest struct {
 	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
 	Subagent *string `json:"subagent,omitempty"`
 
+	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
+	Subagents *map[string]string `json:"subagents,omitempty"`
+
 	// Tags Cost labels, carried onto every request a session using it makes.
-	Tags *map[string]string `json:"tags,omitempty"`
-	Tts  *string            `json:"tts,omitempty"`
+	Tags  *map[string]string `json:"tags,omitempty"`
+	Tts   *string            `json:"tts,omitempty"`
+	Video *SessionVideo      `json:"video,omitempty"`
 
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`
@@ -1126,6 +1215,11 @@ type ContactsRequest struct {
 	} `json:"contacts"`
 }
 
+// ContentPart defines model for ContentPart.
+type ContentPart struct {
+	union json.RawMessage
+}
+
 // CreateSessionRequest defines model for CreateSessionRequest.
 type CreateSessionRequest struct {
 	// AgentId Keys transcripts and statistics. Empty means the call id.
@@ -1197,6 +1291,9 @@ type CreateSessionRequest struct {
 	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
 	Subagent *string `json:"subagent,omitempty"`
 
+	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
+	Subagents *map[string]string `json:"subagents,omitempty"`
+
 	// Tags Cost labels, carried onto every request the session makes.
 	Tags *map[string]string `json:"tags,omitempty"`
 
@@ -1214,8 +1311,9 @@ type CreateSessionRequest struct {
 	Tts *string `json:"tts,omitempty"`
 
 	// UserId Who the agent joins the call as.
-	UserId   *string `json:"user_id,omitempty"`
-	UserName *string `json:"user_name,omitempty"`
+	UserId   *string       `json:"user_id,omitempty"`
+	UserName *string       `json:"user_name,omitempty"`
+	Video    *SessionVideo `json:"video,omitempty"`
 
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`
@@ -1258,6 +1356,26 @@ type HealthStatus struct {
 
 // HealthStatusStatus defines model for HealthStatus.Status.
 type HealthStatusStatus string
+
+// ImageContentPart defines model for ImageContentPart.
+type ImageContentPart struct {
+	ImageUrl ImageSource          `json:"image_url"`
+	Type     ImageContentPartType `json:"type"`
+}
+
+// ImageContentPartType defines model for ImageContentPart.Type.
+type ImageContentPartType string
+
+// ImageSource defines model for ImageSource.
+type ImageSource struct {
+	Detail *ImageSourceDetail `json:"detail,omitempty"`
+
+	// Url Absolute HTTP(S) URL or base64 image data URI.
+	Url string `json:"url"`
+}
+
+// ImageSourceDetail defines model for ImageSource.Detail.
+type ImageSourceDetail string
 
 // IngestKnowledgeRequest defines model for IngestKnowledgeRequest.
 type IngestKnowledgeRequest struct {
@@ -1381,6 +1499,17 @@ type LlmOptionsReasoningEffort string
 
 // LlmOptionsVerbosity defines model for LlmOptions.Verbosity.
 type LlmOptionsVerbosity string
+
+// MessageContent defines model for MessageContent.
+type MessageContent struct {
+	union json.RawMessage
+}
+
+// MessageContent0 defines model for MessageContent.0.
+type MessageContent0 = string
+
+// MessageContent1 defines model for MessageContent.1.
+type MessageContent1 = []ContentPart
 
 // Modality What kind of work was done. The first four are routed across providers. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 //
@@ -1739,12 +1868,16 @@ type Session struct {
 	// Subagent The provider and model delegated work runs on.
 	Subagent *string `json:"subagent,omitempty"`
 
+	// Subagents Configured worker targets, prepared asynchronously.
+	Subagents *map[string]string `json:"subagents,omitempty"`
+
 	// Text The conversation is held in writing rather than on a call.
 	Text *bool `json:"text,omitempty"`
 
 	// Tts The provider and model speaking.
-	Tts    *string `json:"tts,omitempty"`
-	UserId string  `json:"user_id"`
+	Tts    *string       `json:"tts,omitempty"`
+	UserId string        `json:"user_id"`
+	Video  *SessionVideo `json:"video,omitempty"`
 }
 
 // SessionMemory Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
@@ -1771,8 +1904,21 @@ type SessionPhone struct {
 	VendorCallId *string `json:"vendor_call_id,omitempty"`
 }
 
+// SessionRespondCommand defines model for SessionRespondCommand.
+type SessionRespondCommand struct {
+	Images *[]ImageSource            `json:"images,omitempty"`
+	Text   string                    `json:"text"`
+	Type   SessionRespondCommandType `json:"type"`
+}
+
+// SessionRespondCommandType defines model for SessionRespondCommand.Type.
+type SessionRespondCommandType string
+
 // SessionSkill A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under.
 type SessionSkill struct {
+	// CaptureVideo Capture task-scoped visual evidence before reasoning.
+	CaptureVideo *bool `json:"capture_video,omitempty"`
+
 	// DeadlineMs How long the work may run before it is abandoned. Zero is the default.
 	DeadlineMs *int64 `json:"deadline_ms,omitempty"`
 
@@ -1782,6 +1928,9 @@ type SessionSkill struct {
 	// Instructions The full prompt, which only the subagent sees.
 	Instructions string `json:"instructions"`
 	Name         string `json:"name"`
+
+	// Subagent Named worker binding; omitted uses default.
+	Subagent *string `json:"subagent,omitempty"`
 }
 
 // SessionState Whether the agent is still in the call.
@@ -1795,6 +1944,15 @@ type SessionTool struct {
 
 	// Parameters A JSON Schema object describing the arguments.
 	Parameters *map[string]interface{} `json:"parameters,omitempty"`
+}
+
+// SessionVideo defines model for SessionVideo.
+type SessionVideo struct {
+	// MaxFrames Number of recent frames captured for a visual task. Default one.
+	MaxFrames *int `json:"max_frames,omitempty"`
+
+	// Source Track or processor source. Omitted requires one unambiguous available source.
+	Source *string `json:"source,omitempty"`
 }
 
 // Simulation defines model for Simulation.
@@ -1946,6 +2104,8 @@ type SimulationRunState string
 
 // Skill defines model for Skill.
 type Skill struct {
+	// CaptureVideo Capture task-scoped visual evidence before reasoning.
+	CaptureVideo *bool     `json:"capture_video,omitempty"`
 	ConfigId     string    `json:"config_id"`
 	CreatedAt    time.Time `json:"created_at"`
 	DeadlineMs   *int64    `json:"deadline_ms,omitempty"`
@@ -1953,11 +2113,17 @@ type Skill struct {
 	Id           string    `json:"id"`
 	Instructions string    `json:"instructions"`
 	Name         string    `json:"name"`
-	UpdatedAt    time.Time `json:"updated_at"`
+
+	// Subagent Named worker binding; omitted uses default.
+	Subagent  *string   `json:"subagent,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // SkillRequest defines model for SkillRequest.
 type SkillRequest struct {
+	// CaptureVideo Capture task-scoped visual evidence before reasoning.
+	CaptureVideo *bool `json:"capture_video,omitempty"`
+
 	// ConfigId The agent config this skill belongs to. A skill is not shared: two agents that both need one have one each, so editing either leaves the other alone.
 	ConfigId string `json:"config_id"`
 
@@ -1972,6 +2138,9 @@ type SkillRequest struct {
 
 	// Name How the config names it, which is unique among that config's own skills.
 	Name string `json:"name"`
+
+	// Subagent Named worker binding; omitted uses default.
+	Subagent *string `json:"subagent,omitempty"`
 }
 
 // SkippedVendor defines model for SkippedVendor.
@@ -2173,14 +2342,18 @@ type SyncAgentRequest struct {
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
 	// SandboxProfile Backend-managed research profile, scoped to this customer and agent.
-	SandboxProfile *string            `json:"sandbox_profile,omitempty"`
-	Search         *string            `json:"search,omitempty"`
-	Skills         *[]SkillRequest    `json:"skills,omitempty"`
-	Stt            *string            `json:"stt,omitempty"`
-	Subagent       *string            `json:"subagent,omitempty"`
-	Tags           *map[string]string `json:"tags,omitempty"`
-	Tts            *string            `json:"tts,omitempty"`
-	Voice          *string            `json:"voice,omitempty"`
+	SandboxProfile *string         `json:"sandbox_profile,omitempty"`
+	Search         *string         `json:"search,omitempty"`
+	Skills         *[]SkillRequest `json:"skills,omitempty"`
+	Stt            *string         `json:"stt,omitempty"`
+	Subagent       *string         `json:"subagent,omitempty"`
+
+	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
+	Subagents *map[string]string `json:"subagents,omitempty"`
+	Tags      *map[string]string `json:"tags,omitempty"`
+	Tts       *string            `json:"tts,omitempty"`
+	Video     *SessionVideo      `json:"video,omitempty"`
+	Voice     *string            `json:"voice,omitempty"`
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -2215,6 +2388,15 @@ type TagStatsBucket struct {
 	Uptime   *float64 `json:"uptime,omitempty"`
 }
 
+// TextContentPart defines model for TextContentPart.
+type TextContentPart struct {
+	Text string              `json:"text"`
+	Type TextContentPartType `json:"type"`
+}
+
+// TextContentPartType defines model for TextContentPart.Type.
+type TextContentPartType string
+
 // Tier What the model optimises for.
 type Tier string
 
@@ -2237,6 +2419,17 @@ type TimelineEntry struct {
 	StartedAt time.Time `json:"started_at"`
 	TurnId    string    `json:"turn_id"`
 }
+
+// ToolResultCommand defines model for ToolResultCommand.
+type ToolResultCommand struct {
+	Error      *string               `json:"error,omitempty"`
+	Output     *MessageContent       `json:"output,omitempty"`
+	ToolCallId string                `json:"tool_call_id"`
+	Type       ToolResultCommandType `json:"type"`
+}
+
+// ToolResultCommandType defines model for ToolResultCommand.Type.
+type ToolResultCommandType string
 
 // TranscriptEntity Something the recording named, for the providers that pick them out.
 type TranscriptEntity struct {
@@ -2758,6 +2951,130 @@ type TranscribeRecordingJSONRequestBody = TranscriptionRequest
 
 // RecordSpeechJSONRequestBody defines body for RecordSpeech for application/json ContentType.
 type RecordSpeechJSONRequestBody = SpeechRequest
+
+// AsTextContentPart returns the union data inside the ContentPart as a TextContentPart
+func (t ContentPart) AsTextContentPart() (TextContentPart, error) {
+	var body TextContentPart
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromTextContentPart overwrites any union data inside the ContentPart as the provided TextContentPart
+func (t *ContentPart) FromTextContentPart(v TextContentPart) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeTextContentPart performs a merge with any union data inside the ContentPart, using the provided TextContentPart
+func (t *ContentPart) MergeTextContentPart(v TextContentPart) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsImageContentPart returns the union data inside the ContentPart as a ImageContentPart
+func (t ContentPart) AsImageContentPart() (ImageContentPart, error) {
+	var body ImageContentPart
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromImageContentPart overwrites any union data inside the ContentPart as the provided ImageContentPart
+func (t *ContentPart) FromImageContentPart(v ImageContentPart) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeImageContentPart performs a merge with any union data inside the ContentPart, using the provided ImageContentPart
+func (t *ContentPart) MergeImageContentPart(v ImageContentPart) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ContentPart) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ContentPart) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsMessageContent0 returns the union data inside the MessageContent as a MessageContent0
+func (t MessageContent) AsMessageContent0() (MessageContent0, error) {
+	var body MessageContent0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMessageContent0 overwrites any union data inside the MessageContent as the provided MessageContent0
+func (t *MessageContent) FromMessageContent0(v MessageContent0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMessageContent0 performs a merge with any union data inside the MessageContent, using the provided MessageContent0
+func (t *MessageContent) MergeMessageContent0(v MessageContent0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsMessageContent1 returns the union data inside the MessageContent as a MessageContent1
+func (t MessageContent) AsMessageContent1() (MessageContent1, error) {
+	var body MessageContent1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMessageContent1 overwrites any union data inside the MessageContent as the provided MessageContent1
+func (t *MessageContent) FromMessageContent1(v MessageContent1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMessageContent1 performs a merge with any union data inside the MessageContent, using the provided MessageContent1
+func (t *MessageContent) MergeMessageContent1(v MessageContent1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t MessageContent) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *MessageContent) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error

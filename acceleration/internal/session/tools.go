@@ -39,7 +39,7 @@ type bridge struct {
 
 // toolResult is what the caller said happened.
 type toolResult struct {
-	output  string
+	parts   []llm.ContentPart
 	failure string
 }
 
@@ -55,17 +55,17 @@ func newBridge(timeout time.Duration, ask func(ToolCall) error) *bridge {
 }
 
 // Run carries one tool call out to the caller and waits for the answer.
-func (b *bridge) Run(ctx context.Context, call llm.ToolCall) (string, error) {
+func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
 	answer := make(chan toolResult, 1)
 
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
-		return "", errors.New("session: the call has ended")
+		return nil, errors.New("session: the call has ended")
 	}
 	if _, duplicate := b.pending[call.ID]; duplicate {
 		b.mu.Unlock()
-		return "", fmt.Errorf("session: %s was already asked for", call.ID)
+		return nil, fmt.Errorf("session: %s was already asked for", call.ID)
 	}
 	b.pending[call.ID] = answer
 	b.mu.Unlock()
@@ -77,7 +77,7 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) (string, error) {
 	}()
 
 	if err := b.ask(ToolCall{ID: call.ID, Name: call.Name, Arguments: call.Arguments}); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	deadline, cancel := context.WithTimeout(ctx, b.timeout)
@@ -86,11 +86,12 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) (string, error) {
 	select {
 	case result := <-answer:
 		if result.failure != "" {
-			return "", errors.New(result.failure)
+			return nil, errors.New(result.failure)
 		}
-		return result.output, nil
+		return result.parts, nil
 	case <-deadline.Done():
-		return "", fmt.Errorf("session: %s did not answer within %s", call.Name, b.timeout)
+		_ = b.ask(ToolCall{ID: call.ID, Name: call.Name, Cancel: true})
+		return nil, fmt.Errorf("session: %s did not answer within %s", call.Name, b.timeout)
 	}
 }
 
@@ -98,7 +99,7 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) (string, error) {
 //
 // An answer for a call nobody is waiting on is dropped rather than an error, because the
 // commonest reason for one is a caller answering a tool that has already timed out.
-func (b *bridge) Resolve(id, output, failure string) bool {
+func (b *bridge) Resolve(id string, parts []llm.ContentPart, failure string) bool {
 	b.mu.Lock()
 	answer, waiting := b.pending[id]
 	b.mu.Unlock()
@@ -107,7 +108,7 @@ func (b *bridge) Resolve(id, output, failure string) bool {
 	}
 
 	select {
-	case answer <- toolResult{output: output, failure: failure}:
+	case answer <- toolResult{parts: parts, failure: failure}:
 		return true
 	default:
 		return false

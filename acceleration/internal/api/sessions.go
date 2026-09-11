@@ -43,6 +43,9 @@ func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequest
 		config = &found
 	}
 
+	if err := workerConflict(request.Body.Subagent, request.Body.Subagents); err != nil {
+		return CreateSession400JSONResponse{badRequest(err.Error())}, nil
+	}
 	spec := specOf(*request.Body, customerID, config)
 	created, err := s.sessions.Create(ctx, spec)
 	if err != nil {
@@ -138,7 +141,7 @@ func (s *Server) RespondSession(ctx context.Context, request RespondSessionReque
 		return RespondSession400JSONResponse{badRequest("there is nothing to answer")}, nil
 	}
 
-	if err := found.Respond(ctx, request.Body.Text); err != nil {
+	if err := found.Respond(ctx, request.Body.Text, nil); err != nil {
 		return RespondSession400JSONResponse{badRequest(err.Error())}, nil
 	}
 	return RespondSession204Response{}, nil
@@ -237,6 +240,17 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	spec.STTTarget = override(spec.STTTarget, request.Stt)
 	spec.TTSTarget = override(spec.TTSTarget, request.Tts)
 	spec.SubagentTarget = override(spec.SubagentTarget, request.Subagent)
+	if request.Subagent != nil && spec.Subagents != nil {
+		delete(spec.Subagents, "default")
+	}
+	if request.Subagents != nil {
+		if spec.Subagents == nil {
+			spec.Subagents = map[string]string{}
+		}
+		for name, target := range *request.Subagents {
+			spec.Subagents[name] = target
+		}
+	}
 	spec.SearchTarget = override(spec.SearchTarget, request.Search)
 	spec.Voice = override(spec.Voice, request.Voice)
 	spec.MaxTokens = override(spec.MaxTokens, request.MaxTokens)
@@ -282,11 +296,16 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 			VendorCallID: value(request.Phone.VendorCallId),
 		}
 	}
+	if request.Video != nil {
+		spec.VideoSource = override(spec.VideoSource, request.Video.Source)
+		spec.VideoMaxFrames = override(spec.VideoMaxFrames, request.Video.MaxFrames)
+	}
 	if request.Skills != nil {
 		skills := harness.Skills{Skills: make([]harness.Skill, 0, len(*request.Skills))}
 		for _, skill := range *request.Skills {
 			skills.Skills = append(skills.Skills, harness.Skill{
-				Name:         skill.Name,
+				Name:     skill.Name,
+				Subagent: value(skill.Subagent), CaptureVideo: value(skill.CaptureVideo),
 				Description:  skill.Description,
 				Instructions: skill.Instructions,
 				Deadline:     time.Duration(value(skill.DeadlineMs)) * time.Millisecond,
@@ -324,6 +343,10 @@ func sessionOf(found *session.Session) Session {
 		AgentId:   spec.AgentID,
 		State:     SessionState(found.State()),
 		CreatedAt: found.CreatedAt(),
+	}
+	rendered.Subagents = &spec.Subagents
+	if found.CapturesVideo() {
+		rendered.Video = &SessionVideo{Source: &spec.VideoSource, MaxFrames: &spec.VideoMaxFrames}
 	}
 	if spec.Text {
 		rendered.Text = &spec.Text

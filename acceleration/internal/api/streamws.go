@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -129,6 +131,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer connection.Close()
+	connection.SetReadLimit(maxSocketMessage)
 	out := &socket{connection: connection}
 
 	opening, err := readStart(connection)
@@ -401,7 +404,17 @@ func (s *Server) streamLLM(
 
 		switch command.Type {
 		case "respond":
-			stream, err := session.Create(ctx, command.params(held))
+			params, err := command.params(held)
+			if err != nil {
+				out.failed(err)
+				continue
+			}
+			if llm.HasImage(params.Input) && !session.Capabilities().Accepts(llm.ModalityImage) {
+				out.failed(fmt.Errorf("llm: %s does not accept %s input",
+					session.Model(), llm.ModalityImage))
+				continue
+			}
+			stream, err := session.Create(ctx, params)
 			if err != nil {
 				out.failed(err)
 				continue
@@ -464,8 +477,8 @@ type respond struct {
 
 	Instructions string `json:"instructions"`
 	Messages     []struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
 	} `json:"messages"`
 	Tools      []llm.Tool `json:"tools"`
 	ToolChoice string     `json:"tool_choice"`
@@ -486,13 +499,20 @@ type respond struct {
 
 // params turns the frame into a response to generate, with the socket's options behind
 // anything it did not name.
-func (r respond) params(held options.LLM) llm.ResponseParams {
+func (r respond) params(held options.LLM) (llm.ResponseParams, error) {
 	messages := make([]llm.Message, 0, len(r.Messages))
 	for _, message := range r.Messages {
-		messages = append(messages, llm.Message{
-			Role:    llm.Role(message.Role),
-			Content: message.Content,
-		})
+		text, parts, err := parseContent(message.Content)
+		if err != nil {
+			return llm.ResponseParams{}, err
+		}
+		item := llm.Message{Role: llm.Role(message.Role)}
+		if len(parts) > 0 {
+			item.Parts = parts
+		} else {
+			item.Content = text
+		}
+		messages = append(messages, item)
 	}
 
 	params := llm.ResponseParams{
@@ -517,7 +537,7 @@ func (r respond) params(held options.LLM) llm.ResponseParams {
 	if len(params.Metadata) == 0 {
 		params.Metadata = held.Metadata
 	}
-	return params
+	return params, nil
 }
 
 // fallback, firstSet and pick are what "the frame wins, then the socket's options, then

@@ -2,7 +2,9 @@
 
 from .agent_config import AgentConfig
 from .agent_config_request import AgentConfigRequest
+from .agent_config_request_subagents import AgentConfigRequestSubagents
 from .agent_config_request_tags import AgentConfigRequestTags
+from .agent_config_subagents import AgentConfigSubagents
 from .agent_config_tags import AgentConfigTags
 from .agent_mode import AgentMode
 from .attach_number_request import AttachNumberRequest
@@ -30,6 +32,7 @@ from .contact_state import ContactState
 from .contacts_request import ContactsRequest
 from .contacts_request_contacts_item import ContactsRequestContactsItem
 from .create_session_request import CreateSessionRequest
+from .create_session_request_subagents import CreateSessionRequestSubagents
 from .create_session_request_tags import CreateSessionRequestTags
 from .data_policy import DataPolicy
 from .decision_kind import DecisionKind
@@ -40,6 +43,10 @@ from .granularity import Granularity
 from .health_status import HealthStatus
 from .health_status_dependencies import HealthStatusDependencies
 from .health_status_status import HealthStatusStatus
+from .image_content_part import ImageContentPart
+from .image_content_part_type import ImageContentPartType
+from .image_source import ImageSource
+from .image_source_detail import ImageSourceDetail
 from .ingest_knowledge_request import IngestKnowledgeRequest
 from .ingested_knowledge import IngestedKnowledge
 from .instructions_request import InstructionsRequest
@@ -96,10 +103,14 @@ from .session import Session
 from .session_memory import SessionMemory
 from .session_memory_filter import SessionMemoryFilter
 from .session_phone import SessionPhone
+from .session_respond_command import SessionRespondCommand
+from .session_respond_command_type import SessionRespondCommandType
 from .session_skill import SessionSkill
 from .session_state import SessionState
+from .session_subagents import SessionSubagents
 from .session_tool import SessionTool
 from .session_tool_parameters import SessionToolParameters
+from .session_video import SessionVideo
 from .simulation import Simulation
 from .simulation_case import SimulationCase
 from .simulation_case_ended import SimulationCaseEnded
@@ -123,11 +134,16 @@ from .stats_bucket import StatsBucket
 from .stt_options import SttOptions
 from .stt_options_overwrites import SttOptionsOverwrites
 from .sync_agent_request import SyncAgentRequest
+from .sync_agent_request_subagents import SyncAgentRequestSubagents
 from .sync_agent_request_tags import SyncAgentRequestTags
 from .sync_agent_result import SyncAgentResult
 from .tag_stats_bucket import TagStatsBucket
+from .text_content_part import TextContentPart
+from .text_content_part_type import TextContentPartType
 from .tier import Tier
 from .timeline_entry import TimelineEntry
+from .tool_result_command import ToolResultCommand
+from .tool_result_command_type import ToolResultCommandType
 from .transcript_entity import TranscriptEntity
 from .transcript_format import TranscriptFormat
 from .transcript_message import TranscriptMessage
@@ -152,7 +168,9 @@ from .voice_sample_request import VoiceSampleRequest
 __all__ = (
     "AgentConfig",
     "AgentConfigRequest",
+    "AgentConfigRequestSubagents",
     "AgentConfigRequestTags",
+    "AgentConfigSubagents",
     "AgentConfigTags",
     "AgentMode",
     "AttachNumberRequest",
@@ -180,6 +198,7 @@ __all__ = (
     "ContactsRequest",
     "ContactsRequestContactsItem",
     "CreateSessionRequest",
+    "CreateSessionRequestSubagents",
     "CreateSessionRequestTags",
     "DataPolicy",
     "DecisionKind",
@@ -190,6 +209,10 @@ __all__ = (
     "HealthStatus",
     "HealthStatusDependencies",
     "HealthStatusStatus",
+    "ImageContentPart",
+    "ImageContentPartType",
+    "ImageSource",
+    "ImageSourceDetail",
     "IngestKnowledgeRequest",
     "IngestedKnowledge",
     "InstructionsRequest",
@@ -246,10 +269,14 @@ __all__ = (
     "SessionMemory",
     "SessionMemoryFilter",
     "SessionPhone",
+    "SessionRespondCommand",
+    "SessionRespondCommandType",
     "SessionSkill",
     "SessionState",
+    "SessionSubagents",
     "SessionTool",
     "SessionToolParameters",
+    "SessionVideo",
     "Simulation",
     "SimulationCase",
     "SimulationCaseEnded",
@@ -273,11 +300,16 @@ __all__ = (
     "SttOptions",
     "SttOptionsOverwrites",
     "SyncAgentRequest",
+    "SyncAgentRequestSubagents",
     "SyncAgentRequestTags",
     "SyncAgentResult",
     "TagStatsBucket",
+    "TextContentPart",
+    "TextContentPartType",
     "Tier",
     "TimelineEntry",
+    "ToolResultCommand",
+    "ToolResultCommandType",
     "TranscriptEntity",
     "TranscriptFormat",
     "TranscriptMessage",

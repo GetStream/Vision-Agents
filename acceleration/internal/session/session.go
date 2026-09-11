@@ -22,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
 // watcherBuffer is how many events may queue for one watcher before it starts losing them.
@@ -75,6 +76,7 @@ type Event any
 // ToolCall is the model asking for one of the caller's own tools. It is the only event a
 // watcher is obliged to answer: everything else is a report.
 type ToolCall struct {
+	Cancel bool
 	// ID is what a result must quote to answer this call.
 	ID string
 	// Name is which tool was asked for.
@@ -226,17 +228,26 @@ func (s *Session) Say(ctx context.Context, text string) error {
 }
 
 // Respond answers a piece of text through the model, as though a participant had said it.
-func (s *Session) Respond(ctx context.Context, text string) error {
+// Images attach to that turn as content parts.
+func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart) error {
 	if s.persisted != nil {
 		if err := s.persisted.Begin(text); err != nil {
 			return err
 		}
 	}
-	err := s.voiceAgent.SimpleResponse(ctx, text)
+	err := s.voiceAgent.RespondTo(ctx, text, images)
 	if err != nil && s.persisted != nil {
 		s.persisted.Cancel()
 	}
 	return err
+}
+
+// Report publishes a failure the watcher should see, without ending the session.
+func (s *Session) Report(err error, context string) {
+	if err == nil {
+		return
+	}
+	s.broadcast(agent.Error{Err: err, Context: context})
 }
 
 // Ask answers a piece of text in writing, without speaking any of it, and writes the answer
@@ -277,7 +288,12 @@ func (s *Session) SetInstructions(text string) {
 // ResolveTool hands a tool result back to the model waiting for it, reporting whether
 // anything was.
 func (s *Session) ResolveTool(id, output, failure string) bool {
-	return s.tools.Resolve(id, output, failure)
+	return s.ResolveToolParts(id, llm.TextParts(output), failure)
+}
+
+// ResolveToolParts is ResolveTool for a result that may carry images.
+func (s *Session) ResolveToolParts(id string, parts []llm.ContentPart, failure string) bool {
+	return s.tools.Resolve(id, parts, failure)
 }
 
 // Close leaves the call and releases everything the session opened. It is safe to call
@@ -421,6 +437,10 @@ func (s *Session) askTool(call ToolCall) error {
 // deployment cannot route is a refusal, but a deployment routing no thinking model should
 // still take calls: that agent answers everything itself, the way it goes without search.
 func (m *Manager) think(ctx context.Context, spec *Spec) {
+	if target, exists := spec.Subagents["default"]; exists {
+		spec.SubagentTarget = target
+		return
+	}
 	if spec.Text || spec.SubagentTarget != "" {
 		return
 	}
@@ -440,7 +460,7 @@ func (m *Manager) think(ctx context.Context, spec *Spec) {
 // Naming them is what an agent config does, so that editing what a skill means changes
 // every agent that uses it rather than every request that mentions it.
 func (m *Manager) skills(ctx context.Context, spec Spec) (harness.Skills, error) {
-	if spec.SubagentTarget == "" {
+	if spec.SubagentTarget == "" && len(spec.Subagents) == 0 {
 		return harness.Skills{}, nil
 	}
 	if spec.Skills != nil {
@@ -452,7 +472,25 @@ func (m *Manager) skills(ctx context.Context, spec Spec) (harness.Skills, error)
 		return declared, nil
 	}
 	if len(spec.SkillNames) == 0 {
-		return harness.DefaultSkills()
+		builtins, err := harness.DefaultSkills()
+		if err != nil {
+			return harness.Skills{}, err
+		}
+		var available []harness.Skill
+		for _, skill := range builtins.Skills {
+			binding := skill.Subagent
+			if binding == "" {
+				binding = "default"
+			}
+			target, declared := spec.Subagents[binding]
+			if !declared && binding == "default" {
+				target = spec.SubagentTarget
+			}
+			if target != "" {
+				available = append(available, skill)
+			}
+		}
+		return harness.Skills{Skills: available}, nil
 	}
 	return m.namedSkills(ctx, spec.CustomerID, spec.ConfigID, spec.SkillNames)
 }
@@ -481,6 +519,7 @@ func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, 
 				Description:  skill.Description,
 				Instructions: skill.Instructions,
 				Deadline:     time.Duration(skill.DeadlineMs) * time.Millisecond,
+				Subagent:     skill.Subagent, CaptureVideo: skill.CaptureVideo,
 			}
 		}
 	}
@@ -501,4 +540,14 @@ func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, 
 	}
 	resolved.Normalize()
 	return resolved, nil
+}
+
+// CapturesVideo reports whether a configured skill needs the local video worker.
+func (s *Session) CapturesVideo() bool {
+	for _, skill := range s.skills.Skills {
+		if skill.CaptureVideo {
+			return true
+		}
+	}
+	return false
 }

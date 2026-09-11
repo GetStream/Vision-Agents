@@ -82,7 +82,10 @@ def sync_detailed(
     samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
     for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
     `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
-    tokens and how long the caller waited for the first of them. An `interrupt` frame naming
+    tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an
+    array of parts `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm`
+    to select image-capable models. A model that does not accept images is refused with an `error` frame
+    naming the model and the modality, before anything is billed. An `interrupt` frame naming
     `response_ids` abandons responses still being generated, which still settle and are still billed for
     what they produced before being cut off. All three report failures as `error` frames and end with
     `closed`.
@@ -138,7 +141,10 @@ def sync(
     samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
     for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
     `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
-    tokens and how long the caller waited for the first of them. An `interrupt` frame naming
+    tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an
+    array of parts `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm`
+    to select image-capable models. A model that does not accept images is refused with an `error` frame
+    naming the model and the modality, before anything is billed. An `interrupt` frame naming
     `response_ids` abandons responses still being generated, which still settle and are still billed for
     what they produced before being cut off. All three report failures as `error` frames and end with
     `closed`.
@@ -189,7 +195,10 @@ async def asyncio_detailed(
     samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
     for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
     `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
-    tokens and how long the caller waited for the first of them. An `interrupt` frame naming
+    tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an
+    array of parts `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm`
+    to select image-capable models. A model that does not accept images is refused with an `error` frame
+    naming the model and the modality, before anything is billed. An `interrupt` frame naming
     `response_ids` abandons responses still being generated, which still settle and are still billed for
     what they produced before being cut off. All three report failures as `error` frames and end with
     `closed`.
@@ -243,7 +252,10 @@ async def asyncio(
     samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions`
     for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one
     `complete` per response; a `complete` reports the `status` the response ended in, what it cost in
-    tokens and how long the caller waited for the first of them. An `interrupt` frame naming
+    tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an
+    array of parts `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm`
+    to select image-capable models. A model that does not accept images is refused with an `error` frame
+    naming the model and the modality, before anything is billed. An `interrupt` frame naming
     `response_ids` abandons responses still being generated, which still settle and are still billed for
     what they produced before being cut off. All three report failures as `error` frames and end with
     `closed`.

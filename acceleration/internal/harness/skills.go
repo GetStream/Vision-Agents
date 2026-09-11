@@ -27,6 +27,10 @@ const defaultDeadline = 30 * time.Second
 // it declares is the sort of question worth paying that model's latency for, and the
 // instructions it answers under.
 type Skill struct {
+	VideoSource  string `yaml:"-"`
+	VideoFrames  int    `yaml:"-"`
+	Subagent     string `yaml:"subagent"`
+	CaptureVideo bool   `yaml:"capture_video"`
 	// Name is how the fast model asks for it.
 	Name string `yaml:"name"`
 	// Description is what the fast model is told the skill is for, so it knows when to
@@ -62,19 +66,19 @@ func (s Skills) Prompt() string {
 	}
 
 	var prompt strings.Builder
-	prompt.WriteString("You have a slower, more capable colleague listening in. " +
-		"Hand work over only when a value looks truncated, mashed, or you cannot " +
-		"tell what they said. If the caller already gave complete identifiers, " +
-		"answer yourself and call any tool you need; do not wait for a colleague " +
-		"on a complete thought.\n\n" +
-		"To hand something over, write <ask skill=\"name\">what you need</ask> in your " +
-		"reply. It is never spoken aloud, so the caller hears only the rest of the " +
-		"sentence: say something that fills the pause, like \"let me check that\", and " +
-		"put the request beside it. Write <drop skill=\"name\"/> if the caller has " +
-		"moved on and the answer no longer matters.\n\n" +
-		"What they can take on:\n")
+	prompt.WriteString("Delegate work according to the skill descriptions below. " +
+		"Write <ask skill=\"name\">what you need</ask> beside your spoken reply; " +
+		"the request is never spoken aloud. Continue the conversation while work runs. " +
+		"Write <drop skill=\"name\"/> when the work no longer matters. " +
+		"Report findings only after they arrive.\n\nAvailable skills:\n")
 	for _, skill := range s.Skills {
 		fmt.Fprintf(&prompt, "- %s: %s\n", skill.Name, skill.Description)
+		if skill.CaptureVideo {
+			prompt.WriteString("  Optional capture attributes: source=\"participant/track\" and frames=\"2\". Request 2–8 recent frames for comparisons over time; omit for the session default. Use only source names reported by capture or the video state tool.\n")
+		}
+	}
+	if _, ok := s.Lookup("think"); ok {
+		prompt.WriteString("For think, use complete identifiers already supplied rather than asking again.\n")
 	}
 	return strings.TrimRight(prompt.String(), "\n")
 }

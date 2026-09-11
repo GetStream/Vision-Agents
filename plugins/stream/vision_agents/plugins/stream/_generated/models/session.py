@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -10,6 +10,11 @@ from typing_extensions import Self
 
 from ..models.session_state import SessionState
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.session_subagents import SessionSubagents
+    from ..models.session_video import SessionVideo
+
 
 T = TypeVar("T", bound="Session")
 
@@ -34,6 +39,8 @@ class Session:
         tts (str | Unset): The provider and model speaking.
         stt (str | Unset): The provider and model transcribing, once somebody has been heard.
         subagent (str | Unset): The provider and model delegated work runs on.
+        subagents (SessionSubagents | Unset): Configured worker targets, prepared asynchronously.
+        video (SessionVideo | Unset):
         instructions (str | Unset):
     """
 
@@ -52,6 +59,8 @@ class Session:
     tts: str | Unset = UNSET
     stt: str | Unset = UNSET
     subagent: str | Unset = UNSET
+    subagents: SessionSubagents | Unset = UNSET
+    video: SessionVideo | Unset = UNSET
     instructions: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -86,6 +95,14 @@ class Session:
 
         subagent = self.subagent
 
+        subagents: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.subagents, Unset):
+            subagents = self.subagents.to_dict()
+
+        video: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.video, Unset):
+            video = self.video.to_dict()
+
         instructions = self.instructions
 
         field_dict: dict[str, Any] = {}
@@ -117,6 +134,10 @@ class Session:
             field_dict["stt"] = stt
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
+        if subagents is not UNSET:
+            field_dict["subagents"] = subagents
+        if video is not UNSET:
+            field_dict["video"] = video
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
 
@@ -124,6 +145,9 @@ class Session:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.session_subagents import SessionSubagents
+        from ..models.session_video import SessionVideo
+
         d = dict(src_dict)
         id = d.pop("id")
 
@@ -155,6 +179,20 @@ class Session:
 
         subagent = d.pop("subagent", UNSET)
 
+        _subagents = d.pop("subagents", UNSET)
+        subagents: SessionSubagents | Unset
+        if isinstance(_subagents, Unset):
+            subagents = UNSET
+        else:
+            subagents = SessionSubagents.from_dict(_subagents)
+
+        _video = d.pop("video", UNSET)
+        video: SessionVideo | Unset
+        if isinstance(_video, Unset):
+            video = UNSET
+        else:
+            video = SessionVideo.from_dict(_video)
+
         instructions = d.pop("instructions", UNSET)
 
         session = cls(
@@ -173,6 +211,8 @@ class Session:
             tts=tts,
             stt=stt,
             subagent=subagent,
+            subagents=subagents,
+            video=video,
             instructions=instructions,
         )
 

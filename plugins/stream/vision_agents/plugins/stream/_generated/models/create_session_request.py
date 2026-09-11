@@ -11,11 +11,13 @@ from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.create_session_request_subagents import CreateSessionRequestSubagents
     from ..models.create_session_request_tags import CreateSessionRequestTags
     from ..models.session_memory import SessionMemory
     from ..models.session_phone import SessionPhone
     from ..models.session_skill import SessionSkill
     from ..models.session_tool import SessionTool
+    from ..models.session_video import SessionVideo
 
 
 T = TypeVar("T", bound="CreateSessionRequest")
@@ -51,6 +53,8 @@ class CreateSessionRequest:
             it, and a caller naming a config would silently lose the model it configured.
         stt (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
         tts (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
+        subagents (CreateSessionRequestSubagents | Unset): Named worker targets. Entries merge over stored
+            configuration; an empty target removes that worker. Singular subagent is shorthand for default.
         subagent (str | Unset): The model that does the thinking. Empty means the voice model answers everything itself,
             and skills mean nothing.
         search (str | Unset): Omit it and the config decides, or search-fast when there is no config.
@@ -77,6 +81,7 @@ class CreateSessionRequest:
         memory (SessionMemory | Unset): Who the session's memories are about. Without a user id nothing is recalled or
             stored, which is the case for a call with nobody identified on it.
         phone (SessionPhone | Unset): The number the session acts from, which is what turns transferring on.
+        video (SessionVideo | Unset):
     """
 
     conversation_id: str | Unset = UNSET
@@ -95,6 +100,7 @@ class CreateSessionRequest:
     llm: str | Unset = UNSET
     stt: str | Unset = UNSET
     tts: str | Unset = UNSET
+    subagents: CreateSessionRequestSubagents | Unset = UNSET
     subagent: str | Unset = UNSET
     search: str | Unset = UNSET
     voice: str | Unset = UNSET
@@ -113,6 +119,7 @@ class CreateSessionRequest:
     tags: CreateSessionRequestTags | Unset = UNSET
     memory: SessionMemory | Unset = UNSET
     phone: SessionPhone | Unset = UNSET
+    video: SessionVideo | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -147,6 +154,10 @@ class CreateSessionRequest:
         stt = self.stt
 
         tts = self.tts
+
+        subagents: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.subagents, Unset):
+            subagents = self.subagents.to_dict()
 
         subagent = self.subagent
 
@@ -208,6 +219,10 @@ class CreateSessionRequest:
         if not isinstance(self.phone, Unset):
             phone = self.phone.to_dict()
 
+        video: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.video, Unset):
+            video = self.video.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -243,6 +258,8 @@ class CreateSessionRequest:
             field_dict["stt"] = stt
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if subagents is not UNSET:
+            field_dict["subagents"] = subagents
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
         if search is not UNSET:
@@ -279,11 +296,16 @@ class CreateSessionRequest:
             field_dict["memory"] = memory
         if phone is not UNSET:
             field_dict["phone"] = phone
+        if video is not UNSET:
+            field_dict["video"] = video
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.create_session_request_subagents import (
+            CreateSessionRequestSubagents,
+        )
         from ..models.create_session_request_tags import (
             CreateSessionRequestTags,
         )
@@ -291,6 +313,7 @@ class CreateSessionRequest:
         from ..models.session_phone import SessionPhone
         from ..models.session_skill import SessionSkill
         from ..models.session_tool import SessionTool
+        from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
         conversation_id = d.pop("conversation_id", UNSET)
@@ -324,6 +347,13 @@ class CreateSessionRequest:
         stt = d.pop("stt", UNSET)
 
         tts = d.pop("tts", UNSET)
+
+        _subagents = d.pop("subagents", UNSET)
+        subagents: CreateSessionRequestSubagents | Unset
+        if isinstance(_subagents, Unset):
+            subagents = UNSET
+        else:
+            subagents = CreateSessionRequestSubagents.from_dict(_subagents)
 
         subagent = d.pop("subagent", UNSET)
 
@@ -395,6 +425,13 @@ class CreateSessionRequest:
         else:
             phone = SessionPhone.from_dict(_phone)
 
+        _video = d.pop("video", UNSET)
+        video: SessionVideo | Unset
+        if isinstance(_video, Unset):
+            video = UNSET
+        else:
+            video = SessionVideo.from_dict(_video)
+
         create_session_request = cls(
             conversation_id=conversation_id,
             persist_conversation=persist_conversation,
@@ -412,6 +449,7 @@ class CreateSessionRequest:
             llm=llm,
             stt=stt,
             tts=tts,
+            subagents=subagents,
             subagent=subagent,
             search=search,
             voice=voice,
@@ -430,6 +468,7 @@ class CreateSessionRequest:
             tags=tags,
             memory=memory,
             phone=phone,
+            video=video,
         )
 
         create_session_request.additional_properties = d

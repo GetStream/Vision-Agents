@@ -102,6 +102,14 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/SessionSkill/description`.
             internal var description: Swift.String
+            /// Named worker binding; omitted uses default.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionSkill/subagent`.
+            internal var subagent: Swift.String?
+            /// Capture task-scoped visual evidence before reasoning.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionSkill/capture_video`.
+            internal var captureVideo: Swift.Bool?
             /// The full prompt, which only the subagent sees.
             ///
             /// - Remark: Generated from `#/components/schemas/SessionSkill/instructions`.
@@ -115,22 +123,30 @@ extension Components {
             /// - Parameters:
             ///   - name:
             ///   - description: The one line the fast model sees.
+            ///   - subagent: Named worker binding; omitted uses default.
+            ///   - captureVideo: Capture task-scoped visual evidence before reasoning.
             ///   - instructions: The full prompt, which only the subagent sees.
             ///   - deadlineMs: How long the work may run before it is abandoned. Zero is the default.
             internal init(
                 name: Swift.String,
                 description: Swift.String,
+                subagent: Swift.String? = nil,
+                captureVideo: Swift.Bool? = nil,
                 instructions: Swift.String,
                 deadlineMs: Swift.Int64? = nil
             ) {
                 self.name = name
                 self.description = description
+                self.subagent = subagent
+                self.captureVideo = captureVideo
                 self.instructions = instructions
                 self.deadlineMs = deadlineMs
             }
             internal enum CodingKeys: String, CodingKey {
                 case name
                 case description
+                case subagent
+                case captureVideo = "capture_video"
                 case instructions
                 case deadlineMs = "deadline_ms"
             }
@@ -264,6 +280,32 @@ extension Components {
             internal var voice: Swift.String?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/llm`.
             internal var llm: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/AgentConfig/video`.
+            internal var video: Components.Schemas.SessionVideo?
+            /// Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
+            ///
+            /// - Remark: Generated from `#/components/schemas/AgentConfig/subagents`.
+            internal struct SubagentsPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: Swift.String]
+                /// Creates a new `SubagentsPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: Swift.String] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
+            ///
+            /// - Remark: Generated from `#/components/schemas/AgentConfig/subagents`.
+            internal var subagents: Components.Schemas.AgentConfig.SubagentsPayload?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/subagent`.
             internal var subagent: Swift.String?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/search`.
@@ -325,6 +367,8 @@ extension Components {
             ///   - tts:
             ///   - voice:
             ///   - llm:
+            ///   - video:
+            ///   - subagents: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
             ///   - subagent:
             ///   - search:
             ///   - instructions:
@@ -347,6 +391,8 @@ extension Components {
                 tts: Swift.String? = nil,
                 voice: Swift.String? = nil,
                 llm: Swift.String? = nil,
+                video: Components.Schemas.SessionVideo? = nil,
+                subagents: Components.Schemas.AgentConfig.SubagentsPayload? = nil,
                 subagent: Swift.String? = nil,
                 search: Swift.String? = nil,
                 instructions: Swift.String? = nil,
@@ -369,6 +415,8 @@ extension Components {
                 self.tts = tts
                 self.voice = voice
                 self.llm = llm
+                self.video = video
+                self.subagents = subagents
                 self.subagent = subagent
                 self.search = search
                 self.instructions = instructions
@@ -392,6 +440,8 @@ extension Components {
                 case tts
                 case voice
                 case llm
+                case video
+                case subagents
                 case subagent
                 case search
                 case instructions
@@ -2352,6 +2402,30 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tts`.
             internal var tts: Swift.String?
+            /// Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/subagents`.
+            internal struct SubagentsPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: Swift.String]
+                /// Creates a new `SubagentsPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: Swift.String] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/subagents`.
+            internal var subagents: Components.Schemas.CreateSessionRequest.SubagentsPayload?
             /// The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
             ///
             ///
@@ -2439,6 +2513,8 @@ extension Components {
             internal var memory: Components.Schemas.SessionMemory?
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/phone`.
             internal var phone: Components.Schemas.SessionPhone?
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/video`.
+            internal var video: Components.Schemas.SessionVideo?
             /// Creates a new `CreateSessionRequest`.
             ///
             /// - Parameters:
@@ -2458,6 +2534,7 @@ extension Components {
             ///   - llm: A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
             ///   - stt: Omit it and the config decides, or en-low-latency when there is no config.
             ///   - tts: Omit it and the config decides, or en-low-latency when there is no config.
+            ///   - subagents: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
             ///   - subagent: The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
             ///   - search: Omit it and the config decides, or search-fast when there is no config.
             ///   - voice: Provider-specific voice id.
@@ -2476,6 +2553,7 @@ extension Components {
             ///   - tags: Cost labels, carried onto every request the session makes.
             ///   - memory:
             ///   - phone:
+            ///   - video:
             internal init(
                 conversationId: Swift.String? = nil,
                 persistConversation: Swift.Bool? = nil,
@@ -2493,6 +2571,7 @@ extension Components {
                 llm: Swift.String? = nil,
                 stt: Swift.String? = nil,
                 tts: Swift.String? = nil,
+                subagents: Components.Schemas.CreateSessionRequest.SubagentsPayload? = nil,
                 subagent: Swift.String? = nil,
                 search: Swift.String? = nil,
                 voice: Swift.String? = nil,
@@ -2510,7 +2589,8 @@ extension Components {
                 toolTimeoutMs: Swift.Int? = nil,
                 tags: Components.Schemas.CreateSessionRequest.TagsPayload? = nil,
                 memory: Components.Schemas.SessionMemory? = nil,
-                phone: Components.Schemas.SessionPhone? = nil
+                phone: Components.Schemas.SessionPhone? = nil,
+                video: Components.Schemas.SessionVideo? = nil
             ) {
                 self.conversationId = conversationId
                 self.persistConversation = persistConversation
@@ -2528,6 +2608,7 @@ extension Components {
                 self.llm = llm
                 self.stt = stt
                 self.tts = tts
+                self.subagents = subagents
                 self.subagent = subagent
                 self.search = search
                 self.voice = voice
@@ -2546,6 +2627,7 @@ extension Components {
                 self.tags = tags
                 self.memory = memory
                 self.phone = phone
+                self.video = video
             }
             internal enum CodingKeys: String, CodingKey {
                 case conversationId = "conversation_id"
@@ -2564,6 +2646,7 @@ extension Components {
                 case llm
                 case stt
                 case tts
+                case subagents
                 case subagent
                 case search
                 case voice
@@ -2582,6 +2665,34 @@ extension Components {
                 case tags
                 case memory
                 case phone
+                case video
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/SessionVideo`.
+        internal struct SessionVideo: Codable, Hashable, Sendable {
+            /// Track or processor source. Omitted requires one unambiguous available source.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionVideo/source`.
+            internal var source: Swift.String?
+            /// Number of recent frames captured for a visual task. Default one.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionVideo/max_frames`.
+            internal var maxFrames: Swift.Int?
+            /// Creates a new `SessionVideo`.
+            ///
+            /// - Parameters:
+            ///   - source: Track or processor source. Omitted requires one unambiguous available source.
+            ///   - maxFrames: Number of recent frames captured for a visual task. Default one.
+            internal init(
+                source: Swift.String? = nil,
+                maxFrames: Swift.Int? = nil
+            ) {
+                self.source = source
+                self.maxFrames = maxFrames
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case source
+                case maxFrames = "max_frames"
             }
         }
         /// - Remark: Generated from `#/components/schemas/Session`.
@@ -2634,6 +2745,32 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Session/subagent`.
             internal var subagent: Swift.String?
+            /// Configured worker targets, prepared asynchronously.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/subagents`.
+            internal struct SubagentsPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: [String: Swift.String]
+                /// Creates a new `SubagentsPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: [String: Swift.String] = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// Configured worker targets, prepared asynchronously.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/subagents`.
+            internal var subagents: Components.Schemas.Session.SubagentsPayload?
+            /// - Remark: Generated from `#/components/schemas/Session/video`.
+            internal var video: Components.Schemas.SessionVideo?
             /// - Remark: Generated from `#/components/schemas/Session/instructions`.
             internal var instructions: Swift.String?
             /// Creates a new `Session`.
@@ -2654,6 +2791,8 @@ extension Components {
             ///   - tts: The provider and model speaking.
             ///   - stt: The provider and model transcribing, once somebody has been heard.
             ///   - subagent: The provider and model delegated work runs on.
+            ///   - subagents: Configured worker targets, prepared asynchronously.
+            ///   - video:
             ///   - instructions:
             internal init(
                 conversationId: Swift.String? = nil,
@@ -2671,6 +2810,8 @@ extension Components {
                 tts: Swift.String? = nil,
                 stt: Swift.String? = nil,
                 subagent: Swift.String? = nil,
+                subagents: Components.Schemas.Session.SubagentsPayload? = nil,
+                video: Components.Schemas.SessionVideo? = nil,
                 instructions: Swift.String? = nil
             ) {
                 self.conversationId = conversationId
@@ -2688,6 +2829,8 @@ extension Components {
                 self.tts = tts
                 self.stt = stt
                 self.subagent = subagent
+                self.subagents = subagents
+                self.video = video
                 self.instructions = instructions
             }
             internal enum CodingKeys: String, CodingKey {
@@ -2706,6 +2849,8 @@ extension Components {
                 case tts
                 case stt
                 case subagent
+                case subagents
+                case video
                 case instructions
             }
         }

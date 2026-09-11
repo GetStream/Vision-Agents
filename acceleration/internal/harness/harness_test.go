@@ -1003,3 +1003,57 @@ func (s *HarnessSuite) TestResettingForgetsAnInterruptedReply() {
 	s.Empty(s.slow.requests(), "an abandoned reply never finished asking")
 	s.Equal("Hello.", s.reply("turn-2", "Hello."), "and does not leak into the next turn")
 }
+
+func (s *HarnessSuite) TestWorkerPreparationDoesNotBlockDelegationOrSpeech() {
+	fast := newStubLLM()
+	fast.automatic = "I can still talk."
+	h, err := New(Options{
+		Model: s.session(fast),
+		Workers: map[string]func(context.Context) (*llmrouter.Session, error){
+			"vision": func(ctx context.Context) (*llmrouter.Session, error) { <-ctx.Done(); return nil, ctx.Err() },
+		},
+		Skills: Skills{Skills: []Skill{{Name: "vision", Subagent: "vision", Description: "inspect", Instructions: "describe", Deadline: time.Minute}}},
+	})
+	s.Require().NoError(err)
+	events := collect(h)
+	defer func() { s.NoError(h.Close()); <-events.done }()
+	accepted := make(chan error, 1)
+	go func() { _, err := h.Delegate("vision", "look", "turn-1", nil); accepted <- err }()
+	select {
+	case err := <-accepted:
+		s.Require().NoError(err)
+	case <-time.After(time.Second):
+		s.T().Fatal("worker startup blocked acceptance")
+	}
+	reply, err := h.Respond(s.ctx, Turn{ID: "turn-2", History: []llm.Message{{Role: llm.User, Content: "hello"}}})
+	s.Require().NoError(err)
+	for reply.Next() {
+	}
+	s.Equal("I can still talk.", reply.Response().OutputText)
+	s.True(h.Delegating())
+}
+
+func (s *HarnessSuite) TestSlowProviderHeadersDoNotBlockTaskAcceptance() {
+	provider := newStubLLM()
+	hold := make(chan struct{})
+	provider.holdCreate = hold
+	m := newManager(s.session(provider), 2, nil, slog.New(slog.DiscardHandler))
+	defer m.Close()
+	accepted := make(chan string, 1)
+	go func() { id, _ := m.Create(testSkills().Skills[0], "question", nil, "turn", false); accepted <- id }()
+	var id string
+	select {
+	case id = <-accepted:
+		s.NotEmpty(id)
+	case <-time.After(time.Second):
+		s.T().Fatal("provider headers blocked task acceptance")
+	}
+	m.Cancel(id, ReasonDropped)
+	select {
+	case result := <-m.Results():
+		s.Equal(Cancelled, result.State)
+		s.Equal(ReasonDropped, result.Reason)
+	case <-time.After(time.Second):
+		s.T().Fatal("cancellation did not stop provider startup")
+	}
+}

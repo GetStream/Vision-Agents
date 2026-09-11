@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -66,6 +67,7 @@ type Spec struct {
 	STTTarget      string
 	TTSTarget      string
 	SubagentTarget string
+	Subagents      map[string]string
 	// ControllerTarget routes the flow controller. Internal rather than customer-facing:
 	// a caller configures the conversation's model, not the classifier that decides who
 	// holds the floor, so it is defaulted here rather than read from a config.
@@ -110,6 +112,9 @@ type Spec struct {
 	// MinConfidence is how sure the transcriber must be before the agent answers rather
 	// than checks what was meant.
 	MinConfidence float64
+
+	VideoSource    string
+	VideoMaxFrames int
 
 	// Memory scopes what the session recalls and remembers. Without it the agent starts
 	// the call knowing nothing but its instructions.
@@ -157,12 +162,13 @@ func FromConfig(config store.AgentConfig) Spec {
 		ConfigID:   config.ID,
 		// A text agent holds its conversation in writing, so a session created from one
 		// joins no call unless the request asks for a voice session explicitly.
-		Text:               config.Mode == store.AgentModeText,
-		STTTarget:          config.STT,
-		TTSTarget:          config.TTS,
-		Voice:              config.Voice,
-		LLMTarget:          config.LLM,
-		SubagentTarget:     config.Subagent,
+		Text:           config.Mode == store.AgentModeText,
+		STTTarget:      config.STT,
+		TTSTarget:      config.TTS,
+		Voice:          config.Voice,
+		LLMTarget:      config.LLM,
+		SubagentTarget: config.Subagent,
+		Subagents:      maps.Clone(config.Subagents), VideoSource: config.VideoSource, VideoMaxFrames: config.VideoMaxFrames,
 		SearchTarget:       config.Search,
 		Instructions:       config.Instructions,
 		Greeting:           config.Greeting,
@@ -230,6 +236,13 @@ func (s *Spec) Normalize() error {
 	if len(s.Keyterms) > stt.MaxKeyterms {
 		return fmt.Errorf("session: at most %d keyterms may be named, and this asks for %d",
 			stt.MaxKeyterms, len(s.Keyterms))
+	}
+
+	if s.VideoMaxFrames == 0 {
+		s.VideoMaxFrames = 1
+	}
+	if s.VideoMaxFrames < 1 || s.VideoMaxFrames > 8 {
+		return fmt.Errorf("session: video.max_frames must be between 1 and 8")
 	}
 
 	if err := s.Tags.Validate(); err != nil {

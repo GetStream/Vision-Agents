@@ -36,9 +36,11 @@ const (
 
 // Result is a finished task.
 type Result struct {
-	TaskID string
-	Skill  string
-	State  State
+	Worker   string
+	Evidence []string
+	TaskID   string
+	Skill    string
+	State    State
 	// Text is the answer, when there is one.
 	Text string
 	// Question is what the agent must ask the caller before the work can go any further.

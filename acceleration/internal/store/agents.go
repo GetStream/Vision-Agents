@@ -46,7 +46,7 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 	normalizeConfig(config)
 
 	result, err := s.db.NewUpdate().Model(config).
-		Column("name", "mode", "stt", "tts", "voice", "llm", "subagent", "search", "instructions",
+		Column("name", "mode", "stt", "tts", "voice", "llm", "subagent", "subagents", "video_source", "video_max_frames", "search", "instructions",
 			"greeting", "skills", "plugins", "keyterms", "knowledge_namespace", "sandbox", "sandbox_profile", "tags",
 			"sync_hash", "updated_at").
 		Where("id = ?", config.ID).
@@ -190,7 +190,7 @@ func (s *Store) UpdateSkill(ctx context.Context, skill *Skill) error {
 	skill.UpdatedAt = time.Now().UTC()
 
 	result, err := s.db.NewUpdate().Model(skill).
-		Column("config_id", "name", "description", "instructions", "deadline_ms", "updated_at").
+		Column("config_id", "name", "description", "instructions", "subagent", "capture_video", "deadline_ms", "updated_at").
 		Where("id = ?", skill.ID).
 		Where("customer_id = ?", skill.CustomerID).
 		Where("deleted_at IS NULL").
@@ -303,6 +303,12 @@ func (s *Store) SkillsNamed(ctx context.Context, customerID, configID string, na
 // normalizeConfig fills in the JSONB columns a nil slice or map would write as null,
 // which the columns are not, and the mode a caller that predates it leaves empty.
 func normalizeConfig(config *AgentConfig) {
+	if config.VideoMaxFrames == 0 {
+		config.VideoMaxFrames = 1
+	}
+	if config.Subagents == nil {
+		config.Subagents = map[string]string{}
+	}
 	if config.Mode == "" {
 		config.Mode = AgentModeVoice
 	}

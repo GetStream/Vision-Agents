@@ -103,6 +103,13 @@ def sync_detailed(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
     `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
     answered: everything else is a report.
+    `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
+    an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
+    `low` or `high`. One socket message is at most 5 MB.
+    `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation
+    receives the question and later the findings, without raw images. Video capture uses task-correlated
+    `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically
+    to conversational turns.
 
     Args:
         id (str):
@@ -163,6 +170,13 @@ def sync(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
     `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
     answered: everything else is a report.
+    `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
+    an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
+    `low` or `high`. One socket message is at most 5 MB.
+    `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation
+    receives the question and later the findings, without raw images. Video capture uses task-correlated
+    `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically
+    to conversational turns.
 
     Args:
         id (str):
@@ -218,6 +232,13 @@ async def asyncio_detailed(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
     `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
     answered: everything else is a report.
+    `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
+    an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
+    `low` or `high`. One socket message is at most 5 MB.
+    `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation
+    receives the question and later the findings, without raw images. Video capture uses task-correlated
+    `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically
+    to conversational turns.
 
     Args:
         id (str):
@@ -276,6 +297,13 @@ async def asyncio(
     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
     `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
     answered: everything else is a report.
+    `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
+    an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
+    `low` or `high`. One socket message is at most 5 MB.
+    `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation
+    receives the question and later the findings, without raw images. Video capture uses task-correlated
+    `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically
+    to conversational turns.
 
     Args:
         id (str):

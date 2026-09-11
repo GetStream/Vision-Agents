@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -90,6 +91,7 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer connection.Close()
+	connection.SetReadLimit(maxSocketMessage)
 
 	// Reading and writing each own the connection in one direction, which is what gorilla
 	// requires: two goroutines writing to one socket interleave frames.
@@ -179,12 +181,15 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			Type string `json:"type"`
 			// ToolCallID names the call a tool_result answers.
 			ToolCallID string `json:"tool_call_id"`
-			// Output is what the tool returned, in words the model can use.
-			Output string `json:"output"`
+			// Output is a string or a parts array, which is what a tool that returns an
+			// image sends.
+			Output json.RawMessage `json:"output"`
 			// Error is what to tell the model instead, when the tool did not work.
 			Error string `json:"error"`
 			// Text carries say and respond.
 			Text string `json:"text"`
+			// Images attach to a respond command, and become image parts on that turn.
+			Images []wireImage `json:"images"`
 			// Instructions carries the instructions command.
 			Instructions string `json:"instructions"`
 		}
@@ -198,23 +203,33 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 
 		switch command.Type {
 		case "tool_result":
-			if !found.ResolveTool(command.ToolCallID, command.Output, command.Error) {
-				// The commonest reason is a result for a call that already timed out,
-				// which is worth a line in a log and nothing more.
+			parts, err := parseToolOutput(command.Output)
+			if err != nil {
+				found.Report(err, "tool")
+				if !found.ResolveTool(command.ToolCallID, "", err.Error()) {
+					s.logger.Debug("a tool result answered nothing",
+						"session", found.ID(), "call", command.ToolCallID)
+				}
+				continue
+			}
+			if !found.ResolveToolParts(command.ToolCallID, parts, command.Error) {
 				s.logger.Debug("a tool result answered nothing",
 					"session", found.ID(), "call", command.ToolCallID)
 			}
 
 		case "say":
-			// The work these commands start belongs to the conversation rather than to
-			// the frame that asked for it, so it is not tied to this socket's lifetime.
 			if err := found.Say(context.Background(), command.Text); err != nil {
 				s.logger.Debug("could not say it", "session", found.ID(), "error", err)
 			}
 
 		case "respond":
-			if err := found.Respond(context.Background(), command.Text); err != nil {
-				s.logger.Debug("could not answer it", "session", found.ID(), "error", err)
+			images, err := imagesFromWire(command.Images)
+			if err != nil {
+				found.Report(err, "llm")
+				continue
+			}
+			if err := found.Respond(context.Background(), command.Text, images); err != nil {
+				found.Report(err, "llm")
 			}
 
 		case "interrupt":
@@ -228,6 +243,7 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			return
 
 		default:
+			found.Report(fmt.Errorf("unknown command %q", command.Type), "command")
 			s.logger.Debug("ignoring an unknown command",
 				"session", found.ID(), "type", command.Type)
 		}
@@ -244,6 +260,9 @@ func frameOf(event session.Event) (frame, bool) {
 	case session.ResearchProgress:
 		return frame{"type": "research_progress", "tool_call_id": typed.ToolCallID, "phase": typed.Phase, "elapsed_ms": typed.ElapsedMS, "verified_citations": typed.VerifiedCitations}, true
 	case session.ToolCall:
+		if typed.Cancel {
+			return frame{"type": "tool_cancel", "id": typed.ID}, true
+		}
 		return frame{
 			"type":      "tool_call",
 			"id":        typed.ID,
@@ -350,7 +369,8 @@ func frameOf(event session.Event) (frame, bool) {
 
 	case agent.TaskSettled:
 		return frame{
-			"type":       "task_settled",
+			"type":     "task_settled",
+			"evidence": typed.Evidence, "worker": typed.Worker,
 			"task_id":    typed.TaskID,
 			"skill":      typed.Skill,
 			"text":       typed.Text,

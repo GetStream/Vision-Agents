@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -51,6 +52,8 @@ type scriptedLLM struct {
 	turns int
 	reply string
 	calls []llm.ToolCall
+	asked []llm.ResponseParams
+	sees  bool
 }
 
 func (s *scriptedLLM) Start(context.Context) error { return nil }
@@ -58,6 +61,7 @@ func (s *scriptedLLM) Start(context.Context) error { return nil }
 func (s *scriptedLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.turns++
+	s.asked = append(s.asked, params)
 	first := s.turns == 1
 	reply := s.reply
 	var calls []llm.ToolCall
@@ -79,10 +83,21 @@ func (s *scriptedLLM) Create(_ context.Context, params llm.ResponseParams) (*llm
 	return script.Stream(), nil
 }
 
-func (s *scriptedLLM) Provider() string               { return "stub" }
-func (s *scriptedLLM) Model() string                  { return "stub-llm" }
-func (s *scriptedLLM) Capabilities() llm.Capabilities { return llm.Capabilities{} }
-func (s *scriptedLLM) Close() error                   { return nil }
+func (s *scriptedLLM) Provider() string { return "stub" }
+func (s *scriptedLLM) Model() string    { return "stub-llm" }
+func (s *scriptedLLM) Capabilities() llm.Capabilities {
+	if s.sees {
+		return llm.Capabilities{InputModalities: []string{llm.ModalityImage}}
+	}
+	return llm.Capabilities{}
+}
+func (s *scriptedLLM) Close() error { return nil }
+
+func (s *scriptedLLM) requests() []llm.ResponseParams {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]llm.ResponseParams(nil), s.asked...)
+}
 
 // quietSTT hears nothing, since these tests drive the session over HTTP rather than
 // through a microphone.
@@ -150,6 +165,7 @@ func routableConfig() routing.ModalityConfig {
 		Aliases: map[string]routing.Alias{
 			"llm-flow":       {Languages: []string{"en"}, RequireRealtime: true},
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-flow":       {Languages: []string{"en"}, RequireRealtime: true},
 		},
 	}
 }
@@ -159,6 +175,7 @@ type SessionAPISuite struct {
 
 	server *httptest.Server
 	model  *scriptedLLM
+	vision *scriptedLLM
 	voice  *recordingTTS
 }
 
@@ -190,9 +207,12 @@ func (s *SessionAPISuite) SetupTest() {
 		}
 		return &scriptedLLM{}, nil
 	})
-	reasoner, err := llmrouter.New(llmrouter.Options{
-		Config: routableConfig(), Registry: reasoning, Logger: logger,
-	})
+	s.vision = &scriptedLLM{reply: "Two roses.", sees: true}
+	reasoning.Register("vision", func(routing.Spec) (llmrouter.Provider, error) { return s.vision, nil })
+	llmConfig := routableConfig()
+	llmConfig.Providers = append(llmConfig.Providers, routing.ProviderConfig{Provider: "vision", Model: "vision-model", Languages: []string{"en"}, InputModalities: []string{"image"}})
+	llmConfig.Aliases["vlm"] = routing.Alias{RequireInputModalities: []string{"image"}}
+	reasoner, err := llmrouter.New(llmrouter.Options{Config: llmConfig, Registry: reasoning, Logger: logger})
 	s.Require().NoError(err)
 	s.T().Cleanup(reasoner.Close)
 
@@ -683,6 +703,166 @@ func (s *SessionAPISuite) TestNamingAConfigWithoutADatabaseIsRefused() {
 	s.Contains(failure.Error, "no database configured")
 }
 
+func jpegURI(raw []byte) string {
+	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(raw)
+}
+
+func (s *SessionAPISuite) streamLLM() *websocket.Conn {
+	address := "ws" + strings.TrimPrefix(s.server.URL, "http") + "/v1/llm/stream"
+	header := http.Header{}
+	header.Set(CustomerHeader, "acme")
+	connection, _, err := websocket.DefaultDialer.Dial(address, header)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { connection.Close() })
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "start", "target": "en-low-latency",
+	}))
+	connection.SetReadDeadline(time.Now().Add(settleFor))
+	var started map[string]any
+	s.Require().NoError(connection.ReadJSON(&started))
+	s.Equal("started", started["type"])
+	return connection
+}
+
+func (s *SessionAPISuite) TestAPlainStringContentStillRoundTripsOnTheStream() {
+	connection := s.streamLLM()
+	s.model.reply = "Paris."
+
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "respond", "id": "r1",
+		"messages": []map[string]any{
+			{"role": "user", "content": "capital of France?"},
+		},
+	}))
+
+	s.eventuallyAsked(func(params llm.ResponseParams) bool {
+		return len(params.Input) == 1 && params.Input[0].Content == "capital of France?"
+	})
+}
+
+func (s *SessionAPISuite) TestImagePartsOnTheStreamReachTheProvider() {
+	s.model.sees = true
+	connection := s.streamLLM()
+	jpeg := []byte{0xff, 0xd8, 0xff}
+
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "respond", "id": "r1",
+		"messages": []map[string]any{
+			{"role": "user", "content": []map[string]any{
+				{"type": "text", "text": "what flower"},
+				{"type": "image_url", "image_url": map[string]any{"url": jpegURI(jpeg), "detail": "low"}},
+			}},
+		},
+	}))
+
+	s.eventuallyAsked(func(params llm.ResponseParams) bool {
+		return llm.HasImage(params.Input)
+	})
+}
+
+func (s *SessionAPISuite) TestImagesAgainstATextOnlyStreamModelAreRefused() {
+	connection := s.streamLLM()
+	jpeg := []byte{0xff, 0xd8, 0xff}
+
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "respond", "id": "r1",
+		"messages": []map[string]any{
+			{"role": "user", "content": []map[string]any{
+				{"type": "image_url", "image_url": map[string]any{"url": jpegURI(jpeg)}},
+			}},
+		},
+	}))
+
+	failure := s.await(connection, "error")
+	s.Contains(fmtString(failure["error"]), "does not accept image")
+}
+
+func (s *SessionAPISuite) TestAToolResultWithImagesReachesTheModel() {
+	s.model.sees = true
+	s.model.calls = []llm.ToolCall{{
+		ID: "call-1", Name: "get_video_frame", Arguments: "{}",
+	}}
+	created := s.creates(CreateSessionRequest{
+		CallId: callID("call-1"), Subagents: &map[string]string{"vision": "vlm"},
+		Tools: &[]SessionTool{{Name: "get_video_frame", Description: "photograph"}},
+	})
+	connection := s.watches(created.Id, "acme")
+	s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/respond", "acme",
+		SayRequest{Text: "what is on camera"})
+
+	asked := s.await(connection, "tool_call")
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type":         "tool_result",
+		"tool_call_id": asked["id"],
+		"output": []map[string]any{
+			{"type": "text", "text": "a cat"},
+			{"type": "image_url", "image_url": map[string]any{"url": jpegURI([]byte{0xff, 0xd8})}},
+		},
+	}))
+
+	result := s.await(connection, "task_settled")
+	s.Equal("vision", result["worker"])
+	s.True(llm.HasImage(s.vision.requests()[0].Input))
+	for _, request := range s.model.requests() {
+		s.False(llm.HasImage(request.Input))
+	}
+}
+
+func (s *SessionAPISuite) TestAFrameCommandIsRefusedWhenNotPerTurn() {
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1")})
+	connection := s.watches(created.Id, "acme")
+
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type":      "frame",
+		"image_url": map[string]any{"url": jpegURI([]byte{0xff, 0xd8})},
+		"source":    "annotated",
+	}))
+
+	failure := s.await(connection, "error")
+	s.Contains(fmtString(failure["error"]), "unknown command")
+}
+
+func (s *SessionAPISuite) TestInvalidImagesOnAToolResultAreToldToTheModel() {
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: "{}"}}
+	created := s.creates(CreateSessionRequest{
+		CallId: callID("call-1"),
+		Tools:  &[]SessionTool{{Name: "lookup_order", Description: "find an order"}},
+	})
+	connection := s.watches(created.Id, "acme")
+	s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/respond", "acme",
+		SayRequest{Text: "where is my order"})
+
+	asked := s.await(connection, "tool_call")
+	parts := make([]map[string]any, 5)
+	for i := range parts {
+		parts[i] = map[string]any{"type": "image_url", "image_url": map[string]any{"url": "invalid"}}
+	}
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type":         "tool_result",
+		"tool_call_id": asked["id"],
+		"output":       parts,
+	}))
+
+	ran := s.await(connection, "tool_ran")
+	s.Contains(fmtString(ran["error"]), "HTTP")
+}
+
+func (s *SessionAPISuite) eventuallyAsked(ok func(llm.ResponseParams) bool) {
+	s.Require().Eventually(func() bool {
+		for _, params := range s.model.requests() {
+			if ok(params) {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 5*time.Millisecond, "the model was never asked that")
+}
+
+func fmtString(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
 // listed is the customer's sessions as the API reports them.
 func (s *SessionAPISuite) listed(customerID string) []Session {
 	response := s.send(http.MethodGet, "/v1/agents/sessions", customerID, nil)
@@ -691,4 +871,62 @@ func (s *SessionAPISuite) listed(customerID string) []Session {
 	var sessions []Session
 	s.decodeBody(response, &sessions)
 	return sessions
+}
+
+func (s *SessionAPISuite) TestAttachmentsReachOnlyTheVisionWorker() {
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1"), Subagents: &map[string]string{"vision": "vlm"}})
+	connection := s.watches(created.Id, "acme")
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "respond", "text": "compare these", "images": []map[string]any{{"url": jpegURI([]byte{1})}, {"url": jpegURI([]byte{2})}}}))
+	result := s.await(connection, "task_settled")
+	s.Equal("vision", result["worker"])
+	s.Equal("Two roses.", result["text"])
+	requests := s.vision.requests()
+	s.Require().NotEmpty(requests)
+	var images []byte
+	for _, message := range requests[0].Input {
+		for _, part := range message.Parts {
+			if part.Image != nil {
+				images = append(images, part.Image.Data...)
+			}
+		}
+	}
+	s.Equal([]byte{1, 2}, images)
+	for _, request := range s.model.requests() {
+		s.False(llm.HasImage(request.Input))
+	}
+}
+
+func (s *SessionAPISuite) TestDelegationCapturesTimestampedEvidenceOverTheSocket() {
+	s.model.reply = `<ask skill="vision" frames="2">inspect the camera</ask>One moment.`
+	frames := 1
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1"), Subagents: &map[string]string{"vision": "vlm"}, Video: &SessionVideo{MaxFrames: &frames}})
+	connection := s.watches(created.Id, "acme")
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "respond", "text": "what changed"}))
+	call := s.await(connection, "tool_call")
+	s.Equal("get_video_frames", call["name"])
+	var args map[string]any
+	s.Require().NoError(json.Unmarshal([]byte(call["arguments"].(string)), &args))
+	s.Equal(float64(2), args["limit"])
+	s.Positive(args["at_ms"])
+	metadata := `{"source":"alice/camera","frame_id":"frame-1","captured_at_ms":1000}`
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "tool_result", "tool_call_id": call["id"], "output": []map[string]any{
+		{"type": "text", "text": metadata}, {"type": "image_url", "image_url": map[string]string{"url": jpegURI([]byte{7})}},
+	}}))
+	result := s.await(connection, "task_settled")
+	s.Equal([]any{metadata}, result["evidence"])
+	for _, request := range s.model.requests() {
+		s.False(llm.HasImage(request.Input))
+	}
+	s.True(llm.HasImage(s.vision.requests()[0].Input))
+}
+
+func (s *SessionAPISuite) TestNamedWorkerOverridesPreserveAndRemoveEntries() {
+	stored := &store.AgentConfig{Subagent: "old", Subagents: map[string]string{"default": "stored", "vision": "vlm"}, VideoMaxFrames: 1}
+	single := "new"
+	spec := specOf(CreateSessionRequest{Subagent: &single, Subagents: &map[string]string{"vision": ""}}, "acme", stored)
+	s.Equal("new", spec.SubagentTarget)
+	s.NotContains(spec.Subagents, "default")
+	s.Equal("", spec.Subagents["vision"])
+	s.Equal("stored", stored.Subagents["default"])
+	s.Error(workerConflict(&single, &map[string]string{"default": "conflict"}))
 }
