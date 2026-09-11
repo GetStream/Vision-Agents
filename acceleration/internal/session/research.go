@@ -27,13 +27,13 @@ type researchRunner struct {
 	progress  func(string, string)
 }
 
-func (r *researchRunner) Run(ctx context.Context, call llm.ToolCall) (string, error) {
+func (r *researchRunner) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
 	if call.Name != "investigate_sdk" {
 		return r.next.Run(ctx, call)
 	}
 	var in research.Request
 	if len(call.Arguments) > 8192 || json.Unmarshal([]byte(call.Arguments), &in) != nil {
-		return "", errors.New("research: invalid arguments")
+		return nil, errors.New("research: invalid arguments")
 	}
 	result := r.workspace.Research(ctx, in, func(p research.Progress) {
 		if r.progress != nil {
@@ -43,7 +43,7 @@ func (r *researchRunner) Run(ctx context.Context, call llm.ToolCall) (string, er
 	})
 	r.emit(ResearchProgress{ToolCallID: call.ID, Phase: result.Status, ElapsedMS: result.ElapsedMS, VerifiedCitations: len(result.Citations)})
 	data, err := json.Marshal(result)
-	return string(data), err
+	return llm.TextParts(string(data)), err
 }
 func researchTool(profile research.Profile) harness.Tool {
 	manifest, _ := json.Marshal(profile.Repositories)

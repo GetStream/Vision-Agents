@@ -165,7 +165,6 @@ func routableConfig() routing.ModalityConfig {
 		Aliases: map[string]routing.Alias{
 			"llm-flow":       {Languages: []string{"en"}, RequireRealtime: true},
 			"en-low-latency": {Languages: []string{"en"}, RequireRealtime: true},
-			"llm-flow":       {Languages: []string{"en"}, RequireRealtime: true},
 		},
 	}
 }

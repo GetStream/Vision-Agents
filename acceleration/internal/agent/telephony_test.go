@@ -590,11 +590,11 @@ type cancellationTool struct {
 	stopped chan struct{}
 }
 
-func (r *cancellationTool) Run(ctx context.Context, _ llm.ToolCall) (string, error) {
+func (r *cancellationTool) Run(ctx context.Context, _ llm.ToolCall) ([]llm.ContentPart, error) {
 	close(r.began)
 	<-ctx.Done()
 	close(r.stopped)
-	return "", ctx.Err()
+	return nil, ctx.Err()
 }
 func (s *AgentSuite) TestInterruptCancelsActiveTextToolWithoutFollowingUp() {
 	s.ownsTools("")

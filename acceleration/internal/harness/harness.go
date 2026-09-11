@@ -461,7 +461,7 @@ func (h *Harness) act(turnID string, found directive) {
 	h.mu.Lock()
 	history := append([]llm.Message(nil), h.history...)
 	complete := !h.options.Text && identifiersAlreadyComplete(history)
-	if complete && skill.Name == "think" {
+	if complete && !skill.CaptureVideo {
 		h.notes = append(h.notes, noted{text: "Those values are already complete. " +
 			"Call the tool yourself this turn; do not wait for a colleague."})
 		h.mu.Unlock()
