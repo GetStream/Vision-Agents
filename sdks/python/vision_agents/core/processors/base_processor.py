@@ -4,6 +4,7 @@ import typing
 from typing import Optional
 
 import aiortc
+import av
 from getstream.video.rtc import AudioStreamTrack, PcmData
 from vision_agents.core.observability import MetricsCollector
 from vision_agents.core.base import Component
@@ -11,6 +12,8 @@ from vision_agents.core.utils.video_forwarder import VideoForwarder
 
 if typing.TYPE_CHECKING:
     from vision_agents.core import Agent
+
+from .observations import ObservationBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +82,13 @@ class VideoProcessor(Processor, metaclass=abc.ABCMeta):
         Override this to clean up frame handlers and stop output tracks.
         """
         pass
+
+    observation_buffer: Optional[ObservationBuffer] = None
+    frame_source: str = "annotated"
+
+    def latest_frame(self, annotated: bool = True) -> Optional[av.VideoFrame]:
+        """The most recent frame, or None when this processor does not keep frames."""
+        return None
 
     def state(self) -> dict[str, object]:
         """What this processor currently sees, for the LLM's ``get_video_state`` tool.

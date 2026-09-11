@@ -2,16 +2,19 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import Any, AsyncIterator, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Optional, Union
 
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm import llm
-from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.llm.llm import ImageContent, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.utils.utils import cancel_and_wait
 
 from ._backend import Backend
 from ._routerconfig import ensure_router
 from ._socket import Socket
+
+if TYPE_CHECKING:
+    from vision_agents.core.agents import Conversation
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +67,12 @@ class LLM(llm.LLM):
         self._reader: Optional[asyncio.Task] = None
         self._incoming: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._answering = asyncio.Lock()
+        self._message_content: dict[str, list[dict[str, object]]] = {}
+
+    def set_conversation(self, conversation: "Conversation") -> None:
+        if conversation is not self._conversation:
+            self._message_content.clear()
+        super().set_conversation(conversation)
 
     async def start(self) -> None:
         """Open the socket and start reading completions off it."""
@@ -92,30 +101,58 @@ class LLM(llm.LLM):
     async def __aexit__(self, *exception) -> None:
         await self.close()
 
+    def content_response(
+        self,
+        content: list[str | ImageContent],
+        participant: Optional[Participant] = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        text = "\n".join(part for part in content if isinstance(part, str))
+        return self.simple_response(text, participant, content=content)
+
+    def image_response(
+        self,
+        text: str,
+        images: list[ImageContent],
+        participant: Optional[Participant] = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        return self.simple_response(text, participant, images=images)
+
     async def simple_response(
         self,
         text: str,
         participant: Optional[Participant] = None,
+        images: Optional[list[ImageContent]] = None,
+        content: Optional[list[str | ImageContent]] = None,
     ) -> AsyncIterator[Union[LLMResponseDelta, LLMResponseFinal]]:
         """Answer `text` in the conversation this LLM was given."""
         if self._socket is None or not self._socket.open:
             raise RuntimeError("the completions socket is not open")
 
-        if participant is None and self._conversation is not None:
-            await self._conversation.send_message(
-                role="user", user_id="user", content=text
-            )
-
         completion = str(uuid.uuid4())
         started = time.perf_counter()
 
         async with self._answering:
+            if self._conversation is not None:
+                previous = self._conversation.messages
+                supplied = (
+                    previous
+                    and previous[-1].role == "user"
+                    and previous[-1].content == text
+                )
+                if participant is None or (
+                    (images or content is not None) and not supplied
+                ):
+                    await self._conversation.send_message(
+                        role="user",
+                        user_id=participant.user_id if participant else "user",
+                        content=text,
+                    )
             await self._socket.send(
                 {
                     "type": "respond",
                     "id": completion,
                     "instructions": self._instructions,
-                    "messages": self._messages(text),
+                    "messages": self._messages(text, images, content),
                     "max_tokens": self.max_tokens,
                 }
             )
@@ -167,19 +204,62 @@ class LLM(llm.LLM):
             await self._socket.close()
             self._socket = None
 
-    def _messages(self, text: str) -> list[dict[str, str]]:
+    def _messages(
+        self,
+        text: str,
+        images: Optional[list[ImageContent]] = None,
+        ordered: Optional[list[str | ImageContent]] = None,
+    ) -> list[dict[str, Any]]:
         """The conversation so far, as the router wants it.
 
         A session without a conversation keeps nothing, so what was just asked is all
         there is to send: the router refuses a response with no input rather than
         answering out of nothing.
         """
+        content: str | list[dict[str, object]] = text
+        if images:
+            parts: list[dict[str, object]] = []
+            if text:
+                parts.append({"type": "text", "text": text})
+            parts.extend(image.as_content_part() for image in images)
+            content = parts
+        if ordered is not None:
+            content = [
+                {"type": "text", "text": part}
+                if isinstance(part, str)
+                else part.as_content_part()
+                for part in ordered
+            ]
         if self._conversation is None:
-            return [{"role": "user", "content": text}]
-        return [
-            {"role": message.role or "user", "content": message.content or ""}
+            return [{"role": "user", "content": content}]
+        retained = {message.id for message in self._conversation.messages}
+        self._message_content = {
+            key: value
+            for key, value in self._message_content.items()
+            if key in retained
+        }
+        messages: list[dict[str, Any]] = [
+            {
+                "role": message.role or "user",
+                "content": self._message_content.get(
+                    message.id or "", message.content or ""
+                ),
+            }
             for message in self._conversation.messages
         ]
+        if (
+            (images or ordered is not None)
+            and messages
+            and messages[-1]["role"] == "user"
+            and self._conversation.messages[-1].content == text
+        ):
+            messages[-1]["content"] = content
+            message_id = self._conversation.messages[-1].id
+            if message_id is not None and isinstance(content, list):
+                self._message_content[message_id] = content
+        elif images or ordered is not None:
+            messages.append({"role": "user", "content": content})
+        return messages
 
     async def _read(self) -> None:
         """Hand everything the router sends to whoever is answering."""

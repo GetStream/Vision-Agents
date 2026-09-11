@@ -7,7 +7,12 @@ import aiortc
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.harness import Harness
-from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal, OmniLLM
+from vision_agents.core.llm.llm import (
+    LLMResponseDelta,
+    LLMResponseFinal,
+    OmniLLM,
+    ImageContent,
+)
 from vision_agents.core.llm.remote import (
     RemoteCall,
     RemoteEvent,
@@ -29,6 +34,8 @@ from ._generated.models import (
     SessionSkill,
     SessionTool,
     SessionToolParameters,
+    SessionVideo,
+    CreateSessionRequestSubagents,
 )
 from ._socket import Socket
 from .config import ensure_agent
@@ -76,6 +83,9 @@ class Accelerated(OmniLLM):
         url: Optional[str] = None,
         customer_id: Optional[str] = None,
         keyterms: Optional[list[str]] = None,
+        subagents: Optional[dict[str, str]] = None,
+        video_source: str = "",
+        video_max_frames: int = 0,
     ):
         """Configure a pipeline to run remotely.
 
@@ -104,6 +114,9 @@ class Accelerated(OmniLLM):
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
             keyterms: Words the transcriber would otherwise get wrong, such as names and
                 member IDs. Empty leaves whatever the stored config named.
+            subagents: Named worker targets, selected by skill bindings.
+            video_source: Camera or processor source for delegated capture.
+            video_max_frames: Recent frames per task (1–8); zero uses configuration.
         """
         super().__init__()
         self.provider_name = "stream"
@@ -119,6 +132,9 @@ class Accelerated(OmniLLM):
         self.max_tokens = max_tokens
         self.tool_timeout = tool_timeout
         self.keyterms = keyterms or []
+        self.subagents = subagents or {}
+        self.video_source = video_source
+        self.video_max_frames = video_max_frames
 
         self.backend = Backend(url=url, customer_id=customer_id)
         # A knowledge base belongs to the stored config that reads it, so an agent
@@ -129,7 +145,12 @@ class Accelerated(OmniLLM):
         self._socket: Optional[Socket] = None
         self._reader: Optional[asyncio.Task] = None
         self._running: set[asyncio.Task] = set()
+        self._tool_tasks: dict[str, asyncio.Task] = {}
         self._events: asyncio.Queue[Optional[RemoteEvent]] = asyncio.Queue()
+
+    @property
+    def uses_video_observations(self) -> bool:
+        return self.session is not None and isinstance(self.session.video, SessionVideo)
 
     @property
     def router_session_id(self) -> Optional[str]:
@@ -193,11 +214,34 @@ class Accelerated(OmniLLM):
             await self._command({"type": "interrupt"})
         await self._command({"type": "say", "text": text})
 
-    async def respond_remote(self, text: str, interrupt: bool = True) -> None:
+    async def respond_remote(
+        self,
+        text: str,
+        interrupt: bool = True,
+        images: Optional[list[ImageContent]] = None,
+    ) -> None:
         """Answer `text` through the model, as though it had been said on the call."""
         if interrupt:
             await self._command({"type": "interrupt"})
-        await self._command({"type": "respond", "text": text})
+        command: dict[str, Any] = {"type": "respond", "text": text}
+        if images:
+            command["images"] = [image.as_image_dict() for image in images]
+        await self._command(command)
+
+    async def simple_response(
+        self,
+        text: str,
+        participant: Optional[Participant] = None,
+        images: Optional[list[ImageContent]] = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        """Answer `text` through the model.
+
+        Yields nothing: the reply is spoken on the call and reported as events, so there
+        is no response here to hand back.
+        """
+        await self.respond_remote(text, images=images)
+        return
+        yield  # pragma: no cover - the empty stream this signature promises
 
     async def leave_remote(self) -> None:
         """End the call. Safe to call after it has already ended."""
@@ -213,20 +257,6 @@ class Accelerated(OmniLLM):
                 session.id, client=self.backend.client()
             )
         await self._stop_watching()
-
-    async def simple_response(
-        self,
-        text: str,
-        participant: Optional[Participant] = None,
-    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
-        """Answer `text` through the model.
-
-        Yields nothing: the reply is spoken on the call and reported as events, so there
-        is no response here to hand back.
-        """
-        await self.respond_remote(text)
-        return
-        yield  # pragma: no cover - the empty stream this signature promises
 
     async def interrupt(self) -> None:
         """Abandon the reply being spoken."""
@@ -305,6 +335,10 @@ class Accelerated(OmniLLM):
             request.tool_timeout_ms = int(self.tool_timeout * 1000)
         if self.keyterms:
             request.keyterms = self.keyterms
+        if self.video_source or self.video_max_frames:
+            request.video = SessionVideo(
+                source=self.video_source, max_frames=self.video_max_frames or 1
+            )
 
         tools = self._tools()
         if tools:
@@ -356,13 +390,20 @@ class Accelerated(OmniLLM):
         self, request: CreateSessionRequest, harness: Optional[Harness]
     ) -> None:
         """Fold the agent's harness into the session it is configuring."""
+        if self.subagent:
+            request.subagent = self.subagent
+        if self.subagents:
+            request.subagents = CreateSessionRequestSubagents.from_dict(self.subagents)
         if harness is None:
             if self.subagent:
                 request.subagent = self.subagent
             return
 
         spec = harness.spec()
-        request.subagent = spec.get("subagent", self.subagent)
+        if "subagents" in spec:
+            request.subagents = CreateSessionRequestSubagents.from_dict(
+                {**self.subagents, **spec["subagents"]}
+            )
         if spec["tasks"]:
             request.tasks = spec["tasks"]
         if "sandbox" in spec:
@@ -371,6 +412,8 @@ class Accelerated(OmniLLM):
             request.skills = [
                 SessionSkill(
                     name=skill["name"],
+                    subagent=skill["subagent"],
+                    capture_video=skill["capture_video"],
                     description=skill["description"],
                     instructions=skill["instructions"],
                     deadline_ms=skill["deadline_ms"],
@@ -401,10 +444,27 @@ class Accelerated(OmniLLM):
         """Turn one session frame into an event, or into a tool call to run."""
         kind = frame.get("type", "")
 
+        if kind == "tool_cancel":
+            running = self._tool_tasks.get(str(frame.get("id", "")))
+            if running is not None:
+                running.cancel()
+            return
         if kind == "tool_call":
+            call_id = str(frame.get("id", ""))
+            if len(self._tool_tasks) >= 16:
+                await self._command(
+                    {
+                        "type": "tool_result",
+                        "tool_call_id": call_id,
+                        "error": "video worker task capacity exceeded",
+                    }
+                )
+                return
             task = asyncio.create_task(self._run_tool(frame))
             self._running.add(task)
+            self._tool_tasks[call_id] = task
             task.add_done_callback(self._running.discard)
+            task.add_done_callback(lambda finished: self._tool_tasks.pop(call_id, None))
             return
 
         event = _event_of(frame)
@@ -424,14 +484,65 @@ class Accelerated(OmniLLM):
 
         try:
             arguments = json.loads(frame.get("arguments") or "{}")
-            output = await self.call_function(name, arguments)
-            result["output"] = _rendered(output)
+            if name == "get_video_frames":
+                result["output"] = await self._capture_video(arguments)
+            else:
+                output = await self.call_function(name, arguments)
+                result["output"] = _tool_output(output)
+        except ValueError as exc:
+            if name == "get_video_frames":
+                result["output"] = str(exc)
+            else:
+                result["error"] = str(exc)
         except Exception as exc:
             logger.exception("the tool %s failed", name)
             result["error"] = str(exc)
 
         if self._socket is not None and self._socket.open:
             await self._socket.send(result)
+
+    async def _capture_video(
+        self, arguments: dict[str, Any]
+    ) -> list[dict[str, object]]:
+        agent = self.agent
+        if agent is None:
+            raise ValueError("no video worker is attached")
+        buffers = [agent.observations]
+        buffers.extend(
+            p.observation_buffer
+            for p in agent.video_processors
+            if p.observation_buffer is not None
+        )
+        source = str(arguments.get("source", ""))
+        candidates = [(name, buffer) for buffer in buffers for name in buffer.sources]
+        if source:
+            candidates = [
+                (name, buffer)
+                for name, buffer in candidates
+                if name == source or name.split("/")[0] == source
+            ]
+        else:
+            # Processor sources need an explicit choice; raw camera evidence is the default.
+            candidates = [
+                (name, buffer)
+                for name, buffer in candidates
+                if buffer is agent.observations
+            ]
+        if len(candidates) != 1:
+            names = ", ".join(name for name, _ in candidates) or "none"
+            raise ValueError(f"select one available video source (available: {names})")
+        name, buffer = candidates[0]
+        selected = buffer.select(
+            name, int(arguments["at_ms"]), int(arguments.get("limit", 1))
+        )
+        parts: list[dict[str, object]] = []
+        for observation in selected:
+            parts.extend(await asyncio.to_thread(observation.content))
+        if len(json.dumps(parts).encode()) > 4 << 20:
+            raise ValueError(
+                "selected images exceed the transfer limit; request fewer frames"
+            )
+        return parts
 
     async def _stop_watching(self) -> None:
         """Drop the socket and everything reading it."""
@@ -528,3 +639,49 @@ def _rendered(output: Any) -> str:
     if isinstance(output, str):
         return output
     return json.dumps(output)
+
+
+def _tool_output(output: Any) -> str | list[dict[str, object]]:
+    """A string when the tool returned words, or parts when it returned an image."""
+    if isinstance(output, list) and all(
+        isinstance(part, (str, ImageContent)) for part in output
+    ):
+        return [
+            {"type": "text", "text": part}
+            if isinstance(part, str)
+            else part.as_content_part()
+            for part in output
+        ]
+    images: list[ImageContent] = []
+    rest = _take_images(output, images)
+    if not images:
+        return _rendered(output)
+    parts: list[dict[str, object]] = []
+    if rest not in (None, {}, []):
+        parts.append({"type": "text", "text": _rendered(rest)})
+    parts.extend(image.as_content_part() for image in images)
+    return parts
+
+
+def _take_images(value: Any, images: list[ImageContent]) -> Any:
+    """Pull ImageContent values out of a tool result, leaving the rest."""
+    if isinstance(value, ImageContent):
+        images.append(value)
+        return None
+    if isinstance(value, dict):
+        kept: dict[str, Any] = {}
+        for key, item in value.items():
+            if isinstance(item, ImageContent):
+                images.append(item)
+            else:
+                kept[key] = _take_images(item, images)
+        return kept
+    if isinstance(value, list):
+        kept_list: list[Any] = []
+        for item in value:
+            if isinstance(item, ImageContent):
+                images.append(item)
+            else:
+                kept_list.append(_take_images(item, images))
+        return kept_list
+    return value

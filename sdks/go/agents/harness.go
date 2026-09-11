@@ -31,6 +31,8 @@ func Daytona() *Sandbox {
 // There is nothing behind a skill but a better model and more time. What it declares is the
 // description the fast model chooses by, and the instructions the slow one answers under.
 type Skill struct {
+	Subagent     string
+	CaptureVideo bool
 	// Name is how the fast model asks for it.
 	Name string
 	// Description is the one line the fast model sees.
@@ -51,8 +53,7 @@ type Harness struct {
 	// UseSkills offers the backend's built-in skills. Setting Skills replaces them.
 	UseSkills bool
 	// Subagents are model targets for the work handed over, keyed by name. The entry under
-	// "default", or the only entry, is the model that runs skills. Empty means the fast
-	// model answers everything itself.
+	// "default" runs unbound skills; other entries run skills bound to that name.
 	Subagents map[string]string
 	// VM is where delegated code runs.
 	VM *Sandbox
@@ -68,22 +69,12 @@ func DefaultHarness() *Harness {
 	return &Harness{UseSkills: true}
 }
 
-// Subagent is the model that runs delegated work, or the empty string when nothing is
-// delegated.
+// Subagent is the default worker's model, or the empty string when none is configured.
 func (h *Harness) Subagent() string {
 	if h == nil || len(h.Subagents) == 0 {
 		return ""
 	}
-	if named, ok := h.Subagents["default"]; ok {
-		return named
-	}
-	// Go randomises map iteration, so the single-entry shorthand is only well defined for
-	// one entry. More than one without a default is a configuration mistake, caught by
-	// Validate before it can pick differently on two runs.
-	for _, target := range h.Subagents {
-		return target
-	}
-	return ""
+	return h.Subagents["default"]
 }
 
 // Validate refuses a harness that would mean something different on every run.
@@ -93,11 +84,6 @@ func (h *Harness) Validate() error {
 	}
 	if h.Tasks < 0 {
 		return errors.New("agents: tasks cannot be negative")
-	}
-	if len(h.Subagents) > 1 {
-		if _, ok := h.Subagents["default"]; !ok {
-			return errors.New(`agents: several subagents and no "default", so which one runs skills is undecided`)
-		}
 	}
 	for _, skill := range h.Skills {
 		if skill.Name == "" {
@@ -132,7 +118,7 @@ func (h *Harness) apply(call *stream.Call) {
 		return
 	}
 
-	call.Subagent = h.Subagent()
+	call.Subagents = h.Subagents
 	call.Tasks = h.Tasks
 	if h.VM != nil {
 		call.Sandbox = h.VM.Provider
@@ -150,7 +136,8 @@ func (h *Harness) apply(call *stream.Call) {
 // session renders a skill as the session spec understands it.
 func (s Skill) session() acceleration.SessionSkill {
 	rendered := acceleration.SessionSkill{
-		Name:         s.Name,
+		Name:     s.Name,
+		Subagent: &s.Subagent, CaptureVideo: &s.CaptureVideo,
 		Description:  s.Description,
 		Instructions: s.Instructions,
 	}

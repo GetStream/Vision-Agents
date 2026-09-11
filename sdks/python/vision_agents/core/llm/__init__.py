@@ -1,4 +1,4 @@
-from .llm import LLM, AudioLLM, VideoLLM, OmniLLM
+from .llm import LLM, AudioLLM, VideoLLM, OmniLLM, ImageContent, jpeg_bytes
 from .realtime import Realtime, AudioInputPacingConfig
 from .remote import (
     RemoteCall,
@@ -14,6 +14,8 @@ __all__ = [
     "AudioLLM",
     "VideoLLM",
     "OmniLLM",
+    "ImageContent",
+    "jpeg_bytes",
     "Realtime",
     "AudioInputPacingConfig",
     "RemoteCall",

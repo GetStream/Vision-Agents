@@ -11,6 +11,22 @@ def write(root: Path, name: str, content: str) -> None:
 
 
 class TestFolder:
+    def test_named_workers_and_skill_binding_round_trip(self, tmp_path):
+        write(
+            tmp_path,
+            "agent.yaml",
+            "name: vision\nsubagents:\n  default: llm-thinking\n  vision: vlm\n",
+        )
+        write(
+            tmp_path,
+            "skills/vision.md",
+            "---\nname: vision\nsubagent: vision\ncapture_video: true\ndescription: inspect images\n---\nDescribe the evidence.",
+        )
+        folder = load(tmp_path)
+        assert folder.settings.subagents == {"default": "llm-thinking", "vision": "vlm"}
+        assert folder.skills[0].subagent == "vision"
+        assert folder.skills[0].capture_video
+
     def test_a_directory_is_read_as_instructions_skills_and_knowledge(
         self, tmp_path: Path
     ):
@@ -109,6 +125,17 @@ class TestFolder:
 
         with pytest.raises(ValueError, match="lmm"):
             load(root)
+
+    def test_video_selection_is_read_from_a_nested_block(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(
+            root,
+            "agent.yaml",
+            "name: jean\nvideo:\n  source: roboflow\n  max_frames: 2\n",
+        )
+
+        assert load(root).settings.video_source == "roboflow"
+        assert load(root).settings.video_max_frames == 2
 
     def test_a_list_setting_given_as_one_word_is_refused(self, tmp_path: Path):
         root = tmp_path / "jean"

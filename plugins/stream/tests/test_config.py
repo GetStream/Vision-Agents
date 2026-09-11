@@ -200,6 +200,39 @@ class TestDefineAgent:
         assert stored["instructions"] == EXPLAIN.instructions
         assert stored["deadline_ms"] == 25_000
 
+    async def test_named_vision_worker_and_capture_settings_are_stored(
+        self, router: Router
+    ) -> None:
+        config = await stream.define_agent(
+            name="visual-agent",
+            subagents={"default": "llm-thinking", "vision": "vlm"},
+            video_source="roboflow_streaming",
+            video_max_frames=2,
+            skills=[
+                Skill(
+                    name="vision",
+                    description="Inspect visual evidence",
+                    instructions="Answer from the supplied images.",
+                    subagent="vision",
+                    capture_video=True,
+                )
+            ],
+            url=router.url,
+            customer_id="acme",
+        )
+
+        assert config.subagents.to_dict() == {
+            "default": "llm-thinking",
+            "vision": "vlm",
+        }
+        assert config.video.to_dict() == {
+            "source": "roboflow_streaming",
+            "max_frames": 2,
+        }
+        [skill] = list(router.skills.values())
+        assert skill["subagent"] == "vision"
+        assert skill["capture_video"] is True
+
     async def test_defining_the_same_agent_twice_edits_it(self, router: Router):
         first = await self.define(router)
 

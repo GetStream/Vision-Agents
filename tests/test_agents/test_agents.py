@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 from uuid import uuid4
 
 import aiortc
@@ -17,7 +17,13 @@ from vision_agents.core.edge import Call, EdgeTransport
 from vision_agents.core.edge.types import Participant, TrackType
 from vision_agents.core.events import EventManager
 from vision_agents.core.harness import DefaultHarness
-from vision_agents.core.llm.llm import LLM, LLMResponseEvent, OmniLLM
+from vision_agents.core.llm.llm import (
+    ImageContent,
+    LLM,
+    LLMResponseEvent,
+    LLMResponseFinal,
+    OmniLLM,
+)
 from vision_agents.core.llm.remote import KnowledgePage, RemoteCall, RemoteEvent
 from vision_agents.core.processors.base_processor import (
     AudioPublisher,
@@ -74,6 +80,13 @@ class DummyLLM(LLM, Warmable[bool]):
 
     async def on_warmed_up(self, *_) -> None:
         self.warmed_up = True
+
+
+class TextOnlyLLM(LLM):
+    async def simple_response(
+        self, text: str, participant: Optional[Participant] = None
+    ) -> AsyncIterator[LLMResponseFinal]:
+        yield LLMResponseFinal(text=text)
 
 
 class DummyPhone:
@@ -208,7 +221,12 @@ class DummyRemotePipeline(OmniLLM):
     async def say_remote(self, text: str, interrupt: bool = False) -> None:
         self.said.append(text)
 
-    async def respond_remote(self, text: str, interrupt: bool = True) -> None:
+    async def respond_remote(
+        self,
+        text: str,
+        interrupt: bool = True,
+        images: Optional[list[ImageContent]] = None,
+    ) -> None:
         self.said.append(text)
 
     async def leave_remote(self) -> None:
@@ -348,6 +366,9 @@ class DummyVideoProcessor(VideoProcessorPublisher):
 
     def publish_video_track(self) -> QueuedVideoTrack:
         return self.track
+
+    def latest_frame(self, annotated: bool = True):
+        return None
 
 
 class DummyAudioPublisher(AudioPublisher):
@@ -1273,6 +1294,52 @@ class TestAgent:
 
         result = await agent.llm.call_function("get_video_state", {})
         assert result == {"dummy_video": {"objects": [{"label": "rose"}]}}
+
+    async def test_keeps_image_tools_out_of_the_conversation(self):
+        processor = DummyVideoProcessor()
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+            processors=[processor],
+        )
+
+        assert "get_video_frame" not in agent.llm.function_registry.list_functions()
+
+    async def test_text_response_facade_keeps_existing_plugin_signature(self):
+        model = TextOnlyLLM()
+        chunks = [chunk async for chunk in model.responses.create("hello")]
+        assert chunks
+        with pytest.raises(ValueError, match="does not support image"):
+            _ = [
+                chunk
+                async for chunk in model.responses.create(
+                    "look", images=[ImageContent(data=b"x")]
+                )
+            ]
+
+    async def test_local_image_submission_is_rejected(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+        with pytest.raises(ValueError, match="vision worker"):
+            await agent.responses.create(
+                "describe", images=[ImageContent(data=b"image")]
+            )
+
+    async def test_skips_get_video_frame_without_a_keeping_processor(self):
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=DummyEdge(),
+            agent_user=User(name="test"),
+        )
+
+        assert "get_video_frame" not in agent.llm.function_registry.list_functions()
 
     async def test_skips_get_video_state_without_processors(self):
         agent = Agent(

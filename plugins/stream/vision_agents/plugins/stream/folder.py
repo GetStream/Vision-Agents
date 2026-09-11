@@ -64,6 +64,9 @@ class Settings:
     plugins: list[str] = field(default_factory=list)
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
+    subagents: dict[str, str] = field(default_factory=dict)
+    video_source: str = ""
+    video_max_frames: int = 0
 
 
 @dataclass
@@ -106,6 +109,8 @@ class Folder:
             hasher.update(skill.description.encode())
             hasher.update(b"\n")
             hasher.update(skill.instructions.encode())
+            hasher.update(skill.subagent.encode())
+            hasher.update(str(skill.capture_video).encode())
             hasher.update(b"\n")
             if skill.deadline_seconds:
                 hasher.update(str(skill.deadline_seconds).encode())
@@ -238,6 +243,8 @@ def _declare(path: Path) -> Settings:
             settings.llm = _word(value)
         elif field_name == "subagent":
             settings.subagent = _word(value)
+        elif field_name == "subagents":
+            settings.subagents = _tags(path, value)
         elif field_name == "search":
             settings.search = _word(value)
         elif field_name == "greeting":
@@ -250,10 +257,18 @@ def _declare(path: Path) -> Settings:
             settings.keyterms = _terms(path, field_name, value)
         elif field_name == "tags":
             settings.tags = _tags(path, value)
+        elif field_name == "video":
+            settings.video_source, settings.video_max_frames = _video(path, value)
         else:
             raise ValueError(
                 f"{path} declares {field_name!r}, which is not something an agent has"
             )
+    if (
+        settings.subagent
+        and "default" in settings.subagents
+        and settings.subagents["default"] != settings.subagent
+    ):
+        raise ValueError("subagent conflicts with subagents.default")
     return settings
 
 
@@ -280,6 +295,18 @@ def _tags(path: Path, value: object) -> dict[str, str]:
     if not isinstance(value, dict):
         raise ValueError(f"{path} should give tags as a mapping of label to value")
     return {str(key): _word(item) for key, item in value.items()}
+
+
+def _video(path: Path, value: object) -> tuple[str, int]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give video as a mapping")
+    extra = set(value) - {"source", "max_frames"}
+    if extra:
+        raise ValueError(f"{path} unknown video setting: {sorted(extra)[0]}")
+    limit = value.get("max_frames", 1)
+    if type(limit) is not int or not 1 <= limit <= 8:
+        raise ValueError("video.max_frames must be an integer from 1 to 8")
+    return _word(value.get("source")), limit
 
 
 def _looks_like_agent(path: Path) -> bool:
@@ -314,6 +341,12 @@ def _parse_skill(name: str, content: str) -> Skill:
                 skill.name = value
             elif key.strip() == "description":
                 skill.description = value
+            elif key.strip() == "subagent":
+                skill.subagent = value
+            elif key.strip() == "capture_video":
+                if value not in ("true", "false"):
+                    raise ValueError("capture_video must be true or false")
+                skill.capture_video = value == "true"
             elif key.strip() == "deadline":
                 skill.deadline_seconds = _parse_deadline(value)
 

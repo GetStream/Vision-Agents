@@ -178,6 +178,13 @@ func parseSkill(name, content string) (Skill, error) {
 				skill.Name = value
 			case "description":
 				skill.Description = value
+			case "subagent":
+				skill.Subagent = value
+			case "capture_video":
+				if value != "true" && value != "false" {
+					return Skill{}, fmt.Errorf("capture_video must be true or false")
+				}
+				skill.CaptureVideo = value == "true"
 			case "deadline":
 				deadline, err := parseDeadline(value)
 				if err != nil {

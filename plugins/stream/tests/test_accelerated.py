@@ -5,9 +5,15 @@ from typing import Any, AsyncIterator, Optional
 import pytest
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import TestServer
+import time
+
+import av
+from PIL import Image
+from vision_agents.core import Agent, User
 from vision_agents.core.harness import Daytona, DefaultHarness
+from vision_agents.core.llm.llm import ImageContent
 from vision_agents.core.llm.remote import RemoteCall, RemoteEvent, RemotePipelineError
-from vision_agents.plugins import stream
+from vision_agents.plugins import stream, getstream
 
 SETTLE = 2.0
 
@@ -156,7 +162,7 @@ class TestAccelerated:
             self, router: Router, joined: stream.Accelerated
         ):
             assert router.created is not None
-            assert router.created["subagent"] == "llm-smart"
+            assert router.created["subagents"] == {"default": "llm-smart"}
             assert router.created["sandbox"] == "daytona"
 
     async def test_named_keyterms_reach_the_session(
@@ -289,6 +295,121 @@ class TestAccelerated:
 
         assert await router.answered() == {"type": "say", "text": "one moment"}
         assert await router.answered() == {"type": "respond", "text": "greet them"}
+
+    async def test_responding_with_images_sends_them_on_the_socket(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        await joined.respond_remote(
+            "look",
+            interrupt=False,
+            images=[ImageContent(data=b"\xff\xd8", detail="low")],
+        )
+
+        command = await router.answered()
+        assert command["type"] == "respond"
+        assert command["text"] == "look"
+        assert command["images"][0]["detail"] == "low"
+        assert command["images"][0]["url"].startswith("data:image/jpeg;base64,")
+
+    async def test_a_tool_that_returns_an_image_sends_parts(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        @joined.register_function(description="Photograph the shelf")
+        async def snapshot() -> dict:
+            return {
+                "note": "2 roses",
+                "photo": ImageContent(data=b"\xff\xd8", mime="image/jpeg"),
+            }
+
+        await router.send(
+            {
+                "type": "tool_call",
+                "id": "call-11",
+                "name": "snapshot",
+                "arguments": "{}",
+            }
+        )
+
+        answer = await router.answered()
+        assert answer["tool_call_id"] == "call-11"
+        kinds = [part["type"] for part in answer["output"]]
+        assert "text" in kinds
+        assert "image_url" in kinds
+
+    async def test_video_selection_is_named_on_the_session(
+        self, router: Router, call: RemoteCall
+    ):
+        pipeline = stream.Accelerated(
+            model="gemma4",
+            url=router.url,
+            customer_id="acme",
+            video_source="camera",
+            video_max_frames=2,
+        )
+        await pipeline.join_remote(call)
+        try:
+            assert router.created is not None
+            assert router.created["video"] == {"source": "camera", "max_frames": 2}
+        finally:
+            await pipeline.leave_remote()
+
+    async def test_capture_is_task_scoped_and_keeps_frame_time(
+        self, router: Router, joined: stream.Accelerated
+    ):
+        agent = Agent(llm=joined, edge=getstream.Edge(), agent_user=User(name="test"))
+        at_ms = int(time.time() * 1000)
+        agent.observations.append(
+            "caller/camera",
+            av.VideoFrame.from_image(Image.new("RGB", (2, 2))),
+            captured_at_ms=at_ms,
+        )
+        agent.observations.append(
+            "caller/camera",
+            av.VideoFrame.from_image(Image.new("RGB", (2, 2), "red")),
+            captured_at_ms=at_ms + 10,
+        )
+        await router.send(
+            {
+                "type": "tool_call",
+                "id": "task-1-capture",
+                "name": "get_video_frames",
+                "arguments": json.dumps({"at_ms": at_ms, "limit": 1}),
+            }
+        )
+        answer = await router.answered()
+        assert answer["tool_call_id"] == "task-1-capture"
+        metadata = json.loads(answer["output"][0]["text"])
+        assert metadata["frame_id"] == "caller/camera:1"
+        assert metadata["captured_at_ms"] == at_ms
+        assert answer["output"][1]["type"] == "image_url"
+
+    async def test_slow_work_can_be_cancelled_while_speech_events_continue(
+        self, router, joined
+    ):
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+        never = asyncio.Event()
+
+        @joined.register_function(description="Wait for work")
+        async def slow() -> str:
+            started.set()
+            try:
+                await never.wait()
+                return "late answer"
+            finally:
+                cancelled.set()
+
+        await router.send(
+            {"type": "tool_call", "id": "task-slow", "name": "slow", "arguments": "{}"}
+        )
+        await asyncio.wait_for(started.wait(), SETTLE)
+        await router.send({"type": "heard", "text": "keep talking"})
+        events = joined.remote_events()
+        event = await asyncio.wait_for(anext(events), SETTLE)
+        assert event.text == "keep talking"
+        await router.send({"type": "tool_cancel", "id": "task-slow"})
+        await asyncio.wait_for(cancelled.wait(), SETTLE)
+        assert router.commands.empty()
 
     async def test_leaving_closes_the_session(
         self, router: Router, llm: stream.Accelerated, call: RemoteCall

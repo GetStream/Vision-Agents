@@ -18,10 +18,13 @@ from ._generated.api.default import (
 from ._generated.models import (
     AgentConfig,
     AgentConfigRequest,
+    AgentConfigRequestSubagents,
     AgentMode,
     Error,
     KnowledgeDocument,
     SkillRequest,
+    SyncAgentRequestSubagents,
+    SessionVideo,
     SyncAgentRequest,
     SyncAgentRequestTags,
     SyncAgentResult,
@@ -77,6 +80,8 @@ async def sync_agent(
         SkillRequest(
             config_id="",
             name=skill.name,
+            subagent=skill.subagent,
+            capture_video=skill.capture_video,
             description=skill.description,
             instructions=skill.instructions,
             deadline_ms=int((skill.deadline_seconds or 0) * 1000),
@@ -155,6 +160,10 @@ async def define_agent(
     vm: Optional[Union[Sandbox, type[Sandbox]]] = None,
     url: Optional[str] = None,
     customer_id: Optional[str] = None,
+    *,
+    subagents: Optional[dict[str, str]] = None,
+    video_source: Optional[str] = None,
+    video_max_frames: Optional[int] = None,
 ) -> AgentConfig:
     """Store an agent configuration, along with the skills it names.
 
@@ -169,8 +178,10 @@ async def define_agent(
         name: What the config is called, which is also how it is found again.
         instructions: The system prompt.
         llm: The model that answers.
-        subagent: The slower model that runs delegated work. Without one the skills mean
-            nothing, since there is nobody to hand the work to.
+        subagent: Shorthand for the default worker's model.
+        subagents: Worker names mapped to model targets, such as ``vision: vlm``.
+        video_source: Source used by skills that capture video.
+        video_max_frames: Number of retained frames to capture, from 1 to 8.
         stt: The model that transcribes, for a config a call will use.
         tts: The model that speaks, for a config a call will use.
         voice: A provider-specific voice id.
@@ -199,6 +210,14 @@ async def define_agent(
         wanted.llm = llm
     if subagent:
         wanted.subagent = subagent
+    if subagents is not None:
+        wanted.subagents = AgentConfigRequestSubagents.from_dict(subagents)
+    if video_source is not None or video_max_frames is not None:
+        wanted.video = SessionVideo()
+        if video_source is not None:
+            wanted.video.source = video_source
+        if video_max_frames is not None:
+            wanted.video.max_frames = video_max_frames
     if stt:
         wanted.stt = stt
     if tts:
@@ -257,6 +276,8 @@ async def define_skills(
         body = SkillRequest(
             config_id=config_id,
             name=skill.name,
+            subagent=skill.subagent,
+            capture_video=skill.capture_video,
             description=skill.description,
             instructions=skill.instructions,
             deadline_ms=int((skill.deadline_seconds or 0) * 1000),
@@ -289,6 +310,12 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.llm = settings.llm
     if settings.subagent:
         body.subagent = settings.subagent
+    if settings.subagents:
+        body.subagents = SyncAgentRequestSubagents.from_dict(settings.subagents)
+    if settings.video_max_frames:
+        body.video = SessionVideo(
+            source=settings.video_source, max_frames=settings.video_max_frames
+        )
     if settings.search:
         body.search = settings.search
     if settings.greeting:

@@ -1,7 +1,15 @@
 from dataclasses import dataclass
-from typing import AsyncIterator, Literal, Optional, Protocol, runtime_checkable
+from typing import (
+    AsyncIterator,
+    Literal,
+    Optional,
+    Protocol,
+    runtime_checkable,
+    Sequence,
+)
 
 from ..harness import Harness
+from .llm import ImageContent
 
 RemoteEventType = Literal[
     "participant_joined",
@@ -125,7 +133,12 @@ class RemotePipeline(Protocol):
         """Speak `text` on the call without asking the model anything."""
         ...
 
-    async def respond_remote(self, text: str, interrupt: bool = True) -> None:
+    async def respond_remote(
+        self,
+        text: str,
+        interrupt: bool = True,
+        images: Optional[Sequence[ImageContent]] = None,
+    ) -> None:
         """Ask the model to reply to an injected instruction."""
         ...
 

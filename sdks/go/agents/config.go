@@ -37,7 +37,9 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	wanted := acceleration.AgentConfigRequest{Name: a.options.Name}
 	setString(&wanted.Instructions, a.options.Instructions)
 	setString(&wanted.KnowledgeNamespace, namespace)
-	setString(&wanted.Subagent, a.options.Harness.Subagent())
+	if a.options.Harness != nil && len(a.options.Harness.Subagents) > 0 {
+		wanted.Subagents = &a.options.Harness.Subagents
+	}
 	if len(a.options.CostTracking) > 0 {
 		tags := a.options.CostTracking
 		wanted.Tags = &tags
@@ -116,7 +118,8 @@ func DefineSkills(ctx context.Context, client *acceleration.ClientWithResponses,
 
 	for _, skill := range skills {
 		body := acceleration.SkillRequest{
-			Name:         skill.Name,
+			Name:     skill.Name,
+			Subagent: &skill.Subagent, CaptureVideo: &skill.CaptureVideo,
 			Description:  skill.Description,
 			Instructions: skill.Instructions,
 		}

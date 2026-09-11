@@ -1,8 +1,13 @@
 import abc
 import asyncio
+import base64
+import io
 import json
 import time
 from dataclasses import dataclass
+from urllib.parse import urlparse
+
+import av
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -36,6 +41,62 @@ from .function_registry import FunctionRegistry
 from .llm_types import NormalizedToolCallItem, ToolSchema
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class ImageContent:
+    """An image supplied as immutable bytes or an HTTP(S) URL."""
+
+    data: bytes = b""
+    mime: str = "image/jpeg"
+    detail: Optional[str] = None
+    url: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if bool(self.data) == bool(self.url):
+            raise ValueError("provide exactly one of image data or url")
+        if self.detail not in (None, "auto", "low", "high"):
+            raise ValueError("image detail must be auto, low, or high")
+        if self.url:
+            parsed = urlparse(self.url)
+            if (
+                parsed.scheme not in ("http", "https")
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+            ):
+                raise ValueError(
+                    "image url must be an absolute HTTP(S) URL without credentials"
+                )
+        elif self.mime not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
+            raise ValueError("unsupported image media type")
+        if not isinstance(self.data, bytes):
+            raise ValueError("image data must be immutable bytes")
+
+    def data_uri(self) -> str:
+        """Return the original URL or a data URI for bytes."""
+        if self.url:
+            return self.url
+        encoded = base64.standard_b64encode(self.data).decode("ascii")
+        return f"data:{self.mime};base64,{encoded}"
+
+    def as_content_part(self) -> dict[str, object]:
+        """Render an OpenRouter-compatible image content part."""
+        return {"type": "image_url", "image_url": self.as_image_dict()}
+
+    def as_image_dict(self) -> dict[str, str]:
+        """Render the image source used by socket attachment shorthand."""
+        image = {"url": self.data_uri()}
+        if self.detail:
+            image["detail"] = self.detail
+        return image
+
+
+def jpeg_bytes(frame: av.VideoFrame) -> bytes:
+    """Encode a video frame as JPEG bytes."""
+    buf = io.BytesIO()
+    frame.to_image().save(buf, format="JPEG")
+    return buf.getvalue()
 
 
 class LLMResponseEvent(Generic[T]):
@@ -94,6 +155,32 @@ class LLMResponseFinal:
     """Original response object."""
 
 
+class LLMResponses:
+    """``llm.responses.create``, the same vocabulary ``agent.responses`` speaks."""
+
+    def __init__(self, llm: "LLM") -> None:
+        self._llm = llm
+
+    async def create(
+        self,
+        text: str | list[str | ImageContent],
+        images: Optional[List[ImageContent]] = None,
+        participant: Optional[Participant] = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        """Ask the model to reply to ``text``, optionally attaching images."""
+        if isinstance(text, list):
+            if images:
+                raise ValueError("use ordered content or images shorthand, not both")
+            async for chunk in self._llm.content_response(text, participant):
+                yield chunk
+        elif images:
+            async for chunk in self._llm.image_response(text, images, participant):
+                yield chunk
+        else:
+            async for chunk in self._llm.simple_response(text, participant):
+                yield chunk
+
+
 class LLM(Component):
     provider_name: Optional[str] = None
     # The model identifier this LLM is configured to use.
@@ -116,6 +203,37 @@ class LLM(Component):
         text: str,
         participant: Optional[Participant] = None,
     ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]: ...
+
+    def content_response(
+        self,
+        content: list[str | ImageContent],
+        participant: Optional[Participant] = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        """Reject ordered content unless the plugin implements it."""
+        raise ValueError(
+            f"{self.provider_name or type(self).__name__} does not support ordered content responses"
+        )
+
+    def image_response(
+        self,
+        text: str,
+        images: list[ImageContent],
+        participant: Optional[Participant] = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        """Reject image requests unless a plugin explicitly implements them."""
+        raise ValueError(
+            f"{self.provider_name or type(self).__name__} does not support image responses"
+        )
+
+    @property
+    def responses(self) -> LLMResponses:
+        """``responses.create``, delegating to ``simple_response``."""
+        return LLMResponses(self)
+
+    @property
+    def uses_video_observations(self) -> bool:
+        """Whether the remote pipeline needs a local frame collector."""
+        return False
 
     @property
     def router_session_id(self) -> Optional[str]:

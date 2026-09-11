@@ -35,7 +35,7 @@ from ..events.manager import EventManager
 from ..harness import Harness
 from ..instructions import Instructions
 from ..llm import events as llm_events
-from ..llm.llm import LLM, AudioLLM, VideoLLM
+from ..llm.llm import LLM, AudioLLM, VideoLLM, ImageContent
 from ..llm.realtime import Realtime
 from ..llm.remote import (
     KnowledgeBase,
@@ -55,6 +55,7 @@ from ..processors.base_processor import (
     VideoProcessor,
     VideoPublisher,
 )
+from ..processors.observations import ObservationBuffer
 from ..profiling import Profiler
 from ..stt.stt import STT
 from ..telephony import InboundCall, OutboundCall, PlacedCall, Telephony
@@ -124,6 +125,7 @@ class Responses:
         text: str,
         participant: Optional[Participant] = None,
         interrupt: bool = True,
+        images: Optional[list[ImageContent]] = None,
     ) -> None:
         """Ask the LLM to reply to an injected instruction.
 
@@ -136,13 +138,19 @@ class Responses:
                 Defaults to the agent itself when not supplied.
             interrupt: If True (default), preempt any in-flight LLM turn. If
                 False, drop silently when a turn is already in flight.
+            images: Frames attached to this turn. Accelerated sessions send
+                them to the vision worker; unsupported local flows reject them.
         """
         agent = self._agent
         with agent.tracer.start_as_current_span("agent.responses.create"):
             if isinstance(agent.llm, RemotePipeline):
-                await agent.llm.respond_remote(text, interrupt=interrupt)
+                await agent.llm.respond_remote(text, interrupt=interrupt, images=images)
                 return
 
+            if images:
+                raise ValueError(
+                    'image attachments require a delegated vision worker; use stream.LLM(target="vlm") for direct inference'
+                )
             if participant is None:
                 participant = Participant(
                     original=agent.agent_user,
@@ -378,6 +386,7 @@ class Agent:
             processor.attach_agent(self)
 
         self._register_processor_state_tool()
+        self.observations = ObservationBuffer()
 
         # Track metadata: track_id -> TrackInfo
         self._active_video_tracks: dict[str, TrackInfo] = {}
@@ -1083,7 +1092,7 @@ class Agent:
 
         with self.span("llm.join_remote"):
             await pipeline.join_remote(self._remote_call(call.id))
-        if self.video_processors:
+        if self.video_processors or self.llm.uses_video_observations:
             await self._join_video_worker(call)
         self.logger.info(f"🤖 Agent joined call remotely: {call.id}")
         self.events.send(events.AgentJoinedCallEvent(call=call))
@@ -1355,6 +1364,11 @@ class Agent:
             await cancel_and_wait(self._remote_events_task)
             self._remote_events_task = None
 
+        for track in self._active_video_tracks.values():
+            await track.forwarder.stop()
+        self._active_video_tracks.clear()
+        self.observations.clear()
+
         # Stop the inference flow
         await self._flow.stop()
         self._audio_input_stream.close()
@@ -1618,6 +1632,7 @@ class Agent:
             f"📺 Track removed: {track_type.name} from {participant.user_id}"
         )
 
+        self.observations.remove(f"{participant.user_id}/{track_id}")
         track = self._active_video_tracks.pop(track_id, None)
         if track is not None:
             await track.forwarder.stop()
@@ -1711,6 +1726,12 @@ class Agent:
             forwarder=forwarder,
         )
 
+        source = f"{participant.user_id}/{track_id}"
+        forwarder.add_frame_handler(
+            lambda frame: self.observations.append(source, frame),
+            fps=2,
+            name=f"observations_{track_id}",
+        )
         await self._on_track_change(track_id)
 
     @property
@@ -1742,7 +1763,11 @@ class Agent:
         return len(self.video_publishers) > 0
 
     def _needs_video(self) -> bool:
-        return len(self.video_processors) > 0 or _is_video_llm(self.llm)
+        return (
+            len(self.video_processors) > 0
+            or _is_video_llm(self.llm)
+            or isinstance(self.llm, RemotePipeline)
+        )
 
     @property
     def audio_processors(self) -> list[AudioProcessor]:

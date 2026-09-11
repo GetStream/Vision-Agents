@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -430,6 +431,22 @@ type Question struct {
 type Said struct {
 	Role    string
 	Content string
+	Images  []Image
+	Parts   []ContentPart
+}
+
+// ContentPart is one ordered text or image segment.
+type ContentPart struct {
+	Text  string
+	Image *Image
+}
+
+// Image is a still attached to a turn.
+type Image struct {
+	URL    string
+	MIME   string
+	Data   []byte
+	Detail string
 }
 
 // Answer is the reply arriving as it is written.
@@ -454,7 +471,24 @@ type Model struct {
 func (m *Model) Ask(question Question) error {
 	said := make([]Frame, 0, len(question.Messages))
 	for _, message := range question.Messages {
-		said = append(said, Frame{"role": message.Role, "content": message.Content})
+		if len(message.Parts) > 0 && (message.Content != "" || len(message.Images) > 0) {
+			return errors.New("stream: use ordered parts or content/images shorthand, not both")
+		}
+		images := append([]Image(nil), message.Images...)
+		for _, part := range message.Parts {
+			if part.Image != nil {
+				if part.Text != "" {
+					return errors.New("stream: a part cannot contain text and an image")
+				}
+				images = append(images, *part.Image)
+			}
+		}
+		for _, image := range images {
+			if (image.URL != "") == (len(image.Data) > 0) {
+				return errors.New("stream: an image needs exactly one URL or byte payload")
+			}
+		}
+		said = append(said, Frame{"role": message.Role, "content": contentOf(message)})
 	}
 
 	frame := Frame{"type": "respond", "messages": said}
@@ -492,6 +526,44 @@ func (m *Model) Ask(question Question) error {
 		frame["metadata"] = question.Metadata
 	}
 	return m.socket.Send(frame)
+}
+
+func contentOf(message Said) any {
+	if len(message.Parts) > 0 {
+		parts := make([]Frame, 0, len(message.Parts))
+		for _, part := range message.Parts {
+			if part.Image != nil {
+				parts = append(parts, contentOf(Said{Images: []Image{*part.Image}}).([]Frame)...)
+			} else {
+				parts = append(parts, Frame{"type": "text", "text": part.Text})
+			}
+		}
+		return parts
+	}
+	if len(message.Images) == 0 {
+		return message.Content
+	}
+	parts := make([]Frame, 0, 1+len(message.Images))
+	if message.Content != "" {
+		parts = append(parts, Frame{"type": "text", "text": message.Content})
+	}
+	for _, image := range message.Images {
+		mime := image.MIME
+		if mime == "" {
+			mime = "image/jpeg"
+		}
+		url := image.URL
+		if url == "" {
+			url = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(image.Data)
+		}
+		source := Frame{"url": url}
+		if image.Detail != "" {
+			source["detail"] = image.Detail
+		}
+		part := Frame{"type": "image_url", "image_url": source}
+		parts = append(parts, part)
+	}
+	return parts
 }
 
 // Answers yields the reply until the socket closes, when the channel closes.

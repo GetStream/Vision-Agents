@@ -254,6 +254,72 @@ provider behind that target can express: a transcript that was quietly not diari
 than being told. What each provider can express is in the `router-stt`, `router-tts`,
 `router-llm` and `router-search` skills.
 
+## Images and delegated vision
+
+Keep the conversation on `llm-fast` and bind visual analysis to a separate worker in
+`agent.yaml`:
+
+```yaml
+llm: llm-fast
+subagents:
+  default: llm-thinking
+  vision: vlm
+video:
+  max_frames: 1
+```
+
+The built-in `vision` skill captures evidence when asked and runs on the `vision` worker.
+Worker preparation, frame encoding and inference run asynchronously, so the conversation
+can continue. Custom skills opt in with `subagent: vision` and `capture_video: true`.
+`subagent: llm-thinking` remains shorthand for `subagents.default`; declare only one form
+of the default in a configuration layer. Named overrides merge by key; an empty target
+removes that worker. `stream.define_agent` also accepts `subagents`, `video_source` and
+`video_max_frames`.
+
+Explicit attachments use the same worker in an accelerated agent:
+
+```python
+from vision_agents.core.llm import ImageContent
+
+await agent.responses.create(
+    "Compare these pictures.",
+    images=[ImageContent(data=first_jpeg), ImageContent(url=second_url)],
+)
+```
+
+The main conversation receives the question, pending task and eventual findings. The
+vision worker receives the images. For standalone inference, use
+`stream.LLM(target="vlm").responses.create(...)` and iterate the response stream. The
+standalone API also accepts an ordered list of strings and `ImageContent` as its first
+argument to preserve text/image interleaving. With an attached conversation, images remain
+on their original turns for follow-up questions and are released when those turns are
+removed from history. Image URLs are HTTP(S) URLs or bytes encoded
+by the SDK; the wire format is `{"type":"image_url","image_url":{"url":"…","detail":"auto"}}`.
+Image detail accepts `auto`, `low` or `high`. `vlm` requires image capability before model
+selection; `llm-fast` retains its existing routing policy.
+
+Camera evidence uses local receive timestamps in Unix milliseconds; backend and video
+worker system clocks must be synchronized. Each observation
+buffer retains at most 64 frames and 32 MiB. Capture selects 1–8 frames at or before task
+acceptance, pins them for that task, and rejects missing or stale evidence. The newest
+selected frame must be no more than five seconds old. Multiple available cameras require
+an explicit source; missing or ambiguous evidence produces a clarification question.
+`video.source` can name a raw `participant/track` or a processor source such as
+`roboflow_streaming`. A vision directive can override selection for one question, for
+example `<ask skill="vision" frames="2">What changed?</ask>`.
+
+Roboflow continues processing independently. Its observations retain raw frames and
+separately timestamped predictions; unavailable prediction/frame alignment is stated
+explicitly. See the [flower spotter](../../examples/video_agents/flower_spotter) and
+[standalone image example](../../examples/video_agents/describe_image).
+
+On the session socket, `get_video_frames` is a reserved capture request carrying a task
+ID, source, acceptance timestamp and limit. The matching `tool_result` carries ordered
+metadata/image parts. A `tool_cancel` event with that request ID cancels capture or a
+running local tool; late results are discarded. Existing native speech-to-speech video
+forwarding is unchanged. Integrating those engines with the shared task/result lifecycle
+is a separate milestone.
+
 ## Regenerating the client
 
 `_generated/` comes from `acceleration/api/openapi.yaml` and is committed. After changing
