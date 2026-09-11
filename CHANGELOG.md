@@ -160,6 +160,16 @@ saved conversation links remain readable after the session ends.
 - Backend-managed Daytona research profiles keep a source workspace and Cursor process warm. Agent configs and session requests accept `sandbox_profile`; Go agents select it with `ManagedSandbox`, and receive `research_progress` events.
 - Daytona Python sandboxes use the official Go SDK, serialize concurrent creation and retain identity after failed deletion.
 
+### Delegated visual understanding
+
+- Added `vlm` for image-capable routing; `llm-fast` keeps its existing policy.
+- LLM messages and tool results accept ordered `text` and `image_url` parts, including bytes and HTTP URLs.
+- Direct VLM conversations retain image attachments on their original turns for follow-up questions.
+- Named `subagents` and per-skill bindings keep visual reasoning off the live conversation loop.
+- Camera and processor observations use bounded history, frame IDs, capture times and task-scoped selection. Uncorrelated Roboflow predictions are labelled explicitly.
+- `agent.responses.create(text, images=[...])` delegates attachments to the configured vision skill. Unsupported local flows reject images clearly.
+- Swift session observers answer only locally registered tools, so an attached iPhone cannot reject frame-capture requests owned by the Python video worker.
+
 ### An agent or router stores its own directory on starting
 
 `Agent(config="customer_support")` and `Router("clinic")` now find the directory behind the
