@@ -15,6 +15,8 @@ A voice agent that looks through the caller's camera.
 Voice runs in the Go acceleration backend. This process joins the same call as the video
 worker: it streams the camera to Roboflow Serverless Video Streaming, publishes the frames
 back with boxes drawn on, and the model reads the detections through `get_video_state`.
+Visual interpretation uses the named vision worker configured in agent.yaml, with raw
+frames selected from the processor's retained observations.
 
 `rfdetr-nano` is a COCO detector, enough to prove the pipeline on a cup or a laptop. Point
 it at a flower Workflow with `workflow_id=` and `workspace=` in place of `model_id=`.

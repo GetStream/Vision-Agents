@@ -5,12 +5,18 @@ this Python process joins the same call as a video worker, streams the camera
 to Roboflow Serverless Video Streaming, and publishes the frames back with
 boxes drawn on.
 
-The phone shows its own camera with the annotated track inset. The model does
-**not** see those frames. It only gets detection labels (and boxes/counts)
-when it calls `get_video_state`.
+The phone shows its own camera with the annotated track inset. The conversation
+uses `get_video_state` for detection labels and counts. Visual questions are
+delegated to a separate `vision` worker, which receives retained raw frames and
+returns findings while the conversation stays responsive. Predictions carry
+separate timestamps; the displayed boxes may lag the current camera frame.
+
+`agent.yaml` keeps `llm: llm-fast`, binds `subagents.vision: vlm`, and selects
+`video.source: roboflow_streaming` with one frame per analysis. Set `max_frames`
+to 2–8 to supply a recent sequence instead.
 
 ```
-agent.yaml           name and description; pushed to the router on join
+agent.yaml           models and video selection; synced to the router on join
 instructions.md      what the agent is told
 flower_spotter.py    joins as the video worker
 app/                 iOS: lists the live call, camera on, annotated video
@@ -18,8 +24,9 @@ app/                 iOS: lists the live call, camera on, annotated video
 
 The default model is `rfdetr-nano`, a serverless COCO detector (person, cup,
 laptop, cat). That is the office smoke test. For flowers, pass `workflow_id=`
-and `workspace=` instead of `model_id=` and rewrite `instructions.md` so it
-still answers only from `get_video_state`.
+and `workspace=` instead of `model_id=`. Keep the distinction in
+`instructions.md`: detection questions use processor state, while visual
+interpretation uses the vision skill.
 
 Streaming is billed per hour while the Roboflow WebRTC session is open. The
 red hang-up button in the app ends the session and closes it.
@@ -32,7 +39,9 @@ A running acceleration router from the repo root:
 docker compose up --build
 ```
 
-That serves the router on `:8080`. See [acceleration/README.md](../../../acceleration/README.md).
+That serves the router on `:8080`. Router startup applies migrations, including
+the new named-worker/video configuration columns. Applying this migration was verified
+locally; rollback has not been tested. See [acceleration/README.md](../../../acceleration/README.md).
 
 Credentials live in the repo-root `.env`. This example needs:
 
@@ -42,6 +51,7 @@ STREAM_API_SECRET=your_stream_secret
 STREAM_ACCELERATION_URL=http://localhost:8080
 STREAM_ACCELERATION_CUSTOMER_ID=examples
 ROBOFLOW_API_KEY=your_roboflow_key
+OPENAI_API_KEY=your_openai_key
 ```
 
 `STREAM_ACCELERATION_CUSTOMER_ID` is often missing from `.env`. It must be
@@ -49,8 +59,9 @@ ROBOFLOW_API_KEY=your_roboflow_key
 `NEXT_PUBLIC_CUSTOMER_ID` in `compose.yaml`. Export it if it is not in the
 file.
 
-The router also needs a key for whichever LLM it routes the config to,
-`GOOGLE_API_KEY` by default. Get a Roboflow key from Roboflow → Settings → API.
+The router needs `OPENAI_API_KEY` for the current `vlm` preference and
+`GOOGLE_API_KEY` for the default conversation route, plus credentials for its
+configured speech providers. Get a Roboflow key from Roboflow → Settings → API.
 
 This example has its own venv. The Roboflow `webrtc` extra needs NumPy 2,
 which the workspace pins away.
@@ -88,6 +99,23 @@ address. Allow Local Network when iOS asks.
 
 Rebuild after changing `Demo.routerURL`. Pull to refresh, tap the live call,
 point the camera, and ask what it sees.
+
+## Smoke test
+
+1. Point at a cup or laptop and ask “What objects are detected?” This should use
+   `get_video_state`.
+2. Ask “Describe the color and appearance of the object.” This should delegate
+   to `vision` and answer after its findings arrive.
+3. Keep speaking while analysis runs to check that the conversation remains
+   responsive. Move the camera after asking; the task should retain its selected
+   evidence.
+4. Stop sharing video and ask another visual question. Once retained evidence
+   is stale, the agent should ask you to show the subject again.
+
+The initial phone test exposed an observer rejecting the Python worker's frame-capture
+request; the Swift client now leaves remote tools to their owners. Repeat this smoke
+test with the fixed build. Roboflow upstream connectivity also failed during the initial
+run, so a complete camera-to-spoken-answer result remains unverified.
 
 Navigating back leaves the phone's call and keeps the Python session. The red
 hang-up button ends the session.

@@ -87,6 +87,7 @@ class TestHybridVideoWorkerLive:
 
             names = [schema["name"] for schema in agent.llm.get_available_functions()]
             assert "get_video_state" in names
+            assert "get_video_frame" not in names
 
             replies.clear()
             await agent.responses.create(
@@ -105,3 +106,45 @@ class TestHybridVideoWorkerLive:
         assert any(label.lower() in spoken for label in labels), (
             f"reply {spoken!r} did not use labels {labels}"
         )
+
+    async def test_delegated_vision_round_trip(self, assets_dir, tmp_path):
+        await acceleration.sync_agent("flower_spotter")
+        processor = roboflow.RoboflowStreamingProcessor(model_id="rfdetr-nano", fps=1)
+        agent = Agent(
+            config="flower_spotter",
+            processors=[processor],
+            agent_user=User(name="hybrid-frame", id="hybrid-frame"),
+        )
+        agent.set_video_track_override_path(
+            str(_cat_video(Path(assets_dir), tmp_path / "cat-frame.mp4"))
+        )
+
+        replies: list[str] = []
+
+        @agent.events.subscribe
+        async def on_reply(event: LLMResponseFinalEvent):
+            if event.text:
+                replies.append(event.text)
+
+        call = await agent.create_call("agent", f"hybrid-frame-{int(time.time())}")
+        async with agent.join(call, wait_for_end=False, participant_wait_timeout=0):
+            deadline = time.monotonic() + 70
+            while time.monotonic() < deadline:
+                if processor.latest_frame() is not None:
+                    break
+                await asyncio.sleep(0.5)
+            assert processor.latest_frame() is not None
+
+            replies.clear()
+            await agent.responses.create(
+                "Delegate to the vision skill and describe the current camera image after its findings arrive. "
+                "Do not guess from memory."
+            )
+            reply_deadline = time.monotonic() + 45
+            while time.monotonic() < reply_deadline:
+                if replies:
+                    break
+                await asyncio.sleep(0.2)
+
+        spoken = " ".join(replies).lower()
+        assert spoken, "the model did not reply after looking at the frame"

@@ -1,5 +1,8 @@
 """Stream video through Roboflow Serverless Video Streaming (WebRTC)."""
 
+import json
+import time
+
 import asyncio
 import logging
 import os
@@ -15,6 +18,7 @@ from inference_sdk import InferenceHTTPClient
 from vision_agents.core import Agent
 from vision_agents.core.events import EventManager
 from vision_agents.core.processors.base_processor import VideoProcessorPublisher
+from vision_agents.core.processors.observations import ObservationBuffer
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 
@@ -71,6 +75,8 @@ class RoboflowStreamingProcessor(VideoProcessorPublisher):
         fps: Frames sent per second.
         classes: Keep only these labels.
         task_type: The model's task, so ``model_id`` needs no lookup.
+        frame_source: ``annotated`` or ``raw``, which ``latest_frame`` serves
+            when the tool does not say.
     """
 
     name = "roboflow_streaming"
@@ -86,6 +92,7 @@ class RoboflowStreamingProcessor(VideoProcessorPublisher):
         fps: int = 5,
         classes: Optional[list[str]] = None,
         task_type: str = "object-detection",
+        frame_source: str = "annotated",
     ):
         super().__init__()
         if model_id and workflow_id:
@@ -107,6 +114,7 @@ class RoboflowStreamingProcessor(VideoProcessorPublisher):
         self.fps = fps
         self.requested_region = requested_region
         self.task_type = task_type
+        self.frame_source = frame_source
         self._classes = classes
         self._api_key = api_key
         self._api_url = api_url
@@ -119,9 +127,14 @@ class RoboflowStreamingProcessor(VideoProcessorPublisher):
         self._session: Optional[_WebRTCSession] = None
         self._session_thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self.observation_buffer: ObservationBuffer = ObservationBuffer()
+        self._source_name = self.name
+        self._processed_at_ms = 0
         self._latest_state: dict[str, object] = detection_state([])
         self._latest_detections: sv.Detections = sv.Detections.empty()
         self._latest_classes: dict[int, str] = {}
+        self._latest_raw: Optional[np.ndarray] = None
+        self._latest_annotated: Optional[np.ndarray] = None
         self._video_track: QueuedVideoTrack = QueuedVideoTrack(
             fps=self.fps,
             max_queue_size=self.fps,
@@ -179,6 +192,8 @@ class RoboflowStreamingProcessor(VideoProcessorPublisher):
         shared_forwarder: Optional[VideoForwarder] = None,
     ):
         """Send call frames to Roboflow and republish them with boxes."""
+        self._source_name = f"{self.name}/{participant_id or 'unknown'}"
+        self.observation_buffer.clear()
         if self._video_forwarder is not None:
             await self._video_forwarder.remove_frame_handler(self._send_frame)
         self._video_forwarder = (
@@ -208,6 +223,7 @@ class RoboflowStreamingProcessor(VideoProcessorPublisher):
         await self.stop_processing()
         self._closed = True
         await self._stop_session()
+        self.observation_buffer.clear()
         self._video_track.stop()
         logger.info("Roboflow streaming processor closed")
 
@@ -228,6 +244,14 @@ class RoboflowStreamingProcessor(VideoProcessorPublisher):
         if self._closed:
             return
         image = frame.to_ndarray(format="bgr24")
+        self._latest_raw = image.copy()
+        self.observation_buffer.append(
+            self._source_name,
+            av.VideoFrame.from_ndarray(image.copy(), format="bgr24"),
+            processor_result=json.dumps(self._latest_state),
+            processed_at_ms=self._processed_at_ms,
+            aligned=False,
+        )
         if self._source is not None:
             try:
                 self._source.send(image)
@@ -248,6 +272,15 @@ class RoboflowStreamingProcessor(VideoProcessorPublisher):
         await self._video_track.add_frame(
             av.VideoFrame.from_ndarray(rgb, format="rgb24")
         )
+        self._latest_annotated = rgb.copy()
+
+    def latest_frame(self, annotated: bool = True) -> Optional[av.VideoFrame]:
+        """The most recent frame, annotated or raw depending on ``annotated``."""
+        array = self._latest_annotated if annotated else self._latest_raw
+        if array is None:
+            return None
+        fmt = "rgb24" if annotated else "bgr24"
+        return av.VideoFrame.from_ndarray(array, format=fmt)
 
     def _bind_session_handlers(self, session: _WebRTCSession) -> None:
         @session.on_data("predictions")
@@ -272,7 +305,12 @@ class RoboflowStreamingProcessor(VideoProcessorPublisher):
             if detections.confidence is not None
             else None
         )
-        self._latest_state = detection_state(objects, confidences)
+        self._processed_at_ms = int(time.time() * 1000)
+        self._latest_state = {
+            **detection_state(objects, confidences),
+            "processed_at_ms": self._processed_at_ms,
+            "frame_alignment": "unavailable",
+        }
         if objects and self._loop is not None:
             self._loop.call_soon_threadsafe(self._emit_detection, detections, objects)
 
