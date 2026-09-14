@@ -27,10 +27,18 @@ public struct RoutedFrame: Sendable, Hashable {
         case started
         case transcript
         case speechStarted = "speech_started"
+        case speechStopped = "speech_stopped"
         case synthesisComplete = "synthesis_complete"
         case delta
         case complete
         case interrupted
+        case inputTranscript = "input_transcript"
+        case outputTranscript = "output_transcript"
+        case responseStarted = "response_started"
+        case responseComplete = "response_complete"
+        case toolCall = "tool_call"
+        case toolCancel = "tool_cancel"
+        case sessionExpiring = "session_expiring"
         case error
         case closed
     }
@@ -66,15 +74,31 @@ public struct SpokenAudio: Sendable, Hashable {
     public let samples: Data
     public let sampleRate: Int
     public let channels: Int
+    /// Which reply the audio belongs to and where in it this chunk falls, on a conversation
+    /// socket. A client drops audio whose generation a `response_complete` frame has already
+    /// reported interrupted. Nil on a voice socket, whose header does not say.
+    public let generation: Int?
+    public let index: Int?
+
+    /// The size of the header on a voice socket's audio frame, and on a conversation's.
+    static let voiceHeader = 8
+    static let conversationHeader = 16
 
     /// Reads one audio frame, whose header says how to play what follows.
-    init?(_ payload: Data) {
-        guard payload.count > 8 else { return nil }
-        let header = [UInt8](payload.prefix(8))
-        sampleRate =
-            Int(header[0]) | Int(header[1]) << 8 | Int(header[2]) << 16 | Int(header[3]) << 24
-        channels = Int(header[4]) | Int(header[5]) << 8
-        samples = payload.dropFirst(8)
+    init?(_ payload: Data, header: Int = SpokenAudio.voiceHeader) {
+        guard payload.count > header else { return nil }
+        let bytes = [UInt8](payload.prefix(header))
+        sampleRate = Int(bytes[0]) | Int(bytes[1]) << 8 | Int(bytes[2]) << 16 | Int(bytes[3]) << 24
+        channels = Int(bytes[4]) | Int(bytes[5]) << 8
+        if header == SpokenAudio.conversationHeader {
+            generation =
+                Int(bytes[8]) | Int(bytes[9]) << 8 | Int(bytes[10]) << 16 | Int(bytes[11]) << 24
+            index = Int(bytes[12]) | Int(bytes[13]) << 8 | Int(bytes[14]) << 16 | Int(bytes[15]) << 24
+        } else {
+            generation = nil
+            index = nil
+        }
+        samples = payload.dropFirst(header)
     }
 }
 
@@ -93,13 +117,22 @@ actor ModalitySocket {
     private let url: URL
     private let headers: [String: String]
     private let urlSession: URLSession
+    /// How long the header on an audio frame is, which depends on the modality: a voice
+    /// says only how to play the audio, a conversation also says which reply it belongs to.
+    private let audioHeader: Int
     private var task: URLSessionWebSocketTask?
     private var reader: Task<Void, Never>?
 
-    init(url: URL, headers: [String: String], urlSession: URLSession = .shared) {
+    init(
+        url: URL,
+        headers: [String: String],
+        urlSession: URLSession = .shared,
+        audioHeader: Int = SpokenAudio.voiceHeader
+    ) {
         self.url = url
         self.headers = headers
         self.urlSession = urlSession
+        self.audioHeader = audioHeader
     }
 
     /// Opens the socket and starts reading.
@@ -192,7 +225,7 @@ actor ModalitySocket {
                 // payload is is decided by whether it reads as a frame.
                 if let frame = try? decoder.decode(RoutedFrame.self, from: payload) {
                     continuation.yield(.frame(frame))
-                } else if let audio = SpokenAudio(payload) {
+                } else if let audio = SpokenAudio(payload, header: audioHeader) {
                     continuation.yield(.audio(audio))
                 }
             case .string(let text):

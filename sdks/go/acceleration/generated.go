@@ -154,16 +154,16 @@ func (e DecisionKind) Valid() bool {
 
 // Defines values for Endpointing.
 const (
-	Semantic Endpointing = "semantic"
-	Silence  Endpointing = "silence"
+	EndpointingSemantic Endpointing = "semantic"
+	EndpointingSilence  Endpointing = "silence"
 )
 
 // Valid indicates whether the value is a known member of the Endpointing enum.
 func (e Endpointing) Valid() bool {
 	switch e {
-	case Semantic:
+	case EndpointingSemantic:
 		return true
-	case Silence:
+	case EndpointingSilence:
 		return true
 	default:
 		return false
@@ -333,6 +333,7 @@ const (
 	Memory    Modality = "memory"
 	Phone     Modality = "phone"
 	Search    Modality = "search"
+	Sts       Modality = "sts"
 	Stt       Modality = "stt"
 	Tts       Modality = "tts"
 )
@@ -349,6 +350,8 @@ func (e Modality) Valid() bool {
 	case Phone:
 		return true
 	case Search:
+		return true
+	case Sts:
 		return true
 	case Stt:
 		return true
@@ -719,6 +722,27 @@ func (e SimulationRunState) Valid() bool {
 	}
 }
 
+// Defines values for StsOptionsTurnDetection.
+const (
+	StsOptionsTurnDetectionNone      StsOptionsTurnDetection = "none"
+	StsOptionsTurnDetectionSemantic  StsOptionsTurnDetection = "semantic"
+	StsOptionsTurnDetectionServerVad StsOptionsTurnDetection = "server_vad"
+)
+
+// Valid indicates whether the value is a known member of the StsOptionsTurnDetection enum.
+func (e StsOptionsTurnDetection) Valid() bool {
+	switch e {
+	case StsOptionsTurnDetectionNone:
+		return true
+	case StsOptionsTurnDetectionSemantic:
+		return true
+	case StsOptionsTurnDetectionServerVad:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TextContentPartType.
 const (
 	TextContentPartTypeText TextContentPartType = "text"
@@ -876,8 +900,11 @@ type AgentConfig struct {
 	SandboxProfile *string   `json:"sandbox_profile,omitempty"`
 	Search         *string   `json:"search,omitempty"`
 	Skills         *[]string `json:"skills,omitempty"`
-	Stt            *string   `json:"stt,omitempty"`
-	Subagent       *string   `json:"subagent,omitempty"`
+
+	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
+	Sts      *string `json:"sts,omitempty"`
+	Stt      *string `json:"stt,omitempty"`
+	Subagent *string `json:"subagent,omitempty"`
 
 	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
 	Subagents *map[string]string `json:"subagents,omitempty"`
@@ -925,6 +952,9 @@ type AgentConfigRequest struct {
 
 	// Skills Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
 	Skills *[]string `json:"skills,omitempty"`
+
+	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
+	Sts *string `json:"sts,omitempty"`
 
 	// Stt A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
 	Stt *string `json:"stt,omitempty"`
@@ -1047,6 +1077,12 @@ type Call struct {
 	// Skills What the fast model could hand to the subagent. The instructions behind each name are in the skill registry.
 	Skills    *[]string `json:"skills,omitempty"`
 	StartedAt time.Time `json:"started_at"`
+
+	// Sts The speech-to-speech target, for a native call, on the same terms as stt.
+	Sts *string `json:"sts,omitempty"`
+
+	// StsUsed The provider/model that held a native call, on the same terms as stt_used.
+	StsUsed *string `json:"sts_used,omitempty"`
 
 	// Stt The transcription target the call ran with, after a session's overrides were folded into whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is several models and routing fails over between them, so per-turn providers are in the request rows.
 	Stt *string `json:"stt,omitempty"`
@@ -1285,6 +1321,9 @@ type CreateSessionRequest struct {
 	// Skills Omit for the built-in set of think, recall and explain.
 	Skills *[]SessionSkill `json:"skills,omitempty"`
 
+	// Sts A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
+	Sts *string `json:"sts,omitempty"`
+
 	// Stt Omit it and the config decides, or en-low-latency when there is no config.
 	Stt *string `json:"stt,omitempty"`
 
@@ -1511,7 +1550,7 @@ type MessageContent0 = string
 // MessageContent1 defines model for MessageContent.1.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first four are routed across providers. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first five are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 //
 // Example: tts
 type Modality string
@@ -1722,6 +1761,9 @@ type RouterConfig struct {
 	// Search How this config finds out today's answers.
 	Search *SearchOptions `json:"search,omitempty"`
 
+	// Sts How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
+	Sts *StsOptions `json:"sts,omitempty"`
+
 	// Stt How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently.
 	Stt  *SttOptions        `json:"stt,omitempty"`
 	Tags *map[string]string `json:"tags,omitempty"`
@@ -1741,6 +1783,9 @@ type RouterConfigRequest struct {
 
 	// Search How this config finds out today's answers.
 	Search *SearchOptions `json:"search,omitempty"`
+
+	// Sts How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
+	Sts *StsOptions `json:"sts,omitempty"`
 
 	// Stt How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently.
 	Stt *SttOptions `json:"stt,omitempty"`
@@ -1861,6 +1906,9 @@ type Session struct {
 
 	// State Whether the agent is still in the call.
 	State SessionState `json:"state"`
+
+	// Sts The provider and model holding a native conversation, once routing has picked one.
+	Sts *string `json:"sts,omitempty"`
 
 	// Stt The provider and model transcribing, once somebody has been heard.
 	Stt *string `json:"stt,omitempty"`
@@ -2230,6 +2278,69 @@ type StatsBucket struct {
 	Uptime *float64 `json:"uptime,omitempty"`
 }
 
+// StsOptions How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
+type StsOptions struct {
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
+
+	// Images The session will send the model frames, so it is routed only to a model that sees, the way vlm routes a text model.
+	Images *bool `json:"images,omitempty"`
+
+	// InputTranscript Ask the model to write down what it heard.
+	InputTranscript *bool `json:"input_transcript,omitempty"`
+
+	// Instructions The system prompt the model converses under.
+	Instructions *string `json:"instructions,omitempty"`
+
+	// InterruptResponse Whether the model cuts its own reply off when it hears the caller. Omitting it leaves the vendor's default; false is for a speaker close enough to the microphone that the model would otherwise interrupt itself.
+	InterruptResponse *bool     `json:"interrupt_response,omitempty"`
+	Languages         *[]string `json:"languages,omitempty"`
+
+	// OutputTranscript Ask the model to write down what it said.
+	OutputTranscript *bool `json:"output_transcript,omitempty"`
+
+	// Overwrites Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"openai": {"eagerness": "high"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
+	//
+	//
+	// Example: {"openai":{"eagerness":"high"}}
+	Overwrites *map[string]interface{} `json:"overwrites,omitempty"`
+
+	// PrefixPaddingMs How much audio before the detected speech is kept, for a silence timer.
+	PrefixPaddingMs *int `json:"prefix_padding_ms,omitempty"`
+
+	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
+	//
+	//
+	// Example: ["openai","sts-fast"]
+	Providers *[]string `json:"providers,omitempty"`
+
+	// SilenceMs How long a pause ends the turn, for a silence timer.
+	SilenceMs *int `json:"silence_ms,omitempty"`
+
+	// Target A provider/model or a capability shortcut.
+	//
+	// Example: sts-fast
+	Target *string `json:"target,omitempty"`
+
+	// Text The session will inject typed turns.
+	Text *bool `json:"text,omitempty"`
+
+	// Tools The session will hand the model functions to call.
+	Tools *bool `json:"tools,omitempty"`
+
+	// TurnDetection What decides the caller has finished: a silence timer, a model reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default. Only some models read the words, so semantic is a term.
+	TurnDetection *StsOptionsTurnDetection `json:"turn_detection,omitempty"`
+
+	// Voice The vendor's own name for a voice, such as marin at OpenAI or Kore at Google. None of these models takes one of your own voices, so the name is passed on as given rather than looked up.
+	//
+	//
+	// Example: marin
+	Voice *string `json:"voice,omitempty"`
+}
+
+// StsOptionsTurnDetection What decides the caller has finished: a silence timer, a model reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default. Only some models read the words, so semantic is a term.
+type StsOptionsTurnDetection string
+
 // SttOptions How this config transcribes, live or from a recording. A field that only means something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to write subtitles from. A provider that cannot express a term refuses the request rather than dropping it silently.
 type SttOptions struct {
 	// Channels Transcribe a multichannel recording per channel rather than mixed down.
@@ -2345,8 +2456,11 @@ type SyncAgentRequest struct {
 	SandboxProfile *string         `json:"sandbox_profile,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]SkillRequest `json:"skills,omitempty"`
-	Stt            *string         `json:"stt,omitempty"`
-	Subagent       *string         `json:"subagent,omitempty"`
+
+	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
+	Sts      *string `json:"sts,omitempty"`
+	Stt      *string `json:"stt,omitempty"`
+	Subagent *string `json:"subagent,omitempty"`
 
 	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
 	Subagents *map[string]string `json:"subagents,omitempty"`

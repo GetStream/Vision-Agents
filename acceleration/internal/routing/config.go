@@ -34,6 +34,11 @@ const (
 	// question, they differ in what they cost and how long they take, and which one is
 	// worth asking changes with their health.
 	Search Modality = "search"
+	// STS is speech-to-speech: one native audio model that hears the caller and speaks
+	// back, in place of the three above. It is its own modality rather than a flag on a
+	// language model because it is served over a different protocol, billed in different
+	// units and asked for different things.
+	STS Modality = "sts"
 	// Memory, Knowledge and Phone are recorded but not routed: there is one memory store,
 	// one knowledge base and one vendor per number, so there is nothing to choose
 	// between. They are modalities so what they cost shows up in the same reporting as
@@ -447,12 +452,12 @@ func (c Config) Validate() error {
 		if err := c[modality].validate(); err != nil {
 			return fmt.Errorf("routing: %s: %w", modality, err)
 		}
-		// Speech in and speech out are the modalities a data policy can be asked of, so
-		// they are the ones where every model has to have said what happens to what it is
-		// sent. An undeclared model would not answer such a request anyway; failing here
-		// is how that is found out when the provider is added rather than when a customer
-		// asks.
-		if modality != STT && modality != TTS {
+		// Speech in, speech out and the models that do both are the modalities a data
+		// policy can be asked of, so they are the ones where every model has to have said
+		// what happens to what it is sent. An undeclared model would not answer such a
+		// request anyway; failing here is how that is found out when the provider is
+		// added rather than when a customer asks.
+		if modality != STT && modality != TTS && modality != STS {
 			continue
 		}
 		for _, provider := range c[modality].Providers {

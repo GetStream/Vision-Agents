@@ -112,10 +112,11 @@ def sync_detailed(
     key=project returns one row per project per bucket.
 
     Args:
-        modality (Modality): What kind of work was done. The first four are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+        modality (Modality): What kind of work was done. The first five are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. Memory, knowledge and phone are recorded but not routed, since
+            there is one memory store, one knowledge base and one vendor per number, so the provider
+            paths do not serve them while the statistics paths do.
              Example: tts.
         key (str):
         granularity (Granularity | Unset):
@@ -160,10 +161,11 @@ def sync(
     key=project returns one row per project per bucket.
 
     Args:
-        modality (Modality): What kind of work was done. The first four are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+        modality (Modality): What kind of work was done. The first five are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. Memory, knowledge and phone are recorded but not routed, since
+            there is one memory store, one knowledge base and one vendor per number, so the provider
+            paths do not serve them while the statistics paths do.
              Example: tts.
         key (str):
         granularity (Granularity | Unset):
@@ -203,10 +205,11 @@ async def asyncio_detailed(
     key=project returns one row per project per bucket.
 
     Args:
-        modality (Modality): What kind of work was done. The first four are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+        modality (Modality): What kind of work was done. The first five are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. Memory, knowledge and phone are recorded but not routed, since
+            there is one memory store, one knowledge base and one vendor per number, so the provider
+            paths do not serve them while the statistics paths do.
              Example: tts.
         key (str):
         granularity (Granularity | Unset):
@@ -249,10 +252,11 @@ async def asyncio(
     key=project returns one row per project per bucket.
 
     Args:
-        modality (Modality): What kind of work was done. The first four are routed across
-            providers. Memory, knowledge and phone are recorded but not routed, since there is one
-            memory store, one knowledge base and one vendor per number, so the provider paths do not
-            serve them while the statistics paths do.
+        modality (Modality): What kind of work was done. The first five are routed across
+            providers; sts is speech to speech, one native audio model in place of a transcriber, a
+            text model and a voice. Memory, knowledge and phone are recorded but not routed, since
+            there is one memory store, one knowledge base and one vendor per number, so the provider
+            paths do not serve them while the statistics paths do.
              Example: tts.
         key (str):
         granularity (Granularity | Unset):

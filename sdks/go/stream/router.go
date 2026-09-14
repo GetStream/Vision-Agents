@@ -675,6 +675,8 @@ func named(options Frame) bool {
 			return typed != nil && typed.Target != nil && *typed.Target != ""
 		case *acceleration.LlmOptions:
 			return typed != nil && typed.Target != nil && *typed.Target != ""
+		case *acceleration.StsOptions:
+			return typed != nil && typed.Target != nil && *typed.Target != ""
 		}
 	}
 	return false

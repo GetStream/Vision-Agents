@@ -44,7 +44,7 @@ func (s *Store) UpdateRouterConfig(ctx context.Context, config *RouterConfig) er
 	normalizeRouterConfig(config)
 
 	result, err := s.db.NewUpdate().Model(config).
-		Column("name", "stt", "tts", "llm", "search", "tags", "updated_at").
+		Column("name", "stt", "tts", "llm", "sts", "search", "tags", "updated_at").
 		Where("id = ?", config.ID).
 		Where("customer_id = ?", config.CustomerID).
 		Where("deleted_at IS NULL").

@@ -7,6 +7,7 @@ class Modality(StrEnum):
     MEMORY = "memory"
     PHONE = "phone"
     SEARCH = "search"
+    STS = "sts"
     STT = "stt"
     TTS = "tts"
 

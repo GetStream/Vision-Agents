@@ -53,6 +53,8 @@ class CreateSessionRequest:
             it, and a caller naming a config would silently lose the model it configured.
         stt (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
         tts (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
+        sts (str | Unset): A speech-to-speech target. Naming one makes this a native session: the model hears and speaks
+            for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
         subagents (CreateSessionRequestSubagents | Unset): Named worker targets. Entries merge over stored
             configuration; an empty target removes that worker. Singular subagent is shorthand for default.
         subagent (str | Unset): The model that does the thinking. Empty means the voice model answers everything itself,
@@ -100,6 +102,7 @@ class CreateSessionRequest:
     llm: str | Unset = UNSET
     stt: str | Unset = UNSET
     tts: str | Unset = UNSET
+    sts: str | Unset = UNSET
     subagents: CreateSessionRequestSubagents | Unset = UNSET
     subagent: str | Unset = UNSET
     search: str | Unset = UNSET
@@ -154,6 +157,8 @@ class CreateSessionRequest:
         stt = self.stt
 
         tts = self.tts
+
+        sts = self.sts
 
         subagents: dict[str, Any] | Unset = UNSET
         if not isinstance(self.subagents, Unset):
@@ -258,6 +263,8 @@ class CreateSessionRequest:
             field_dict["stt"] = stt
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if sts is not UNSET:
+            field_dict["sts"] = sts
         if subagents is not UNSET:
             field_dict["subagents"] = subagents
         if subagent is not UNSET:
@@ -347,6 +354,8 @@ class CreateSessionRequest:
         stt = d.pop("stt", UNSET)
 
         tts = d.pop("tts", UNSET)
+
+        sts = d.pop("sts", UNSET)
 
         _subagents = d.pop("subagents", UNSET)
         subagents: CreateSessionRequestSubagents | Unset
@@ -449,6 +458,7 @@ class CreateSessionRequest:
             llm=llm,
             stt=stt,
             tts=tts,
+            sts=sts,
             subagents=subagents,
             subagent=subagent,
             search=search,

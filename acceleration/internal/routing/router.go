@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -122,6 +123,10 @@ type Request struct {
 	Voice string
 	// Keyterms are the words a modality that recognises speech should expect.
 	Keyterms []string
+	// Tools are what a modality that converses may call. They are here rather than in an
+	// option block because they are the session's rather than the config's, and some
+	// models take them only as the session opens.
+	Tools []llm.Tool
 	// Terms are the optional terms this request asks for beyond a target and a language.
 	// A candidate that has not declared one of them is not a candidate, so a term is
 	// either honoured or the request fails saying nothing can serve it.
@@ -130,10 +135,11 @@ type Request struct {
 	// It narrows candidates the same way a term does, and for the same reason: being
 	// refused is better than being served by a provider who keeps what they were sent.
 	DataPolicy options.DataPolicy
-	// STT, TTS and Search are the per-modality options, handed to the factory of
+	// STT, TTS, STS and Search are the per-modality options, handed to the factory of
 	// whichever modality this router serves.
 	STT    options.STT
 	TTS    options.TTS
+	STS    options.STS
 	Search options.Search
 }
 
@@ -382,8 +388,10 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 		LanguageHints: request.LanguageHints,
 		Voice:         voice,
 		Keyterms:      request.Keyterms,
+		Tools:         request.Tools,
 		STT:           request.STT,
 		TTS:           request.TTS,
+		STS:           request.STS,
 		Search:        request.Search,
 		Overwrites:    r.overwrites(request, candidate.Config.Provider),
 		Logger:        r.logger,
@@ -423,8 +431,8 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 }
 
 // overwrites is the block this candidate was given, out of whichever modality's options
-// this router serves. A router only ever reads its own: the same request carries all
-// three, and a vendor that transcribes and speaks would otherwise be handed the settings
+// this router serves. A router only ever reads its own: the same request carries every
+// block, and a vendor that transcribes and speaks would otherwise be handed the settings
 // meant for its other half.
 func (r *Router[P]) overwrites(request Request, provider string) json.RawMessage {
 	switch r.modality {
@@ -432,6 +440,8 @@ func (r *Router[P]) overwrites(request Request, provider string) json.RawMessage
 		return request.STT.Overwrites[provider]
 	case TTS:
 		return request.TTS.Overwrites[provider]
+	case STS:
+		return request.STS.Overwrites[provider]
 	default:
 		return nil
 	}

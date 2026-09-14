@@ -55,6 +55,7 @@ class Settings:
     mode: str = ""
     stt: str = ""
     tts: str = ""
+    sts: str | None = None
     voice: str = ""
     llm: str = ""
     subagent: str = ""
@@ -237,6 +238,8 @@ def _declare(path: Path) -> Settings:
             settings.stt = _word(value)
         elif field_name == "tts":
             settings.tts = _word(value)
+        elif field_name == "sts":
+            settings.sts = _word(value)
         elif field_name == "voice":
             settings.voice = _word(value)
         elif field_name == "llm":

@@ -63,9 +63,13 @@ type Spec struct {
 	// Navigating tells an agent that placed this call how to get past whatever answers.
 	Navigating bool
 
-	LLMTarget      string
-	STTTarget      string
-	TTSTarget      string
+	LLMTarget string
+	STTTarget string
+	TTSTarget string
+	// STSTarget routes one native audio model that hears and speaks for itself. Naming
+	// one makes this a native session: the agent opens that model and no transcriber,
+	// conversation model or voice, so the three targets above are left as they are.
+	STSTarget      string
 	SubagentTarget string
 	Subagents      map[string]string
 	// ControllerTarget routes the flow controller. Internal rather than customer-facing:
@@ -165,6 +169,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Text:           config.Mode == store.AgentModeText,
 		STTTarget:      config.STT,
 		TTSTarget:      config.TTS,
+		STSTarget:      config.STS,
 		Voice:          config.Voice,
 		LLMTarget:      config.LLM,
 		SubagentTarget: config.Subagent,
@@ -184,10 +189,13 @@ func FromConfig(config store.AgentConfig) Spec {
 
 // Normalize fills in the defaults a caller left out and reports what cannot be defaulted.
 func (s *Spec) Normalize() error {
+
 	s.CallID = strings.TrimSpace(s.CallID)
 	switch {
 	case s.Text && s.CallID != "":
 		return errors.New("session: a text session holds no call, so it cannot join one")
+	case s.Text && s.Native():
+		return errors.New("session: a text session has no voice, so it cannot run a speech-to-speech model")
 	case !s.Text && s.CallID == "":
 		return errors.New("session: a call id is required")
 	}
@@ -212,10 +220,12 @@ func (s *Spec) Normalize() error {
 			s.AgentID = newID()
 		}
 	}
-	if s.LLMTarget == "" {
+	// A native session opens none of the cascade's three models, so none of their targets
+	// is defaulted: the call row would otherwise name a model that never ran.
+	if s.LLMTarget == "" && !s.Native() {
 		s.LLMTarget = defaultLLMTarget
 	}
-	if s.ControllerTarget == "" {
+	if s.ControllerTarget == "" && !s.Native() {
 		s.ControllerTarget = defaultControllerTarget
 	}
 	if s.SearchTarget == "" {
@@ -223,7 +233,7 @@ func (s *Spec) Normalize() error {
 	}
 	// Neither speech target means anything without a voice, and defaulting them would
 	// have a text session refused by a deployment that routes only a model.
-	if !s.Text {
+	if !s.Text && !s.Native() {
 		if s.STTTarget == "" {
 			s.STTTarget = defaultSTTTarget
 		}
@@ -250,6 +260,10 @@ func (s *Spec) Normalize() error {
 	}
 	return harness.Tools{Tools: s.Tools}.Validate()
 }
+
+// Native reports whether this session is held by one speech-to-speech model rather than
+// the cascade of a transcriber, a conversation model and a voice.
+func (s Spec) Native() bool { return s.STSTarget != "" }
 
 // prompt is what the agent is told to be. An agent that placed the call is told how to get
 // through whatever answers, ahead of whatever it was told to do once it has.

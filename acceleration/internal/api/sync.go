@@ -142,6 +142,9 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	if body.Tts != nil {
 		config.TTS = *body.Tts
 	}
+	if body.Sts != nil {
+		config.STS = *body.Sts
+	}
 	if body.Voice != nil {
 		config.Voice = *body.Voice
 	}

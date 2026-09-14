@@ -142,7 +142,7 @@ type Harness struct {
 // New validates the options and returns a Harness. It opens nothing: the sessions it is
 // given are already started.
 func New(options Options) (*Harness, error) {
-	if options.Model == nil {
+	if options.Model == nil && options.Subagent == nil && len(options.Workers) == 0 {
 		return nil, errors.New("harness: a model session is required")
 	}
 	if options.Tasks <= 0 {
@@ -255,6 +255,9 @@ func sameMessage(a, b llm.Message) bool {
 // Respond asks the fast model to answer a turn and returns the stream the reply arrives
 // on. The caller drains it and passes each delta through Filter.
 func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
+	if h.options.Model == nil {
+		return nil, errors.New("harness: no text conversation model")
+	}
 	h.mu.Lock()
 	h.history = append([]llm.Message(nil), turn.History...)
 	instructions := h.instructions(turn.Instructions, turn.Note)
@@ -681,23 +684,51 @@ func identifiersAlreadyComplete(history []llm.Message) bool {
 }
 
 // Delegate submits work independently of the conversation provider's transport.
-func (h *Harness) Delegate(skillName, prompt, turnID string, parts []llm.ContentPart) (string, error) {
+func (h *Harness) Delegate(skillName, prompt, turnID string, parts []llm.ContentPart, history []llm.Message) (string, error) {
 	skill, ok := h.options.Skills.Lookup(skillName)
 	if !ok || h.tasks == nil {
 		return "", fmt.Errorf("harness: skill %q is not available", skillName)
 	}
-	h.mu.Lock()
-	history := append([]llm.Message(nil), h.history...)
-	h.mu.Unlock()
+	if strings.TrimSpace(prompt) == "" {
+		return "", errors.New("harness: delegation needs a prompt")
+	}
+	if history == nil {
+		h.mu.Lock()
+		history = append([]llm.Message(nil), h.history...)
+		h.mu.Unlock()
+	} else {
+		history = append([]llm.Message(nil), history...)
+	}
 	if len(parts) > 0 {
 		history = append(history, llm.Message{Role: llm.User, Parts: parts})
 		skill.CaptureVideo = false
 	}
 	id, err := h.tasks.Create(skill, prompt, history, turnID, false)
 	if err == nil {
-		h.emitter.Send(Delegated{TaskID: id, Skill: skill.Name, Prompt: prompt, TurnID: turnID})
+		h.emitter.Send(Delegated{StartedAt: time.Now().UTC(), TaskID: id, Skill: skill.Name, Prompt: prompt, TurnID: turnID})
 	}
 	return id, err
+}
+
+// CancelSkill abandons work the caller no longer needs without interrupting speech.
+func (h *Harness) CancelSkill(skill string) error {
+	if _, known := h.options.Skills.Lookup(skill); !known || h.tasks == nil {
+		return fmt.Errorf("harness: skill %q is not available", skill)
+	}
+	h.tasks.CancelSkill(skill, ReasonDropped)
+	return nil
+}
+
+// TakeNotes returns completed work for delivery through a native speech session.
+func (h *Harness) TakeNotes() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	lines := make([]string, 0, len(h.notes))
+	for _, written := range h.notes {
+		lines = append(lines, written.text)
+	}
+	h.notes = nil
+	return strings.Join(lines, "\n")
 }
 
 func (h *Harness) reject(skill string, err error) {

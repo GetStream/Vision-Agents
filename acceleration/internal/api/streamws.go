@@ -19,6 +19,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -38,12 +40,15 @@ const startWait = 30 * time.Second
 //
 // It is the same routers a session uses. What differs is only who holds the conversation:
 // here the caller does, and the router is one piece of their pipeline rather than the
-// whole of it. Three of them are sockets, and search and the two recording jobs are plain
+// whole of it. Four of them are sockets, and search and the two recording jobs are plain
 // requests, because nothing about them arrives in pieces.
 type Streams struct {
 	STT *sttrouter.Router
 	TTS *ttsrouter.Router
 	LLM *llmrouter.Router
+	// STS holds a whole conversation with one native audio model, for a caller that owns
+	// the media and wants the model routed.
+	STS *stsrouter.Router
 	// Search answers a question at /v1/search.
 	Search *searchrouter.Router
 	// Transcriptions and Speech run the non-realtime jobs, against the batch half of each
@@ -78,29 +83,34 @@ type start struct {
 	SampleRate int `json:"sample_rate"`
 	// Keyterms are the business-specific words the transcriber would otherwise get wrong.
 	Keyterms []string `json:"keyterms"`
-	// STT, TTS and LLM are the modality's own option block. Only the one belonging to the
-	// socket's modality is read.
+	// Tools are what a speech-to-speech model may call, given here because some models
+	// take them only as the session opens.
+	Tools []llm.Tool `json:"tools"`
+	// STT, TTS, LLM and STS are the modality's own option block. Only the one belonging
+	// to the socket's modality is read.
 	STT options.STT `json:"stt"`
 	TTS options.TTS `json:"tts"`
 	LLM options.LLM `json:"llm"`
+	STS options.STS `json:"sts"`
 }
 
 // options merges what the start frame said over what its config holds, filling in the
 // three fields the frame has always carried at the top level so a caller written before
 // the blocks existed keeps working.
-func (s start) options(config store.RouterConfig) (options.STT, options.TTS, options.LLM) {
+func (s start) options(config store.RouterConfig) (options.STT, options.TTS, options.LLM, options.STS) {
 	speech := config.STT.Merge(s.STT)
 	voice := config.TTS.Merge(s.TTS)
 	model := config.LLM.Merge(s.LLM)
+	conversation := config.STS.Merge(s.STS)
 
 	if s.Target != "" {
-		speech.Target, voice.Target, model.Target = s.Target, s.Target, s.Target
+		speech.Target, voice.Target, model.Target, conversation.Target = s.Target, s.Target, s.Target, s.Target
 	}
 	if len(s.Languages) > 0 {
-		speech.Languages, voice.Languages = s.Languages, s.Languages
+		speech.Languages, voice.Languages, conversation.Languages = s.Languages, s.Languages, s.Languages
 	}
 	if s.Voice != "" {
-		voice.Voice = s.Voice
+		voice.Voice, conversation.Voice = s.Voice, s.Voice
 	}
 	if len(s.Keyterms) > 0 {
 		speech.Keyterms = s.Keyterms
@@ -109,7 +119,13 @@ func (s start) options(config store.RouterConfig) (options.STT, options.TTS, opt
 		rate := s.SampleRate
 		speech.SampleRate = &rate
 	}
-	return speech, voice, model
+	// A frame that hands the model tools has asked for a model that calls them, whether
+	// or not it said so in the block.
+	if len(s.Tools) > 0 {
+		calls := true
+		conversation.Tools = &calls
+	}
+	return speech, voice, model, conversation
 }
 
 // streamModality routes one modality for a caller holding its own pipeline.
@@ -150,7 +166,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 		out.failed(err)
 		return
 	}
-	speech, voice, model := opening.options(config)
+	speech, voice, model, conversation := opening.options(config)
 
 	request := routing.Request{
 		CustomerID: customerID,
@@ -176,6 +192,11 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 			model.Target = llmDefaultTarget
 		}
 		err = s.streamLLM(ctx, out, request, model)
+	case routing.STS:
+		if conversation.Target == "" {
+			conversation.Target = stsDefaultTarget
+		}
+		err = s.streamSTS(ctx, out, request, conversation, opening.Tools, opening.SampleRate)
 	default:
 		err = errors.New(noStreams)
 	}
@@ -194,6 +215,8 @@ func (s *Server) serves(modality routing.Modality) bool {
 		return s.streams.TTS != nil
 	case routing.LLM:
 		return s.streams.LLM != nil
+	case routing.STS:
+		return s.streams.STS != nil
 	default:
 		return false
 	}
@@ -460,6 +483,278 @@ func (s *Server) streamLLM(
 	session.Close()
 	writing.Wait()
 	return nil
+}
+
+// streamSTS holds a conversation between the caller's audio and one native audio model.
+//
+// Both directions carry binary and JSON at once: the caller's PCM goes up alongside typed
+// turns and tool results, and the model's voice comes down alongside what it heard, what
+// it said and what it wants run. Neither of the other sockets' read loops fits, since one
+// drops text and the other cannot read binary, so this one reads every frame and looks at
+// its kind.
+func (s *Server) streamSTS(
+	ctx context.Context,
+	out *socket,
+	request routing.Request,
+	held options.STS,
+	tools []llm.Tool,
+	sampleRate int,
+) error {
+	// A start frame is options the same way a stored config is, so a turn detector
+	// nothing recognises is refused rather than ignored.
+	if err := held.Validate(); err != nil {
+		return err
+	}
+
+	session, err := s.streams.STS.Start(ctx, stsrouter.Request{
+		CustomerID:    request.CustomerID,
+		AgentID:       request.AgentID,
+		CallID:        request.CallID,
+		Tags:          request.Tags,
+		Target:        held.Target,
+		LanguageHints: held.Languages,
+		Tools:         tools,
+		Options:       held,
+	})
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	// Sent only now, once the model has taken its configuration: a caller told the
+	// session is ready is not told early.
+	out.frame(frame{
+		"type":        "started",
+		"provider":    session.Provider(),
+		"model":       session.Model(),
+		"sample_rate": session.SampleRate(),
+	})
+
+	if sampleRate <= 0 {
+		sampleRate = defaultSampleRate
+	}
+
+	var writing sync.WaitGroup
+	writing.Add(1)
+	go func() {
+		defer writing.Done()
+		for event := range session.Events() {
+			if err := writeSTS(out, event); err != nil {
+				return
+			}
+		}
+	}()
+
+	// A vendor session is billed for every minute it is held open, silent or not, so a
+	// caller that vanished without closing the socket is found out by a missed pong
+	// rather than by the vendor's own timeout. The other sockets hold cheaper things.
+	stop := make(chan struct{})
+	defer close(stop)
+	out.connection.SetReadDeadline(time.Now().Add(pongWait))
+	out.connection.SetPongHandler(func(string) error {
+		return out.connection.SetReadDeadline(time.Now().Add(pongWait))
+	})
+	go func() {
+		ticker := time.NewTicker(pongWait / 2)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := out.ping(); err != nil {
+					return
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	speaker := stt.Participant{ID: "caller"}
+	for {
+		kind, payload, err := out.connection.ReadMessage()
+		if err != nil {
+			break
+		}
+		out.connection.SetReadDeadline(time.Now().Add(pongWait))
+
+		if kind == websocket.BinaryMessage {
+			pcm := audio.FromBytes(payload, sampleRate, 1)
+			if err := session.ProcessAudio(pcm, speaker); err != nil {
+				out.failed(err)
+			}
+			continue
+		}
+
+		var command converse
+		if err := json.Unmarshal(payload, &command); err != nil {
+			out.failed(fmt.Errorf("unreadable frame: %w", err))
+			continue
+		}
+		if err := command.apply(session, speaker); err != nil {
+			out.failed(err)
+		}
+	}
+
+	session.Close()
+	writing.Wait()
+	return nil
+}
+
+// converse is a JSON frame on the speech-to-speech socket. Type says which fields matter.
+type converse struct {
+	Type string `json:"type"`
+	// Text is a typed turn.
+	Text string `json:"text"`
+	// Instructions and Tools change the session, where the model allows it.
+	Instructions string     `json:"instructions"`
+	Tools        []llm.Tool `json:"tools"`
+	// ImageURL is a frame for a model that sees, as a data URI.
+	ImageURL string `json:"image_url"`
+	// ToolCallID, Output and Error answer a tool call, in the words the session socket
+	// uses for the same thing.
+	ToolCallID string          `json:"tool_call_id"`
+	Output     json.RawMessage `json:"output"`
+	Error      string          `json:"error"`
+	// PlayedMs is how much of the reply the listener heard before interrupting. Zero
+	// leaves it to the provider's own count.
+	PlayedMs int `json:"played_ms"`
+}
+
+// apply carries out one frame against the session. What the model cannot do comes back as
+// an error, which the caller is told about rather than left to wonder.
+func (c converse) apply(session *stsrouter.Session, speaker stt.Participant) error {
+	switch c.Type {
+	case "text":
+		return session.SendText(c.Text, speaker)
+	case "instructions":
+		return session.SetInstructions(c.Instructions)
+	case "tools":
+		return session.SetTools(c.Tools)
+	case "frame":
+		image, err := imageFromURL(c.ImageURL, "")
+		if err != nil {
+			return err
+		}
+		return session.SendFrame(image)
+	case "tool_result":
+		parts, err := parseToolOutput(c.Output)
+		if err != nil {
+			return err
+		}
+		var text string
+		for _, part := range parts {
+			if part.Image != nil {
+				return errors.New("a speech-to-speech model takes a tool's result as text, not as an image")
+			}
+			text += part.Text
+		}
+		var failure error
+		if c.Error != "" {
+			failure = errors.New(c.Error)
+		}
+		return session.Answer(c.ToolCallID, text, failure)
+	case "interrupt":
+		return session.Interrupt(c.PlayedMs)
+	default:
+		return fmt.Errorf("unknown frame %q", c.Type)
+	}
+}
+
+// stsAudioHeader is the size of the header on every speech-to-speech audio frame: the
+// sample rate as a little-endian uint32, the channel count as a uint16, the header version
+// as a uint16, then the reply's generation and the chunk's index as uint32s.
+const stsAudioHeader = 16
+
+// stsAudioVersion is the header's version, so a client can tell this envelope from one a
+// later change makes.
+const stsAudioVersion = 1
+
+// stsAudioMessage frames one chunk of the model's speech so that it describes itself.
+//
+// The voice socket's header carries only the format. This one also says which reply the
+// chunk belongs to, because a model learns of a barge-in one round trip after the caller
+// and the chunks in that gap arrive after the reply has been reported cut off. A client
+// that knows the generation drops them; one that only knew the format would play them as
+// a tail on the words the caller talked over.
+func stsAudioMessage(chunk sts.AudioChunk) []byte {
+	payload := chunk.Audio.Bytes()
+	message := make([]byte, stsAudioHeader+len(payload))
+	binary.LittleEndian.PutUint32(message[0:4], uint32(chunk.Audio.SampleRate))
+	binary.LittleEndian.PutUint16(message[4:6], uint16(chunk.Audio.Channels))
+	binary.LittleEndian.PutUint16(message[6:8], stsAudioVersion)
+	binary.LittleEndian.PutUint32(message[8:12], uint32(chunk.Generation))
+	binary.LittleEndian.PutUint32(message[12:16], uint32(chunk.Index))
+	copy(message[stsAudioHeader:], payload)
+	return message
+}
+
+// writeSTS sends one conversation event: binary for the model's voice, JSON for everything
+// it heard, said and asked for.
+func writeSTS(out *socket, event sts.Event) error {
+	switch typed := event.(type) {
+	case sts.AudioChunk:
+		return out.binary(stsAudioMessage(typed))
+	case sts.SpeechStarted:
+		return out.frame(frame{"type": "speech_started", "participant": typed.Participant.ID})
+	case sts.SpeechStopped:
+		return out.frame(frame{"type": "speech_stopped", "participant": typed.Participant.ID})
+	case sts.InputTranscript:
+		return out.frame(frame{
+			"type":        "input_transcript",
+			"participant": typed.Participant.ID,
+			"mode":        string(typed.Mode),
+			"text":        typed.Text,
+			"language":    typed.Language,
+		})
+	case sts.OutputTranscript:
+		return out.frame(frame{
+			"type": "output_transcript",
+			"id":   typed.ResponseID,
+			"mode": string(typed.Mode),
+			"text": typed.Text,
+		})
+	case sts.ResponseStarted:
+		return out.frame(frame{"type": "response_started", "id": typed.ResponseID, "generation": typed.Generation})
+	case sts.ResponseComplete:
+		return out.frame(frame{
+			"type":                  "response_complete",
+			"id":                    typed.ResponseID,
+			"generation":            typed.Generation,
+			"provider":              typed.Provider,
+			"model":                 typed.Model,
+			"interrupted":           typed.Interrupted,
+			"audio_duration_ms":     typed.AudioDurationMs,
+			"time_to_first_byte_ms": typed.TimeToFirstByteMs,
+			"response_time_ms":      typed.ResponseTimeMs,
+			"input_tokens":          typed.Usage.InputTokens,
+			"cached_input_tokens":   typed.Usage.CachedInputTokens,
+			"output_tokens":         typed.Usage.OutputTokens,
+			"input_audio_tokens":    typed.Usage.InputAudioTokens,
+			"output_audio_tokens":   typed.Usage.OutputAudioTokens,
+		})
+	case sts.ToolCall:
+		return out.frame(frame{
+			"type":      "tool_call",
+			"id":        typed.CallID,
+			"response":  typed.ResponseID,
+			"name":      typed.Name,
+			"arguments": typed.Arguments,
+		})
+	case sts.ToolCancel:
+		return out.frame(frame{"type": "tool_cancel", "ids": typed.CallIDs})
+	case sts.SessionExpiring:
+		return out.frame(frame{"type": "session_expiring", "time_left_ms": typed.TimeLeft.Milliseconds()})
+	case sts.Error:
+		return out.frame(frame{
+			"type":    "error",
+			"id":      typed.ResponseID,
+			"error":   typed.Err.Error(),
+			"context": typed.Context,
+			"fatal":   typed.Fatal,
+		})
+	default:
+		return nil
+	}
 }
 
 // respond is a frame on the language-model socket: either one response to generate or a
@@ -740,6 +1035,14 @@ func (s *socket) binary(payload []byte) error {
 
 	s.connection.SetWriteDeadline(time.Now().Add(writeWait))
 	return s.connection.WriteMessage(websocket.BinaryMessage, payload)
+}
+
+// ping asks the caller whether it is still there, under the write deadline.
+func (s *socket) ping() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.connection.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait))
 }
 
 // failed reports a failure to the caller, which is all that can be done about one here.

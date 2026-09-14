@@ -118,6 +118,7 @@ func row(created *Session) store.Call {
 		STT:          spec.STTTarget,
 		TTS:          spec.TTSTarget,
 		LLM:          spec.LLMTarget,
+		STS:          spec.STSTarget,
 		Subagent:     spec.SubagentTarget,
 		Instructions: spec.prompt(),
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/managed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 	"os"
@@ -61,6 +62,10 @@ type ManagerOptions struct {
 	LLM *llmrouter.Router
 	STT *sttrouter.Router
 	TTS *ttsrouter.Router
+	// STS is optional, and is what a session naming a speech-to-speech target holds its
+	// conversation with instead of the three above. A deployment without one refuses
+	// such a session rather than falling back to the cascade unasked.
+	STS *stsrouter.Router
 
 	// Edge is required: without it there is no call to join.
 	Edge EdgeFactory
@@ -281,6 +286,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if conv != nil {
 		toolStarted = func(event agent.ToolStarted) { conv.Observe(event) }
 	}
+	var conversing *stsrouter.Router
+	if spec.Native() {
+		if m.options.STS == nil {
+			return nil, errors.New("session: this deployment routes no speech-to-speech model")
+		}
+		conversing = m.options.STS
+	}
 	created.voiceAgent, err = agent.New(agent.Options{
 		OnToolStarted:      toolStarted,
 		Edge:               edge,
@@ -297,6 +309,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		STTTarget:          spec.STTTarget,
 		TTS:                m.options.TTS,
 		TTSTarget:          spec.TTSTarget,
+		STS:                conversing,
+		STSTarget:          spec.STSTarget,
 		SubagentTarget:     spec.SubagentTarget,
 		Subagents:          spec.Subagents,
 		ControllerTarget:   spec.ControllerTarget,
@@ -373,7 +387,16 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	if spec.Greeting != "" {
-		if err := created.voiceAgent.Say(ctx, spec.Greeting); err != nil {
+		// A native model has no way to say exact words, so it is asked to open with the
+		// greeting rather than handed it to read out: what the caller hears is the model's
+		// own rendering of it, which is the only kind of speech such a model has.
+		greet := created.voiceAgent.Say
+		greeting := spec.Greeting
+		if spec.Native() {
+			greet = created.voiceAgent.Prompt
+			greeting = "Open the call by greeting the caller. Say this, in these words or close to them: " + spec.Greeting
+		}
+		if err := greet(ctx, greeting); err != nil {
 			created.Close()
 			return nil, fmt.Errorf("session: greet: %w", err)
 		}

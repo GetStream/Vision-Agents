@@ -37,6 +37,7 @@ class Session:
         text (bool | Unset): The conversation is held in writing rather than on a call.
         llm (str | Unset): The provider and model answering, once routing has picked one.
         tts (str | Unset): The provider and model speaking.
+        sts (str | Unset): The provider and model holding a native conversation, once routing has picked one.
         stt (str | Unset): The provider and model transcribing, once somebody has been heard.
         subagent (str | Unset): The provider and model delegated work runs on.
         subagents (SessionSubagents | Unset): Configured worker targets, prepared asynchronously.
@@ -57,6 +58,7 @@ class Session:
     text: bool | Unset = UNSET
     llm: str | Unset = UNSET
     tts: str | Unset = UNSET
+    sts: str | Unset = UNSET
     stt: str | Unset = UNSET
     subagent: str | Unset = UNSET
     subagents: SessionSubagents | Unset = UNSET
@@ -90,6 +92,8 @@ class Session:
         llm = self.llm
 
         tts = self.tts
+
+        sts = self.sts
 
         stt = self.stt
 
@@ -130,6 +134,8 @@ class Session:
             field_dict["llm"] = llm
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if sts is not UNSET:
+            field_dict["sts"] = sts
         if stt is not UNSET:
             field_dict["stt"] = stt
         if subagent is not UNSET:
@@ -175,6 +181,8 @@ class Session:
 
         tts = d.pop("tts", UNSET)
 
+        sts = d.pop("sts", UNSET)
+
         stt = d.pop("stt", UNSET)
 
         subagent = d.pop("subagent", UNSET)
@@ -209,6 +217,7 @@ class Session:
             text=text,
             llm=llm,
             tts=tts,
+            sts=sts,
             stt=stt,
             subagent=subagent,
             subagents=subagents,

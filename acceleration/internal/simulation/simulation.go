@@ -397,7 +397,9 @@ func (r *Runner) spec(
 	} else {
 		spec.Text = true
 		// A text session holds no call, and Normalize says so rather than ignoring one.
+		// Nor has it a voice, so a native config is simulated in writing on the cascade.
 		spec.CallID = ""
+		spec.STSTarget = ""
 	}
 	spec.Tags = tag(spec.Tags, simulation.ID)
 	// The judge has already ruled on this conversation, so paying a second model to

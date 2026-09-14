@@ -117,6 +117,42 @@ public struct ModelOptions: Sendable, Hashable {
     }
 }
 
+/// How to hold a conversation with one native audio model, in place of a transcriber, a text
+/// model and a voice. What every such model takes is a field; what only some take is a term,
+/// and a request naming a term is routed to a model that declared it or refused.
+public struct ConversationOptions: Sendable, Hashable {
+    /// A provider/model or a capability shortcut such as `sts-fast`.
+    public var target: String?
+    /// The system prompt the model converses under.
+    public var instructions: String?
+    /// The vendor's own name for a voice, such as `marin` or `Kore`.
+    public var voice: String?
+    public var languages: [String] = []
+    /// What decides the caller has finished. Nil leaves the vendor's default.
+    public var turnDetection: TurnDetection?
+    /// How long a pause ends the turn, for a silence timer.
+    public var silenceMs: Int?
+    /// How much audio before the detected speech is kept, for a silence timer.
+    public var prefixPaddingMs: Int?
+    /// Whether the model cuts its own reply off when it hears the caller.
+    public var interruptResponse: Bool?
+    /// Ask the model to write down what it heard, and what it said.
+    public var inputTranscript: Bool?
+    public var outputTranscript: Bool?
+    /// The session will hand the model functions to call, inject typed turns, or send frames.
+    public var tools: Bool?
+    public var text: Bool?
+    public var images: Bool?
+
+    public init() {}
+
+    public enum TurnDetection: String, Sendable {
+        case serverVad = "server_vad"
+        case semantic
+        case none
+    }
+}
+
 /// How to find out today's answers.
 public struct SearchOptions: Sendable, Hashable {
     /// A provider/model or a capability shortcut such as `search-fast`.
@@ -223,6 +259,27 @@ extension ModelOptions {
             format: format.flatMap { .init(rawValue: $0.rawValue) },
             verbosity: verbosity.flatMap { .init(rawValue: $0.rawValue) },
             toolChoice: toolChoice)
+    }
+
+    var frame: [String: JSONValue] { block(schema) }
+}
+
+extension ConversationOptions {
+    var schema: Components.Schemas.StsOptions {
+        .init(
+            target: target,
+            instructions: instructions,
+            voice: voice,
+            languages: languages.isEmpty ? nil : languages,
+            turnDetection: turnDetection.flatMap { .init(rawValue: $0.rawValue) },
+            silenceMs: silenceMs,
+            prefixPaddingMs: prefixPaddingMs,
+            interruptResponse: interruptResponse,
+            inputTranscript: inputTranscript,
+            outputTranscript: outputTranscript,
+            tools: tools,
+            text: text,
+            images: images)
     }
 
     var frame: [String: JSONValue] { block(schema) }

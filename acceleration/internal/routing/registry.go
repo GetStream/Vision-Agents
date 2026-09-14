@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
@@ -22,11 +23,15 @@ type Spec struct {
 	Voice string
 	// Keyterms are the words a modality that recognises speech should expect.
 	Keyterms []string
-	// STT, TTS and Search carry the rest of what the request asked for. A factory reads
-	// its own modality's block and ignores the others, and only ever sees terms its model
-	// declared, since routing does not offer a request to a model that cannot serve it.
+	// Tools are what a modality that converses may call.
+	Tools []llm.Tool
+	// STT, TTS, STS and Search carry the rest of what the request asked for. A factory
+	// reads its own modality's block and ignores the others, and only ever sees terms its
+	// model declared, since routing does not offer a request to a model that cannot serve
+	// it.
 	STT    options.STT
 	TTS    options.TTS
+	STS    options.STS
 	Search options.Search
 	// Overwrites is this provider's own block from the request's overwrites, and nobody
 	// else's. A factory that has one decodes it into a struct of its own with Settings,

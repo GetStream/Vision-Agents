@@ -242,9 +242,11 @@ type AgentConfig struct {
 	// AgentModeText. A text agent uses neither speech target and joins no call.
 	Mode string `bun:"mode,notnull"`
 	// STT, TTS, LLM, Subagent and Search are routing targets. Empty leaves the session
-	// default.
+	// default. STS names one native audio model that hears and speaks for itself; naming
+	// one makes the agent native, and the three cascade targets are then not used.
 	STT            string            `bun:"stt,notnull"`
 	TTS            string            `bun:"tts,notnull"`
+	STS            string            `bun:"sts,notnull"`
 	Voice          string            `bun:"voice,notnull"`
 	LLM            string            `bun:"llm,notnull"`
 	Subagent       string            `bun:"subagent,notnull"`
@@ -297,6 +299,7 @@ type RouterConfig struct {
 	STT    options.STT    `bun:"stt,type:jsonb"`
 	TTS    options.TTS    `bun:"tts,type:jsonb"`
 	LLM    options.LLM    `bun:"llm,type:jsonb"`
+	STS    options.STS    `bun:"sts,type:jsonb"`
 	Search options.Search `bun:"search,type:jsonb"`
 	// Tags are cost labels carried onto every request made under this config.
 	Tags      map[string]string `bun:"tags,type:jsonb"`
@@ -573,6 +576,9 @@ type Call struct {
 	TTS      string `bun:"tts,nullzero"`
 	LLM      string `bun:"llm,nullzero"`
 	Subagent string `bun:"subagent,nullzero"`
+	// STS is the speech-to-speech target a native call ran with, in place of the three
+	// above.
+	STS string `bun:"sts,nullzero"`
 	// Instructions is what the agent was told to be on this call.
 	Instructions string `bun:"instructions,nullzero"`
 	// Skills names what the fast model could hand to the subagent. The instructions

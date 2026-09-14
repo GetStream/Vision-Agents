@@ -446,6 +446,14 @@ class TestSyncAgent:
         assert stored["keyterms"] == ["Vision Agents"]
         assert stored["tags"] == {"team": "support"}
 
+    async def test_sts_can_be_selected_and_cleared(self, router: Router, support_dir):
+        for target in ("openai/gpt-realtime-2", ""):
+            (support_dir / "agent.yaml").write_text(f"name: support\nsts: {target}\n")
+            result = await stream.sync_agent(
+                "support", path=str(support_dir), url=router.url, customer_id="acme"
+            )
+            assert router.configs[result.config.id]["sts"] == target
+
     async def test_a_setting_the_declaration_leaves_out_is_not_sent(
         self, router: Router, support_dir
     ):
@@ -457,6 +465,7 @@ class TestSyncAgent:
 
         stored = router.configs[result.config.id]
         assert "llm" not in stored
+        assert "sts" not in stored
         assert "sandbox" not in stored
         assert stored["mode"] == "voice"
 

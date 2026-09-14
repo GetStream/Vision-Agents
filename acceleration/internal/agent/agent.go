@@ -30,6 +30,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -89,6 +90,13 @@ type Options struct {
 	STTTarget string
 	TTS       *ttsrouter.Router
 	TTSTarget string
+	// STS routes one native audio model that hears the caller and speaks back, in place
+	// of the three above. When it is set the agent is native: it opens that model and no
+	// transcriber, conversation model or voice, so LLM, STT and TTS may all be nil. The
+	// model owns endpointing, transcription, synthesis and barge-in, and nothing here acts
+	// as any of them. LLM is still used for configured subagents.
+	STS       *stsrouter.Router
+	STSTarget string
 
 	// SubagentTarget routes the slower, more capable model that runs the work the voice
 	// model hands over. It is a target on the same router as LLMTarget, because the
@@ -197,6 +205,9 @@ type Agent struct {
 	pumps sync.WaitGroup
 
 	tts *ttsrouter.Session
+	// sts is the native audio session, and is what a native agent has instead of llm,
+	// tts and listeners. The harness still runs delegated work.
+	sts *stsrouter.Session
 	// harness stands between what a participant said and the model that answers them. It
 	// decides what the model is asked, and takes the model's requests for help back out
 	// of the reply before any of it reaches the voice.
@@ -282,6 +293,20 @@ type Agent struct {
 	lastParticipant stt.Participant
 	lastHeardAt     time.Time
 	lastSpokeAt     time.Time
+	// The native agent's own state. A speech-to-speech model takes one stream, so bound
+	// is the participant whose audio it hears and arrivals is everyone whose audio has
+	// come in, heard or not, which is what a warm transfer counts. waitingSince is when the
+	// caller stopped and has not been answered, which a native reply is timed from; zero
+	// when nothing is owed. hearing is what the model has written down of the turn so far,
+	// and heardText the last turn it settled, which is what the reply is a reply to.
+	bound           stt.Participant
+	arrivals        map[string]struct{}
+	waitingSince    time.Time
+	hearing         strings.Builder
+	heardText       string
+	nativeListening bool
+	nativeAwaiting  bool
+	nativeCalls     map[string]struct{}
 	// cadence turns evolving transcript revisions into stable candidates without relying
 	// on provider turn boundaries.
 	cadence *cadence
@@ -324,20 +349,29 @@ type Agent struct {
 
 // New validates the options and returns an Agent. It opens nothing; Join does that.
 func New(options Options) (*Agent, error) {
-	if options.LLM == nil {
+	if options.LLM == nil && options.STS == nil {
 		return nil, errors.New("agent: an llm router is required")
 	}
+	if options.Text && options.STS != nil {
+		return nil, errors.New("agent: a text agent has no voice, so it cannot run a speech-to-speech model")
+	}
+	if options.LLM == nil && (options.SubagentTarget != "" || len(options.Subagents) > 0) {
+		return nil, errors.New("agent: subagents require an llm router")
+	}
 	// A conversation in writing has nowhere to listen and nothing to speak with, so the
-	// three that carry a voice are only required when there is one.
+	// three that carry a voice are only required when there is one. A native agent's one
+	// model is its transcriber and its voice both, so it needs neither router.
 	if !options.Text {
 		if options.Edge == nil {
 			return nil, errors.New("agent: an edge is required")
 		}
-		if options.STT == nil {
-			return nil, errors.New("agent: an stt router is required")
-		}
-		if options.TTS == nil {
-			return nil, errors.New("agent: a tts router is required")
+		if options.STS == nil {
+			if options.STT == nil {
+				return nil, errors.New("agent: an stt router is required")
+			}
+			if options.TTS == nil {
+				return nil, errors.New("agent: a tts router is required")
+			}
 		}
 	}
 	if options.CustomerID == "" {
@@ -452,6 +486,13 @@ func (a *Agent) Join(ctx context.Context) error {
 	a.joined = true
 	a.mu.Unlock()
 
+	// A native agent opens one session where the cascade opens four, and runs one
+	// consumer where it runs six, so it joins on a path of its own rather than threading
+	// through this one.
+	if a.native() {
+		return a.joinNative()
+	}
+
 	start := llmrouter.Request{
 		CustomerID:    a.options.CustomerID,
 		AgentID:       a.options.AgentID,
@@ -486,48 +527,9 @@ func (a *Agent) Join(ctx context.Context) error {
 		return fmt.Errorf("agent: start flow controller: %w", err)
 	}
 
-	workers := map[string]func(context.Context) (*llmrouter.Session, error){}
-	targets := map[string]string{}
-	if a.options.SubagentTarget != "" {
-		targets["default"] = a.options.SubagentTarget
-	}
-	for name, target := range a.options.Subagents {
-		targets[name] = target
-	}
-	for name, target := range targets {
-		if target == "" {
-			continue
-		}
-		var modalities []string
-		for _, skill := range a.options.Skills.Skills {
-			binding := skill.Subagent
-			if binding == "" {
-				binding = "default"
-			}
-			if binding == name && skill.CaptureVideo {
-				modalities = []string{llm.ModalityImage}
-			}
-		}
-		workers[name] = func(ctx context.Context) (*llmrouter.Session, error) {
-			tags := maps.Clone(a.options.Tags)
-			if tags == nil {
-				tags = routing.Tags{}
-			}
-			tags["worker"] = name
-			return a.options.LLM.Start(ctx, llmrouter.Request{
-				CustomerID: a.options.CustomerID, AgentID: a.options.AgentID, CallID: a.options.CallID,
-				Tags: tags, Target: target, LanguageHints: a.options.LanguageHints, InputModalities: modalities,
-			})
-		}
-	}
-	for _, skill := range a.options.Skills.Skills {
-		binding := skill.Subagent
-		if binding == "" {
-			binding = "default"
-		}
-		if _, ok := workers[binding]; !ok {
-			return fmt.Errorf("agent: skill %s names unknown worker %s", skill.Name, binding)
-		}
+	workers, err := a.workers()
+	if err != nil {
+		return err
 	}
 
 	// Searching is routed before the tools are worked out, because whether the model is
@@ -631,6 +633,9 @@ func (a *Agent) SimpleResponse(ctx context.Context, text string) error {
 
 // RespondTo answers a piece of text through the model, attaching images to that turn.
 func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePart) error {
+	if a.native() {
+		return a.respondNative(text, images)
+	}
 	if len(images) > 0 {
 		a.mu.Lock()
 		current := a.harness
@@ -648,7 +653,7 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 			metadata, _ := json.Marshal(map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()})
 			parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
 		}
-		if _, err := current.Delegate("vision", text, id, parts); err != nil {
+		if _, err := current.Delegate("vision", text, id, parts, nil); err != nil {
 			return err
 		}
 		return a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
@@ -695,6 +700,11 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 	if strings.TrimSpace(text) == "" {
 		return "", errors.New("agent: there is nothing to answer")
 	}
+	// A native agent has no text model to ask on the side: everything it says, it says
+	// out loud, on the call.
+	if a.native() {
+		return "", errors.New("agent: a speech-to-speech agent answers only on the call")
+	}
 
 	a.mu.Lock()
 	if a.closed || a.llm == nil {
@@ -739,6 +749,11 @@ func (a *Agent) Say(ctx context.Context, text string) error {
 		a.emitter.Send(Responded{TurnID: turnID, Text: text})
 		return nil
 	}
+	// A native model has no way to say exact words: it says what it makes of a prompt.
+	// Pretending otherwise would promise a caller a script and deliver a paraphrase.
+	if a.native() {
+		return errors.New("agent: a speech-to-speech agent cannot say exact words; use Prompt")
+	}
 
 	a.mu.Lock()
 	if a.tts == nil {
@@ -773,7 +788,22 @@ func (a *Agent) Interrupt() {
 func (a *Agent) SetInstructions(text string) {
 	a.mu.Lock()
 	a.prompt = text
+	instructions := a.instructions()
+	if a.native() {
+		instructions = a.nativeInstructions()
+	}
+	model := a.sts
 	a.mu.Unlock()
+
+	// A native model holds the prompt itself, so it is told. One that took its
+	// instructions only when the session opened refuses, and the refusal is reported
+	// rather than swallowed: a caller who changed the prompt and heard nothing of it would
+	// believe the agent had changed.
+	if model != nil {
+		if err := model.SetInstructions(instructions); err != nil {
+			a.fail(err, "sts")
+		}
+	}
 }
 
 // Events carries what happened in the conversation. It is closed by Close.
@@ -785,6 +815,10 @@ func (a *Agent) LLM() *llmrouter.Session { return a.llm }
 
 // TTS exposes the voice session.
 func (a *Agent) TTS() *ttsrouter.Session { return a.tts }
+
+// STS exposes the speech-to-speech session, which a native agent has in place of the
+// three above. Nil on a cascade.
+func (a *Agent) STS() *stsrouter.Session { return a.sts }
 
 // STT is one of the live transcriptions, if anybody has been heard yet.
 func (a *Agent) STT() *sttrouter.Session {
@@ -895,6 +929,13 @@ func (a *Agent) close() error {
 			failures = append(failures, fmt.Errorf("close tts: %w", err))
 		}
 	}
+	// Closing the native session ends its event stream, which is what lets its consumer
+	// run out of work before the consumers are waited on.
+	if a.sts != nil {
+		if err := a.sts.Close(); err != nil {
+			failures = append(failures, fmt.Errorf("close sts: %w", err))
+		}
+	}
 
 	// Left is sent before the emitter closes, and the emitter closes before the consumers
 	// are waited on: a consumer blocked emitting to a caller that has stopped reading has
@@ -929,6 +970,11 @@ func (a *Agent) consumeEdge() {
 	defer a.running.Done()
 
 	for inbound := range a.options.Edge.Audio() {
+		// A native model hears one stream rather than one per participant.
+		if a.native() {
+			a.hear(inbound)
+			continue
+		}
 		listener, err := a.listen(inbound.Participant)
 		if err != nil {
 			a.fail(err, "stt")
@@ -954,6 +1000,7 @@ func (a *Agent) consumeRoster(roster Roster) {
 			})
 			continue
 		}
+		a.unbind(attendance.Participant)
 		a.logger.Debug("a participant left", "participant", attendance.Participant.UserID)
 		a.emitter.Send(ParticipantLeft{
 			Participant: attendance.Participant,
@@ -1526,8 +1573,9 @@ func (a *Agent) startReply(current *harness.Harness, turn harness.Turn, ctx cont
 	a.mu.Lock()
 	a.streams[turn.ID] = stream
 	_, abandoned := a.abandoned[turn.ID]
+	closed := a.closed
 	a.mu.Unlock()
-	if abandoned {
+	if abandoned || closed {
 		// The caller took the floor while the request was still going out.
 		stream.Close()
 	}
@@ -1946,6 +1994,9 @@ func sameMessages(first, second []llm.Message) bool {
 // is to say must not be separable: two answers landing together would otherwise give one
 // of them a turn with nothing in it.
 func (a *Agent) follow() error {
+	if a.native() {
+		return a.followNative()
+	}
 	a.following.Lock()
 	defer a.following.Unlock()
 
@@ -2140,7 +2191,7 @@ func (a *Agent) interrupt(participant stt.Participant) {
 	a.speakingTurn = ""
 	a.generating = false
 	a.saying = ""
-	reply, voice := a.streams[turnID], a.tts
+	reply, voice, model := a.streams[turnID], a.tts, a.sts
 	a.mu.Unlock()
 
 	a.finishGenerate(turnID)
@@ -2150,6 +2201,13 @@ func (a *Agent) interrupt(participant stt.Participant) {
 	if voice != nil {
 		if err := voice.Interrupt(); err != nil {
 			a.fail(err, "tts")
+		}
+	}
+	// A native model is told to stop the reply it is speaking. It has no word for how
+	// much the caller heard beyond what it sent, so the router's own count stands in.
+	if model != nil {
+		if err := model.Interrupt(0); err != nil {
+			a.fail(err, "sts")
 		}
 	}
 	// Cancelling the voice only stops what it has not synthesised yet. What it already sent
@@ -2286,4 +2344,53 @@ func (a *Agent) RestoreHistory(history []llm.Message) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = append([]llm.Message(nil), history...)
+}
+
+// workers opens the named subagents shared by cascade and native conversations.
+func (a *Agent) workers() (map[string]func(context.Context) (*llmrouter.Session, error), error) {
+	workers := map[string]func(context.Context) (*llmrouter.Session, error){}
+	targets := map[string]string{}
+	if a.options.SubagentTarget != "" {
+		targets["default"] = a.options.SubagentTarget
+	}
+	for name, target := range a.options.Subagents {
+		targets[name] = target
+	}
+	for name, target := range targets {
+		if target == "" {
+			continue
+		}
+		var modalities []string
+		for _, skill := range a.options.Skills.Skills {
+			binding := skill.Subagent
+			if binding == "" {
+				binding = "default"
+			}
+			if binding == name && skill.CaptureVideo {
+				modalities = []string{llm.ModalityImage}
+			}
+		}
+		workers[name] = func(ctx context.Context) (*llmrouter.Session, error) {
+			tags := maps.Clone(a.options.Tags)
+			if tags == nil {
+				tags = routing.Tags{}
+			}
+			tags["worker"] = name
+			return a.options.LLM.Start(ctx, llmrouter.Request{
+				CustomerID: a.options.CustomerID, AgentID: a.options.AgentID, CallID: a.options.CallID,
+				Tags: tags, Target: target, LanguageHints: a.options.LanguageHints, InputModalities: modalities,
+			})
+		}
+	}
+	for _, skill := range a.options.Skills.Skills {
+		binding := skill.Subagent
+		if binding == "" {
+			binding = "default"
+		}
+		if _, ok := workers[binding]; !ok {
+			return nil, fmt.Errorf("agent: skill %s names unknown worker %s", skill.Name, binding)
+		}
+	}
+
+	return workers, nil
 }

@@ -181,6 +181,55 @@ func llmOptionsFor(held options.LLM) *LlmOptions {
 	return sent
 }
 
+func stsOptionsOf(sent *StsOptions) options.STS {
+	if sent == nil {
+		return options.STS{}
+	}
+	return options.STS{
+		Target:            value(sent.Target),
+		Providers:         value(sent.Providers),
+		Instructions:      value(sent.Instructions),
+		Voice:             value(sent.Voice),
+		Languages:         value(sent.Languages),
+		TurnDetection:     string(value(sent.TurnDetection)),
+		SilenceMs:         sent.SilenceMs,
+		PrefixPaddingMs:   sent.PrefixPaddingMs,
+		InterruptResponse: sent.InterruptResponse,
+		InputTranscript:   sent.InputTranscript,
+		OutputTranscript:  sent.OutputTranscript,
+		Tools:             sent.Tools,
+		Text:              sent.Text,
+		Images:            sent.Images,
+		DataPolicy:        dataPolicyOf(sent.DataPolicy),
+		Overwrites:        overwritesOf(sent.Overwrites),
+	}
+}
+
+func stsOptionsFor(held options.STS) *StsOptions {
+	sent := &StsOptions{
+		Target:            optional(held.Target),
+		Providers:         list(held.Providers),
+		Instructions:      optional(held.Instructions),
+		Voice:             optional(held.Voice),
+		Languages:         list(held.Languages),
+		SilenceMs:         held.SilenceMs,
+		PrefixPaddingMs:   held.PrefixPaddingMs,
+		InterruptResponse: held.InterruptResponse,
+		InputTranscript:   held.InputTranscript,
+		OutputTranscript:  held.OutputTranscript,
+		Tools:             held.Tools,
+		Text:              held.Text,
+		Images:            held.Images,
+		DataPolicy:        dataPolicyFor(held.DataPolicy),
+		Overwrites:        overwritesFor(held.Overwrites),
+	}
+	if held.TurnDetection != "" {
+		turns := StsOptionsTurnDetection(held.TurnDetection)
+		sent.TurnDetection = &turns
+	}
+	return sent
+}
+
 func searchOptionsOf(sent *SearchOptions) options.Search {
 	if sent == nil {
 		return options.Search{}

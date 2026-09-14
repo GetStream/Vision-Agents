@@ -276,6 +276,11 @@ extension Components {
             internal var stt: Swift.String?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/tts`.
             internal var tts: Swift.String?
+            /// A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/AgentConfig/sts`.
+            internal var sts: Swift.String?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/voice`.
             internal var voice: Swift.String?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/llm`.
@@ -365,6 +370,7 @@ extension Components {
             ///   - mode:
             ///   - stt:
             ///   - tts:
+            ///   - sts: A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
             ///   - voice:
             ///   - llm:
             ///   - video:
@@ -389,6 +395,7 @@ extension Components {
                 mode: Components.Schemas.AgentMode,
                 stt: Swift.String? = nil,
                 tts: Swift.String? = nil,
+                sts: Swift.String? = nil,
                 voice: Swift.String? = nil,
                 llm: Swift.String? = nil,
                 video: Components.Schemas.SessionVideo? = nil,
@@ -413,6 +420,7 @@ extension Components {
                 self.mode = mode
                 self.stt = stt
                 self.tts = tts
+                self.sts = sts
                 self.voice = voice
                 self.llm = llm
                 self.video = video
@@ -438,6 +446,7 @@ extension Components {
                 case mode
                 case stt
                 case tts
+                case sts
                 case voice
                 case llm
                 case video
@@ -490,6 +499,8 @@ extension Components {
             internal var tts: Components.Schemas.TtsOptions?
             /// - Remark: Generated from `#/components/schemas/RouterConfig/llm`.
             internal var llm: Components.Schemas.LlmOptions?
+            /// - Remark: Generated from `#/components/schemas/RouterConfig/sts`.
+            internal var sts: Components.Schemas.StsOptions?
             /// - Remark: Generated from `#/components/schemas/RouterConfig/search`.
             internal var search: Components.Schemas.SearchOptions?
             /// - Remark: Generated from `#/components/schemas/RouterConfig/created_at`.
@@ -505,6 +516,7 @@ extension Components {
             ///   - stt:
             ///   - tts:
             ///   - llm:
+            ///   - sts:
             ///   - search:
             ///   - createdAt:
             ///   - updatedAt:
@@ -515,6 +527,7 @@ extension Components {
                 stt: Components.Schemas.SttOptions? = nil,
                 tts: Components.Schemas.TtsOptions? = nil,
                 llm: Components.Schemas.LlmOptions? = nil,
+                sts: Components.Schemas.StsOptions? = nil,
                 search: Components.Schemas.SearchOptions? = nil,
                 createdAt: Foundation.Date,
                 updatedAt: Foundation.Date
@@ -525,6 +538,7 @@ extension Components {
                 self.stt = stt
                 self.tts = tts
                 self.llm = llm
+                self.sts = sts
                 self.search = search
                 self.createdAt = createdAt
                 self.updatedAt = updatedAt
@@ -536,6 +550,7 @@ extension Components {
                 case stt
                 case tts
                 case llm
+                case sts
                 case search
                 case createdAt = "created_at"
                 case updatedAt = "updated_at"
@@ -997,6 +1012,180 @@ extension Components {
                 case format
                 case pronunciations
                 case chunkSchedule = "chunk_schedule"
+                case dataPolicy = "data_policy"
+                case overwrites
+            }
+        }
+        /// How this config holds a conversation with one native audio model, in place of a transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a term, and a request naming a term is routed to a model that declared it or refused, never served by one that ignores it.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/StsOptions`.
+        internal struct StsOptions: Codable, Hashable, Sendable {
+            /// A provider/model or a capability shortcut.
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/target`.
+            internal var target: Swift.String?
+            /// A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/providers`.
+            internal var providers: [Swift.String]?
+            /// The system prompt the model converses under.
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/instructions`.
+            internal var instructions: Swift.String?
+            /// The vendor's own name for a voice, such as marin at OpenAI or Kore at Google. None of these models takes one of your own voices, so the name is passed on as given rather than looked up.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/voice`.
+            internal var voice: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/StsOptions/languages`.
+            internal var languages: [Swift.String]?
+            /// What decides the caller has finished: a silence timer, a model reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default. Only some models read the words, so semantic is a term.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/turn_detection`.
+            internal enum TurnDetectionPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case serverVad = "server_vad"
+                case semantic = "semantic"
+                case none = "none"
+            }
+            /// What decides the caller has finished: a silence timer, a model reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default. Only some models read the words, so semantic is a term.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/turn_detection`.
+            internal var turnDetection: Components.Schemas.StsOptions.TurnDetectionPayload?
+            /// How long a pause ends the turn, for a silence timer.
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/silence_ms`.
+            internal var silenceMs: Swift.Int?
+            /// How much audio before the detected speech is kept, for a silence timer.
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/prefix_padding_ms`.
+            internal var prefixPaddingMs: Swift.Int?
+            /// Whether the model cuts its own reply off when it hears the caller. Omitting it leaves the vendor's default; false is for a speaker close enough to the microphone that the model would otherwise interrupt itself.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/interrupt_response`.
+            internal var interruptResponse: Swift.Bool?
+            /// Ask the model to write down what it heard.
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/input_transcript`.
+            internal var inputTranscript: Swift.Bool?
+            /// Ask the model to write down what it said.
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/output_transcript`.
+            internal var outputTranscript: Swift.Bool?
+            /// The session will hand the model functions to call.
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/tools`.
+            internal var tools: Swift.Bool?
+            /// The session will inject typed turns.
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/text`.
+            internal var text: Swift.Bool?
+            /// The session will send the model frames, so it is routed only to a model that sees, the way vlm routes a text model.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/images`.
+            internal var images: Swift.Bool?
+            /// - Remark: Generated from `#/components/schemas/StsOptions/data_policy`.
+            internal var dataPolicy: Components.Schemas.DataPolicy?
+            /// Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"openai": {"eagerness": "high"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/overwrites`.
+            internal struct OverwritesPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                /// Creates a new `OverwritesPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"openai": {"eagerness": "high"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/StsOptions/overwrites`.
+            internal var overwrites: Components.Schemas.StsOptions.OverwritesPayload?
+            /// Creates a new `StsOptions`.
+            ///
+            /// - Parameters:
+            ///   - target: A provider/model or a capability shortcut.
+            ///   - providers: A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands.
+            ///   - instructions: The system prompt the model converses under.
+            ///   - voice: The vendor's own name for a voice, such as marin at OpenAI or Kore at Google. None of these models takes one of your own voices, so the name is passed on as given rather than looked up.
+            ///   - languages:
+            ///   - turnDetection: What decides the caller has finished: a silence timer, a model reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default. Only some models read the words, so semantic is a term.
+            ///   - silenceMs: How long a pause ends the turn, for a silence timer.
+            ///   - prefixPaddingMs: How much audio before the detected speech is kept, for a silence timer.
+            ///   - interruptResponse: Whether the model cuts its own reply off when it hears the caller. Omitting it leaves the vendor's default; false is for a speaker close enough to the microphone that the model would otherwise interrupt itself.
+            ///   - inputTranscript: Ask the model to write down what it heard.
+            ///   - outputTranscript: Ask the model to write down what it said.
+            ///   - tools: The session will hand the model functions to call.
+            ///   - text: The session will inject typed turns.
+            ///   - images: The session will send the model frames, so it is routed only to a model that sees, the way vlm routes a text model.
+            ///   - dataPolicy:
+            ///   - overwrites: Settings for one provider that this vocabulary has no word for, keyed by provider name, for example {"openai": {"eagerness": "high"}}. The provider named parses its own block and refuses a field it does not have, so an overwrite is either sent or reported rather than accepted and dropped.
+            internal init(
+                target: Swift.String? = nil,
+                providers: [Swift.String]? = nil,
+                instructions: Swift.String? = nil,
+                voice: Swift.String? = nil,
+                languages: [Swift.String]? = nil,
+                turnDetection: Components.Schemas.StsOptions.TurnDetectionPayload? = nil,
+                silenceMs: Swift.Int? = nil,
+                prefixPaddingMs: Swift.Int? = nil,
+                interruptResponse: Swift.Bool? = nil,
+                inputTranscript: Swift.Bool? = nil,
+                outputTranscript: Swift.Bool? = nil,
+                tools: Swift.Bool? = nil,
+                text: Swift.Bool? = nil,
+                images: Swift.Bool? = nil,
+                dataPolicy: Components.Schemas.DataPolicy? = nil,
+                overwrites: Components.Schemas.StsOptions.OverwritesPayload? = nil
+            ) {
+                self.target = target
+                self.providers = providers
+                self.instructions = instructions
+                self.voice = voice
+                self.languages = languages
+                self.turnDetection = turnDetection
+                self.silenceMs = silenceMs
+                self.prefixPaddingMs = prefixPaddingMs
+                self.interruptResponse = interruptResponse
+                self.inputTranscript = inputTranscript
+                self.outputTranscript = outputTranscript
+                self.tools = tools
+                self.text = text
+                self.images = images
+                self.dataPolicy = dataPolicy
+                self.overwrites = overwrites
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case target
+                case providers
+                case instructions
+                case voice
+                case languages
+                case turnDetection = "turn_detection"
+                case silenceMs = "silence_ms"
+                case prefixPaddingMs = "prefix_padding_ms"
+                case interruptResponse = "interrupt_response"
+                case inputTranscript = "input_transcript"
+                case outputTranscript = "output_transcript"
+                case tools
+                case text
+                case images
                 case dataPolicy = "data_policy"
                 case overwrites
             }
@@ -1947,6 +2136,10 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Call/tts`.
             internal var tts: Swift.String?
+            /// The speech-to-speech target, for a native call, on the same terms as stt.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Call/sts`.
+            internal var sts: Swift.String?
             /// The target that held the conversation.
             ///
             /// - Remark: Generated from `#/components/schemas/Call/llm`.
@@ -1965,6 +2158,10 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Call/tts_used`.
             internal var ttsUsed: Swift.String?
+            /// The provider/model that held a native call, on the same terms as stt_used.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Call/sts_used`.
+            internal var stsUsed: Swift.String?
             /// The provider/model that held the conversation.
             ///
             /// - Remark: Generated from `#/components/schemas/Call/llm_used`.
@@ -2029,10 +2226,12 @@ extension Components {
             ///   - endedAt: Absent while the call is still running.
             ///   - stt: The transcription target the call ran with, after a session's overrides were folded into whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is several models and routing fails over between them, so per-turn providers are in the request rows.
             ///   - tts: The voice target, on the same terms as stt.
+            ///   - sts: The speech-to-speech target, for a native call, on the same terms as stt.
             ///   - llm: The target that held the conversation.
             ///   - subagent: The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered.
             ///   - sttUsed: The provider/model that transcribed, once routing picked one. Empty until somebody has been heard, and the last one that served if routing failed over.
             ///   - ttsUsed: The provider/model that spoke, on the same terms as stt_used.
+            ///   - stsUsed: The provider/model that held a native call, on the same terms as stt_used.
             ///   - llmUsed: The provider/model that held the conversation.
             ///   - subagentUsed: The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached.
             ///   - instructions: What the agent was told to be on this call.
@@ -2055,10 +2254,12 @@ extension Components {
                 endedAt: Foundation.Date? = nil,
                 stt: Swift.String? = nil,
                 tts: Swift.String? = nil,
+                sts: Swift.String? = nil,
                 llm: Swift.String? = nil,
                 subagent: Swift.String? = nil,
                 sttUsed: Swift.String? = nil,
                 ttsUsed: Swift.String? = nil,
+                stsUsed: Swift.String? = nil,
                 llmUsed: Swift.String? = nil,
                 subagentUsed: Swift.String? = nil,
                 instructions: Swift.String? = nil,
@@ -2081,10 +2282,12 @@ extension Components {
                 self.endedAt = endedAt
                 self.stt = stt
                 self.tts = tts
+                self.sts = sts
                 self.llm = llm
                 self.subagent = subagent
                 self.sttUsed = sttUsed
                 self.ttsUsed = ttsUsed
+                self.stsUsed = stsUsed
                 self.llmUsed = llmUsed
                 self.subagentUsed = subagentUsed
                 self.instructions = instructions
@@ -2108,10 +2311,12 @@ extension Components {
                 case endedAt = "ended_at"
                 case stt
                 case tts
+                case sts
                 case llm
                 case subagent
                 case sttUsed = "stt_used"
                 case ttsUsed = "tts_used"
+                case stsUsed = "sts_used"
                 case llmUsed = "llm_used"
                 case subagentUsed = "subagent_used"
                 case instructions
@@ -2402,6 +2607,11 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tts`.
             internal var tts: Swift.String?
+            /// A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/sts`.
+            internal var sts: Swift.String?
             /// Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/subagents`.
@@ -2534,6 +2744,7 @@ extension Components {
             ///   - llm: A provider/model or a capability shortcut. Omit it and the config decides, or llm-fast when there is no config. These carry no schema default on purpose: a generated client that filled one in would send it, and a caller naming a config would silently lose the model it configured.
             ///   - stt: Omit it and the config decides, or en-low-latency when there is no config.
             ///   - tts: Omit it and the config decides, or en-low-latency when there is no config.
+            ///   - sts: A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
             ///   - subagents: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
             ///   - subagent: The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
             ///   - search: Omit it and the config decides, or search-fast when there is no config.
@@ -2571,6 +2782,7 @@ extension Components {
                 llm: Swift.String? = nil,
                 stt: Swift.String? = nil,
                 tts: Swift.String? = nil,
+                sts: Swift.String? = nil,
                 subagents: Components.Schemas.CreateSessionRequest.SubagentsPayload? = nil,
                 subagent: Swift.String? = nil,
                 search: Swift.String? = nil,
@@ -2608,6 +2820,7 @@ extension Components {
                 self.llm = llm
                 self.stt = stt
                 self.tts = tts
+                self.sts = sts
                 self.subagents = subagents
                 self.subagent = subagent
                 self.search = search
@@ -2646,6 +2859,7 @@ extension Components {
                 case llm
                 case stt
                 case tts
+                case sts
                 case subagents
                 case subagent
                 case search
@@ -2737,6 +2951,10 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Session/tts`.
             internal var tts: Swift.String?
+            /// The provider and model holding a native conversation, once routing has picked one.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/sts`.
+            internal var sts: Swift.String?
             /// The provider and model transcribing, once somebody has been heard.
             ///
             /// - Remark: Generated from `#/components/schemas/Session/stt`.
@@ -2789,6 +3007,7 @@ extension Components {
             ///   - createdAt:
             ///   - llm: The provider and model answering, once routing has picked one.
             ///   - tts: The provider and model speaking.
+            ///   - sts: The provider and model holding a native conversation, once routing has picked one.
             ///   - stt: The provider and model transcribing, once somebody has been heard.
             ///   - subagent: The provider and model delegated work runs on.
             ///   - subagents: Configured worker targets, prepared asynchronously.
@@ -2808,6 +3027,7 @@ extension Components {
                 createdAt: Foundation.Date,
                 llm: Swift.String? = nil,
                 tts: Swift.String? = nil,
+                sts: Swift.String? = nil,
                 stt: Swift.String? = nil,
                 subagent: Swift.String? = nil,
                 subagents: Components.Schemas.Session.SubagentsPayload? = nil,
@@ -2827,6 +3047,7 @@ extension Components {
                 self.createdAt = createdAt
                 self.llm = llm
                 self.tts = tts
+                self.sts = sts
                 self.stt = stt
                 self.subagent = subagent
                 self.subagents = subagents
@@ -2847,6 +3068,7 @@ extension Components {
                 case createdAt = "created_at"
                 case llm
                 case tts
+                case sts
                 case stt
                 case subagent
                 case subagents
