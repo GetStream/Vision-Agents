@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"regexp"
 	"strings"
 	"testing"
@@ -843,4 +844,145 @@ func (s *ServerSuite) TestEveryServerSideOperationTheSpecMarksIsRefusedToAUsersD
 		}
 	}
 	s.NotZero(marked, "the spec marks nothing server-side only")
+}
+
+// forwarded is a request from proxyAddr carrying an X-Forwarded-For chain.
+func (s *ServerSuite) forwarded(proxyAddr string, chain ...string) *http.Request {
+	request := httptest.NewRequest(http.MethodGet, "/v1/stt/providers", nil)
+	request.RemoteAddr = proxyAddr
+	for _, entry := range chain {
+		request.Header.Add(ForwardedHeader, entry)
+	}
+	return request
+}
+
+// trusted parses ranges the way the router does at startup.
+func (s *ServerSuite) trusted(ranges ...string) []netip.Prefix {
+	parsed, err := TrustedProxies(ranges)
+	s.Require().NoError(err)
+	return parsed
+}
+
+func (s *ServerSuite) TestWithNoTrustedProxyTheConnectionIsTheCaller() {
+	// Nothing vouches for the header, so it is not read at all.
+	request := s.forwarded("198.51.100.7:44321", "203.0.113.9")
+
+	s.Equal("198.51.100.7", clientIP(request, nil))
+}
+
+func (s *ServerSuite) TestATrustedProxyNamesTheCallerBehindIt() {
+	request := s.forwarded("10.0.0.5:44321", "203.0.113.9")
+
+	s.Equal("203.0.113.9", clientIP(request, s.trusted("10.0.0.0/8")))
+}
+
+func (s *ServerSuite) TestAForwardedEntryTheCallerWroteThemselvesIsIgnored() {
+	// The caller prepended a victim's address hoping to spend their allowance. Only the
+	// rightmost entry was written by our own proxy, so that is the one believed.
+	request := s.forwarded("10.0.0.5:44321", "203.0.113.250, 203.0.113.9")
+
+	s.Equal("203.0.113.9", clientIP(request, s.trusted("10.0.0.0/8")))
+}
+
+func (s *ServerSuite) TestTheCallerIsFoundThroughSeveralOfOurOwnProxies() {
+	request := s.forwarded("10.0.0.5:44321", "203.0.113.9, 10.0.0.9", "10.0.0.7")
+
+	s.Equal("203.0.113.9", clientIP(request, s.trusted("10.0.0.0/8")))
+}
+
+func (s *ServerSuite) TestAChainOfOnlyOurOwnProxiesFallsBackToTheConnection() {
+	request := s.forwarded("10.0.0.5:44321", "10.0.0.9")
+
+	s.Equal("10.0.0.5", clientIP(request, s.trusted("10.0.0.0/8")))
+}
+
+func (s *ServerSuite) TestAnUnreadableForwardedEntryStopsTheWalk() {
+	// There is no telling whose entry sits left of a broken one, so the proxy is as far as
+	// the chain can be trusted.
+	request := s.forwarded("10.0.0.5:44321", "203.0.113.9, nonsense")
+
+	s.Equal("10.0.0.5", clientIP(request, s.trusted("10.0.0.0/8")))
+}
+
+func (s *ServerSuite) TestTrustedProxiesTakesABareAddressAsWellAsARange() {
+	request := s.forwarded("10.0.0.5:44321", "203.0.113.9")
+
+	s.Equal("203.0.113.9", clientIP(request, s.trusted("10.0.0.5")))
+}
+
+func (s *ServerSuite) TestTrustedProxiesRefusesSomethingThatIsNotARange() {
+	_, err := TrustedProxies([]string{"not-a-range"})
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "not-a-range")
+}
+
+// callerSeenBy runs a request through withCustomer and reports what reached the handler.
+func (s *ServerSuite) callerSeenBy(server *Server, request *http.Request) routing.Caller {
+	var seen routing.Caller
+	handler := server.withCustomer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		seen = CallerFrom(r.Context())
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	return seen
+}
+
+// proxiedServer is a server in noauth mode that believes one range of proxies.
+func (s *ServerSuite) proxiedServer() *Server {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	speech, err := sttrouter.New(sttrouter.Options{
+		Config:   config[routing.STT],
+		Registry: sttrouter.DefaultRegistry(),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(speech.Close)
+
+	server, err := NewServer(Options{
+		Routers:        map[routing.Modality]routing.Inspector{routing.STT: speech},
+		TrustedProxies: s.trusted("10.0.0.0/8"),
+	})
+	s.Require().NoError(err)
+	return server
+}
+
+func (s *ServerSuite) TestAnEndUserIsNamedAndPlacedForTheLimitToCount() {
+	request := s.forwarded("10.0.0.5:44321", "203.0.113.9")
+	request.Header.Set(CustomerHeader, "acme")
+	request.Header.Set(auth.UserHeader, "user-1")
+	request.Header.Set(auth.AuthTypeHeader, auth.AuthTypeJWT)
+
+	seen := s.callerSeenBy(s.proxiedServer(), request)
+
+	s.Equal(routing.Caller{UserID: "user-1", IP: "203.0.113.9"}, seen)
+}
+
+func (s *ServerSuite) TestABackendIsCountedAgainstNobody() {
+	// A process the customer runs is trusted with its own spend, so there is no bucket.
+	request := s.forwarded("10.0.0.5:44321", "203.0.113.9")
+	request.Header.Set(CustomerHeader, "acme")
+	request.Header.Set(auth.UserHeader, "user-1")
+
+	seen := s.callerSeenBy(s.proxiedServer(), request)
+
+	s.True(seen.Anonymous())
+}
+
+func (s *ServerSuite) TestAnEndUserWithNoNameIsStillCountedByAddress() {
+	// A token that names no user is still a browser somewhere, and the address is what is
+	// left to count against.
+	request := s.forwarded("10.0.0.5:44321", "203.0.113.9")
+	request.Header.Set(CustomerHeader, "acme")
+	request.Header.Set(auth.AuthTypeHeader, auth.AuthTypeJWT)
+
+	seen := s.callerSeenBy(s.proxiedServer(), request)
+
+	s.Equal(routing.Caller{IP: "203.0.113.9"}, seen)
+	s.False(seen.Anonymous())
+}
+
+func (s *ServerSuite) TestAnUnauthenticatedRequestCarriesNoCaller() {
+	seen := s.callerSeenBy(s.proxiedServer(), s.forwarded("10.0.0.5:44321", "203.0.113.9"))
+
+	s.True(seen.Anonymous())
 }

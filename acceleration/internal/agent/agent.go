@@ -70,6 +70,10 @@ type Options struct {
 	Instructions string
 	// CustomerID owns every request the agent makes. It is what the usage is billed to.
 	CustomerID string
+	// Caller is the end user who asked for this conversation, which is who its daily
+	// limits are counted against. Empty for one a customer's own backend started, which is
+	// not limited.
+	Caller routing.Caller
 	// AgentID identifies this agent across calls. Transcripts are stored under it and
 	// every request the agent makes is recorded against it.
 	AgentID string
@@ -387,6 +391,7 @@ func New(options Options) (*Agent, error) {
 	logger := options.Logger.With("customer", options.CustomerID)
 	owner := routing.Owner{
 		CustomerID: options.CustomerID,
+		Caller:     options.Caller,
 		AgentID:    options.AgentID,
 		CallID:     options.CallID,
 		Tags:       options.Tags,
@@ -495,6 +500,7 @@ func (a *Agent) Join(ctx context.Context) error {
 
 	start := llmrouter.Request{
 		CustomerID:    a.options.CustomerID,
+		Caller:        a.options.Caller,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,
 		Tags:          a.options.Tags,
@@ -517,6 +523,7 @@ func (a *Agent) Join(ctx context.Context) error {
 	}
 	controller, err := a.options.LLM.Start(a.ctx, llmrouter.Request{
 		CustomerID:    a.options.CustomerID,
+		Caller:        a.options.Caller,
 		AgentID:       a.options.AgentID,
 		CallID:        a.options.CallID,
 		Tags:          a.options.Tags,
@@ -2377,7 +2384,8 @@ func (a *Agent) workers() (map[string]func(context.Context) (*llmrouter.Session,
 			}
 			tags["worker"] = name
 			return a.options.LLM.Start(ctx, llmrouter.Request{
-				CustomerID: a.options.CustomerID, AgentID: a.options.AgentID, CallID: a.options.CallID,
+				CustomerID: a.options.CustomerID, Caller: a.options.Caller,
+				AgentID: a.options.AgentID, CallID: a.options.CallID,
 				Tags: tags, Target: target, LanguageHints: a.options.LanguageHints, InputModalities: modalities,
 			})
 		}

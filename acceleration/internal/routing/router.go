@@ -92,10 +92,27 @@ type Router[P Provider] struct {
 	logger   *slog.Logger
 }
 
+// Caller is the end user a request was made on behalf of, and where they made it from. It
+// is what a per-user limit is counted against, and it is empty for work a customer's own
+// backend does for itself, which is not limited.
+type Caller struct {
+	// UserID is who the customer's token named. It is only unique within the customer, so
+	// a limit keyed by it is keyed by the pair.
+	UserID string
+	// IP is where the request came from, as far as the trusted proxies can tell.
+	IP string
+}
+
+// Anonymous reports whether there is nobody to count a limit against.
+func (c Caller) Anonymous() bool { return c.UserID == "" && c.IP == "" }
+
 // Request is what a caller wants served.
 type Request struct {
 	// CustomerID owns the request. It is what every statistic is keyed by.
 	CustomerID string
+	// Caller is the end user the work is for, when the request came from a device rather
+	// than from the customer's own backend. It is what daily limits are counted against.
+	Caller Caller
 	// AgentID is the agent the work is for. Empty outside a conversation.
 	AgentID string
 	// CallID is the call the work happens in. Empty outside a conversation.
@@ -145,7 +162,13 @@ type Request struct {
 
 // Owner returns who the request is billed to and how it is labelled.
 func (r Request) Owner() Owner {
-	return Owner{CustomerID: r.CustomerID, AgentID: r.AgentID, CallID: r.CallID, Tags: r.Tags}
+	return Owner{
+		CustomerID: r.CustomerID,
+		Caller:     r.Caller,
+		AgentID:    r.AgentID,
+		CallID:     r.CallID,
+		Tags:       r.Tags,
+	}
 }
 
 // Candidate is one option for serving a request, in preference order.

@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/simulation"
@@ -55,6 +57,10 @@ type organizationContextKey struct{}
 
 // serverSideContextKey holds whether the caller is a process the customer runs.
 type serverSideContextKey struct{}
+
+// callerContextKey holds the end user the request is for and where they made it from, which
+// is what a daily limit is counted against.
+type callerContextKey struct{}
 
 // serverSideExtension is what the spec marks an operation only a backend may reach with.
 // The check reads it from the embedded spec rather than from a list kept here, so what a
@@ -121,8 +127,16 @@ type Options struct {
 	// Auth decides who a request is from. Absent means noauth, which trusts the customer
 	// header and is right for a local deployment and for one behind a proxy that has
 	// already authenticated the caller.
-	Auth   auth.Authenticator
-	Logger *slog.Logger
+	Auth auth.Authenticator
+	// Quota caps what one end user may spend in a day. Absent means nothing is capped,
+	// which is right for a deployment with no Redis to count in and for one whose callers
+	// are all backends the customer runs.
+	Quota *quota.Limiter
+	// TrustedProxies are the ranges this deployment's own proxies sit in, and they decide
+	// how much of X-Forwarded-For is believed when working out who a request is from.
+	// Empty means none of it is, and the connection's own address is used.
+	TrustedProxies []netip.Prefix
+	Logger         *slog.Logger
 }
 
 // Server implements the generated StrictServerInterface.
@@ -147,6 +161,8 @@ type Server struct {
 	dashboardURL  string
 	oauth         *plugins.Auth
 	authenticator auth.Authenticator
+	quota         *quota.Limiter
+	trusted       []netip.Prefix
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
 	serverSide *http.ServeMux
@@ -204,6 +220,8 @@ func NewServer(options Options) (*Server, error) {
 		publicURL:     options.PublicURL,
 		dashboardURL:  options.DashboardURL,
 		authenticator: authenticator,
+		quota:         options.Quota,
+		trusted:       options.TrustedProxies,
 		serverSide:    serverSide,
 		upgrader:      newUpgrader(options.CORSOrigins),
 		oauth: &plugins.Auth{
@@ -233,7 +251,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	handler := HandlerFromMux(NewStrictHandler(s, nil), mux)
-	return withCORS(s.corsOrigins, s.withCustomer(s.withRequestLog(s.withServerSide(handler))))
+	return withCORS(s.corsOrigins,
+		s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler)))))
 }
 
 // withRequestLog records one line per request served.
@@ -397,6 +416,9 @@ func (s *Server) refuseClientSide(w http.ResponseWriter, r *http.Request) bool {
 //
 // It also means one 401 for every reason authentication failed. A caller that could tell an
 // unknown key from a bad token could use the difference to find out which keys exist.
+// It also works out who to count a daily limit against, which is only asked of a caller
+// that authenticated as an end user's device: a backend the customer runs is trusted with
+// its own tokens, so naming a user for one would only be a bucket nothing is counted in.
 func (s *Server) withCustomer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, err := s.authenticator.Authenticate(r.Context(), r)
@@ -404,6 +426,12 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx := context.WithValue(r.Context(), customerContextKey{}, principal.AppID)
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
+			if !principal.ServerSide {
+				ctx = context.WithValue(ctx, callerContextKey{}, routing.Caller{
+					UserID: principal.UserID,
+					IP:     clientIP(r, s.trusted),
+				})
+			}
 			r = r.WithContext(ctx)
 		}
 		next.ServeHTTP(w, r)
@@ -464,6 +492,14 @@ func OrganizationFrom(ctx context.Context) string {
 func ServerSideFrom(ctx context.Context) bool {
 	serverSide, _ := ctx.Value(serverSideContextKey{}).(bool)
 	return serverSide
+}
+
+// CallerFrom returns the end user the request is for and where they made it from, which is
+// what a daily limit is counted against. It is empty for a request a backend the customer
+// runs made for itself, and empty means nothing is counted.
+func CallerFrom(ctx context.Context) routing.Caller {
+	caller, _ := ctx.Value(callerContextKey{}).(routing.Caller)
+	return caller
 }
 
 // routerFor returns the router serving a modality, or false when this deployment does not

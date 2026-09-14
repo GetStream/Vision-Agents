@@ -61,6 +61,12 @@ const (
 	// uses, and they are read only in NoAuth mode.
 	CustomerHeader = "X-Customer-Id"
 	CustomerParam  = "customer_id"
+	// UserHeader and UserParam name the end user the request is for, which is what a daily
+	// limit is counted against. They are read only in NoAuth mode, where the proxy has
+	// already decided who the caller is; in APIKey mode the token's user_id claim is the
+	// only answer, since a header a caller writes itself is a limit a caller can reset.
+	UserHeader = "X-Stream-User-Id"
+	UserParam  = "user_id"
 )
 
 const (
@@ -85,6 +91,10 @@ var ErrUnauthenticated = errors.New("auth: unauthenticated")
 type Principal struct {
 	OrganizationID string
 	AppID          string
+	// UserID is the end user the caller is acting for, which is who a daily limit is
+	// counted against. It is empty for a request a backend makes for itself, since there
+	// is no user behind one.
+	UserID string
 	// ServerSide is whether the caller is a process the customer runs rather than an end
 	// user's device. It is what the paths that configure an agent ask for: a browser
 	// holding a token its own backend minted may hold a conversation, and may not rewrite
@@ -142,6 +152,7 @@ func (proxied) Authenticate(_ context.Context, r *http.Request) (Principal, erro
 	return Principal{
 		OrganizationID: strings.TrimSpace(r.Header.Get(OrganizationHeader)),
 		AppID:          app,
+		UserID:         user(r),
 		// The auth type is believed for the same reason the app id is: the proxy has
 		// already verified the credential and overwrites this header rather than
 		// forwarding the caller's own. Saying nothing means server-side, because a
@@ -182,6 +193,7 @@ func (k keyed) Authenticate(ctx context.Context, r *http.Request) (Principal, er
 	return Principal{
 		OrganizationID: app.OrganizationID,
 		AppID:          app.AppID,
+		UserID:         userClaim(claims),
 		// Both halves have to agree, and they fail closed in opposite directions. The
 		// header cannot promote a request on its own because nothing signs it; the claim
 		// cannot either, so a server token handed to a browser that sends the client
@@ -194,6 +206,21 @@ func (k keyed) Authenticate(ctx context.Context, r *http.Request) (Principal, er
 // before there was anything to declare.
 func authTypeOf(r *http.Request) string {
 	return strings.TrimSpace(r.Header.Get(AuthTypeHeader))
+}
+
+// user reads the end user a proxy named, from the header or from the socket's query string.
+func user(r *http.Request) string {
+	if named := strings.TrimSpace(r.Header.Get(UserHeader)); named != "" {
+		return named
+	}
+	return strings.TrimSpace(r.URL.Query().Get(UserParam))
+}
+
+// userClaim reads the user a token was minted for. Only a string is accepted: a claim of
+// some other shape is a token that does not name a user, not a user with an unusual name.
+func userClaim(claims jwt.MapClaims) string {
+	named, _ := claims["user_id"].(string)
+	return strings.TrimSpace(named)
 }
 
 // serverToken reads Stream's own marking of a server-side token: `server` set, and no

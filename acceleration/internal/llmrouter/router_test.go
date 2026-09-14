@@ -96,7 +96,7 @@ func (s *LLMRouterSuite) newSession() (*Session, *stubLLM) {
 func (s *LLMRouterSuite) sessionFor(config routing.ProviderConfig) (*Session, *stubLLM) {
 	provider := newStubLLM()
 	recorder := routing.NewRecorder(routing.LLM, nil, nil, slog.Default())
-	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder)
+	session := newSession(provider, config, routing.Owner{CustomerID: "acme"}, recorder, nil)
 
 	s.T().Cleanup(func() {
 		_ = session.Close()

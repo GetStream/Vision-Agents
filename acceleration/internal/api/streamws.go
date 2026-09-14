@@ -170,6 +170,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 
 	request := routing.Request{
 		CustomerID: customerID,
+		Caller:     CallerFrom(r.Context()),
 		AgentID:    opening.AgentID,
 		CallID:     opening.CallID,
 		Tags:       tagsUnder(config, &opening.Tags),
@@ -396,6 +397,7 @@ func (s *Server) streamLLM(
 ) error {
 	session, err := s.streams.LLM.Start(ctx, llmrouter.Request{
 		CustomerID:    request.CustomerID,
+		Caller:        request.Caller,
 		AgentID:       request.AgentID,
 		CallID:        request.CallID,
 		Tags:          request.Tags,

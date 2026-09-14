@@ -98,6 +98,9 @@ to play audio, or `-out` to write a file instead.
 | `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless the dashboard is running. The same list decides which origins may open a socket |
 | `ROUTER_AUTH_MODE`      | `noauth` (default) or `api_key`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose |
+| `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
+| `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
+| `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_LOG_LEVEL`      | `debug`, `info` (default), `warn` or `error`               |
 | `HARNESS_SKILLS`        | Path to a skill set; defaults to the built-in one          |
 | `MEM0_API_KEY`          | mem0 credentials. Without it the agent remembers nothing   |
@@ -209,6 +212,43 @@ one credential rather than a second one issued by this service.
 That proxy is not part of this repository, and does not need to be: authenticating
 a Stream key means reading Stream's tables. Running this service on your own
 means `api_key` mode instead, where the router authenticates callers itself.
+
+### Daily limits
+
+A token is spent by whoever asks for it, so an end user's device is capped and a
+process the customer runs is not. A backend was given its own key and is trusted
+with the spend that goes with it; a browser holding a token that backend minted is
+not, because a leaked one is a stranger with your model bill.
+
+Two things are counted, per UTC day, and reaching either refuses the next response:
+
+| Counted | Default | Why |
+| ------- | ------- | --- |
+| Model responses | 200 | What "200 messages a day" means |
+| Tokens | 500,000 | A backstop for the caller who asks for few responses and makes each one enormous. Roughly 2,500 tokens for a turn carrying instructions and history, so it should not be what an ordinary day hits first |
+
+Each is counted against two buckets: the `user_id` the caller's token names, scoped
+to the customer who minted it, and the address the request came from. Both matter.
+A user id is the honest answer to who is asking, and the address is the answer that
+still holds when a backend mints a fresh user id per request.
+
+The limit is enforced where a response is created, not only where a request is
+admitted. A socket goes on sending frames and a call goes on talking long after
+whatever opened them was let through, so an admission check alone would cap the
+first turn of an unbounded conversation. A caller with nothing left gets a 429 with
+a `Retry-After`, or an `error` frame if the socket was already open.
+
+Counting happens in Redis, so a deployment without it caps nothing, and a Redis
+that cannot be reached allows the request rather than refusing it. That is the
+right way round: refusing everybody because a counter is missing is a worse outage
+than the one the limit prevents.
+
+`ROUTER_TRUSTED_PROXIES` is what makes the address half meaningful. `X-Forwarded-For`
+is a list each hop appends to, and the leftmost entry is whatever the caller claimed,
+so it is walked from the right and only entries written by proxies you named are
+stepped past. Unset, the header is ignored entirely — correct with nothing in front,
+and wrong behind a load balancer, where every caller would look like the balancer
+and share one allowance.
 
 Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.

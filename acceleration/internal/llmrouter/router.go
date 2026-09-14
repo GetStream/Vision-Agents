@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -51,13 +52,19 @@ type Options struct {
 	Registry *Registry
 	Store    *store.Store
 	Live     *live.Client
-	Logger   *slog.Logger
+	// Quota caps what one end user may spend in a day. Absent means nothing is capped.
+	Quota  *quota.Limiter
+	Logger *slog.Logger
 }
 
 // Request is what a caller wants a model for.
 type Request struct {
 	// CustomerID owns the request. It is what every statistic is keyed by.
 	CustomerID string
+	// Caller is the end user the work is for, when the request came from a device rather
+	// than from the customer's own backend. It is what daily limits are counted against,
+	// and it is empty for work nothing is counted against.
+	Caller routing.Caller
 	// AgentID is the agent the work is for. Empty outside a conversation.
 	AgentID string
 	// CallID is the call the work happens in. Empty outside a conversation.
@@ -75,6 +82,7 @@ type Request struct {
 // Router selects an LLM provider and opens sessions.
 type Router struct {
 	*routing.Router[Provider]
+	quota *quota.Limiter
 }
 
 // New validates the options and returns a Router.
@@ -98,7 +106,7 @@ func New(options Options) (*Router, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Router{Router: core}, nil
+	return &Router{Router: core, quota: options.Quota}, nil
 }
 
 // Start selects a provider and opens a session, falling back to the next candidate when one
@@ -106,6 +114,7 @@ func New(options Options) (*Router, error) {
 func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 	core := routing.Request{
 		CustomerID:      request.CustomerID,
+		Caller:          request.Caller,
 		AgentID:         request.AgentID,
 		CallID:          request.CallID,
 		Tags:            request.Tags,
@@ -118,7 +127,7 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		return nil, err
 	}
 
-	session := newSession(provider, config, core.Owner(), r.Recorder())
+	session := newSession(provider, config, core.Owner(), r.Recorder(), r.quota)
 	session.fallback = func(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 		candidates, err := r.Resolve(ctx, request.Target, request.LanguageHints)
 		if err != nil {
@@ -139,7 +148,11 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 				failures = append(failures, err)
 				continue
 			}
-			child := newSession(provider, selected, core.Owner(), r.Recorder())
+			// The child serves a response the parent already allowed, so it reaches for
+			// create rather than Create: the limit is asked once per response, not once
+			// per provider tried. It still holds the limiter, because whichever provider
+			// ends up answering is the one whose tokens have to be debited.
+			child := newSession(provider, selected, core.Owner(), r.Recorder(), r.quota)
 			if !session.addChild(child) {
 				_ = child.Close()
 				return nil, errors.New("llmrouter: session is closed")

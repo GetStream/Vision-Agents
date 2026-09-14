@@ -116,6 +116,24 @@ func TestNoAuth(t *testing.T) {
 		_, err := authenticator.Authenticate(context.Background(), r)
 		require.ErrorIs(t, err, ErrUnauthenticated)
 	})
+
+	t.Run("reads the end user the proxy named", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		r.Header.Set(AppHeader, "app-1")
+		r.Header.Set(UserHeader, "user-1")
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, "user-1", principal.UserID)
+	})
+
+	t.Run("reads the end user from the query parameter for a socket", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/llm/stream?customer_id=examples&user_id=user-1", nil)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, "user-1", principal.UserID)
+	})
 }
 
 func TestAPIKey(t *testing.T) {
@@ -145,6 +163,31 @@ func TestAPIKey(t *testing.T) {
 			request(key, signed(t, secret, time.Hour)))
 		require.NoError(t, err)
 		require.Equal(t, Principal{OrganizationID: "org-1", AppID: "app-1"}, principal)
+	})
+
+	t.Run("names the end user the token was minted for", func(t *testing.T) {
+		principal, err := authenticator.Authenticate(context.Background(),
+			request(key, signedClaims(t, secret, jwt.MapClaims{"user_id": "user-1"})))
+		require.NoError(t, err)
+		require.Equal(t, "user-1", principal.UserID)
+	})
+
+	t.Run("ignores the user header, since only the token names a user here", func(t *testing.T) {
+		// A caller who could name their own user could reset their own limit by picking a
+		// name nobody has spent anything under.
+		r := request(key, signedClaims(t, secret, jwt.MapClaims{"user_id": "user-1"}))
+		r.Header.Set(UserHeader, "somebody-else")
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, "user-1", principal.UserID)
+	})
+
+	t.Run("names no user for a claim that is not a name", func(t *testing.T) {
+		principal, err := authenticator.Authenticate(context.Background(),
+			request(key, signedClaims(t, secret, jwt.MapClaims{"user_id": 42})))
+		require.NoError(t, err)
+		require.Empty(t, principal.UserID)
 	})
 
 	t.Run("names a backend when the header and the token agree", func(t *testing.T) {

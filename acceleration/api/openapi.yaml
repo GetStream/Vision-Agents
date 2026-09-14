@@ -18,6 +18,17 @@ info:
     `user_id` claim. Both are required, and the token is what proves it, since
     nothing signs the header.
 
+    An end user's device is capped at a number of model responses and a number of
+    tokens per UTC day, counted against both the `user_id` its token names and the
+    address it came from. A caller with nothing left is answered 429 with a
+    `Retry-After` naming the seconds until the limit resets; on a socket the same
+    refusal arrives as an `error` frame, because the socket was already open when
+    the day ran out. A server-side caller is not capped: a process the customer
+    runs is trusted with the spend it was given. The two allowances are
+    ROUTER_RATE_LIMIT_MESSAGES_PER_DAY and ROUTER_RATE_LIMIT_TOKENS_PER_DAY, and a
+    deployment with no Redis to count in caps nothing. In noauth mode the end user
+    is named by `X-Stream-User-Id`, or by a `user_id` query parameter on a socket.
+
 servers:
   - url: http://localhost:8080
 

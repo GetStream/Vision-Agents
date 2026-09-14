@@ -299,6 +299,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		Text:               spec.Text,
 		Instructions:       spec.prompt(),
 		CustomerID:         spec.CustomerID,
+		Caller:             spec.Caller,
 		AgentID:            spec.AgentID,
 		ConfigID:           spec.ConfigID,
 		CallID:             spec.CallID,

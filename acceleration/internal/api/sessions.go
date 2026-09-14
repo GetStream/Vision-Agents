@@ -47,6 +47,10 @@ func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequest
 		return CreateSession400JSONResponse{badRequest(err.Error())}, nil
 	}
 	spec := specOf(*request.Body, customerID, config)
+	// Who asked comes from the credential rather than from specOf, which merges the request
+	// with the config and so only ever sees what the caller was willing to say about
+	// themselves.
+	spec.Caller = CallerFrom(ctx)
 	created, err := s.sessions.Create(ctx, spec)
 	if err != nil {
 		// Everything that can go wrong here is the caller's spec or a provider that would

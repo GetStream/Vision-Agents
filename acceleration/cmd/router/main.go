@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/managed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search/exa"
@@ -74,11 +76,29 @@ const (
 	authModeEnvVar = "ROUTER_AUTH_MODE"
 	// authKEKEnvVar unseals the stored key secrets. It lives outside the database on
 	// purpose: it is what makes a leaked backup ciphertext rather than credentials.
-	authKEKEnvVar     = "ROUTER_AUTH_KEK"
-	logLevelEnvVar    = "ROUTER_LOG_LEVEL"
-	defaultAddress    = ":8080"
-	shutdownGrace     = 10 * time.Second
-	readHeaderTimeout = 10 * time.Second
+	authKEKEnvVar = "ROUTER_AUTH_KEK"
+	// messageLimitEnvVar and tokenLimitEnvVar cap what one of a customer's end users may
+	// spend in a day. They apply to callers holding a token minted for a user, not to a
+	// backend the customer runs for itself, which is trusted with its own spend. Either at
+	// 0 turns that half off; both off, or no Redis to count in, caps nothing.
+	messageLimitEnvVar = "ROUTER_RATE_LIMIT_MESSAGES_PER_DAY"
+	tokenLimitEnvVar   = "ROUTER_RATE_LIMIT_TOKENS_PER_DAY"
+	// trustedProxiesEnvVar names the CIDR ranges this deployment's own proxies sit in,
+	// comma separated, and decides how much of X-Forwarded-For is believed. Unset means
+	// none of it is and the connection's address is used, which is right with no proxy in
+	// front and wrong behind one, where every caller would look like the load balancer.
+	trustedProxiesEnvVar = "ROUTER_TRUSTED_PROXIES"
+	// defaultMessageLimit and defaultTokenLimit are a day's allowance for one end user.
+	// The token limit is a backstop under the message count rather than a second cap: at
+	// roughly 2,500 tokens for a turn carrying instructions and some history, 200 messages
+	// is about 500,000 tokens, so it should only be reached by somebody making a few
+	// enormous requests rather than by somebody having 200 ordinary conversations.
+	defaultMessageLimit = 200
+	defaultTokenLimit   = 500_000
+	logLevelEnvVar      = "ROUTER_LOG_LEVEL"
+	defaultAddress      = ":8080"
+	shutdownGrace       = 10 * time.Second
+	readHeaderTimeout   = 10 * time.Second
 	// crawlTimeout bounds reading one page into a knowledge base. It is generous compared
 	// to a search because nobody is on the phone waiting for it: a page that has to be
 	// crawled live rather than served from an index takes seconds, and giving up on it
@@ -119,6 +139,41 @@ func dashboardBaseURL() string {
 		return value
 	}
 	return "http://localhost:3000"
+}
+
+// dailyLimits reads what one end user may spend in a day, defaulting to the built-in
+// allowance and refusing a value that is not a number.
+//
+// An unreadable limit is an error rather than a fallback to the default: a deployment that
+// meant to raise the cap and mistyped it would otherwise run on the low one and only find
+// out from a customer.
+func dailyLimits() (quota.Limits, error) {
+	messages, err := limitFrom(messageLimitEnvVar, defaultMessageLimit)
+	if err != nil {
+		return quota.Limits{}, err
+	}
+	tokens, err := limitFrom(tokenLimitEnvVar, defaultTokenLimit)
+	if err != nil {
+		return quota.Limits{}, err
+	}
+	return quota.Limits{MessagesPerDay: messages, TokensPerDay: tokens}, nil
+}
+
+// limitFrom reads one limit. Zero is allowed and means the limit is not enforced, which is
+// how a deployment turns one of the two off.
+func limitFrom(name string, fallback int64) (int64, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a whole number of units a day, got %q", name, raw)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s cannot be negative, got %d", name, value)
+	}
+	return value, nil
 }
 
 // newAuthenticator builds the authenticator the deployment's mode asks for.
@@ -210,6 +265,38 @@ func run(logger *slog.Logger) error {
 		logger.Warn("no redis configured, routing will not use live health", "env", redisEnvVar)
 	}
 
+	// A daily limit is counted in Redis, so a deployment without one caps nothing. That is
+	// the right way round: the limit protects against a customer's end users spending more
+	// than they were meant to, and refusing every request because the counter is missing
+	// would be a worse outage than the one it prevents.
+	var limiter *quota.Limiter
+	limits, err := dailyLimits()
+	if err != nil {
+		return err
+	}
+	switch {
+	case !limits.Enforced():
+		logger.Warn("no daily limit configured, an end user may spend without bound",
+			"env", messageLimitEnvVar)
+	case liveClient == nil:
+		logger.Warn("no redis configured, daily limits will not be enforced", "env", redisEnvVar)
+	default:
+		if limiter, err = quota.New(liveClient.Redis(), limits, logger); err != nil {
+			return err
+		}
+		logger.Info("capping what one end user may spend in a day",
+			"messages", limits.MessagesPerDay, "tokens", limits.TokensPerDay)
+	}
+
+	trustedProxies, err := api.TrustedProxies(splitList(os.Getenv(trustedProxiesEnvVar)))
+	if err != nil {
+		return err
+	}
+	if len(trustedProxies) == 0 {
+		logger.Warn("no trusted proxies configured, X-Forwarded-For will be ignored",
+			"env", trustedProxiesEnvVar)
+	}
+
 	// Voices a customer brought with them live in an object bucket and a few tables. The
 	// resolver only reads the tables, so a deployment with a database but no bucket can
 	// still speak in voices another one prepared.
@@ -299,6 +386,7 @@ func run(logger *slog.Logger) error {
 			Registry: llmrouter.DefaultRegistry(),
 			Store:    pgStore,
 			Live:     liveClient,
+			Quota:    limiter,
 			Logger:   logger,
 		})
 		if err != nil {
@@ -465,25 +553,27 @@ func run(logger *slog.Logger) error {
 	}
 
 	options := api.Options{
-		Routers:       routers,
-		Voices:        voiceService,
-		KnowledgeURLs: pages,
-		Store:         pgStore,
-		Live:          liveClient,
-		Phone:         telephony,
-		Sessions:      sessions,
-		Streams:       streams,
-		Transcripts:   transcripts,
-		Campaigns:     campaigns,
-		Simulations:   simulations,
-		Dispatch:      workers,
-		StreamSecret:  os.Getenv(streamSecretEnvVar),
-		StreamKey:     os.Getenv(streamKeyEnvVar),
-		CORSOrigins:   splitList(os.Getenv(corsOriginsEnvVar)),
-		PublicURL:     os.Getenv(publicURLEnvVar),
-		DashboardURL:  dashboardBaseURL(),
-		Auth:          authenticator,
-		Logger:        logger,
+		Routers:        routers,
+		Voices:         voiceService,
+		KnowledgeURLs:  pages,
+		Store:          pgStore,
+		Live:           liveClient,
+		Phone:          telephony,
+		Sessions:       sessions,
+		Streams:        streams,
+		Transcripts:    transcripts,
+		Campaigns:      campaigns,
+		Simulations:    simulations,
+		Dispatch:       workers,
+		Quota:          limiter,
+		TrustedProxies: trustedProxies,
+		StreamSecret:   os.Getenv(streamSecretEnvVar),
+		StreamKey:      os.Getenv(streamKeyEnvVar),
+		CORSOrigins:    splitList(os.Getenv(corsOriginsEnvVar)),
+		PublicURL:      os.Getenv(publicURLEnvVar),
+		DashboardURL:   dashboardBaseURL(),
+		Auth:           authenticator,
+		Logger:         logger,
 	}
 	if options.StreamSecret == "" {
 		logger.Warn("no "+streamSecretEnvVar+" set, so inbound calls cannot be dispatched: "+

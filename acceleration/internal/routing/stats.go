@@ -22,6 +22,11 @@ const statWriteTimeout = 5 * time.Second
 type Owner struct {
 	// CustomerID owns the request. Every statistic is keyed by it.
 	CustomerID string
+	// Caller is the end user the work was done for, when it was asked for by a device
+	// rather than by the customer's own backend. It is what daily limits are counted
+	// against, and it is not recorded: a stat row is what the customer is billed for, and
+	// which of their users asked is theirs to know rather than ours to keep.
+	Caller Caller
 	// AgentID is the agent the work was done for. Empty outside a conversation.
 	AgentID string
 	// CallID is the call the work happened in. Empty outside a conversation.

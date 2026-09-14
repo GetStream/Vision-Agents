@@ -47,6 +47,12 @@ type Spec struct {
 	// CustomerID owns the session and is what its usage is billed to. It comes from the
 	// trusted header rather than the body, so it is filled in by the API.
 	CustomerID string
+	// Caller is the end user who asked for the session, which is not the same thing as
+	// UserID above: that is who the agent joins the call as, this is who wanted it. It
+	// comes from the credential rather than the body, so the API fills it in, and it is
+	// what the session's daily limits are counted against. Empty for a session a
+	// customer's own backend started, which is not limited.
+	Caller routing.Caller
 	// ConfigID names the agent config this session was created from, so a call can later
 	// say what the agent was configured as. Empty for a session that spelled itself out.
 	ConfigID string
