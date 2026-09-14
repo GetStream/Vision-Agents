@@ -6,25 +6,25 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 )
-
-func cursorKey() string { return os.Getenv("CURSOR_API_KEY") }
 
 type Worker struct {
 	Profile Profile
 	Index   *Index
 	Token   string
 	ACP     *ACP
+	// Endpoint is the loopback proxy that holds the Cursor credential, so that the
+	// research process never has it in its own environment.
+	Endpoint string
 	// Only the backend queues work. Refuse overlapping direct worker requests.
 	closed bool
 	busy   chan struct{}
 	mu     sync.Mutex
 }
 
-func NewWorker(ctx context.Context, p Profile, root, token string) (*Worker, error) {
+func NewWorker(ctx context.Context, p Profile, root, token, endpoint string) (*Worker, error) {
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
@@ -37,11 +37,11 @@ func NewWorker(ctx context.Context, p Profile, root, token string) (*Worker, err
 	if e != nil {
 		return nil, e
 	}
-	a, e := StartACP(ctx, root, p.Model)
+	a, e := StartACP(ctx, root, p.Model, endpoint)
 	if e != nil {
 		return nil, e
 	}
-	return &Worker{Profile: p, Index: idx, Token: token, ACP: a, busy: make(chan struct{}, 1)}, nil
+	return &Worker{Profile: p, Index: idx, Token: token, ACP: a, Endpoint: endpoint, busy: make(chan struct{}, 1)}, nil
 }
 func (w *Worker) Close() {
 	w.mu.Lock()
@@ -69,7 +69,7 @@ func (w *Worker) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 				if w.closed {
 					err = errors.New("worker closed")
 				} else {
-					w.ACP, err = StartACP(recoverCtx, w.Index.Root, w.Profile.Model)
+					w.ACP, err = StartACP(recoverCtx, w.Index.Root, w.Profile.Model, w.Endpoint)
 				}
 				alive = err == nil
 				w.mu.Unlock()
@@ -122,7 +122,7 @@ func (w *Worker) ServeHTTP(out http.ResponseWriter, r *http.Request) {
 	if w.closed {
 		e = errors.New("worker closed")
 	} else if w.ACP == nil || !w.ACP.Alive() {
-		w.ACP, e = StartACP(ctx, w.Index.Root, w.Profile.Model)
+		w.ACP, e = StartACP(ctx, w.Index.Root, w.Profile.Model, w.Endpoint)
 	}
 	active := w.ACP
 	w.mu.Unlock()

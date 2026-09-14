@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,12 +36,18 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	_ = os.Setenv("CURSOR_API_KEY", string(key))
+	// The credential stays in this root-owned process and is never exported to the
+	// environment, so it is absent from every environment the research process can read.
+	proxy, e := research.StartAuthProxy(strings.TrimSpace(string(key)))
+	if e != nil {
+		return e
+	}
+	defer proxy.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	startup, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	worker, e := research.NewWorker(startup, p, research.Root, string(token))
+	worker, e := research.NewWorker(startup, p, research.Root, string(token), proxy.Endpoint())
 	if e != nil {
 		return e
 	}

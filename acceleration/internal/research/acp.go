@@ -35,10 +35,13 @@ type ACP struct {
 	repos    []Repository
 }
 
-func StartACP(ctx context.Context, root, model string) (*ACP, error) {
+// StartACP launches the research process. Its environment holds no real credential:
+// endpoint points at the loopback proxy that owns the Cursor credential, and the key
+// Cursor presents is a placeholder the proxy swaps out. See authproxy.go.
+func StartACP(ctx context.Context, root, model, endpoint string) (*ACP, error) {
 	cmd := exec.Command("/usr/bin/setpriv", "--reuid=10001", "--regid=10001", "--init-groups", "--no-new-privs", "/opt/cursor/cursor-agent", "--model", model, "--mode", "ask", "--trust", "acp")
 	cmd.Dir = root
-	cmd.Env = []string{"HOME=/home/support-reader", "PATH=/usr/local/bin:/usr/bin:/bin", "NO_COLOR=1", "CURSOR_API_KEY=" + cursorKey()}
+	cmd.Env = []string{"HOME=/home/support-reader", "PATH=/usr/local/bin:/usr/bin:/bin", "NO_COLOR=1", "CURSOR_API_KEY=" + CredentialPlaceholder, "CURSOR_API_ENDPOINT=" + endpoint}
 	return startACP(ctx, cmd, root)
 }
 func startACP(ctx context.Context, cmd *exec.Cmd, root string) (*ACP, error) {
