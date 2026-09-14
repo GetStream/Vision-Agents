@@ -62,7 +62,22 @@ uv run sts_example.py
 ```
 
 It prints what the model heard, what it said back, and how long the caller waited to hear
-the reply begin, then writes `spoken.wav` with the reply in it.
+the reply begin, then writes `spoken.wav` with the reply in it:
+
+```
+heard: Hi, I'd like to book a table for four this Saturday at 7:30 patio if you have it, a high chair, and one of us has a peanut allergy.
+said:  Got it—a table for four this Saturday at 7:30 on the patio, with a high chair and noting the peanut allergy.
+  first audio 102ms after the caller stopped
+
+spoken.wav: 7.0s at 24000Hz
+```
+
+That run is the routing doing its job. `sts-fast` prefers Gemini, whose project was over
+its spending cap at the time, so the router recorded the refusal and started the next
+candidate in the tier, Grok Voice, before the socket reported ready. The caller heard one
+model answer and nothing of the one that did not. The hundred milliseconds is measured from
+the last audio the example sent, silence included, to the first audio back; the model
+decided the turn was over somewhere inside that silence, so the wait it felt was longer.
 
 Nothing here calls `sync_routers`. `Router("frontdesk")` finds
 `routers/frontdesk/router.yaml` and stores it on the first session; `.router_sync` records
