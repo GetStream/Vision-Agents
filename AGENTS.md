@@ -10,6 +10,7 @@
 | `plugins/`        | 44 Python packages, one per provider. `plugins/stream` is the client for `acceleration/` |
 | `sdks/swift/`     | Three iOS packages: `core` (state and API), `ui` (SwiftUI), `rtc` (voice over Stream Video) |
 | `examples/voice_agents/` | Runnable agents. `simple_voice_ai` is the smallest one                  |
+| `tui/`            | Go terminal UI for a conversation with an agent: the terminal counterpart of `dashboard/` |
 | `sdks/go/`, `benchmark/` | The Go SDK and the voice benchmark. `go.work` ties the Go modules together |
 
 ## Local dev

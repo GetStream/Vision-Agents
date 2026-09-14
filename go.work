@@ -5,4 +5,5 @@ use (
 	./benchmark
 	./examples/voice_agents/swift_demo/configure
 	./sdks/go
+	./tui
 )

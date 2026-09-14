@@ -64,6 +64,7 @@ jobs:
           cache-dependency-path: |
             acceleration/go.sum
             sdks/go/go.sum
+            tui/go.sum
 
       # cmd/transcribe and cmd/agent decode and encode Opus through cgo, so the codecs have
       # to be present before the acceleration module will build at all.
@@ -93,6 +94,14 @@ jobs:
       - name: Test the SDK
         run: go test -race ./...
         working-directory: sdks/go
+
+      - name: Vet the terminal UI
+        run: go vet ./...
+        working-directory: tui
+
+      - name: Test the terminal UI
+        run: go test -race ./...
+        working-directory: tui
 
   dashboard:
     runs-on: ubuntu-latest

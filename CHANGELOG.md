@@ -119,6 +119,34 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+### A terminal UI for a conversation, in `tui/`
+
+`github.com/GetStream/Vision-Agents/tui` holds a conversation with an agent in a
+terminal: the answer as it is written, the tools being run to find it with their queue
+and execution timings, and whether what was said survived being saved. It is the
+terminal counterpart of the dashboard, and works against anything satisfying
+`tui.Session`, which an `*agents.Session` already does.
+
+```go
+err := tui.Run(ctx, tui.Options{
+	Open: func(ctx context.Context, conversationID string) (tui.Session, error) {
+		return agent.Chat(ctx, agents.ChatOptions{Persist: true, ConversationID: conversationID})
+	},
+	History:  tui.BackendHistory(stream.Backend{}, "jean"),
+	Branding: tui.Branding{Title: "Jean", Subtitle: "answers questions about the weather"},
+})
+```
+
+`Enter` sends, `alt-enter` writes another line, `esc` cancels the answer being worked on,
+and `/new`, `/resume <id>` and `/older` move between conversations and page back through
+saved history. An application adds header lines, a theme, a banner and slash commands of
+its own; `OnOpen` is told about each session as it becomes live, which is the moment to
+open the same conversation in the dashboard. `go run ./cmd/chat -name jean` is a runnable
+conversation with a `get_weather` function to watch being called.
+
+It is a module of its own, so the Bubble Tea and Glamour dependencies stay out of
+`sdks/go`.
+
 ### Accelerate LLM request fallback and Claude support
 
 The Go backend can route to Anthropic's OpenAI-compatible Claude endpoint using
