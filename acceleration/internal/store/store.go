@@ -339,9 +339,7 @@ func (s *Store) CustomerTurnStats(
 // CustomerStats returns the buckets for one customer and modality in [from, to), oldest
 // first.
 //
-// Without a tag filter this reads the rollup table. With one it aggregates the matching
-// request rows directly, because a rollup bucket has already lost which labels its
-// requests carried and only the raw rows can answer "and also tagged with".
+// Reads recorded requests directly so recent activity is visible before rollups run.
 func (s *Store) CustomerStats(
 	ctx context.Context,
 	modality, customerID string,
@@ -359,23 +357,10 @@ func (s *Store) CustomerStats(
 		return nil, errors.New("store: modality is required")
 	}
 
-	if len(tags) > 0 {
-		return s.taggedStats(ctx, modality, customerID, granularity, from, to, tags)
+	if tags == nil {
+		tags = map[string]string{}
 	}
-
-	var buckets []Bucket
-	err := s.db.NewSelect().
-		Table(granularity.table()).
-		Where("modality = ?", modality).
-		Where("customer_id = ?", customerID).
-		Where("bucket >= ?", from).
-		Where("bucket < ?", to).
-		Order("bucket ASC", "provider ASC", "model ASC").
-		Scan(ctx, &buckets)
-	if err != nil {
-		return nil, fmt.Errorf("store: customer stats: %w", err)
-	}
-	return buckets, nil
+	return s.taggedStats(ctx, modality, customerID, granularity, from, to, tags)
 }
 
 // taggedStats aggregates raw request rows carrying every one of the given labels.

@@ -249,8 +249,8 @@ func (s *StoreSuite) TestRollupIgnoresRequestsOutsideTheWindow() {
 	_, err := s.store.Rollup(s.ctx, Hourly, s.base, s.base.Add(time.Hour))
 	s.Require().NoError(err)
 
-	buckets, err := s.store.CustomerStats(
-		s.ctx, "stt", "acme", Hourly, s.base.Add(-24*time.Hour), s.base.Add(time.Hour), nil)
+	var buckets []Bucket
+	err = s.store.DB().NewSelect().Table("stats_hourly").Where("customer_id = ?", "acme").Scan(s.ctx, &buckets)
 	s.Require().NoError(err)
 	s.Require().Len(buckets, 1)
 	s.EqualValues(1000, buckets[0].AudioMsTotal)
@@ -668,4 +668,20 @@ func (s *StoreSuite) turn(turnID string, at time.Time, roundtripMs float64) *Tur
 		SpeechEndToAudioMs: &roundtripMs,
 		AudioOutMs:         &audioMs,
 	}
+}
+
+func (s *StoreSuite) TestStatsIncludeNewRequestsWithoutRollups() {
+	s.record("acme", s.base.Add(time.Minute), 1000, 100, true)
+	s.record("other", s.base.Add(time.Minute), 9000, 100, true)
+	buckets, err := s.store.CustomerStats(s.ctx, "stt", "acme", Hourly, s.base, s.base.Add(time.Hour), nil)
+	s.Require().NoError(err)
+	s.Require().Len(buckets, 1)
+	s.EqualValues(1, buckets[0].RequestCount)
+	s.EqualValues(1000, buckets[0].AudioMsTotal)
+	s.record("acme", s.base.Add(2*time.Minute), 2000, 100, true)
+	buckets, err = s.store.CustomerStats(s.ctx, "stt", "acme", Hourly, s.base, s.base.Add(time.Hour), nil)
+	s.Require().NoError(err)
+	s.Require().Len(buckets, 1)
+	s.EqualValues(2, buckets[0].RequestCount)
+	s.EqualValues(3000, buckets[0].AudioMsTotal)
 }
