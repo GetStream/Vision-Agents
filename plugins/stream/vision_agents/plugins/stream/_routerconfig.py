@@ -43,7 +43,9 @@ ROUTER_FILE = "router.yaml"
 ROUTER_STAMP = ".router_sync"
 
 # ROUTER_KEYS are the top-level keys a router config file may hold.
-ROUTER_KEYS = frozenset({"name", "description", "stt", "tts", "llm", "search", "tags"})
+ROUTER_KEYS = frozenset(
+    {"name", "description", "stt", "tts", "llm", "sts", "search", "tags"}
+)
 
 
 async def ensure_router(name: str, backend: Backend) -> Optional[RouterConfig]:

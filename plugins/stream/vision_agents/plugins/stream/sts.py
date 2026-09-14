@@ -120,6 +120,14 @@ class STS(realtime.Realtime):
             capabilities=["audio", "text", "function_calling"],
         )
 
+    async def __aenter__(self) -> "STS":
+        """Start the conversation, for a caller holding the session itself."""
+        await self.connect()
+        return self
+
+    async def __aexit__(self, *exception) -> None:
+        await self.close()
+
     def _start(self) -> dict[str, Any]:
         """The frame that says what to route to and how the model should behave."""
         block = dict(self.options)
