@@ -1018,7 +1018,7 @@ func (s *HarnessSuite) TestWorkerPreparationDoesNotBlockDelegationOrSpeech() {
 	events := collect(h)
 	defer func() { s.NoError(h.Close()); <-events.done }()
 	accepted := make(chan error, 1)
-	go func() { _, err := h.Delegate("vision", "look", "turn-1", nil); accepted <- err }()
+	go func() { _, err := h.Delegate("vision", "look", "turn-1", nil, nil); accepted <- err }()
 	select {
 	case err := <-accepted:
 		s.Require().NoError(err)

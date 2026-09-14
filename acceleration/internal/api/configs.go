@@ -329,6 +329,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Mode:               mode,
 		STT:                value(request.Stt),
 		TTS:                value(request.Tts),
+		STS:                value(request.Sts),
 		Voice:              value(request.Voice),
 		LLM:                value(request.Llm),
 		Subagent:           value(request.Subagent),
@@ -384,6 +385,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	}
 	rendered.Stt = optional(config.STT)
 	rendered.Tts = optional(config.TTS)
+	rendered.Sts = optional(config.STS)
 	rendered.Voice = optional(config.Voice)
 	rendered.Llm = optional(config.LLM)
 	rendered.Subagent = optional(config.Subagent)

@@ -1482,6 +1482,8 @@ export interface components {
             /** @description A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it. */
             stt?: string;
             tts?: string;
+            /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
+            sts?: string;
             /** @description Provider-specific voice id. */
             voice?: string;
             /** @description The model holding the conversation. */
@@ -1519,6 +1521,8 @@ export interface components {
             mode: components["schemas"]["AgentMode"];
             stt?: string;
             tts?: string;
+            /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
+            sts?: string;
             voice?: string;
             llm?: string;
             video?: components["schemas"]["SessionVideo"];
@@ -2076,6 +2080,8 @@ export interface components {
             mode?: components["schemas"]["AgentMode"];
             stt?: string;
             tts?: string;
+            /** @description A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade. */
+            sts?: string;
             voice?: string;
             llm?: string;
             video?: components["schemas"]["SessionVideo"];
@@ -2456,6 +2462,8 @@ export interface components {
             stt?: string;
             /** @description The voice target, on the same terms as stt. */
             tts?: string;
+            /** @description The speech-to-speech target, for a native call, on the same terms as stt. */
+            sts?: string;
             /** @description The target that held the conversation. */
             llm?: string;
             /** @description The slower target delegated work ran on. Empty means nothing was delegated, which also means the skills below were never offered. */
@@ -2464,6 +2472,8 @@ export interface components {
             stt_used?: string;
             /** @description The provider/model that spoke, on the same terms as stt_used. */
             tts_used?: string;
+            /** @description The provider/model that held a native call, on the same terms as stt_used. */
+            sts_used?: string;
             /** @description The provider/model that held the conversation. */
             llm_used?: string;
             /** @description The provider/model delegated work ran on. Empty when nothing was handed over, or when the thinking target was never reached. */
@@ -2612,6 +2622,8 @@ export interface components {
             stt?: string;
             /** @description Omit it and the config decides, or en-low-latency when there is no config. */
             tts?: string;
+            /** @description A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides. */
+            sts?: string;
             /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
             subagents?: {
                 [key: string]: string;
@@ -2716,6 +2728,8 @@ export interface components {
             llm?: string;
             /** @description The provider and model speaking. */
             tts?: string;
+            /** @description The provider and model holding a native conversation, once routing has picked one. */
+            sts?: string;
             /** @description The provider and model transcribing, once somebody has been heard. */
             stt?: string;
             /** @description The provider and model delegated work runs on. */

@@ -419,3 +419,16 @@ func (s *STSRouterSuite) TestTheSessionForwardsWhatItIsAskedTo() {
 	s.Equal(24_000, session.SampleRate())
 	s.True(session.Capabilities().Tools)
 }
+
+func (s *STSRouterSuite) TestDuplicateCompletionsLeaveTheNextTurnsAudioUnbilled() {
+	session, _ := s.newSession()
+	complete := sts.ResponseComplete{ResponseID: "r1", Generation: 1}
+	s.True(session.observe(complete))
+	session.heardMs = 100
+	s.False(session.observe(complete))
+	s.Equal(100.0, session.heardMs)
+	s.False(session.observe(sts.ResponseStarted{ResponseID: "r1", Generation: 1}))
+	s.Empty(session.inFlight)
+	s.True(session.observe(sts.ResponseComplete{ResponseID: "r2", Generation: 2}))
+	s.Zero(session.heardMs)
+}

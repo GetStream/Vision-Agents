@@ -165,6 +165,19 @@ func (s *Session) Resolved() (stt, llm, tts, subagent string) {
 	return stt, llm, tts, subagent
 }
 
+// Speech names the speech-to-speech model routing picked for a native call, and nothing
+// for a call the cascade held.
+func (s *Session) Speech() string {
+	if s.voiceAgent == nil {
+		return ""
+	}
+	model := s.voiceAgent.STS()
+	if model == nil {
+		return ""
+	}
+	return model.Provider() + "/" + model.Model()
+}
+
 // watcher is one attached consumer.
 //
 // The channel is closed exactly once, whether the consumer detached or the session ended

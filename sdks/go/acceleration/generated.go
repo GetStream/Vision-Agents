@@ -900,8 +900,11 @@ type AgentConfig struct {
 	SandboxProfile *string   `json:"sandbox_profile,omitempty"`
 	Search         *string   `json:"search,omitempty"`
 	Skills         *[]string `json:"skills,omitempty"`
-	Stt            *string   `json:"stt,omitempty"`
-	Subagent       *string   `json:"subagent,omitempty"`
+
+	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
+	Sts      *string `json:"sts,omitempty"`
+	Stt      *string `json:"stt,omitempty"`
+	Subagent *string `json:"subagent,omitempty"`
 
 	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
 	Subagents *map[string]string `json:"subagents,omitempty"`
@@ -949,6 +952,9 @@ type AgentConfigRequest struct {
 
 	// Skills Skill names, either the customer's own or one of the built-in think, recall and explain. Omit for the built-in set.
 	Skills *[]string `json:"skills,omitempty"`
+
+	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
+	Sts *string `json:"sts,omitempty"`
 
 	// Stt A provider/model or a capability shortcut. Empty leaves the default, and a text agent ignores it.
 	Stt *string `json:"stt,omitempty"`
@@ -1071,6 +1077,12 @@ type Call struct {
 	// Skills What the fast model could hand to the subagent. The instructions behind each name are in the skill registry.
 	Skills    *[]string `json:"skills,omitempty"`
 	StartedAt time.Time `json:"started_at"`
+
+	// Sts The speech-to-speech target, for a native call, on the same terms as stt.
+	Sts *string `json:"sts,omitempty"`
+
+	// StsUsed The provider/model that held a native call, on the same terms as stt_used.
+	StsUsed *string `json:"sts_used,omitempty"`
 
 	// Stt The transcription target the call ran with, after a session's overrides were folded into whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is several models and routing fails over between them, so per-turn providers are in the request rows.
 	Stt *string `json:"stt,omitempty"`
@@ -1308,6 +1320,9 @@ type CreateSessionRequest struct {
 
 	// Skills Omit for the built-in set of think, recall and explain.
 	Skills *[]SessionSkill `json:"skills,omitempty"`
+
+	// Sts A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
+	Sts *string `json:"sts,omitempty"`
 
 	// Stt Omit it and the config decides, or en-low-latency when there is no config.
 	Stt *string `json:"stt,omitempty"`
@@ -1892,6 +1907,9 @@ type Session struct {
 	// State Whether the agent is still in the call.
 	State SessionState `json:"state"`
 
+	// Sts The provider and model holding a native conversation, once routing has picked one.
+	Sts *string `json:"sts,omitempty"`
+
 	// Stt The provider and model transcribing, once somebody has been heard.
 	Stt *string `json:"stt,omitempty"`
 
@@ -2438,8 +2456,11 @@ type SyncAgentRequest struct {
 	SandboxProfile *string         `json:"sandbox_profile,omitempty"`
 	Search         *string         `json:"search,omitempty"`
 	Skills         *[]SkillRequest `json:"skills,omitempty"`
-	Stt            *string         `json:"stt,omitempty"`
-	Subagent       *string         `json:"subagent,omitempty"`
+
+	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
+	Sts      *string `json:"sts,omitempty"`
+	Stt      *string `json:"stt,omitempty"`
+	Subagent *string `json:"subagent,omitempty"`
 
 	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
 	Subagents *map[string]string `json:"subagents,omitempty"`

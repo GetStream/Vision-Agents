@@ -39,6 +39,8 @@ class SyncAgentRequest:
                 speech target and a session created from it needs no call to join.
             stt (str | Unset):
             tts (str | Unset):
+            sts (str | Unset): A speech-to-speech target: one native audio model that hears the caller and speaks back.
+                Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
             voice (str | Unset):
             llm (str | Unset):
             video (SessionVideo | Unset):
@@ -64,6 +66,7 @@ class SyncAgentRequest:
     mode: AgentMode | Unset = UNSET
     stt: str | Unset = UNSET
     tts: str | Unset = UNSET
+    sts: str | Unset = UNSET
     voice: str | Unset = UNSET
     llm: str | Unset = UNSET
     video: SessionVideo | Unset = UNSET
@@ -106,6 +109,8 @@ class SyncAgentRequest:
         stt = self.stt
 
         tts = self.tts
+
+        sts = self.sts
 
         voice = self.voice
 
@@ -163,6 +168,8 @@ class SyncAgentRequest:
             field_dict["stt"] = stt
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if sts is not UNSET:
+            field_dict["sts"] = sts
         if voice is not UNSET:
             field_dict["voice"] = voice
         if llm is not UNSET:
@@ -238,6 +245,8 @@ class SyncAgentRequest:
 
         tts = d.pop("tts", UNSET)
 
+        sts = d.pop("sts", UNSET)
+
         voice = d.pop("voice", UNSET)
 
         llm = d.pop("llm", UNSET)
@@ -291,6 +300,7 @@ class SyncAgentRequest:
             mode=mode,
             stt=stt,
             tts=tts,
+            sts=sts,
             voice=voice,
             llm=llm,
             video=video,

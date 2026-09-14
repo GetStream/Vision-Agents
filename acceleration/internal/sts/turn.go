@@ -79,7 +79,7 @@ func (t *Turn) Complete(provider, model string, interrupted bool, usage Usage) R
 
 	var timeToFirstByte float64
 	if !t.firstByteAt.IsZero() && !t.heardAt.IsZero() {
-		timeToFirstByte = float64(t.firstByteAt.Sub(t.heardAt).Microseconds()) / 1000
+		timeToFirstByte = t.firstByteAt.Sub(t.heardAt).Seconds() * 1000
 	}
 
 	return ResponseComplete{

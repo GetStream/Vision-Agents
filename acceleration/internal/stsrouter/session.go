@@ -29,6 +29,7 @@ type Session struct {
 	mu sync.Mutex
 	// inFlight tracks replies that have not been settled into a stat row yet.
 	inFlight map[string]*reply
+	settled  map[string]struct{}
 	// heardMs is the caller's audio forwarded since the last reply settled, which is the
 	// audio the next reply is billed against.
 	heardMs float64
@@ -63,6 +64,7 @@ func newSession(
 		recorder: recorder,
 		events:   make(chan sts.Event, sts.EmitterBuffer),
 		inFlight: map[string]*reply{},
+		settled:  map[string]struct{}{},
 	}
 	go session.forward()
 	return session
@@ -155,6 +157,10 @@ func (s *Session) observe(event sts.Event) bool {
 	switch typed := event.(type) {
 	case sts.ResponseStarted:
 		s.mu.Lock()
+		if _, done := s.settled[typed.ResponseID]; done {
+			s.mu.Unlock()
+			return false
+		}
 		s.inFlight[typed.ResponseID] = &reply{startedAt: typed.At}
 		s.current = typed.Generation
 		s.mu.Unlock()
@@ -168,7 +174,10 @@ func (s *Session) observe(event sts.Event) bool {
 	case sts.ResponseComplete:
 		// One reply is one unit of billable work, the way one utterance is for a voice.
 		// An interrupted one still cost the model's time and still cost money.
-		settled, heardMs := s.settle(typed)
+		settled, heardMs, fresh := s.settle(typed)
+		if !fresh {
+			return false
+		}
 		s.recorder.Record(s.config, routing.Stat{
 			Owner:     s.owner,
 			StartedAt: settled.startedAt,
@@ -221,10 +230,14 @@ func (s *Session) fail(responseID, code string) bool {
 // claims the caller's audio heard since the last one. An interrupted reply also marks its
 // generation stale, so audio still arriving for it is dropped. A reply the session never
 // saw start is stamped with now.
-func (s *Session) settle(complete sts.ResponseComplete) (reply, float64) {
+func (s *Session) settle(complete sts.ResponseComplete) (reply, float64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if _, done := s.settled[complete.ResponseID]; done {
+		return reply{}, 0, false
+	}
+	s.settled[complete.ResponseID] = struct{}{}
 	heardMs := s.heardMs
 	s.heardMs = 0
 	if complete.Interrupted && complete.Generation > s.staleBelow {
@@ -233,10 +246,10 @@ func (s *Session) settle(complete sts.ResponseComplete) (reply, float64) {
 
 	current, ok := s.inFlight[complete.ResponseID]
 	if !ok {
-		return reply{startedAt: time.Now().UTC()}, heardMs
+		return reply{startedAt: time.Now().UTC()}, heardMs, true
 	}
 	delete(s.inFlight, complete.ResponseID)
-	return reply{startedAt: current.startedAt.UTC(), errorCode: current.errorCode}, heardMs
+	return reply{startedAt: current.startedAt.UTC(), errorCode: current.errorCode}, heardMs, true
 }
 
 func errorCode(failure sts.Error) string {

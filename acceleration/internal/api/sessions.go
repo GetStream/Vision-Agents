@@ -239,6 +239,12 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	spec.LLMTarget = override(spec.LLMTarget, request.Llm)
 	spec.STTTarget = override(spec.STTTarget, request.Stt)
 	spec.TTSTarget = override(spec.TTSTarget, request.Tts)
+	spec.STSTarget = override(spec.STSTarget, request.Sts)
+	// A request that asks for writing gets writing, whatever the config's model: "test
+	// this agent in writing" has to work against a native config too.
+	if spec.Text {
+		spec.STSTarget = ""
+	}
 	spec.SubagentTarget = override(spec.SubagentTarget, request.Subagent)
 	if request.Subagent != nil && spec.Subagents != nil {
 		delete(spec.Subagents, "default")
@@ -362,6 +368,9 @@ func sessionOf(found *session.Session) Session {
 	}
 	if think != "" {
 		rendered.Subagent = &think
+	}
+	if speech := found.Speech(); speech != "" {
+		rendered.Sts = &speech
 	}
 	if instructions != "" {
 		rendered.Instructions = &instructions

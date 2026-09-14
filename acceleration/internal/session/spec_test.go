@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -82,4 +83,24 @@ func (s *SpecSuite) TestTheLargestListAProviderTakesIsAllowed() {
 	s.Require().NoError(spec.Normalize())
 
 	s.Len(spec.Keyterms, stt.MaxKeyterms)
+}
+
+func (s *SpecSuite) TestNativeSessionsKeepDelegatedWork() {
+	for _, spec := range []Spec{
+		{SkillNames: []string{"think"}},
+		{Skills: &harness.Skills{Skills: []harness.Skill{{Name: "think"}}}},
+		{SubagentTarget: "llm-thinking"},
+		{Subagents: map[string]string{"vision": "vlm"}},
+	} {
+		spec.STSTarget = "openai/gpt-realtime-2"
+		spec.CallID = "call-1"
+		spec.CustomerID = "acme"
+		s.NoError(spec.Normalize())
+	}
+	spec := s.spec(nil)
+	spec.STSTarget = "openai/gpt-realtime-2"
+	s.NoError(spec.Normalize())
+	s.Empty(spec.LLMTarget)
+	s.Empty(spec.STTTarget)
+	s.Empty(spec.TTSTarget)
 }

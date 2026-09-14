@@ -81,6 +81,16 @@ export function Pipeline({
 
   const skills = call.skills ?? [];
   const instructions = call.instructions ?? "";
+  const stages = call.sts || call.sts_used
+    ? [
+        {
+          label: "Conversation (speech-to-speech)",
+          of: (call: Call) => call.sts || call.sts_used,
+          used: (call: Call) => call.sts_used,
+        },
+        modalities[3],
+      ]
+    : modalities;
 
   return (
     <Panel
@@ -92,8 +102,8 @@ export function Pipeline({
         </span>
       }
     >
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-3 lg:grid-cols-4">
-        {modalities.map((modality) => (
+      <div className={`grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-3 ${stages.length === 4 ? "lg:grid-cols-4" : ""}`}>
+        {stages.map((modality) => (
           <div key={modality.label}>
             <div className="text-xs uppercase tracking-wide text-muted">
               {modality.label}

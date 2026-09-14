@@ -2904,6 +2904,12 @@ components:
             text agent ignores it.
         tts:
           type: string
+        sts:
+          type: string
+          description: >
+            A speech-to-speech target: one native audio model that hears the caller and
+            speaks back. Naming one makes the agent native, and stt, tts and llm are then
+            not used. Empty means the cascade.
         voice:
           type: string
           description: Provider-specific voice id.
@@ -2983,6 +2989,12 @@ components:
           type: string
         tts:
           type: string
+        sts:
+          type: string
+          description: >
+            A speech-to-speech target: one native audio model that hears the caller and
+            speaks back. Naming one makes the agent native, and stt, tts and llm are then
+            not used. Empty means the cascade.
         voice:
           type: string
         llm:
@@ -3897,6 +3909,12 @@ components:
           type: string
         tts:
           type: string
+        sts:
+          type: string
+          description: >
+            A speech-to-speech target: one native audio model that hears the caller and
+            speaks back. Naming one makes the agent native, and stt, tts and llm are then
+            not used. Empty means the cascade.
         voice:
           type: string
         llm:
@@ -4580,6 +4598,9 @@ components:
         tts:
           type: string
           description: The voice target, on the same terms as stt.
+        sts:
+          type: string
+          description: The speech-to-speech target, for a native call, on the same terms as stt.
         llm:
           type: string
           description: The target that held the conversation.
@@ -4596,6 +4617,9 @@ components:
         tts_used:
           type: string
           description: The provider/model that spoke, on the same terms as stt_used.
+        sts_used:
+          type: string
+          description: The provider/model that held a native call, on the same terms as stt_used.
         llm_used:
           type: string
           description: The provider/model that held the conversation.
@@ -4870,6 +4894,12 @@ components:
           type: string
           description: >
             Omit it and the config decides, or en-low-latency when there is no config.
+        sts:
+          type: string
+          description: >
+            A speech-to-speech target. Naming one makes this a native session: the model
+            hears and speaks for itself, so no transcriber, conversation model or voice is
+            opened. Omit it and the config decides.
         subagents:
           type: object
           additionalProperties:
@@ -5066,6 +5096,9 @@ components:
         tts:
           type: string
           description: The provider and model speaking.
+        sts:
+          type: string
+          description: The provider and model holding a native conversation, once routing has picked one.
         stt:
           type: string
           description: The provider and model transcribing, once somebody has been heard.

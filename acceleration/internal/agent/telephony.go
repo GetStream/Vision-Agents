@@ -98,6 +98,12 @@ type pressArguments struct {
 // conversation, and a model that is told the transfer did not go through can apologise for
 // it instead of waiting for a caller who is no longer being handed anywhere.
 func (a *Agent) runTool(requested harness.ToolRequested) {
+	ctx, cancel := a.prepareTool(requested)
+	a.executeTool(ctx, cancel, requested)
+}
+
+// prepareTool registers cancellation before native execution starts in a goroutine.
+func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
 	a.mu.Lock()
 	parent := a.ctx
 	if parent == nil {
@@ -112,6 +118,10 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 		cancel()
 	}
 	a.mu.Unlock()
+	return ctx, cancel
+}
+
+func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requested harness.ToolRequested) {
 	defer func() { cancel(); a.mu.Lock(); delete(a.toolCancels, requested.Call.ID); a.mu.Unlock() }()
 	started := ToolStarted{ID: requested.Call.ID, TurnID: requested.TurnID, Tool: requested.Call.Name, StartedAt: time.Now().UTC()}
 	started.Product, started.SDK = toolScope(requested.Call)
@@ -120,8 +130,9 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 	}
 	a.emitter.Send(started)
 	parts, left, err := a.callTool(ctx, requested.Call)
-	if err == nil && llm.HasImage([]llm.Message{{Parts: parts}}) {
-		_, err = a.harness.Delegate("vision", "Analyze this tool result for the caller's current question.", requested.TurnID, parts)
+	// Visual tool results go to the vision worker in both native and cascade calls.
+	if err == nil && a.harness != nil && llm.HasImage([]llm.Message{{Parts: parts}}) {
+		_, err = a.harness.Delegate("vision", "Analyze this tool result for the caller's current question.", requested.TurnID, parts, a.History())
 		if err == nil {
 			parts = llm.TextParts(llm.TextOf(parts) + "\nVisual analysis requested; wait for the vision findings before interpreting the images.")
 		}
@@ -140,6 +151,30 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 		Result:    result,
 		Err:       err,
 	})
+	// A native model is answered on its own session and carries on by itself; there is no
+	// follow-up turn to queue because the model speaks the moment it has the result.
+	if model := a.speech(); model != nil {
+		defer a.noteToolDone()
+		if ctx.Err() == nil {
+			a.mu.Lock()
+			a.nativeAwaiting = true
+			a.mu.Unlock()
+			if err := model.Answer(requested.Call.ID, result, nil); err != nil {
+				a.mu.Lock()
+				a.nativeAwaiting = false
+				a.mu.Unlock()
+				a.fail(err, "sts")
+			}
+		}
+		if left {
+			go func() {
+				if err := a.Close(); err != nil {
+					a.logger.Error("could not leave after transferring", "error", err)
+				}
+			}()
+		}
+		return
+	}
 	a.noteToolDone()
 	if ctx.Err() != nil {
 		return
@@ -176,6 +211,9 @@ func (a *Agent) runTool(requested harness.ToolRequested) {
 func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
+	}
+	if a.native() && (call.Name == delegateSkill || call.Name == cancelSkill) {
+		return a.nativeDelegate(call)
 	}
 
 	if telephonyTool(call.Name) {
@@ -279,7 +317,13 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 	a.speakingTurn = turnID
 	a.mu.Unlock()
 
-	if err := a.speakWhole(turnID, summary); err != nil {
+	// A native model has no way to read the summary out, so it is asked to introduce the
+	// caller from it instead.
+	if model := a.speech(); model != nil {
+		if err := model.Prompt("A colleague has just joined the call to take over. Introduce the caller to them from this summary, then stop: " + summary); err != nil {
+			return "", false, fmt.Errorf("agent: speak the handover summary: %w", err)
+		}
+	} else if err := a.speakWhole(turnID, summary); err != nil {
 		return "", false, fmt.Errorf("agent: speak the handover summary: %w", err)
 	}
 	if err := a.Finish(ctx); err != nil {
@@ -333,8 +377,12 @@ func (a *Agent) heardSoFar() map[string]struct{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	known := make(map[string]struct{}, len(a.listeners))
+	known := make(map[string]struct{}, len(a.listeners)+len(a.arrivals))
 	for id := range a.listeners {
+		known[id] = struct{}{}
+	}
+	// A native agent opens no listeners, so who it has heard is who has sent it audio.
+	for id := range a.arrivals {
 		known[id] = struct{}{}
 	}
 	return known
@@ -372,6 +420,11 @@ func (a *Agent) arrived(known map[string]struct{}) bool {
 	defer a.mu.Unlock()
 
 	for id := range a.listeners {
+		if _, heard := known[id]; !heard {
+			return true
+		}
+	}
+	for id := range a.arrivals {
 		if _, heard := known[id]; !heard {
 			return true
 		}

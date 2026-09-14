@@ -37,12 +37,14 @@ class Call:
             whatever config it named. This is what was asked for rather than what each turn resolved to: a shortcut is
             several models and routing fails over between them, so per-turn providers are in the request rows.
         tts (str | Unset): The voice target, on the same terms as stt.
+        sts (str | Unset): The speech-to-speech target, for a native call, on the same terms as stt.
         llm (str | Unset): The target that held the conversation.
         subagent (str | Unset): The slower target delegated work ran on. Empty means nothing was delegated, which also
             means the skills below were never offered.
         stt_used (str | Unset): The provider/model that transcribed, once routing picked one. Empty until somebody has
             been heard, and the last one that served if routing failed over.
         tts_used (str | Unset): The provider/model that spoke, on the same terms as stt_used.
+        sts_used (str | Unset): The provider/model that held a native call, on the same terms as stt_used.
         llm_used (str | Unset): The provider/model that held the conversation.
         subagent_used (str | Unset): The provider/model delegated work ran on. Empty when nothing was handed over, or
             when the thinking target was never reached.
@@ -68,10 +70,12 @@ class Call:
     ended_at: datetime.datetime | Unset = UNSET
     stt: str | Unset = UNSET
     tts: str | Unset = UNSET
+    sts: str | Unset = UNSET
     llm: str | Unset = UNSET
     subagent: str | Unset = UNSET
     stt_used: str | Unset = UNSET
     tts_used: str | Unset = UNSET
+    sts_used: str | Unset = UNSET
     llm_used: str | Unset = UNSET
     subagent_used: str | Unset = UNSET
     instructions: str | Unset = UNSET
@@ -111,6 +115,8 @@ class Call:
 
         tts = self.tts
 
+        sts = self.sts
+
         llm = self.llm
 
         subagent = self.subagent
@@ -118,6 +124,8 @@ class Call:
         stt_used = self.stt_used
 
         tts_used = self.tts_used
+
+        sts_used = self.sts_used
 
         llm_used = self.llm_used
 
@@ -166,6 +174,8 @@ class Call:
             field_dict["stt"] = stt
         if tts is not UNSET:
             field_dict["tts"] = tts
+        if sts is not UNSET:
+            field_dict["sts"] = sts
         if llm is not UNSET:
             field_dict["llm"] = llm
         if subagent is not UNSET:
@@ -174,6 +184,8 @@ class Call:
             field_dict["stt_used"] = stt_used
         if tts_used is not UNSET:
             field_dict["tts_used"] = tts_used
+        if sts_used is not UNSET:
+            field_dict["sts_used"] = sts_used
         if llm_used is not UNSET:
             field_dict["llm_used"] = llm_used
         if subagent_used is not UNSET:
@@ -229,6 +241,8 @@ class Call:
 
         tts = d.pop("tts", UNSET)
 
+        sts = d.pop("sts", UNSET)
+
         llm = d.pop("llm", UNSET)
 
         subagent = d.pop("subagent", UNSET)
@@ -236,6 +250,8 @@ class Call:
         stt_used = d.pop("stt_used", UNSET)
 
         tts_used = d.pop("tts_used", UNSET)
+
+        sts_used = d.pop("sts_used", UNSET)
 
         llm_used = d.pop("llm_used", UNSET)
 
@@ -272,10 +288,12 @@ class Call:
             ended_at=ended_at,
             stt=stt,
             tts=tts,
+            sts=sts,
             llm=llm,
             subagent=subagent,
             stt_used=stt_used,
             tts_used=tts_used,
+            sts_used=sts_used,
             llm_used=llm_used,
             subagent_used=subagent_used,
             instructions=instructions,

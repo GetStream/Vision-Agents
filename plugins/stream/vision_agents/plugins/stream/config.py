@@ -304,6 +304,8 @@ def _declare_settings(body: SyncAgentRequest, settings: Settings) -> None:
         body.stt = settings.stt
     if settings.tts:
         body.tts = settings.tts
+    if settings.sts is not None:
+        body.sts = settings.sts
     if settings.voice:
         body.voice = settings.voice
     if settings.llm:

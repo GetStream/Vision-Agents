@@ -401,6 +401,7 @@ func callOf(call store.Call) Call {
 	rendered.ToNumber = optional(call.ToNumber)
 	rendered.Stt = optional(call.STT)
 	rendered.Tts = optional(call.TTS)
+	rendered.Sts = optional(call.STS)
 	rendered.Llm = optional(call.LLM)
 	rendered.Subagent = optional(call.Subagent)
 	rendered.Instructions = optional(call.Instructions)
@@ -432,6 +433,7 @@ func (s *Server) attachUsed(ctx context.Context, customerID string, call store.C
 			rendered.LlmUsed = optional(llm)
 			rendered.TtsUsed = optional(tts)
 			rendered.SubagentUsed = optional(subagent)
+			rendered.StsUsed = optional(found.Speech())
 		}
 	}
 
@@ -445,13 +447,20 @@ func (s *Server) attachUsed(ctx context.Context, customerID string, call store.C
 		return
 	}
 
-	rendered.SttUsed = firstUsed(rendered.SttUsed, matchUsed(value(rendered.Stt), namesOf(used, "stt"), s.candidateNames(ctx, routing.STT, value(rendered.Stt))))
-	rendered.TtsUsed = firstUsed(rendered.TtsUsed, matchUsed(value(rendered.Tts), namesOf(used, "tts"), s.candidateNames(ctx, routing.TTS, value(rendered.Tts))))
-	rendered.LlmUsed = firstUsed(rendered.LlmUsed, matchUsed(value(rendered.Llm), namesOf(used, "llm"), s.candidateNames(ctx, routing.LLM, value(rendered.Llm))))
+	if value(rendered.Sts) != "" {
+		rendered.StsUsed = firstUsed(rendered.StsUsed, matchUsed(value(rendered.Sts), namesOf(used, "sts"), s.candidateNames(ctx, routing.STS, value(rendered.Sts))))
+	} else {
+		rendered.SttUsed = firstUsed(rendered.SttUsed, matchUsed(value(rendered.Stt), namesOf(used, "stt"), s.candidateNames(ctx, routing.STT, value(rendered.Stt))))
+		rendered.TtsUsed = firstUsed(rendered.TtsUsed, matchUsed(value(rendered.Tts), namesOf(used, "tts"), s.candidateNames(ctx, routing.TTS, value(rendered.Tts))))
+		rendered.LlmUsed = firstUsed(rendered.LlmUsed, matchUsed(value(rendered.Llm), namesOf(used, "llm"), s.candidateNames(ctx, routing.LLM, value(rendered.Llm))))
+	}
 	rendered.SubagentUsed = firstUsed(rendered.SubagentUsed, matchUsed(value(rendered.Subagent), namesOf(used, "llm"), s.candidateNames(ctx, routing.LLM, value(rendered.Subagent))))
 }
 
 func filledUsed(call *Call) bool {
+	if value(call.Sts) != "" {
+		return call.StsUsed != nil && (value(call.Subagent) == "" || call.SubagentUsed != nil)
+	}
 	return call.SttUsed != nil && call.TtsUsed != nil && call.LlmUsed != nil && call.SubagentUsed != nil
 }
 

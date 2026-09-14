@@ -52,10 +52,13 @@ func (s *stubConversation) ProcessAudio(pcm sts.PcmData, _ sts.Participant) erro
 	s.heard <- pcm
 	return nil
 }
-func (s *stubConversation) SendText(text string, _ sts.Participant) error { s.typed <- text; return nil }
-func (s *stubConversation) SendFrame(llm.ImagePart) error                 { return sts.ErrNoImages }
-func (s *stubConversation) SetInstructions(string) error                  { return nil }
-func (s *stubConversation) SetTools([]llm.Tool) error                     { return nil }
+func (s *stubConversation) SendText(text string, _ sts.Participant) error {
+	s.typed <- text
+	return nil
+}
+func (s *stubConversation) SendFrame(llm.ImagePart) error { return sts.ErrNoImages }
+func (s *stubConversation) SetInstructions(string) error  { return nil }
+func (s *stubConversation) SetTools([]llm.Tool) error     { return nil }
 func (s *stubConversation) Answer(callID, output string, _ error) error {
 	s.answers <- callID + "=" + output
 	return nil
@@ -72,9 +75,9 @@ func (s *stubConversation) Close() error {
 	s.emitter.Close()
 	return nil
 }
-func (s *stubConversation) Provider() string                { return "stub" }
-func (s *stubConversation) Model() string                   { return "stub" }
-func (s *stubConversation) SampleRate() int                 { return 24_000 }
+func (s *stubConversation) Provider() string               { return "stub" }
+func (s *stubConversation) Model() string                  { return "stub" }
+func (s *stubConversation) SampleRate() int                { return 24_000 }
 func (s *stubConversation) Capabilities() sts.Capabilities { return s.capabilities }
 
 // STSStreamSuite drives the speech-to-speech socket end to end against a stub model.

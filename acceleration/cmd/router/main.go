@@ -590,6 +590,7 @@ func buildSessions(
 		LLM:       streams.LLM,
 		STT:       streams.STT,
 		TTS:       streams.TTS,
+		STS:       streams.STS,
 		Memory:    remembering,
 		Knowledge: reading,
 		Search:    finding,

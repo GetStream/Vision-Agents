@@ -1475,6 +1475,33 @@ func (s *APIIntegrationSuite) TestWhatACallDecidedIsFoundByTheRowRecordingIt() {
 	s.Equal("how is the weather", *decided[0].Said)
 }
 
+func (s *APIIntegrationSuite) TestFinishedNativeCallIncludesConversationAndSubagentModels() {
+	call := store.Call{
+		ID: "session-" + s.customerID, CustomerID: s.customerID,
+		CallID: "call-1", AgentID: "agent-1", StartedAt: s.base,
+		STS: "openai/gpt-realtime-2", Subagent: "openai/gpt-5.6-sol",
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+	for modality, model := range map[string]string{"sts": "gpt-realtime-2", "llm": "gpt-5.6-sol"} {
+		s.Require().NoError(s.store.RecordRequest(s.ctx, &store.Request{
+			CustomerID: s.customerID, AgentID: call.AgentID,
+			Modality: modality, Provider: "openai", Model: model,
+			StartedAt: s.base.Add(time.Second), Success: true,
+		}))
+	}
+	s.Require().NoError(s.store.FinishCall(s.ctx, call.ID, s.base.Add(time.Minute)))
+
+	response, payload := s.do(http.MethodGet, "/v1/agents/calls/"+call.ID, "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+	var rendered Call
+	s.Require().NoError(json.Unmarshal(payload, &rendered))
+	s.Equal("openai/gpt-realtime-2", value(rendered.StsUsed))
+	s.Equal("openai/gpt-5.6-sol", value(rendered.SubagentUsed))
+	s.Nil(rendered.SttUsed)
+	s.Nil(rendered.LlmUsed)
+	s.Nil(rendered.TtsUsed)
+}
+
 func (s *APIIntegrationSuite) TestAnotherCustomersCallIsNotFound() {
 	call := store.Call{
 		ID: "session-" + s.customerID, CustomerID: "somebody-else",
