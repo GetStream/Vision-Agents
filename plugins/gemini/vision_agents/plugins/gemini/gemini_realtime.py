@@ -25,7 +25,6 @@ from google.genai.types import (
     EndSensitivity,
     FunctionCall,
     FunctionResponse,
-    FunctionResponseScheduling,
     HttpOptions,
     InteractionStatus,
     LiveConnectConfigDict,
@@ -714,12 +713,13 @@ class GeminiRealtime(realtime.Realtime):
             # Ensure response is a dictionary for Gemini Live
             response_data = result if isinstance(result, dict) else {"result": result}
 
-        # Send function response back to Gemini Live session
+        # Send function response back to Gemini Live session.
+        # `scheduling` is left unset: extended-thinking rejects the field, and
+        # WHEN_IDLE is the server default for NON_BLOCKING tools anyway.
         function_response = FunctionResponse(
             id=call_id,
             name=function_name,
             response=response_data,
-            scheduling=FunctionResponseScheduling.WHEN_IDLE,
         )
         # Send the function response back to the Gemini Live API
         logger.debug(f'Send a function response for "{function_name}": {response_data}')

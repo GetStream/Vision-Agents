@@ -12,7 +12,6 @@ from google.genai.types import (
     Blob,
     Content,
     FunctionCall,
-    FunctionResponseScheduling,
     InteractionStatus,
     LiveServerContent,
     LiveServerMessage,
@@ -693,8 +692,13 @@ class TestGeminiRealtimeFunctionCalling:
             turns=turn, turn_complete=True
         )
 
-    async def test_function_response_uses_when_idle_scheduling(self):
-        realtime = _make_realtime()
+    @pytest.mark.parametrize(
+        "model",
+        [DEFAULT_MODEL, LIVE_EXTENDED_THINKING_MODEL, "gemini-3.1-flash-live-preview"],
+    )
+    async def test_function_response_omits_scheduling(self, model: str):
+        """Setting `scheduling` makes several Live models close the socket (1007)."""
+        realtime = _make_realtime(model=model)
         session = AsyncMock()
         realtime._real_session = session
         realtime._run_one_tool = AsyncMock(return_value=(None, {"ok": True}, None))
@@ -704,7 +708,7 @@ class TestGeminiRealtimeFunctionCalling:
         )
 
         sent = session.send_tool_response.await_args.kwargs["function_responses"][0]
-        assert sent.scheduling == FunctionResponseScheduling.WHEN_IDLE
+        assert sent.scheduling is None
 
 
 @pytest.fixture
