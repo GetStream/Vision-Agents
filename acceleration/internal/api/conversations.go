@@ -17,7 +17,7 @@ func (s *Server) GetConversationMessages(ctx context.Context, req GetConversatio
 	if err != nil {
 		return GetConversationMessages400JSONResponse{badRequest(err.Error())}, nil
 	}
-	page, err := service.History(ctx, owner, req.Params.AgentId, req.Cid, value(req.Params.Before))
+	page, err := service.HistoryForCaller(ctx, owner, req.Params.AgentId, req.Cid, value(req.Params.Before), CallerFrom(ctx).UserID)
 	if err != nil {
 		return GetConversationMessages400JSONResponse{badRequest(err.Error())}, nil
 	}

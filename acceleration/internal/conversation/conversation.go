@@ -66,6 +66,7 @@ type disk struct {
 	CID      string
 	Customer string
 	Agent    string
+	Owner    string
 	Current  *Message
 }
 type operation struct {
@@ -156,6 +157,12 @@ func (s *Service) Close() {
 	}
 }
 func (s *Service) Open(ctx context.Context, customer, agentID, cid string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+	return s.OpenForCaller(ctx, customer, agentID, cid, "", scopes...)
+}
+
+// OpenForCaller binds persistent messages to a verified end-user identity. Empty
+// caller preserves backend-owned demo channels; it cannot open a private channel.
+func (s *Service) OpenForCaller(ctx context.Context, customer, agentID, cid, caller string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	s.mu.Lock()
@@ -175,13 +182,13 @@ func (s *Service) Open(ctx context.Context, customer, agentID, cid string, scope
 	if c := s.all[cid]; c != nil {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if c.data.Customer != customer || c.data.Agent != agentID {
+		if c.data.Customer != customer || c.data.Agent != agentID || c.data.Owner != caller {
 			return nil, nil, false, errors.New("conversation belongs to another customer or agent")
 		}
 		if c.active {
 			return nil, nil, false, errors.New("conversation is already open")
 		}
-		page, err := s.history(ctx, customer, agentID, cid, "")
+		page, err := s.history(ctx, customer, agentID, cid, "", caller)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -193,31 +200,38 @@ func (s *Service) Open(ctx context.Context, customer, agentID, cid string, scope
 		return c, h, tr, nil
 	}
 	if fresh {
-		_, err := s.client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{Users: map[string]getstream.UserRequest{agentID: {ID: agentID}, "support-operator": {ID: "support-operator"}}})
+		userID := caller
+		if userID == "" {
+			userID = "support-operator"
+		}
+		_, err := s.client.UpdateUsers(ctx, &getstream.UpdateUsersRequest{Users: map[string]getstream.UserRequest{agentID: {ID: agentID}, userID: {ID: userID}}})
 		if err != nil {
 			return nil, nil, false, err
 		}
-		_, err = s.client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: "support-operator"}}, Custom: map[string]any{"support_customer_id": customer, "support_agent_id": agentID, "support_memory_scope": scope}}})
+		_, err = s.client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: map[string]any{"support_customer_id": customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller}}})
 		if err != nil {
 			return nil, nil, false, err
 		}
 	}
-	page, err := s.history(ctx, customer, agentID, cid, "")
+	page, err := s.history(ctx, customer, agentID, cid, "", caller)
 	if err != nil {
 		return nil, nil, false, err
 	}
 	if !sameMemoryScope(page.memoryScope, scope) {
 		return nil, nil, false, errors.New("conversation belongs to another memory scope; reopen with its original organization")
 	}
-	c := s.make(disk{CID: cid, Customer: customer, Agent: agentID})
+	c := s.make(disk{CID: cid, Customer: customer, Agent: agentID, Owner: caller})
 	c.active = true
 	h, tr := history(page)
 	return c, h, tr, nil
 }
 func (s *Service) History(ctx context.Context, customer, agentID, cid, before string) (Page, error) {
-	return s.history(ctx, customer, agentID, cid, before)
+	return s.HistoryForCaller(ctx, customer, agentID, cid, before, "")
 }
-func (s *Service) history(ctx context.Context, customer, agentID, cid, before string) (Page, error) {
+func (s *Service) HistoryForCaller(ctx context.Context, customer, agentID, cid, before, caller string) (Page, error) {
+	return s.history(ctx, customer, agentID, cid, before, caller)
+}
+func (s *Service) history(ctx context.Context, customer, agentID, cid, before, caller string) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	id := strings.TrimPrefix(cid, "agent:")
@@ -237,6 +251,14 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before st
 	}
 	if r.Data.Channel.Custom["support_customer_id"] != customer || r.Data.Channel.Custom["support_agent_id"] != agentID {
 		return Page{}, errors.New("conversation belongs to another customer or agent")
+	}
+	rawOwner, bound := r.Data.Channel.Custom["support_owner_id"]
+	owner, valid := rawOwner.(string)
+	if bound && !valid {
+		return Page{}, errors.New("conversation has invalid ownership metadata")
+	}
+	if owner != caller {
+		return Page{}, errors.New("conversation belongs to another user")
 	}
 	p := Page{Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
@@ -666,7 +688,10 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool) e
 	m := op.Message
 	user := c.data.Agent
 	if m.Role == "user" {
-		user = "support-operator"
+		user = c.data.Owner
+		if user == "" {
+			user = "support-operator"
+		}
 	}
 	m.Saved = !ephemeral
 	m.Error = ""

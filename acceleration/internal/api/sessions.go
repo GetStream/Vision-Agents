@@ -74,6 +74,9 @@ func (s *Server) ListSessions(ctx context.Context, _ ListSessionsRequestObject) 
 	running := s.sessions.List(customerID)
 	listed := make([]Session, 0, len(running))
 	for _, found := range running {
+		if !canReadSession(ctx, found.Spec()) {
+			continue
+		}
 		listed = append(listed, sessionOf(found))
 	}
 	return ListSessions200JSONResponse(listed), nil
@@ -103,6 +106,9 @@ func (s *Server) CloseSession(ctx context.Context, request CloseSessionRequestOb
 		return CloseSession404JSONResponse{NotFoundJSONResponse{Error: noSessions}}, nil
 	}
 
+	if _, failure := s.session(ctx, request.Id); failure != nil {
+		return CloseSession404JSONResponse{NotFoundJSONResponse{Error: unknownSession}}, nil
+	}
 	closed, err := s.sessions.Close(request.Id, customerID)
 	if err != nil {
 		return nil, err
@@ -209,7 +215,7 @@ func (s *Server) session(ctx context.Context, id string) (*session.Session, *loo
 		return nil, &lookupFailure{status: notFound, message: noSessions}
 	}
 	found, ok := s.sessions.Get(id, customerID)
-	if !ok {
+	if !ok || !canReadSession(ctx, found.Spec()) {
 		return nil, &lookupFailure{status: notFound, message: unknownSession}
 	}
 	return found, nil
@@ -397,4 +403,9 @@ func override[T any](base T, requested *T) T {
 		return base
 	}
 	return *requested
+}
+
+// Persistent personal sessions use the same caller binding as their Chat channel.
+func canReadSession(ctx context.Context, spec session.Spec) bool {
+	return !spec.PersistConversation || spec.Caller.UserID == CallerFrom(ctx).UserID
 }

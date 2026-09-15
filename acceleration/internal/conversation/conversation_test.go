@@ -373,3 +373,52 @@ func TestConversationKeepsItsMemoryScopeAcrossResumeAndRestart(t *testing.T) {
 	require.NoError(t, err)
 	c.Release()
 }
+
+func TestPersonalConversationBindsMembershipMessagesAndHistoryToCaller(t *testing.T) {
+	db, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	scope := memory.Scope{UserID: "shared-project-memory"}
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee-one", scope)
+	require.NoError(t, err)
+	cid := c.CID()
+	require.NoError(t, c.Begin("private question"))
+	c.Observe(agent.ResponseDelta{Text: "private answer"})
+	c.Cancel()
+	saved(t, c)
+	db.mu.Lock()
+	channel := db.channels[strings.TrimPrefix(cid, "agent:")]
+	require.Equal(t, "employee-one", channel["custom"].(map[string]any)["support_owner_id"])
+	memberJSON, _ := json.Marshal(channel["members"])
+	require.Contains(t, string(memberJSON), "employee-one")
+	require.NotContains(t, string(memberJSON), "support-operator")
+	var userMessage map[string]any
+	for _, message := range db.messages {
+		if message["text"] == "private question" {
+			userMessage = message
+		}
+	}
+	require.Equal(t, "employee-one", userMessage["user_id"])
+	db.mu.Unlock()
+	c.Release()
+	service.Close()
+	// Ownership must survive both local restart and loss of local cache/outbox.
+	for _, directory := range []string{root, t.TempDir()} {
+		service, err = newService(directory, client)
+		require.NoError(t, err)
+		for _, caller := range []string{"employee-two", ""} {
+			_, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, caller, scope)
+			require.Error(t, err)
+			_, err = service.HistoryForCaller(t.Context(), "customer", "agent", cid, "", caller)
+			require.ErrorContains(t, err, "another user")
+		}
+		page, err := service.HistoryForCaller(t.Context(), "customer", "agent", cid, "", "employee-one")
+		require.NoError(t, err)
+		require.Len(t, page.Messages, 2)
+		c, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "employee-one", scope)
+		require.NoError(t, err)
+		c.Release()
+		service.Close()
+	}
+}

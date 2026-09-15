@@ -697,8 +697,19 @@ func (s *SessionSuite) TestAWatcherSeesTheConversationAndStopsWhenItDetaches() {
 	s.Require().NotNil(<-events, "the watcher saw nothing")
 
 	detach()
-	_, open := <-events
-	s.False(open, "detaching left the channel open")
+	// Closing a buffered channel preserves events already queued by Say. Drain
+	// those before checking closure; a queued event is not evidence of an open channel.
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case _, open := <-events:
+			if !open {
+				return
+			}
+		case <-deadline:
+			s.FailNow("detaching left the channel open")
+		}
+	}
 }
 
 func (s *SessionSuite) TestACallersToolIsAskedForAndItsAnswerReachesTheModel() {

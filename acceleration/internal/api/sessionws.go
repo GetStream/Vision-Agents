@@ -74,7 +74,7 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	found, ok := s.sessions.Get(r.PathValue("id"), customerID)
-	if !ok {
+	if !ok || !canReadSession(r.Context(), found.Spec()) {
 		writeError(w, http.StatusNotFound, unknownSession)
 		return
 	}

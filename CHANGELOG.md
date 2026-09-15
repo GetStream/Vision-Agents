@@ -650,6 +650,12 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- Persistent text conversations created by an authenticated end user now bind channel
+  membership, stored user messages, history and session access to that caller. Another
+  user in the same app cannot reopen that conversation through these paths. Existing
+  backend-owned demo channels remain separate; empty caller credentials do not gain
+  access to personal conversations.
+
 - Model WebSocket requests preserve assistant tool calls and correlated tool results,
   including opaque signatures. Completed responses expose their incomplete reason, and
   the LLM handshake advertises tool-history support for external worker clients.

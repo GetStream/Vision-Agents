@@ -174,7 +174,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			return nil, err
 		}
 		var truncated bool
-		conv, previous, truncated, err = service.Open(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		conv, previous, truncated, err = service.OpenForCaller(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if err != nil {
 			return nil, err
 		}
