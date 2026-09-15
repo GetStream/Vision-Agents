@@ -21,7 +21,7 @@ export VOLT_PORT="${VOLT_PORT:-3011}"
 ```
 
 If the sibling is missing, locate an existing Volt checkout or clone it there.
-Need a branch with `scripts/agents-dev-proxy.ts`. Read Volt's `AGENTS.md` before
+Make sure you are on the branch ` ai-team/agent-dashboard` for Volt. Read Volt's `AGENTS.md` before
 changing that repo.
 
 **Org `1181507` / app `1257545`.** All Stream keys, configs, and URLs use this
