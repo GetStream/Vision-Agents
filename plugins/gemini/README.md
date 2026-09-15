@@ -71,7 +71,7 @@ llm = Realtime(model=LIVE_EXTENDED_THINKING_MODEL)
 `turn_complete` only ends a streaming chunk. Agent turn-complete events wait for `interaction_status=IDLE` (or the deprecated `REQUIRES_ACTION` alias) so thinking and async tool calls can continue. Tools are declared `NON_BLOCKING` by default; `blocking=True` is allowed only on `gemini-3.8-live`. Use `send_client_content(..., turn_complete=True)` to inject structured turns; that interrupts ongoing generation.
 
 The `Agent` subscribes to track events internally, so no manual wiring is needed.
-For a full runnable example, see `examples/02_golf_coach_example/golf_coach_example.py`.
+For full runnable examples, see `plugins/gemini/example/gemini_realtime_example.py` and `examples/02_golf_coach_example/golf_coach_example.py`.
 
 ### Gemini Speech-to-Text
 
