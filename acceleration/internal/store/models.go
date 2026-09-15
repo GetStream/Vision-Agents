@@ -40,9 +40,10 @@ type Request struct {
 	OutputTokens int64    `bun:"output_tokens,notnull"`
 	LatencyMs    *float64 `bun:"latency_ms"`
 	// CostMicros is millionths of a dollar, priced from the provider's configured rates.
-	CostMicros int64  `bun:"cost_micros,notnull"`
-	Success    bool   `bun:"success,notnull"`
-	ErrorCode  string `bun:"error_code,nullzero"`
+	CostMicros   int64  `bun:"cost_micros,notnull"`
+	Success      bool   `bun:"success,notnull"`
+	ErrorCode    string `bun:"error_code,nullzero"`
+	ErrorMessage string `bun:"error_message,nullzero"`
 }
 
 // Bucket is one aggregated row from stats_hourly or stats_daily.

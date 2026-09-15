@@ -88,6 +88,7 @@ type ToolCall struct {
 
 // Session is one conversation this process is running on somebody's behalf.
 type Session struct {
+	logs    *logRecorder
 	id      string
 	spec    Spec
 	created time.Time
@@ -409,6 +410,7 @@ func (s *Session) conversation() []spoken {
 
 // broadcast sends one event to every watcher, dropping it for any that has fallen behind.
 func (s *Session) broadcast(event Event) {
+	s.recordLog(event)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

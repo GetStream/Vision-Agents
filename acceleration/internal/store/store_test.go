@@ -685,3 +685,71 @@ func (s *StoreSuite) TestStatsIncludeNewRequestsWithoutRollups() {
 	s.EqualValues(2, buckets[0].RequestCount)
 	s.EqualValues(3000, buckets[0].AudioMsTotal)
 }
+
+func (s *StoreSuite) TestAgentLogsPageFilterAndResume() {
+	for i := 0; i < 520; i++ {
+		entry := AgentLog{CustomerID: "log-test", ConfigID: "agent-a", SessionID: "session-a", UserID: "user-a", Source: "user", Severity: "info", EventType: "test", Message: "same timestamp", OccurredAt: s.base}
+		if i%2 == 0 {
+			entry.Severity = "error"
+		}
+		s.Require().NoError(s.store.RecordAgentLog(s.ctx, &entry))
+	}
+	other := AgentLog{CustomerID: "other", Source: "system", Severity: "error", EventType: "test", Message: "not yours", OccurredAt: s.base}
+	s.Require().NoError(s.store.RecordAgentLog(s.ctx, &other))
+	high, err := s.store.LogHighWater(s.ctx, "log-test")
+	s.Require().NoError(err)
+	f := LogFilter{CustomerID: "log-test", Limit: 250, Before: high + 1}
+	first, err := s.store.AgentLogs(s.ctx, f)
+	s.Require().NoError(err)
+	s.Require().Len(first, 250)
+	f.Before = first[len(first)-1].ID
+	second, err := s.store.AgentLogs(s.ctx, f)
+	s.Require().NoError(err)
+	s.Require().Len(second, 250)
+	s.Less(second[0].ID, first[len(first)-1].ID)
+	f.Before = second[len(second)-1].ID
+	third, err := s.store.AgentLogs(s.ctx, f)
+	s.Require().NoError(err)
+	s.Len(third, 20)
+	fresh := AgentLog{CustomerID: "log-test", Source: "tool", Severity: "error", EventType: "tool_failed", Message: "Fresh", OccurredAt: s.base}
+	s.Require().NoError(s.store.RecordAgentLog(s.ctx, &fresh))
+	rows, err := s.store.AgentLogs(s.ctx, LogFilter{CustomerID: "log-test", After: high, Forward: true, Limit: 250})
+	s.Require().NoError(err)
+	s.Require().Len(rows, 1)
+	s.Equal(fresh.ID, rows[0].ID)
+	_, err = s.store.AgentLog(s.ctx, "other", fresh.ID)
+	s.Error(err)
+	rows, err = s.store.AgentLogs(s.ctx, LogFilter{CustomerID: "log-test", Severity: "error", Sources: []string{"user"}, UserID: "user-a", ConfigID: "agent-a", SessionID: "session-a", Limit: 250})
+	s.Require().NoError(err)
+	s.Len(rows, 250)
+	for _, row := range rows {
+		s.Equal("error", row.Severity)
+		s.Equal("user", row.Source)
+		s.Nil(row.Details)
+	}
+}
+
+func (s *StoreSuite) TestAgentLogRedactsBeforeStorage() {
+	entry := AgentLog{CustomerID: "redaction-test", Source: "agent", Severity: "info", EventType: "test", Message: "Bearer private-token api_key=secret-value", Details: map[string]any{"authorization": "secret", "tool": "lookup", "arguments": map[string]string{"password": "private"}}}
+	s.Require().NoError(s.store.RecordAgentLog(s.ctx, &entry))
+	row, err := s.store.AgentLog(s.ctx, "redaction-test", entry.ID)
+	s.Require().NoError(err)
+	s.NotContains(row.Message, "private-token")
+	s.NotContains(row.Message, "secret-value")
+	s.Equal(map[string]any{"tool": "lookup"}, row.Details)
+}
+
+func (s *StoreSuite) TestAgentLogProviderFailureDetails() {
+	request := &Request{Modality: "search", CustomerID: "failure-details", AgentID: "test-agent", Provider: "perplexity", Model: "search", StartedAt: time.Now(), Success: false, ErrorCode: "build_failed", ErrorMessage: "perplexity: PERPLEXITY_API_KEY is required; api_key=private-key-value"}
+	s.Require().NoError(s.store.RecordRequest(s.ctx, request))
+	rows, err := s.store.AgentLogs(s.ctx, LogFilter{CustomerID: request.CustomerID, Limit: 1})
+	s.Require().NoError(err)
+	s.Require().Len(rows, 1)
+	detail, err := s.store.AgentLog(s.ctx, request.CustomerID, rows[0].ID)
+	s.Require().NoError(err)
+	s.Equal("build_failed", detail.Details["error_code"])
+	s.Contains(detail.Details["error_message"], "PERPLEXITY_API_KEY is required")
+	s.NotContains(detail.Details["error_message"], "private-key-value")
+	_, err = s.store.AgentLog(s.ctx, "another-customer", rows[0].ID)
+	s.Require().Error(err)
+}

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pressly/goose/v3"
@@ -27,7 +28,8 @@ import (
 
 // Store reads and writes router statistics.
 type Store struct {
-	db *bun.DB
+	db       *bun.DB
+	LogDrops atomic.Int64
 }
 
 // Open connects to Postgres using a pgdriver DSN, for example
@@ -65,6 +67,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 // RecordRequest stores one request. Latency is optional because a request that failed
 // before reaching the provider has none.
 func (s *Store) RecordRequest(ctx context.Context, request *Request) error {
+	request.ErrorMessage = SafeLogText(request.ErrorMessage)
 	if request.CustomerID == "" {
 		return errors.New("store: customer id is required")
 	}

@@ -423,10 +423,11 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	provider, err := r.registry.Build(candidate.Config.Provider, spec)
 	if err != nil {
 		r.recorder.Record(candidate.Config, Stat{
-			Owner:     request.Owner(),
-			StartedAt: time.Now().UTC(),
-			Success:   false,
-			ErrorCode: "build_failed",
+			Owner:        request.Owner(),
+			StartedAt:    time.Now().UTC(),
+			Success:      false,
+			ErrorCode:    "build_failed",
+			ErrorMessage: err.Error(),
 		})
 		return zero, err
 	}
@@ -441,11 +442,12 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	if err := provider.Start(ctx); err != nil {
 		provider.Close()
 		r.recorder.Record(candidate.Config, Stat{
-			Owner:     request.Owner(),
-			StartedAt: startedAt.UTC(),
-			LatencyMs: MsSince(startedAt),
-			Success:   false,
-			ErrorCode: "start_failed",
+			Owner:        request.Owner(),
+			StartedAt:    startedAt.UTC(),
+			LatencyMs:    MsSince(startedAt),
+			Success:      false,
+			ErrorCode:    "start_failed",
+			ErrorMessage: err.Error(),
 		})
 		return zero, err
 	}

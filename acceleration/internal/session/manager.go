@@ -88,6 +88,7 @@ type ManagerOptions struct {
 
 // Manager owns the sessions this process is running.
 type Manager struct {
+	logs          *logRecorder
 	conversations *persistent.Service
 	options       ManagerOptions
 	logger        *slog.Logger
@@ -126,6 +127,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		sessions: map[string]*Session{},
 	}
 	if options.Store != nil {
+		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 	}
@@ -239,6 +241,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	created := &Session{
+		logs:      m.logs,
 		persisted: conv,
 		id:        newID(),
 		spec:      spec,
@@ -567,6 +570,7 @@ func (m *Manager) Shutdown() error {
 	if m.calls != nil {
 		m.reviews.Close()
 		m.calls.Close()
+		m.logs.close()
 	}
 	if m.conversations != nil {
 		m.conversations.Close()

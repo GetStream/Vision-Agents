@@ -122,6 +122,7 @@ func (r *Recordings) Record(
 	}
 	if err != nil {
 		stat.ErrorCode = "record_failed"
+		stat.ErrorMessage = err.Error()
 	}
 	r.Recorder().Record(config, stat)
 	if err != nil {

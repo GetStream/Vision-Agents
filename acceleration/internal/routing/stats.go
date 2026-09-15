@@ -51,9 +51,10 @@ type Stat struct {
 	// CostMicros overrides the priced amount for work that is not billed by the units in
 	// Usage, such as a phone number's monthly charge, where the vendor quotes the price
 	// outright rather than a rate to multiply. Zero leaves the pricing to the rates.
-	CostMicros int64
-	Success    bool
-	ErrorCode  string
+	CostMicros   int64
+	Success      bool
+	ErrorCode    string
+	ErrorMessage string
 }
 
 // Recorder writes stats to Postgres and Redis off the request path. A conversation must
@@ -116,6 +117,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		CostMicros:        cost,
 		Success:           entry.Success,
 		ErrorCode:         entry.ErrorCode,
+		ErrorMessage:      store.SafeLogText(entry.ErrorMessage),
 	}
 	if entry.LatencyMs > 0 {
 		latency := entry.LatencyMs

@@ -75,6 +75,7 @@ func (s *Session) record(started time.Time, err error) {
 	}
 	if err != nil {
 		stat.ErrorCode = "search_failed"
+		stat.ErrorMessage = err.Error()
 		// A search that failed is not billed, so the row records what was waited for
 		// without charging for it.
 		stat.CostMicros = 0

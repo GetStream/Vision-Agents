@@ -42,6 +42,88 @@ security:
     AuthType: []
 
 paths:
+  /v1/agents/logs:
+    get:
+      x-server-side-only: true
+      operationId: listAgentLogs
+      summary: Latest structured agent logs, with backward cursor pagination
+      parameters:
+        - {name: config_id, in: query, schema: {type: string}}
+        - {name: session_id, in: query, schema: {type: string}}
+        - {name: user_id, in: query, schema: {type: string}}
+        - {name: severity, in: query, schema: {type: string, enum: [info, error]}}
+        - {name: source, in: query, description: Comma-separated user/agent/tool/system sources., schema: {type: string}}
+        - {name: q, in: query, schema: {type: string, maxLength: 256}}
+        - {name: from, in: query, schema: {type: string, format: date-time}}
+        - {name: to, in: query, schema: {type: string, format: date-time}}
+        - {name: cursor, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 250, default: 250}}
+      responses:
+        "200":
+          description: Newest first; resume cursor marks the history/live handoff.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AgentLogPage"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503":
+          description: Log storage is unavailable.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /v1/agents/logs/stream:
+    get:
+      x-server-side-only: true
+      operationId: streamAgentLogs
+      summary: Read-only SSE of durable logs with replay
+      description: logs events carry AgentLog arrays in ingestion order; checkpoint events advance the resume cursor; reset requires reloading history. Last-Event-ID resumes on reconnect. No agent controls are accepted.
+      parameters:
+        - {name: config_id, in: query, schema: {type: string}}
+        - {name: session_id, in: query, schema: {type: string}}
+        - {name: user_id, in: query, schema: {type: string}}
+        - {name: severity, in: query, schema: {type: string, enum: [info, error]}}
+        - {name: source, in: query, description: Comma-separated user/agent/tool/system sources., schema: {type: string}}
+        - {name: q, in: query, schema: {type: string, maxLength: 256}}
+        - {name: from, in: query, schema: {type: string, format: date-time}}
+        - {name: to, in: query, schema: {type: string, format: date-time}}
+        - {name: cursor, in: query, schema: {type: string}}
+        - {name: Last-Event-ID, in: header, schema: {type: string}}
+      responses:
+        "200":
+          description: SSE events logs, checkpoint and reset.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503":
+          description: Log storage is unavailable.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /v1/agents/logs/{id}:
+    get:
+      x-server-side-only: true
+      operationId: getAgentLog
+      summary: Redacted structured log details scoped to the customer
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: One log with full safe metadata.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AgentLog"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503":
+          description: Log storage is unavailable.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "404": {$ref: "#/components/responses/NotFound"}
   /health:
     get:
       operationId: getHealth
@@ -2787,6 +2869,33 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    AgentLog:
+      type: object
+      required: [id, config_id, agent_id, session_id, source, severity, event_type, message, occurred_at, ingested_at]
+      properties:
+        id: {type: string}
+        cursor: {type: string}
+        config_id: {type: string}
+        agent_id: {type: string}
+        session_id: {type: string}
+        user_id: {type: string}
+        source: {type: string, enum: [user, agent, tool, system]}
+        severity: {type: string, enum: [info, error]}
+        event_type: {type: string}
+        message: {type: string}
+        occurred_at: {type: string, format: date-time}
+        ingested_at: {type: string, format: date-time}
+        details: {type: object, additionalProperties: true}
+    AgentLogPage:
+      type: object
+      required: [items, has_more, next_cursor, resume_cursor, dropped_logs, coverage]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/AgentLog"}}
+        has_more: {type: boolean}
+        next_cursor: {type: string}
+        resume_cursor: {type: string}
+        dropped_logs: {type: integer, format: int64}
+        coverage: {type: string}
     Error:
       type: object
       required: [error]

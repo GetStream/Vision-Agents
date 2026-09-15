@@ -18,3 +18,7 @@ output-options:
     - streamModality
     - dispatchCalls
     - pluginOAuthCallback
+
+    - listAgentLogs
+    - getAgentLog
+    - streamAgentLogs

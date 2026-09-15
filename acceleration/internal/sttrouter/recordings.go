@@ -114,6 +114,7 @@ func (r *Recordings) Transcribe(
 	}
 	if err != nil {
 		stat.ErrorCode = "transcribe_failed"
+		stat.ErrorMessage = err.Error()
 	}
 	r.Recorder().Record(config, stat)
 	if err != nil {

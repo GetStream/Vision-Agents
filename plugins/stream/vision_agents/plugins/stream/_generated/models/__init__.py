@@ -6,6 +6,11 @@ from .agent_config_request_subagents import AgentConfigRequestSubagents
 from .agent_config_request_tags import AgentConfigRequestTags
 from .agent_config_subagents import AgentConfigSubagents
 from .agent_config_tags import AgentConfigTags
+from .agent_log import AgentLog
+from .agent_log_details import AgentLogDetails
+from .agent_log_page import AgentLogPage
+from .agent_log_severity import AgentLogSeverity
+from .agent_log_source import AgentLogSource
 from .agent_mode import AgentMode
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
@@ -54,6 +59,7 @@ from .knowledge_document import KnowledgeDocument
 from .knowledge_url import KnowledgeUrl
 from .knowledge_url_request import KnowledgeUrlRequest
 from .knowledge_url_state import KnowledgeUrlState
+from .list_agent_logs_severity import ListAgentLogsSeverity
 from .list_simulation_runs_state import ListSimulationRunsState
 from .llm_options import LlmOptions
 from .llm_options_format import LlmOptionsFormat
@@ -175,6 +181,11 @@ __all__ = (
     "AgentConfigRequestTags",
     "AgentConfigSubagents",
     "AgentConfigTags",
+    "AgentLog",
+    "AgentLogDetails",
+    "AgentLogPage",
+    "AgentLogSeverity",
+    "AgentLogSource",
     "AgentMode",
     "AttachNumberRequest",
     "AttachedNumber",
@@ -223,6 +234,7 @@ __all__ = (
     "KnowledgeUrl",
     "KnowledgeUrlRequest",
     "KnowledgeUrlState",
+    "ListAgentLogsSeverity",
     "ListSimulationRunsState",
     "LlmOptions",
     "LlmOptionsFormat",

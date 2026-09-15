@@ -242,6 +242,9 @@ func NewServer(options Options) (*Server, error) {
 // than a customer: a telephony vendor and Stream.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/agents/logs", s.listAgentLogs)
+	mux.HandleFunc("GET /v1/agents/logs/stream", s.streamAgentLogs)
+	mux.HandleFunc("GET /v1/agents/logs/{id}", s.getAgentLog)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
 	mux.HandleFunc("GET /v1/dispatch", s.dispatchCalls)

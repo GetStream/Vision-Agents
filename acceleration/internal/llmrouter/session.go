@@ -54,10 +54,11 @@ func (s *Session) create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	stream, err := s.provider.Create(ctx, params)
 	if err != nil {
 		s.recorder.Record(s.config, routing.Stat{
-			Owner:     s.owner,
-			StartedAt: startedAt,
-			Success:   false,
-			ErrorCode: "create_failed",
+			Owner:        s.owner,
+			StartedAt:    startedAt,
+			Success:      false,
+			ErrorCode:    "create_failed",
+			ErrorMessage: err.Error(),
 		})
 		return nil, err
 	}
