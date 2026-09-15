@@ -13,7 +13,7 @@ uv add vision-agents-plugins-gemini
 ### Requirements
 
 - **Python**: 3.10+
-- **Dependencies**: `vision-agents`, `google-genai>=2.15.0`
+- **Dependencies**: `vision-agents`, `google-genai>=2.19.0`
 - **API key**: `GOOGLE_API_KEY` or `GEMINI_API_KEY` set in your environment
 
 ### Quick Start
@@ -34,7 +34,7 @@ async def create_agent(**kwargs) -> Agent:
         edge=getstream.Edge(),
         agent_user=User(name="AI coach"),
         instructions="Read @coaching.md",
-        llm=gemini.Realtime(model="gemini-3.1-flash-live-preview"),
+        llm=gemini.Realtime(),
         processors=[],
     )
     return agent
@@ -59,6 +59,16 @@ Video frames from remote participants are forwarded to Gemini automatically when
 ```python
 llm=gemini.Realtime(fps=3)  # forward video at 3 frames per second
 ```
+
+The default Live model is `gemini-3.8-live` (latency-optimized audio). For background reasoning and async tools, use Extended Thinking:
+
+```python
+from vision_agents.plugins.gemini import LIVE_EXTENDED_THINKING_MODEL, Realtime
+
+llm = Realtime(model=LIVE_EXTENDED_THINKING_MODEL)
+```
+
+`turn_complete` only ends a streaming chunk. Agent turn-complete events wait for `interaction_status=IDLE` (or the deprecated `REQUIRES_ACTION` alias) so thinking and async tool calls can continue. Tools are declared `NON_BLOCKING` by default; `blocking=True` is allowed only on `gemini-3.8-live`. Use `send_client_content(..., turn_complete=True)` to inject structured turns; that interrupts ongoing generation.
 
 The `Agent` subscribes to track events internally, so no manual wiring is needed.
 For a full runnable example, see `examples/02_golf_coach_example/golf_coach_example.py`.

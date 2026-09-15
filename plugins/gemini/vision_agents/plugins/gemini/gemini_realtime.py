@@ -17,12 +17,17 @@ from google.genai.live import AsyncSession
 from google.genai.types import (
     AudioTranscriptionConfigDict,
     AutomaticActivityDetectionDict,
+    Behavior,
     Blob,
+    Content,
+    ContentDict,
     ContextWindowCompressionConfigDict,
     EndSensitivity,
     FunctionCall,
     FunctionResponse,
+    FunctionResponseScheduling,
     HttpOptions,
+    InteractionStatus,
     LiveConnectConfigDict,
     LiveServerMessage,
     LiveServerToolCall,
@@ -32,6 +37,8 @@ from google.genai.types import (
     SlidingWindowDict,
     SpeechConfigDict,
     StartSensitivity,
+    ThinkingConfigDict,
+    ThinkingLevel,
     TurnCoverage,
     VoiceConfigDict,
 )
@@ -50,7 +57,8 @@ from .file_search import FileSearchStore
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_MODEL = "gemini-3.1-flash-live-preview"
+DEFAULT_MODEL = "gemini-3.8-live"
+LIVE_EXTENDED_THINKING_MODEL = "gemini-3.8-live-extended-thinking"
 LIVE_TRANSLATE_MODEL = "gemini-3.5-live-translate-preview"
 
 DEFAULT_CONFIG = LiveConnectConfigDict(
@@ -64,7 +72,7 @@ DEFAULT_CONFIG = LiveConnectConfigDict(
         language_code="en-US",
     ),
     realtime_input_config=RealtimeInputConfigDict(
-        turn_coverage=TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
+        turn_coverage=TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO,
         # VAD config optimized for lower latency
         automatic_activity_detection=AutomaticActivityDetectionDict(
             start_of_speech_sensitivity=StartSensitivity.START_SENSITIVITY_HIGH,
@@ -119,8 +127,24 @@ def _classify_loop_error(exc: Exception) -> tuple[str, str, bool]:
     return RETRY, str(exc), False
 
 
+def _normalized_model(model: str) -> str:
+    return model.lower().removeprefix("models/")
+
+
 def _needs_input_audio_pacing(model: str) -> bool:
-    return model.lower() == LIVE_TRANSLATE_MODEL
+    return _normalized_model(model) == LIVE_TRANSLATE_MODEL
+
+
+def _is_extended_thinking_model(model: str) -> bool:
+    return _normalized_model(model) == LIVE_EXTENDED_THINKING_MODEL
+
+
+def _is_in_progress(status: InteractionStatus | None) -> bool:
+    return status is InteractionStatus.IN_PROGRESS
+
+
+def _is_idle(status: InteractionStatus | None) -> bool:
+    return status in (InteractionStatus.IDLE, InteractionStatus.REQUIRES_ACTION)
 
 
 class GeminiRealtime(realtime.Realtime):
@@ -159,19 +183,24 @@ class GeminiRealtime(realtime.Realtime):
         client: Optional[genai.Client] = None,
         api_key: Optional[str] = None,
         file_search_store: Optional[FileSearchStore] = None,
+        thinking_level: Optional[ThinkingLevel] = None,
+        blocking: bool = False,
         **kwargs,
     ) -> None:
         """
         Initialize Gemini Realtime.
 
         Args:
-            model: Model to use for realtime.
+            model: Model to use for realtime. Defaults to gemini-3.8-live.
             config: Optional LiveConnectConfigDict to customize behavior.
             http_options: Optional HTTP options.
             client: Optional Gemini client.
             api_key: Optional API key.
             file_search_store: Optional FileSearchStore for RAG functionality.
                 See: https://ai.google.dev/gemini-api/docs/file-search
+            thinking_level: Optional thinking level. Applied automatically for
+                gemini-3.8-live-extended-thinking when thinking_config is omitted.
+            blocking: Use BLOCKING tool execution. Rejected on extended thinking.
             **kwargs: Additional arguments passed to parent class.
         """
         if "input_audio_pacing" not in kwargs and _needs_input_audio_pacing(model):
@@ -183,6 +212,12 @@ class GeminiRealtime(realtime.Realtime):
         self.model = model
         self.connected: bool = False
         self.file_search_store = file_search_store
+        if blocking and _is_extended_thinking_model(model):
+            raise ValueError(
+                "gemini-3.8-live-extended-thinking only supports NON_BLOCKING "
+                "tool execution"
+            )
+        self._blocking = blocking
 
         http_options = http_options or HttpOptions(api_version="v1alpha")
 
@@ -197,6 +232,15 @@ class GeminiRealtime(realtime.Realtime):
         # Merge custom config to the default config if provided
         if config:
             self._base_config.update(config)
+
+        if "thinking_config" not in self._base_config:
+            level = thinking_level or (
+                ThinkingLevel.HIGH if _is_extended_thinking_model(model) else None
+            )
+            if level is not None:
+                self._base_config["thinking_config"] = ThinkingConfigDict(
+                    thinking_level=level
+                )
 
         self._session_resumption_id: Optional[str] = None
         self._video_forwarder: Optional[VideoForwarder] = None
@@ -267,6 +311,19 @@ class GeminiRealtime(realtime.Realtime):
         blob = Blob(data=audio_bytes, mime_type="audio/pcm;rate=16000")
 
         await self._session.send_realtime_input(audio=blob)
+
+    async def send_client_content(
+        self,
+        turns: Content | ContentDict | list[Content | ContentDict],
+        turn_complete: bool = True,
+    ) -> None:
+        """Send structured conversation turns via send_client_content.
+
+        ``turn_complete=True`` immediately interrupts ongoing model generation.
+        """
+        await self._session.send_client_content(
+            turns=turns, turn_complete=turn_complete
+        )
 
     async def watch_video_track(
         self,
@@ -439,6 +496,12 @@ class GeminiRealtime(realtime.Realtime):
             self._user_audio_started = False
             self._emit_user_speech_ended()
 
+    def _end_agent_speech_if_started(self, interrupted: bool = False) -> None:
+        """Emit agent_speech_ended once per agent turn and clear the flag."""
+        if self._agent_audio_started:
+            self._agent_audio_started = False
+            self._emit_agent_speech_ended(interrupted=interrupted)
+
     async def _process_events(self) -> bool:
         """
         Process events from Gemini Live API.
@@ -489,15 +552,16 @@ class GeminiRealtime(realtime.Realtime):
 
             if server_content and server_content.interrupted:
                 await self.interrupt()
-                if self._agent_audio_started:
-                    self._agent_audio_started = False
-                    self._emit_agent_speech_ended(interrupted=True)
+                self._end_agent_speech_if_started(interrupted=True)
                 self._emit_audio_output_done_event(interrupted=True)
                 handled = True
             elif server_content and server_content.turn_complete:
-                if self._agent_audio_started:
-                    self._agent_audio_started = False
-                    self._emit_agent_speech_ended()
+                if not _is_in_progress(server_content.interaction_status):
+                    self._end_agent_speech_if_started()
+                self._emit_audio_output_done_event()
+                handled = True
+            elif server_content and _is_idle(server_content.interaction_status):
+                self._end_agent_speech_if_started()
                 self._emit_audio_output_done_event()
                 handled = True
 
@@ -573,11 +637,13 @@ class GeminiRealtime(realtime.Realtime):
         Returns:
             List of tools in Gemini Live format
         """
+        tool_behavior = Behavior.BLOCKING if self._blocking else Behavior.NON_BLOCKING
         function_declarations = [
             {
                 "name": tool["name"],
                 "description": tool.get("description", ""),
                 "parameters": tool["parameters_schema"],
+                "behavior": tool_behavior,
             }
             for tool in tools
         ]
@@ -630,7 +696,10 @@ class GeminiRealtime(realtime.Realtime):
 
         # Send function response back to Gemini Live session
         function_response = FunctionResponse(
-            id=call_id, name=function_name, response=response_data
+            id=call_id,
+            name=function_name,
+            response=response_data,
+            scheduling=FunctionResponseScheduling.WHEN_IDLE,
         )
         # Send the function response back to the Gemini Live API
         logger.debug(f'Send a function response for "{function_name}": {response_data}')

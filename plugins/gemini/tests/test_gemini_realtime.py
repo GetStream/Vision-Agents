@@ -7,15 +7,20 @@ import websockets
 from dotenv import load_dotenv
 from google.genai.errors import APIError
 from google.genai.types import (
+    Behavior,
     Blob,
     Content,
     FunctionCall,
+    FunctionResponseScheduling,
+    InteractionStatus,
     LiveServerContent,
     LiveServerMessage,
     LiveServerSessionResumptionUpdate,
     LiveServerToolCall,
     Part,
+    ThinkingLevel,
     Transcription,
+    TurnCoverage,
 )
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.realtime import (
@@ -30,7 +35,7 @@ from vision_agents.core.llm.realtime import (
 )
 from vision_agents.core.utils.audio_input_pacer import AudioInputPacer
 from vision_agents.core.utils.audio_input_direct import AudioInputDirect
-from vision_agents.plugins.gemini import Realtime
+from vision_agents.plugins.gemini import LIVE_EXTENDED_THINKING_MODEL, Realtime
 from vision_agents.plugins.gemini.gemini_realtime import (
     DEFAULT_MODEL,
     LIVE_TRANSLATE_MODEL,
@@ -58,9 +63,20 @@ def _fake_client() -> Any:
     return object()
 
 
-def _make_realtime() -> GeminiRealtime:
+def _make_realtime(**kwargs: Any) -> GeminiRealtime:
     """Create a GeminiRealtime instance without connecting."""
-    return GeminiRealtime(client=_fake_client())
+    kwargs.setdefault("client", _fake_client())
+    return GeminiRealtime(**kwargs)
+
+
+def _audio_model_turn() -> LiveServerMessage:
+    return LiveServerMessage(
+        server_content=LiveServerContent(
+            model_turn=Content(
+                parts=[Part(inline_data=Blob(data=b"\x00" * 100))],
+            ),
+        ),
+    )
 
 
 class TestGeminiRealtimeInputPacing:
@@ -76,7 +92,8 @@ class TestGeminiRealtimeInputPacing:
             input_audio_pacing=None,
         )
 
-        assert DEFAULT_MODEL == "gemini-3.1-flash-live-preview"
+        assert DEFAULT_MODEL == "gemini-3.8-live"
+        assert LIVE_EXTENDED_THINKING_MODEL == "gemini-3.8-live-extended-thinking"
         assert LIVE_TRANSLATE_MODEL == "gemini-3.5-live-translate-preview"
         assert type(default_rt._audio_input_processor) is AudioInputDirect
         assert isinstance(translate_rt._audio_input_processor, AudioInputPacer)
@@ -122,15 +139,7 @@ class TestGeminiRealtimeProcessEvents:
 
     async def test_model_turn_audio(self):
         rt = _make_realtime()
-        audio_bytes = b"\x00" * 100
-        msg = LiveServerMessage(
-            server_content=LiveServerContent(
-                model_turn=Content(
-                    parts=[Part(inline_data=Blob(data=audio_bytes))],
-                ),
-            ),
-        )
-        rt._real_session = _make_session([msg])
+        rt._real_session = _make_session([_audio_model_turn()])
 
         await rt._process_events()
 
@@ -176,6 +185,40 @@ class TestGeminiRealtimeProcessEvents:
         items = rt.output.peek()
         assert len(items) == 1
         assert isinstance(items[0], RealtimeAudioOutputDone)
+
+    @pytest.mark.parametrize(
+        ("turn_complete", "status", "expect_agent_ended"),
+        [
+            (True, InteractionStatus.IN_PROGRESS, False),
+            (True, InteractionStatus.IDLE, True),
+            (True, InteractionStatus.REQUIRES_ACTION, True),
+            (False, InteractionStatus.IDLE, True),
+        ],
+    )
+    async def test_interaction_status_after_audio(
+        self,
+        turn_complete: bool,
+        status: InteractionStatus,
+        expect_agent_ended: bool,
+    ):
+        rt = _make_realtime()
+        follow_up: dict[str, object] = {"interaction_status": status}
+        if turn_complete:
+            follow_up["turn_complete"] = True
+        rt._real_session = _make_session(
+            [
+                _audio_model_turn(),
+                LiveServerMessage(server_content=LiveServerContent(**follow_up)),
+            ]
+        )
+
+        await rt._process_events()
+
+        items = rt.output.peek()
+        assert any(isinstance(i, RealtimeAudioOutputDone) for i in items)
+        ended = any(isinstance(i, RealtimeAgentSpeechEnded) for i in items)
+        assert ended is expect_agent_ended
+        assert rt._agent_audio_started is not expect_agent_ended
 
     async def test_tool_call(self):
         rt = _make_realtime()
@@ -519,6 +562,7 @@ class TestGeminiRealtimeFunctionCalling:
         assert tool1["name"] == "get_weather"
         assert tool1["description"] == "Get weather information"
         assert "location" in tool1["parameters"]["properties"]
+        assert tool1["behavior"] == Behavior.NON_BLOCKING
 
         # Check second tool
         tool2 = result[0]["function_declarations"][1]
@@ -554,6 +598,62 @@ class TestGeminiRealtimeFunctionCalling:
 
         # Verify tools were not added
         assert "tools" not in config
+
+    def test_default_turn_coverage_includes_video(self):
+        realtime = _make_realtime()
+        coverage = realtime._base_config["realtime_input_config"]["turn_coverage"]
+        assert coverage == TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO
+
+    def test_extended_thinking_applies_default_thinking_config(self):
+        realtime = _make_realtime(model=LIVE_EXTENDED_THINKING_MODEL)
+        thinking = realtime._base_config["thinking_config"]
+        assert thinking["thinking_level"] == ThinkingLevel.HIGH
+
+    def test_default_live_omits_thinking_config(self):
+        realtime = _make_realtime()
+        assert "thinking_config" not in realtime._base_config
+
+    def test_blocking_rejected_on_extended_thinking(self):
+        with pytest.raises(ValueError, match="NON_BLOCKING"):
+            _make_realtime(model=LIVE_EXTENDED_THINKING_MODEL, blocking=True)
+
+    def test_convert_tools_blocking_on_live(self):
+        realtime = _make_realtime(blocking=True)
+        result = realtime._convert_tools_to_provider_format(
+            [
+                {
+                    "name": "get_weather",
+                    "description": "Get weather",
+                    "parameters_schema": {"type": "object", "properties": {}},
+                }
+            ]
+        )
+        assert result[0]["function_declarations"][0]["behavior"] == Behavior.BLOCKING
+
+    async def test_send_client_content_forwards_to_session(self):
+        realtime = _make_realtime()
+        session = AsyncMock()
+        realtime._real_session = session
+        turn = Content(role="user", parts=[Part(text="hi")])
+
+        await realtime.send_client_content(turns=turn, turn_complete=True)
+
+        session.send_client_content.assert_awaited_once_with(
+            turns=turn, turn_complete=True
+        )
+
+    async def test_function_response_uses_when_idle_scheduling(self):
+        realtime = _make_realtime()
+        session = AsyncMock()
+        realtime._real_session = session
+        realtime._run_one_tool = AsyncMock(return_value=(None, {"ok": True}, None))
+
+        await realtime._handle_function_call(
+            FunctionCall(id="c1", name="get_weather", args={"city": "NYC"})
+        )
+
+        sent = session.send_tool_response.await_args.kwargs["function_responses"][0]
+        assert sent.scheduling == FunctionResponseScheduling.WHEN_IDLE
 
 
 @pytest.fixture
@@ -714,3 +814,41 @@ class TestGeminiRealtimeIntegration:
         function_names = [call["name"] for call in function_calls]
         assert "get_time" in function_names, "get_time function was not called"
         assert "get_status" in function_names, "get_status function was not called"
+
+
+@pytest.mark.integration
+class TestGeminiRealtimeExtendedThinkingIntegration:
+    """End-to-end tests against Gemini 3.8 Live Extended Thinking."""
+
+    async def test_simple_response_and_tool_call(self):
+        function_calls: list[dict[str, Any]] = []
+        rt = Realtime(model=LIVE_EXTENDED_THINKING_MODEL)
+
+        @rt.register_function(description="Get current weather for a location")
+        async def get_weather(location: str) -> dict[str, str]:
+            function_calls.append({"name": "get_weather", "location": location})
+            return {
+                "location": location,
+                "temperature": "22°C",
+                "condition": "Sunny",
+            }
+
+        try:
+            await rt.connect()
+        except APIError as exc:
+            pytest.skip(f"extended thinking model unavailable: {exc}")
+
+        try:
+            async for _ in rt.simple_response(
+                "What's the weather like in New York? Please use the get_weather function to check."
+            ):
+                pass
+            await asyncio.sleep(12.0)
+
+            items = rt.output.peek()
+            audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+            weather_calls = [c for c in function_calls if c["name"] == "get_weather"]
+            assert len(audio) > 0 or len(weather_calls) > 0
+            assert len(weather_calls) > 0, "get_weather was not called"
+        finally:
+            await rt.close()
