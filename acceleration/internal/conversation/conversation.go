@@ -121,6 +121,15 @@ type Conversation struct {
 
 var validID = regexp.MustCompile(`^support-[a-f0-9-]{36}$`)
 
+// SessionCommandChannel reserves the persistent conversation namespace for the
+// session command path. Webhook delivery cannot opt it into a second trigger path.
+func SessionCommandChannel(channelType, id string) bool {
+	return channelType == "agent" && validID.MatchString(id)
+}
+
+const TriggerField = "support_trigger"
+const SessionCommandTrigger = "session_commands"
+
 func New(root string) (*Service, error) {
 	client, err := getstream.NewClient(os.Getenv("STREAM_API_KEY"), os.Getenv("STREAM_API_SECRET"))
 	if err != nil {
@@ -260,7 +269,7 @@ func (s *Service) OpenForCaller(ctx context.Context, customer, agentID, cid, cal
 		if err != nil {
 			return nil, nil, false, err
 		}
-		_, err = s.client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: map[string]any{"support_customer_id": customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller}}})
+		_, err = s.client.Chat().GetOrCreateChannel(ctx, "agent", id, &getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &agentID, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: userID}}, Custom: map[string]any{"support_customer_id": customer, "support_agent_id": agentID, "support_memory_scope": scope, "support_owner_id": caller, TriggerField: SessionCommandTrigger}}})
 		if err != nil {
 			return nil, nil, false, err
 		}

@@ -10,6 +10,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 )
@@ -104,6 +105,11 @@ func (s *Server) receiveMessageEvent(w http.ResponseWriter, r *http.Request) {
 // it was said or its own reply, and answering either is the agent talking to itself. And a
 // message with nothing written in it, which an attachment on its own is.
 func addressed(event messageEvent) bool {
+	// This namespace belongs to durable session commands, even on older channels
+	// without trigger metadata or when a client omits/forges the source marker.
+	if conversation.SessionCommandChannel(event.ChannelType, event.ChannelID) {
+		return false
+	}
 	if event.ChannelType != chatlog.ChannelType || event.ChannelID == "" {
 		return false
 	}
@@ -123,6 +129,9 @@ func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
 
 	if s.sessions != nil {
 		if found, running := s.sessions.ByAgent(event.ChannelID); running {
+			if found.Spec().PersistConversation {
+				return
+			}
 			// On its own goroutine because a model call takes seconds and Stream is
 			// waiting on this delivery. The answer goes back to the channel rather than
 			// in a response, so there is nothing here to wait for.

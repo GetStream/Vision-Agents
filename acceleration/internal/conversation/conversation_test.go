@@ -391,6 +391,7 @@ func TestPersonalConversationBindsMembershipMessagesAndHistoryToCaller(t *testin
 	db.mu.Lock()
 	channel := db.channels[strings.TrimPrefix(cid, "agent:")]
 	require.Equal(t, "employee-one", channel["custom"].(map[string]any)["support_owner_id"])
+	require.Equal(t, SessionCommandTrigger, channel["custom"].(map[string]any)[TriggerField])
 	memberJSON, _ := json.Marshal(channel["members"])
 	require.Contains(t, string(memberJSON), "employee-one")
 	require.NotContains(t, string(memberJSON), "support-operator")

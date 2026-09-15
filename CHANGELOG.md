@@ -663,6 +663,11 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- Persistent `agent:support-…` conversations accept inference through session commands
+  only. Chat webhook deliveries cannot start a second response, including retries and
+  messages with missing or forged source markers. New channels record this trigger
+  policy in their metadata.
+
 - Persistent text conversations created by an authenticated end user now bind channel
   membership, stored user messages, history and session access to that caller. Another
   user in the same app cannot reopen that conversation through these paths. Existing
