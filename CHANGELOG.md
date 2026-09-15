@@ -663,6 +663,9 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- Worker ping replies now share the dispatch socket's single writer with ready,
+  call and message frames, preventing concurrent writes during call delivery.
+
 - Persistent `agent:support-…` conversations accept inference through session commands
   only. Chat webhook deliveries cannot start a second response, including retries and
   messages with missing or forged source markers. New channels record this trigger
