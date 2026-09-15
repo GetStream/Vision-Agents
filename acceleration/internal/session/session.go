@@ -245,6 +245,9 @@ func (s *Session) Say(ctx context.Context, text string) error {
 // Images attach to that turn as content parts.
 func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart) error {
 	if s.persisted != nil {
+		if s.spec.Caller.UserID != "" {
+			return errors.New("personal conversations require a command ID")
+		}
 		if err := s.persisted.Begin(text); err != nil {
 			return err
 		}
@@ -254,6 +257,27 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 		s.persisted.Cancel()
 	}
 	return err
+}
+
+// RespondCommand accepts one durable text submission. The receipt may be replayed,
+// but only the first successful acceptance is allowed to invoke the model.
+func (s *Session) RespondCommand(ctx context.Context, id, text string) (persistent.CommandReceipt, error) {
+	if s.persisted == nil {
+		return persistent.CommandReceipt{}, errors.New("command IDs require a persistent text conversation")
+	}
+	receipt, err := s.persisted.BeginCommand(id, text)
+	if err != nil {
+		return receipt, err
+	}
+	s.broadcast(receipt)
+	if receipt.Duplicate {
+		return receipt, nil
+	}
+	if err = s.voiceAgent.RespondTo(ctx, text, nil); err != nil {
+		s.persisted.Cancel()
+		return receipt, err
+	}
+	return receipt, nil
 }
 
 // Report publishes a failure the watcher should see, without ending the session.

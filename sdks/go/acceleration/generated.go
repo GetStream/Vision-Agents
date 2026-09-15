@@ -1328,6 +1328,19 @@ type ChatTokenRequest struct {
 	UserName *string `json:"user_name,omitempty"`
 }
 
+// CommandReceipt defines model for CommandReceipt.
+type CommandReceipt struct {
+	AssistantMessageId string `json:"assistant_message_id"`
+	CommandId          string `json:"command_id"`
+
+	// Duplicate True when this command already exists and no new inference was started.
+	Duplicate bool `json:"duplicate"`
+
+	// State Latest locally recorded response state; an interrupted command is never automatically rerun.
+	State         string `json:"state"`
+	UserMessageId string `json:"user_message_id"`
+}
+
 // Contact defines model for Contact.
 type Contact struct {
 	Attempts int `json:"attempts"`
@@ -1853,6 +1866,13 @@ type RecordingSource struct {
 // RecordingStatus Where a job has got to. A failed job carries the reason in `error`, and a completed one carries its result.
 type RecordingStatus string
 
+// RespondRequest defines model for RespondRequest.
+type RespondRequest struct {
+	// CommandId Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
+	CommandId *string `json:"command_id,omitempty"`
+	Text      string  `json:"text"`
+}
+
 // RollupRequest defines model for RollupRequest.
 type RollupRequest struct {
 	From        time.Time    `json:"from"`
@@ -2071,9 +2091,11 @@ type SessionPhone struct {
 
 // SessionRespondCommand defines model for SessionRespondCommand.
 type SessionRespondCommand struct {
-	Images *[]ImageSource            `json:"images,omitempty"`
-	Text   string                    `json:"text"`
-	Type   SessionRespondCommandType `json:"type"`
+	// CommandId Required for personal persistent text conversations; reuse on retries. Text only when present.
+	CommandId *string                   `json:"command_id,omitempty"`
+	Images    *[]ImageSource            `json:"images,omitempty"`
+	Text      string                    `json:"text"`
+	Type      SessionRespondCommandType `json:"type"`
 }
 
 // SessionRespondCommandType defines model for SessionRespondCommand.Type.
@@ -3153,7 +3175,7 @@ type CreateSessionJSONRequestBody = CreateSessionRequest
 type SetSessionInstructionsJSONRequestBody = InstructionsRequest
 
 // RespondSessionJSONRequestBody defines body for RespondSession for application/json ContentType.
-type RespondSessionJSONRequestBody = SayRequest
+type RespondSessionJSONRequestBody = RespondRequest
 
 // SaySessionJSONRequestBody defines body for SaySession for application/json ContentType.
 type SaySessionJSONRequestBody = SayRequest
@@ -14398,12 +14420,21 @@ func (r InterruptSessionResponse) ContentType() string {
 type RespondSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CommandReceipt
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RespondSessionResponse) GetJSON200() *CommandReceipt {
+	return r.JSON200
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -14419,6 +14450,11 @@ func (r RespondSessionResponse) GetJSON401() *Unauthorized {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r RespondSessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r RespondSessionResponse) GetJSON409() *Error {
+	return r.JSON409
 }
 
 // GetBody returns the raw response body bytes
@@ -21068,6 +21104,13 @@ func ParseRespondSessionResponse(rsp *http.Response) (*RespondSessionResponse, e
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CommandReceipt
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case rsp.StatusCode == 204:
 		break // No content-type
 
@@ -21091,6 +21134,13 @@ func ParseRespondSessionResponse(rsp *http.Response) (*RespondSessionResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	}
 

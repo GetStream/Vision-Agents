@@ -2616,7 +2616,7 @@ internal enum Operations {
             /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/respond/POST/requestBody`.
             internal enum Body: Sendable, Hashable {
                 /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/respond/POST/requestBody/content/application\/json`.
-                case json(Components.Schemas.SayRequest)
+                case json(Components.Schemas.RespondRequest)
             }
             internal var body: Operations.RespondSession.Input.Body
             /// Creates a new `Input`.
@@ -2636,6 +2636,108 @@ internal enum Operations {
             }
         }
         internal enum Output: Sendable, Hashable {
+            internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/respond/POST/responses/200/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/respond/POST/responses/200/content/application\/json`.
+                    case json(Components.Schemas.CommandReceipt)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.CommandReceipt {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.RespondSession.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.RespondSession.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// Durable command accepted or replayed; only a new command starts inference
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/respond/post(respondSession)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.RespondSession.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            internal var ok: Operations.RespondSession.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            internal struct Conflict: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/respond/POST/responses/409/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/respond/POST/responses/409/content/application\/json`.
+                    case json(Components.Schemas._Error)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas._Error {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.RespondSession.Output.Conflict.Body
+                /// Creates a new `Conflict`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.RespondSession.Output.Conflict.Body) {
+                    self.body = body
+                }
+            }
+            /// The command ID was already accepted with different content
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/respond/post(respondSession)/responses/409`.
+            ///
+            /// HTTP response code: `409 conflict`.
+            case conflict(Operations.RespondSession.Output.Conflict)
+            /// The associated value of the enum case if `self` is `.conflict`.
+            ///
+            /// - Throws: An error if `self` is not `.conflict`.
+            /// - SeeAlso: `.conflict`.
+            internal var conflict: Operations.RespondSession.Output.Conflict {
+                get throws {
+                    switch self {
+                    case let .conflict(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "conflict",
+                            response: self
+                        )
+                    }
+                }
+            }
             internal struct NoContent: Sendable, Hashable {
                 /// Creates a new `NoContent`.
                 internal init() {}

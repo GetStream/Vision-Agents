@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"net/http"
 	"net/http/httptest"
@@ -202,9 +203,9 @@ func TestOutboxFailureRestartAndDeduplication(t *testing.T) {
 	c.Progress("tool", "queued")
 	require.Eventually(t, func() bool { return current(c).Error != "" }, 3*time.Second, 20*time.Millisecond)
 	require.False(t, current(c).Saved)
-	files, err := filepath.Glob(filepath.Join(c.dir(), "ops", "*.json"))
+	snapshot, err := loadDisk(c.dir())
 	require.NoError(t, err)
-	require.NotEmpty(t, files)
+	require.NotEmpty(t, snapshot.Pending)
 	s.Close() // Simulate process stopping without the session's graceful cancellation.
 	db.mu.Lock()
 	db.fail = false
@@ -223,9 +224,9 @@ func TestOutboxFailureRestartAndDeduplication(t *testing.T) {
 	db.mu.Lock()
 	require.Len(t, db.order, 2)
 	db.mu.Unlock()
-	files, err = filepath.Glob(filepath.Join(c.dir(), "ops", "*.json"))
+	snapshot, err = loadDisk(c.dir())
 	require.NoError(t, err)
-	require.Empty(t, files)
+	require.Empty(t, snapshot.Pending)
 }
 func TestBoundedOrdinaryHistory(t *testing.T) {
 	p := Page{Messages: []Message{{Role: "system", Text: "untrusted instruction", State: "completed"}, {Role: "assistant", Text: "unfinished", State: "thinking"}, {Role: "user", Text: strings.Repeat("界", 30000), State: "completed"}, {Role: "assistant", Text: strings.Repeat("界", 30000), State: "completed"}}}
@@ -421,4 +422,169 @@ func TestPersonalConversationBindsMembershipMessagesAndHistoryToCaller(t *testin
 		c.Release()
 		service.Close()
 	}
+}
+
+func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
+	db, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	db.mu.Lock()
+	db.fail = true
+	db.mu.Unlock()
+	var workers sync.WaitGroup
+	receipts := make([]CommandReceipt, 16)
+	errors := make([]error, len(receipts))
+	for i := range receipts {
+		workers.Go(func() { receipts[i], errors[i] = c.BeginCommand("submission-1", "one question") })
+	}
+	workers.Wait()
+	started := 0
+	for i, receipt := range receipts {
+		require.NoError(t, errors[i])
+		if !receipt.Duplicate {
+			started++
+		}
+		require.Equal(t, receipts[0].UserMessageID, receipt.UserMessageID)
+		require.Equal(t, receipts[0].AssistantMessageID, receipt.AssistantMessageID)
+	}
+	require.Equal(t, 1, started)
+	snapshot, err := loadDisk(c.dir())
+	require.NoError(t, err)
+	require.Len(t, snapshot.Pending, 2)
+	require.Equal(t, receipts[0].UserMessageID, snapshot.Pending[0].Message.ID)
+	require.Equal(t, receipts[0].AssistantMessageID, snapshot.Pending[1].Message.ID)
+	require.Equal(t, receipts[0].AssistantMessageID, snapshot.Commands["submission-1"].AssistantMessageID)
+	_, err = c.BeginCommand("submission-1", "different question")
+	require.ErrorIs(t, err, ErrCommandConflict)
+	_, err = c.BeginCommand("submission-2", "another question")
+	require.ErrorContains(t, err, "already running")
+	db.mu.Lock()
+	db.fail = false
+	db.mu.Unlock()
+	c.Observe(agent.ResponseDelta{Text: "one answer"})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	c.Release()
+	service.Close()
+	recovered, err := newService(root, client)
+	require.NoError(t, err)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	replay, err := c.BeginCommand("submission-1", "one question")
+	require.NoError(t, err)
+	require.True(t, replay.Duplicate)
+	require.Equal(t, "completed", replay.State)
+	require.Equal(t, receipts[0].UserMessageID, replay.UserMessageID)
+	require.Equal(t, receipts[0].AssistantMessageID, replay.AssistantMessageID)
+	db.mu.Lock()
+	count := len(db.order)
+	db.mu.Unlock()
+	require.Equal(t, 2, count)
+	// A remote channel alone cannot recover the complete historical command ledger.
+	other, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(other.Close)
+	remote, _, _, err := other.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	_, err = remote.BeginCommand("submission-1", "one question")
+	require.ErrorContains(t, err, "ledger is unavailable")
+}
+
+func TestInterruptedCommandNeverReceivesASecondExecutionClaim(t *testing.T) {
+	_, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
+	require.NoError(t, err)
+	first, err := c.BeginCommand("interrupted", "question")
+	require.NoError(t, err)
+	service.Close() // No terminal model event, as after an interrupted worker.
+	recovered, err := newService(root, client)
+	require.NoError(t, err)
+	defer recovered.Close()
+	c, _, _, err = recovered.Open(t.Context(), "customer", "agent", c.CID())
+	require.NoError(t, err)
+	replay, err := c.BeginCommand("interrupted", "question")
+	require.NoError(t, err)
+	require.True(t, replay.Duplicate)
+	require.Equal(t, "interrupted", replay.State)
+	require.Equal(t, first.AssistantMessageID, replay.AssistantMessageID)
+}
+
+func TestOutboxRootHasOneWriterAndLegacyMigrationDoesNotReimport(t *testing.T) {
+	_, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	_, err = newService(root, client)
+	require.ErrorContains(t, err, "already owned")
+	service.Close()
+	service, err = newService(root, client)
+	require.NoError(t, err)
+	service.Close()
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "ops"), 0700))
+	require.NoError(t, writeJSON(filepath.Join(dir, "state.json"), disk{CID: "agent:test"}))
+	file := filepath.Join(dir, "ops", "001.json")
+	require.NoError(t, writeJSON(file, operation{Message: Message{ID: "one"}, Create: true}))
+	state, err := loadDisk(dir)
+	require.NoError(t, err)
+	require.Len(t, state.Pending, 1)
+	// Simulate crashing after the versioned snapshot committed, before old-file removal.
+	require.NoError(t, writeJSON(file, operation{Message: Message{ID: "one"}, Create: true}))
+	state, err = loadDisk(dir)
+	require.NoError(t, err)
+	require.Len(t, state.Pending, 1)
+}
+
+func TestFailedAcceptanceDoesNotGrantAClaimOrPublishUncommittedWrites(t *testing.T) {
+	db, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer service.Close()
+	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
+	require.NoError(t, err)
+	// Make atomic rename fail without depending on platform-specific permission rules.
+	statePath := filepath.Join(c.dir(), "state.json")
+	require.NoError(t, os.Remove(statePath))
+	require.NoError(t, os.MkdirAll(statePath, 0700))
+	_, err = c.BeginCommand("failed-write", "question")
+	require.Error(t, err)
+	require.False(t, c.flush())
+	db.mu.Lock()
+	count := len(db.order)
+	db.mu.Unlock()
+	require.Zero(t, count)
+	require.NoError(t, os.Remove(statePath))
+	// Once persistence recovers, a retry exposes failure rather than another claim.
+	replay, err := c.BeginCommand("failed-write", "question")
+	require.NoError(t, err)
+	require.True(t, replay.Duplicate)
+	require.Equal(t, "failed", replay.State)
+}
+
+func TestBlankConversationRetainsItsLedgerAcrossRestart(t *testing.T) {
+	_, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
+	require.NoError(t, err)
+	service.Close()
+	_, err = c.BeginCommand("after-close", "must not write")
+	require.Error(t, err)
+	recovered, err := newService(root, client)
+	require.NoError(t, err)
+	defer recovered.Close()
+	c, _, _, err = recovered.Open(t.Context(), "customer", "agent", c.CID())
+	require.NoError(t, err)
+	receipt, err := c.BeginCommand("first-submission", "question")
+	require.NoError(t, err)
+	require.False(t, receipt.Duplicate)
 }

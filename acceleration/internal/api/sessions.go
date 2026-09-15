@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -151,6 +153,17 @@ func (s *Server) RespondSession(ctx context.Context, request RespondSessionReque
 		return RespondSession400JSONResponse{badRequest("there is nothing to answer")}, nil
 	}
 
+	if id := value(request.Body.CommandId); id != "" {
+		receipt, err := found.RespondCommand(ctx, id, request.Body.Text)
+		if errors.Is(err, conversation.ErrCommandConflict) {
+			return RespondSession409JSONResponse{Error: err.Error()}, nil
+		}
+		if err != nil {
+			return RespondSession400JSONResponse{badRequest(err.Error())}, nil
+		}
+		return RespondSession200JSONResponse{CommandId: receipt.CommandID, UserMessageId: receipt.UserMessageID,
+			AssistantMessageId: receipt.AssistantMessageID, State: receipt.State, Duplicate: receipt.Duplicate}, nil
+	}
 	if err := found.Respond(ctx, request.Body.Text, nil); err != nil {
 		return RespondSession400JSONResponse{badRequest(err.Error())}, nil
 	}

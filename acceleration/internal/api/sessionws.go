@@ -187,7 +187,8 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			// Error is what to tell the model instead, when the tool did not work.
 			Error string `json:"error"`
 			// Text carries say and respond.
-			Text string `json:"text"`
+			Text      string `json:"text"`
+			CommandID string `json:"command_id"`
 			// Images attach to a respond command, and become image parts on that turn.
 			Images []wireImage `json:"images"`
 			// Instructions carries the instructions command.
@@ -223,6 +224,16 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			}
 
 		case "respond":
+			if command.CommandID != "" {
+				if len(command.Images) > 0 {
+					found.Report(fmt.Errorf("durable commands currently support text only"), "llm")
+					continue
+				}
+				if _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text); err != nil {
+					found.Report(err, "llm")
+				}
+				continue
+			}
 			images, err := imagesFromWire(command.Images)
 			if err != nil {
 				found.Report(err, "llm")
@@ -385,6 +396,8 @@ func frameOf(event session.Event) (frame, bool) {
 			"reason":  typed.Reason,
 		}, true
 
+	case conversation.CommandReceipt:
+		return frame{"type": "command_accepted", "command": typed}, true
 	case conversation.Updated:
 		return frame{"type": "conversation_updated", "conversation_id": typed.CID, "message": typed.Message}, true
 	case agent.ToolStarted:

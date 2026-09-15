@@ -3,6 +3,7 @@ package conversation
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
+	"golang.org/x/sys/unix"
 )
 
 type Tool struct {
@@ -39,6 +41,7 @@ type Tool struct {
 	DurationMS         int64      `json:"duration_ms"`
 }
 type Message struct {
+	CommandID      string     `json:"command_id,omitempty"`
 	ID             string     `json:"id"`
 	QuestionID     string     `json:"question_id,omitempty"`
 	Role           string     `json:"role"`
@@ -62,34 +65,58 @@ type Updated struct {
 	CID     string  `json:"conversation_id"`
 	Message Message `json:"message"`
 }
+
+// CommandReceipt identifies one durable submission and its two Chat messages.
+type CommandReceipt struct {
+	CommandID          string `json:"command_id"`
+	UserMessageID      string `json:"user_message_id"`
+	AssistantMessageID string `json:"assistant_message_id"`
+	State              string `json:"state"`
+	Duplicate          bool   `json:"duplicate"`
+}
+type commandRecord struct {
+	CommandReceipt
+	Digest string
+}
+
+var ErrCommandConflict = errors.New("command ID was already used with different content")
+var validCommandID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
 type disk struct {
-	CID      string
-	Customer string
-	Agent    string
-	Owner    string
-	Current  *Message
+	OutboxVersion int
+	CommandLedger bool
+	Pending       []operation
+	Commands      map[string]commandRecord
+	CID           string
+	Customer      string
+	Agent         string
+	Owner         string
+	Current       *Message
 }
 type operation struct {
 	Message Message
 	Create  bool
 }
 type Service struct {
+	lock   *os.File
+	closed bool
 	mu     sync.Mutex
 	client *getstream.Stream
 	root   string
 	all    map[string]*Conversation
 }
 type Conversation struct {
-	mu      sync.Mutex
-	service *Service
-	data    disk
-	active  bool
-	turns   map[string]string
-	created map[string]bool
-	emit    func(Updated)
-	dirty   bool
-	stopped chan struct{}
-	done    chan struct{}
+	mu       sync.Mutex
+	service  *Service
+	data     disk
+	active   bool
+	stopping bool
+	turns    map[string]string
+	created  map[string]bool
+	emit     func(Updated)
+	dirty    bool
+	stopped  chan struct{}
+	done     chan struct{}
 }
 
 var validID = regexp.MustCompile(`^support-[a-f0-9-]{36}$`)
@@ -112,7 +139,21 @@ func newService(root string, client *getstream.Stream) (*Service, error) {
 	if err = os.MkdirAll(root, 0700); err != nil {
 		return nil, err
 	}
-	s := &Service{client: client, root: root, all: map[string]*Conversation{}}
+	lock, err := os.OpenFile(filepath.Join(root, ".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		lock.Close()
+		return nil, errors.New("conversation outbox is already owned by another service")
+	}
+	s := &Service{client: client, root: root, lock: lock, all: map[string]*Conversation{}}
+	ready := false
+	defer func() {
+		if !ready {
+			s.Close()
+		}
+	}()
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
@@ -121,12 +162,8 @@ func newService(root string, client *getstream.Stream) (*Service, error) {
 		if !e.IsDir() || !validID.MatchString(e.Name()) {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(root, e.Name(), "state.json"))
+		d, err := loadDisk(filepath.Join(root, e.Name()))
 		if err != nil {
-			return nil, err
-		}
-		var d disk
-		if err = json.Unmarshal(b, &d); err != nil {
 			return nil, err
 		}
 		c := s.make(d)
@@ -134,6 +171,7 @@ func newService(root string, client *getstream.Stream) (*Service, error) {
 		c.finish("interrupted")
 		c.mu.Unlock()
 	}
+	ready = true
 	return s, nil
 }
 func (s *Service) make(d disk) *Conversation {
@@ -144,17 +182,28 @@ func (s *Service) make(d disk) *Conversation {
 }
 func (s *Service) Close() {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
 	all := make([]*Conversation, 0, len(s.all))
 	for _, c := range s.all {
 		all = append(all, c)
 	}
 	s.mu.Unlock()
 	for _, c := range all {
+		c.mu.Lock()
+		c.active = false
+		c.stopping = true
+		c.mu.Unlock()
 		close(c.stopped)
 	}
 	for _, c := range all {
 		<-c.done
 	}
+	_ = unix.Flock(int(s.lock.Fd()), unix.LOCK_UN)
+	_ = s.lock.Close()
 }
 func (s *Service) Open(ctx context.Context, customer, agentID, cid string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
 	return s.OpenForCaller(ctx, customer, agentID, cid, "", scopes...)
@@ -167,6 +216,9 @@ func (s *Service) OpenForCaller(ctx context.Context, customer, agentID, cid, cal
 	defer cancel()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil, nil, false, errors.New("conversation service is closed")
+	}
 	var scope memory.Scope
 	if len(scopes) > 0 {
 		scope = scopes[0]
@@ -220,8 +272,17 @@ func (s *Service) OpenForCaller(ctx context.Context, customer, agentID, cid, cal
 	if !sameMemoryScope(page.memoryScope, scope) {
 		return nil, nil, false, errors.New("conversation belongs to another memory scope; reopen with its original organization")
 	}
-	c := s.make(disk{CID: cid, Customer: customer, Agent: agentID, Owner: caller})
+	c := s.make(disk{CID: cid, Customer: customer, Agent: agentID, Owner: caller, CommandLedger: fresh})
 	c.active = true
+	if fresh {
+		c.mu.Lock()
+		err := c.persist()
+		c.mu.Unlock()
+		if err != nil {
+			c.Release()
+			return nil, nil, false, err
+		}
+	}
 	h, tr := history(page)
 	return c, h, tr, nil
 }
@@ -287,20 +348,15 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 	}
 	if before == "" {
 		// Overlay durable pending snapshots so a reconnect sees unfinished retries truthfully.
-		files, _ := filepath.Glob(filepath.Join(s.root, id, "ops", "*.json"))
-		sort.Strings(files)
-		for _, file := range files {
-			raw, err := os.ReadFile(file)
-			if os.IsNotExist(err) {
-				continue
-			}
-			if err != nil {
-				return Page{}, err
-			}
-			var op operation
-			if err = json.Unmarshal(raw, &op); err != nil {
-				return Page{}, err
-			}
+		var pending disk
+		raw, err := os.ReadFile(filepath.Join(s.root, id, "state.json"))
+		if err != nil && !os.IsNotExist(err) {
+			return Page{}, err
+		}
+		if err == nil && json.Unmarshal(raw, &pending) != nil {
+			return Page{}, errors.New("invalid conversation outbox")
+		}
+		for _, op := range pending.Pending {
 			op.Message.Saved = false
 			op.Message.Error = "Pending Stream Chat save"
 			found := false
@@ -364,30 +420,66 @@ func (c *Conversation) Release() {
 	c.emit = nil
 }
 func (c *Conversation) Begin(text string) error {
+	_, err := c.beginCommand(uuid.NewString(), text, true)
+	return err
+}
+
+// BeginCommand atomically records command ownership and both initial Chat writes.
+// A recorded command is never automatically executed again, including after a crash.
+func (c *Conversation) BeginCommand(id, text string) (CommandReceipt, error) {
+	return c.beginCommand(id, text, false)
+}
+func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if !c.active {
+		return CommandReceipt{}, errors.New("conversation is not open")
+	}
+	if !legacy && !c.data.CommandLedger {
+		return CommandReceipt{}, errors.New("conversation command ledger is unavailable; restore its durable state")
+	}
+	if !validCommandID.MatchString(id) || text == "" || len(text) > 1024*1024 {
+		return CommandReceipt{}, errors.New("invalid command ID or text")
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))
+	if previous, ok := c.data.Commands[id]; ok {
+		if previous.Digest != digest {
+			return CommandReceipt{}, ErrCommandConflict
+		}
+		receipt := previous.CommandReceipt
+		receipt.Duplicate = true
+		return receipt, nil
+	}
 	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
-		return errors.New("a response is already running")
+		return CommandReceipt{}, errors.New("a response is already running")
 	}
 	now := time.Now().UTC()
-	u := Message{ID: uuid.NewString(), Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}}
-	if err := c.enqueue(u, true); err != nil {
-		return err
+	u := Message{ID: uuid.NewString(), CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}}
+	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
+	receipt := CommandReceipt{CommandID: id, UserMessageID: u.ID, AssistantMessageID: a.ID, State: a.State}
+	if c.data.Commands == nil {
+		c.data.Commands = map[string]commandRecord{}
+	}
+	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest}
+	c.data.Current = &a
+	c.data.Pending = append(c.data.Pending, operation{u, true}, operation{a, true})
+	if err := c.persist(); err != nil {
+		// A rename/fsync failure has an uncertain durable outcome. Retain the IDs,
+		// fail the command and never grant another inference attempt for this ID.
+		c.finish("failed")
+		return CommandReceipt{}, err
 	}
 	c.publish(u)
-	a := Message{ID: uuid.NewString(), Role: "assistant", QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
-	c.data.Current = &a
-	if err := c.enqueue(a, true); err != nil {
-		c.data.Current = nil
-		return err
-	}
 	c.publish(a)
-	return nil
+	return receipt, nil
 }
 func (c *Conversation) Cancel() { c.mu.Lock(); defer c.mu.Unlock(); c.finish("cancelled") }
 func (c *Conversation) Observe(event agent.Event) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.stopping {
+		return
+	}
 	m := c.data.Current
 	if m == nil || m.FinishedAt != nil {
 		return
@@ -550,6 +642,9 @@ func (c *Conversation) acceptTurn(id string, start bool) bool {
 func (c *Conversation) Progress(id, phase string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.stopping {
+		return
+	}
 	m := c.data.Current
 	if m == nil || m.FinishedAt != nil {
 		return
@@ -603,10 +698,17 @@ func (c *Conversation) state(state string) {
 	if m.State != state {
 		m.Saved = false
 		m.State = state
+		if record, ok := c.data.Commands[m.CommandID]; ok {
+			record.State = state
+			c.data.Commands[m.CommandID] = record
+		}
 		m.StateStartedAt = time.Now().UTC()
 	}
 }
 func (c *Conversation) finish(state string) {
+	if c.stopping {
+		return
+	}
 	m := c.data.Current
 	if m == nil || m.FinishedAt != nil {
 		return
@@ -666,15 +768,61 @@ func writeJSON(path string, v any) error {
 	defer d.Close()
 	return d.Sync()
 }
+
+// loadDisk imports the earlier per-operation files once. The version marker and
+// queue are committed together, so a crash during cleanup cannot replay old files.
+func loadDisk(dir string) (disk, error) {
+	var d disk
+	b, err := os.ReadFile(filepath.Join(dir, "state.json"))
+	if err != nil {
+		return d, err
+	}
+	if err = json.Unmarshal(b, &d); err != nil {
+		return d, err
+	}
+	if d.OutboxVersion > 1 {
+		return d, errors.New("unsupported conversation outbox version")
+	}
+	if d.OutboxVersion == 0 {
+		files, err := filepath.Glob(filepath.Join(dir, "ops", "*.json"))
+		if err != nil {
+			return d, err
+		}
+		sort.Strings(files)
+		for _, file := range files {
+			b, err := os.ReadFile(file)
+			if err != nil {
+				return d, err
+			}
+			var op operation
+			if err = json.Unmarshal(b, &op); err != nil {
+				return d, err
+			}
+			d.Pending = append(d.Pending, op)
+		}
+		d.OutboxVersion = 1
+		d.CommandLedger = true
+		if err = writeJSON(filepath.Join(dir, "state.json"), d); err != nil {
+			return d, err
+		}
+		for _, file := range files {
+			_ = os.Remove(file)
+		}
+	}
+	return d, nil
+}
+
+func (c *Conversation) persist() error {
+	if err := os.MkdirAll(c.dir(), 0700); err != nil {
+		return err
+	}
+	c.data.OutboxVersion = 1
+	return writeJSON(filepath.Join(c.dir(), "state.json"), c.data)
+}
 func (c *Conversation) enqueue(m Message, create bool) error {
-	dir := c.dir()
-	if err := os.MkdirAll(filepath.Join(dir, "ops"), 0700); err != nil {
-		return err
-	}
-	if err := writeJSON(filepath.Join(dir, "state.json"), c.data); err != nil {
-		return err
-	}
-	return writeJSON(filepath.Join(dir, "ops", fmt.Sprintf("%020d-%s.json", time.Now().UnixNano(), uuid.NewString())), operation{m, create})
+	m.Tools = append([]Tool{}, m.Tools...)
+	c.data.Pending = append(c.data.Pending, operation{m, create})
+	return c.persist()
 }
 func (c *Conversation) save() {
 	m := c.data.Current
@@ -730,19 +878,21 @@ func sameSnapshot(a, b Message) bool {
 	return string(x) == string(y)
 }
 func (c *Conversation) flush() bool {
-	files, _ := filepath.Glob(filepath.Join(c.dir(), "ops", "*.json"))
-	sort.Strings(files)
-	for _, file := range files {
-		b, err := os.ReadFile(file)
-		if err != nil {
+	for {
+		c.mu.Lock()
+		if len(c.data.Pending) == 0 {
+			c.mu.Unlock()
+			return true
+		}
+		// Never send an operation that only exists in memory after a failed disk write.
+		if err := c.persist(); err != nil {
+			c.mu.Unlock()
 			return false
 		}
-		var op operation
-		if json.Unmarshal(b, &op) != nil {
-			return false
-		}
+		op := c.data.Pending[0]
+		c.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err = c.send(ctx, op, false)
+		err := c.send(ctx, op, false)
 		cancel()
 		c.mu.Lock()
 		if err != nil {
@@ -753,7 +903,13 @@ func (c *Conversation) flush() bool {
 			c.mu.Unlock()
 			return false
 		}
-		_ = os.Remove(file)
+		pending := c.data.Pending
+		c.data.Pending = pending[1:]
+		if err := c.persist(); err != nil {
+			c.data.Pending = pending
+			c.mu.Unlock()
+			return false
+		}
 		if op.Create {
 			c.created[op.Message.ID] = true
 		}
@@ -771,7 +927,6 @@ func (c *Conversation) flush() bool {
 		}
 		c.mu.Unlock()
 	}
-	return true
 }
 func (c *Conversation) run() {
 	defer close(c.done)

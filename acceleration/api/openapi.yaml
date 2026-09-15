@@ -2392,8 +2392,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SayRequest"
+              $ref: "#/components/schemas/RespondRequest"
       responses:
+        "200":
+          description: Durable command accepted or replayed; only a new command starts inference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandReceipt"
+        "409":
+          description: The command ID was already accepted with different content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "204":
           description: The model is answering
         "400":
@@ -2461,13 +2473,20 @@ paths:
         `conversation_compacted`, `error` and `left`.
 
         Persistent text sessions also emit `conversation_updated` with conversation_id
-        and a complete message snapshot: id, role, text, state, response_started_at,
+        and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at,
         state_started_at, finished_at, duration_ms, saved, persistence_error and
         attachments. Each tool_calling attachment has tool_call_id, name, title,
         status, phase, summary, immutable started_at, execution_started_at, finished_at
         and duration_ms. Activity states are thinking, queued, tools, writing,
         completed, failed and cancelled. tool_started includes tool_call_id, tool,
         turn_id and started_at; tool_ran also includes tool_call_id.
+
+        A respond command carrying command_id emits command_accepted with a nested
+        command receipt (command_id, user_message_id, assistant_message_id, state,
+        duplicate). Personal persistent text sessions require this ID. A retry with
+        the same text returns the existing IDs without invoking the model again;
+        reuse with different text emits an error. Commands with IDs currently accept
+        text only. After restart an interrupted command is reported, not rerun.
 
         A `decision` frame is one judgement the conversation made, carrying the same
         fields as a CallEvent. Together they are why the call went the way it did, and
@@ -5175,6 +5194,10 @@ components:
           enum: [respond]
         text:
           type: string
+        command_id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,128}$'
+          description: Required for personal persistent text conversations; reuse on retries. Text only when present.
         images:
           type: array
           items:
@@ -5250,6 +5273,33 @@ components:
         instructions:
           type: string
 
+    RespondRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+        command_id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,128}$'
+          description: Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
+    CommandReceipt:
+      type: object
+      required: [command_id, user_message_id, assistant_message_id, state, duplicate]
+      properties:
+        command_id:
+          type: string
+        user_message_id:
+          type: string
+        assistant_message_id:
+          type: string
+        state:
+          type: string
+          description: Latest locally recorded response state; an interrupted command is never automatically rerun.
+        duplicate:
+          type: boolean
+          description: True when this command already exists and no new inference was started.
     SayRequest:
       type: object
       required: [text]

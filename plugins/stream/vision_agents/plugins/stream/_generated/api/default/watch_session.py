@@ -87,12 +87,17 @@ def sync_detailed(
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
     `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
-    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
-    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
-    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
-    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
-    includes tool_call_id.
+    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
+    tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
+    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
+    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
+    started_at; tool_ran also includes tool_call_id.
+    A respond command carrying command_id emits command_accepted with a nested command receipt
+    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
+    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
+    After restart an interrupted command is reported, not rerun.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
@@ -153,12 +158,17 @@ def sync(
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
     `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
-    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
-    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
-    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
-    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
-    includes tool_call_id.
+    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
+    tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
+    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
+    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
+    started_at; tool_ran also includes tool_call_id.
+    A respond command carrying command_id emits command_accepted with a nested command receipt
+    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
+    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
+    After restart an interrupted command is reported, not rerun.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
@@ -214,12 +224,17 @@ async def asyncio_detailed(
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
     `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
-    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
-    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
-    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
-    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
-    includes tool_call_id.
+    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
+    tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
+    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
+    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
+    started_at; tool_ran also includes tool_call_id.
+    A respond command carrying command_id emits command_accepted with a nested command receipt
+    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
+    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
+    After restart an interrupted command is reported, not rerun.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
@@ -278,12 +293,17 @@ async def asyncio(
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
     `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
-    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
-    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
-    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
-    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
-    includes tool_call_id.
+    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
+    tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
+    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
+    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
+    started_at; tool_ran also includes tool_call_id.
+    A respond command carrying command_id emits command_accepted with a nested command receipt
+    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
+    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
+    After restart an interrupted command is reported, not rerun.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.

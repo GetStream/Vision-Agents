@@ -23,11 +23,14 @@ class SessionRespondCommand:
     Attributes:
         type_ (SessionRespondCommandType):
         text (str):
+        command_id (str | Unset): Required for personal persistent text conversations; reuse on retries. Text only when
+            present.
         images (list[ImageSource] | Unset):
     """
 
     type_: SessionRespondCommandType
     text: str
+    command_id: str | Unset = UNSET
     images: list[ImageSource] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -35,6 +38,8 @@ class SessionRespondCommand:
         type_ = self.type_.value
 
         text = self.text
+
+        command_id = self.command_id
 
         images: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.images, Unset):
@@ -51,6 +56,8 @@ class SessionRespondCommand:
                 "text": text,
             }
         )
+        if command_id is not UNSET:
+            field_dict["command_id"] = command_id
         if images is not UNSET:
             field_dict["images"] = images
 
@@ -65,6 +72,8 @@ class SessionRespondCommand:
 
         text = d.pop("text")
 
+        command_id = d.pop("command_id", UNSET)
+
         _images = d.pop("images", UNSET)
         images: list[ImageSource] | Unset = UNSET
         if _images is not UNSET:
@@ -77,6 +86,7 @@ class SessionRespondCommand:
         session_respond_command = cls(
             type_=type_,
             text=text,
+            command_id=command_id,
             images=images,
         )
 

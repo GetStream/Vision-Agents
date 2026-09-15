@@ -3060,6 +3060,76 @@ extension Components {
                 case instructions
             }
         }
+        /// - Remark: Generated from `#/components/schemas/RespondRequest`.
+        internal struct RespondRequest: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/RespondRequest/text`.
+            internal var text: Swift.String
+            /// Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
+            ///
+            /// - Remark: Generated from `#/components/schemas/RespondRequest/command_id`.
+            internal var commandId: Swift.String?
+            /// Creates a new `RespondRequest`.
+            ///
+            /// - Parameters:
+            ///   - text:
+            ///   - commandId: Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
+            internal init(
+                text: Swift.String,
+                commandId: Swift.String? = nil
+            ) {
+                self.text = text
+                self.commandId = commandId
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case text
+                case commandId = "command_id"
+            }
+        }
+        /// - Remark: Generated from `#/components/schemas/CommandReceipt`.
+        internal struct CommandReceipt: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/CommandReceipt/command_id`.
+            internal var commandId: Swift.String
+            /// - Remark: Generated from `#/components/schemas/CommandReceipt/user_message_id`.
+            internal var userMessageId: Swift.String
+            /// - Remark: Generated from `#/components/schemas/CommandReceipt/assistant_message_id`.
+            internal var assistantMessageId: Swift.String
+            /// Latest locally recorded response state; an interrupted command is never automatically rerun.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CommandReceipt/state`.
+            internal var state: Swift.String
+            /// True when this command already exists and no new inference was started.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CommandReceipt/duplicate`.
+            internal var duplicate: Swift.Bool
+            /// Creates a new `CommandReceipt`.
+            ///
+            /// - Parameters:
+            ///   - commandId:
+            ///   - userMessageId:
+            ///   - assistantMessageId:
+            ///   - state: Latest locally recorded response state; an interrupted command is never automatically rerun.
+            ///   - duplicate: True when this command already exists and no new inference was started.
+            internal init(
+                commandId: Swift.String,
+                userMessageId: Swift.String,
+                assistantMessageId: Swift.String,
+                state: Swift.String,
+                duplicate: Swift.Bool
+            ) {
+                self.commandId = commandId
+                self.userMessageId = userMessageId
+                self.assistantMessageId = assistantMessageId
+                self.state = state
+                self.duplicate = duplicate
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case commandId = "command_id"
+                case userMessageId = "user_message_id"
+                case assistantMessageId = "assistant_message_id"
+                case state
+                case duplicate
+            }
+        }
         /// - Remark: Generated from `#/components/schemas/SayRequest`.
         internal struct SayRequest: Codable, Hashable, Sendable {
             /// - Remark: Generated from `#/components/schemas/SayRequest/text`.

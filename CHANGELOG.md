@@ -2,6 +2,14 @@
 
 ## Breaking Changes
 
+### Personal persistent text submissions require a command ID
+
+Authenticated personal conversations require `command_id` on REST and WebSocket
+respond commands. Keep the ID and exact text across retries; changing the text under
+the same ID is a conflict. Swift callers can use `sendCommand(id:text:)`. Legacy
+backend-owned conversations keep their existing respond behavior. The local outbox
+now requires exclusive ownership of its directory; do not share it between routers.
+
 ### Source research belongs to the agent, and managed research sandboxes are gone
 
 An agent that reads source now owns its own Daytona VM and offers `investigate_sdk` as
@@ -174,6 +182,11 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 `description`.
 
 ## New Features
+
+- Persistent text commands return stable user/assistant message IDs and suppress
+  duplicate inference. Acceptance records both initial Chat writes and the command
+  mapping atomically. Restarted unfinished commands report interruption instead of
+  rerunning. Existing per-operation outboxes migrate to the versioned snapshot once.
 
 - Added the Go `meta` LLM provider for Muse Spark 1.3 through Meta's hosted API, with streamed text/usage, tool-result replay, reasoning-effort selection and cancellation. Applications opt in through their routing configuration using `META_API_KEY`.
 

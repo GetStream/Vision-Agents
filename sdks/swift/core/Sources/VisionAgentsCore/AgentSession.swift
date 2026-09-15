@@ -76,6 +76,12 @@ public final class AgentSession {
         try await socket.send(.respond(trimmed))
     }
 
+    /// Submit or retry a persistent text command without adding a second local row.
+    /// Keep the ID across reconnects; reconcile the receipt and Chat messages by ID.
+    public func sendCommand(id: String, text: String) async throws {
+        try await socket.send(.respondCommand(id: id, text: text))
+    }
+
     /// Speaks this without going through the model.
     public func say(_ text: String) async throws {
         try await socket.send(.say(text))
