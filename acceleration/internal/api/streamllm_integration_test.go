@@ -3,9 +3,13 @@
 package api
 
 import (
+	"bytes"
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +21,36 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
+
+// This opt-in fixture hosts only the fresh API handler on loopback. The Athena
+// probe owns its disposable sandbox, reverse transport, budgets and cleanup.
+func TestMetaDaytonaPiTask(t *testing.T) {
+	directory := os.Getenv("ATHENA_PI_PROBE_DIR")
+	if directory == "" || os.Getenv("META_API_KEY") == "" {
+		t.Skip("ATHENA_PI_PROBE_DIR and META_API_KEY required")
+	}
+	router, err := llmrouter.New(llmrouter.Options{Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{
+		Provider: "meta", Model: "muse-spark-1.3", Languages: []string{"en"}, Realtime: true, Tier: routing.HighQuality,
+	}}}, Registry: llmrouter.DefaultRegistry()})
+	require.NoError(t, err)
+	t.Cleanup(router.Close)
+	server, err := NewServer(Options{Routers: map[routing.Modality]routing.Inspector{routing.LLM: router}, Streams: &Streams{LLM: router}})
+	require.NoError(t, err)
+	endpoint := httptest.NewServer(server.Handler())
+	t.Cleanup(endpoint.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, "node", "--env-file=../../.env", "--import", "tsx", "src/daytona-probe.ts", "--offline-adapter", "--live-task")
+	command.Dir = directory
+	command.Env = append(os.Environ(), "ATHENA_TEST_ROUTER_WS=ws"+strings.TrimPrefix(endpoint.URL, "http")+"/v1/llm/stream")
+	var output bytes.Buffer
+	command.Stdout = io.MultiWriter(os.Stdout, &output)
+	command.Stderr = os.Stderr
+	require.NoError(t, command.Run())
+	require.Contains(t, output.String(), `"event":"live-pi-task-verified"`)
+	require.Contains(t, output.String(), `"event":"deletion-verified"`)
+	t.Log("Daytona Pi read/write task passed through acceleration and Muse; sandbox deletion verified")
+}
 
 func TestMetaSocketLiveToolReplay(t *testing.T) {
 	if os.Getenv("META_API_KEY") == "" {
