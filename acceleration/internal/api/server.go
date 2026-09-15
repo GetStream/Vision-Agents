@@ -441,9 +441,27 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 	})
 }
 
+// corsRequestHeaders are the request headers a browser may send.
+//
+// They cover both ways a caller proves itself, because one deployment's browser is not the
+// other's: reached through Stream's proxy a token arrives in Authorization with its kind
+// named in Stream-Auth-Type, while a deployment running without a proxy and without keys
+// names its tenant in X-Customer-Id instead. X-Stream-Client is what Stream's own clients
+// tag themselves with, and arrives whether or not anything here reads it.
+//
+// A preflight refuses any header it was not asked about, and the browser reports that as a
+// blocked request naming only the header, so a list covering one mode alone fails in a way
+// that looks like the origin was never allowed.
+const corsRequestHeaders = "Authorization, " + auth.AuthTypeHeader + ", " + auth.APIKeyHeader +
+	", X-Stream-Client, " + CustomerHeader + ", Content-Type"
+
+// corsMethods are the methods this API serves. PUT belongs here because a live session's
+// instructions are replaced with one; PATCH does not, because the spec serves none.
+const corsMethods = "GET, POST, PUT, DELETE, OPTIONS"
+
 // withCORS lets a browser at the API from the origins the deployment named.
 //
-// It exists for the dashboard, which talks to the router directly rather than through a
+// It exists for a browser app that talks to the router directly rather than through a
 // server of its own: an extra hop would only be there to move a header, and the router is
 // already the thing that decides who may read a call.
 func withCORS(allowed []string, next http.Handler) http.Handler {
@@ -462,8 +480,8 @@ func withCORS(allowed []string, next http.Handler) http.Handler {
 		if origin != "" && (named || anywhere) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", CustomerHeader+", Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", corsRequestHeaders)
+			w.Header().Set("Access-Control-Allow-Methods", corsMethods)
 			w.Header().Set("Access-Control-Max-Age", "600")
 		}
 		// A preflight asks whether the real request would be allowed and carries nothing

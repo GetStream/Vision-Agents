@@ -95,7 +95,7 @@ to play audio, or `-out` to write a file instead.
 | `ROUTER_BLOB_URL`       | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
-| `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless the dashboard is running. The same list decides which origins may open a socket |
+| `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless a browser app calls this deployment. The same list decides which origins may open a socket. A deployment reached through Stream's proxy needs the proxy to let a preflight through as well, since a browser cannot authenticate one |
 | `ROUTER_AUTH_MODE`      | `noauth` (default) or `api_key`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
@@ -114,10 +114,11 @@ to play audio, or `-out` to write a file instead.
 | `TELNYX_API_KEY`        | Telnyx credentials                                         |
 | `TELNYX_CONNECTION_ID`  | The Telnyx SIP connection numbers are routed over          |
 | `DEEPGRAM_API_KEY`      | Deepgram Flux credentials                                  |
-| `CARTESIA_API_KEY`      | Cartesia Sonic credentials                                 |
+| `CARTESIA_API_KEY`      | Cartesia credentials, used by Sonic and the Ink 2 transcriber |
 | `CARTESIA_VOICE_ID`     | Optional default voice; a built-in one is used when unset  |
-| `ELEVENLABS_API_KEY`    | ElevenLabs credentials                                     |
+| `ELEVENLABS_API_KEY`    | ElevenLabs credentials, used by the three voices and the Scribe v2 Realtime transcriber |
 | `ELEVENLABS_VOICE_ID`   | Optional default voice; a built-in one is used when unset  |
+| `INWORLD_API_KEY`       | Inworld credentials, used by TTS 2 Flash and the STT-1 transcriber |
 | `FISH_API_KEY`          | Fish Audio credentials                                     |
 | `FISH_VOICE_ID`         | Optional Fish reference id to clone a voice from           |
 | `OPENAI_API_KEY`        | OpenAI credentials                                         |

@@ -128,6 +128,25 @@ func (s *ServerSuite) TestANamedOriginMayReadTheApiAndSendTheCustomerHeader() {
 	s.Contains(recorder.Header().Get("Access-Control-Allow-Headers"), CustomerHeader)
 }
 
+// A browser reaching a proxied deployment proves itself with a token rather than by naming
+// a tenant, and a preflight turns any header it was not asked about into a blocked request.
+// Allowing only the header a keyless deployment uses is how direct browser access breaks
+// while looking like the origin was at fault.
+func (s *ServerSuite) TestANamedOriginMaySendTheCredentialsAProxiedDeploymentWants() {
+	allowed := s.origins("https://dash.example")
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodOptions, "/v1/agents/sessions", nil)
+	request.Header.Set("Origin", "https://dash.example")
+	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	allowed.ServeHTTP(recorder, request)
+
+	permitted := recorder.Header().Get("Access-Control-Allow-Headers")
+	for _, header := range []string{"Authorization", auth.AuthTypeHeader, auth.APIKeyHeader, "Content-Type"} {
+		s.Contains(permitted, header)
+	}
+}
+
 func (s *ServerSuite) TestAPreflightIsAnsweredWithoutReachingAHandler() {
 	allowed := s.origins("https://dash.example")
 
@@ -137,7 +156,9 @@ func (s *ServerSuite) TestAPreflightIsAnsweredWithoutReachingAHandler() {
 	allowed.ServeHTTP(recorder, request)
 
 	s.Equal(http.StatusNoContent, recorder.Code)
-	s.Contains(recorder.Header().Get("Access-Control-Allow-Methods"), http.MethodPatch)
+	// PUT is what replaces a live session's instructions, and a method missing from the
+	// preflight is a request the browser never sends.
+	s.Contains(recorder.Header().Get("Access-Control-Allow-Methods"), http.MethodPut)
 }
 
 func (s *ServerSuite) TestWithoutNamedOriginsNoBrowserIsLetIn() {
