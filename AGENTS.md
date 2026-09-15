@@ -1,5 +1,7 @@
 # AGENTS.md
 
+When running an agent using @acceleration/ or an example using @acceleration/ refer to the skill acceleration/development_skills/dashboard_skill.md to setup the dashboard and launch the example. Make sure you restart any routers or binaries to avoid running old builds.
+
 ## What is here
 
 | Path              | What it is                                                              |
