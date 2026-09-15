@@ -1129,33 +1129,24 @@ server-side only makes that check in its own handler rather than in the middlewa
   the next one is tried; a provider that keeps failing falls down the ranking.
 - **`customer_id` is a trusted header.** Real authentication is not part of this version.
 
-## Managed research sandboxes
+## Source research is the caller's, not the backend's
 
-`RESEARCH_PROFILES` names an operator-owned YAML file containing `profiles` with
-`name`, `customer_id`, `agent_id`, `image`, `model` and `repositories`. Each repository
-has `id`, HTTPS GitHub `url`, `product`, `sdk` and optional branch/tag `ref`.
-`image: build` requires `RESEARCH_WORKER_BINARY`, a Linux/amd64 build of
-`./cmd/research-worker`; it builds the pinned Cursor image through Daytona's SDK.
-`RESEARCH_DEPLOYMENT_ID` identifies the single backend process's owned resources.
+The backend holds no research workspaces. An agent that reads source owns its own
+Daytona VM and offers `investigate_sdk` as one of its own tools, which the session
+dispatches back to it like any other caller-owned tool. Nothing about the VM, the
+repositories it holds or the credentials it reads them with is the backend's to know.
 
-The optional `sandbox_profile` on configs and session requests selects one named
-profile and is checked against the authenticated customer and requested agent.
-It exposes `investigate_sdk` directly, with additive `research_progress` events
-(tool_call_id, phase, elapsed_ms, verified_citations). The Go SDK selects it with
-`agents.ManagedSandbox("support")`. Existing `agents.Daytona()` / `sandbox: daytona`
-continues to provide delegated Python execution.
+This is deliberate. The agent has to be told which repositories it may read and under
+whose Cursor and Daytona keys, and every one of those answers belongs to whoever
+deploys the agent rather than to whoever runs this router. A profile on an agent config
+could only ever be a copy of a decision made elsewhere.
 
-Profiles are prepared eagerly and kept until process shutdown. A single worker
-serializes research, with eight queue slots, fresh Cursor ACP sessions, a 60-second
-active deadline, exact source-quote validation and immutable commit citations.
-Changes require restart/rebuild; there is no per-request repository fetch. Same-host
-starts for the same deployment are locked; multi-host ownership is not supported.
-Private worker HTTP requires Daytona preview authentication and a separate random token.
-Clean shutdown waits for deletion; failures retain the sandbox identity for retry.
-The five-minute auto-stop is a crash fallback, not normal idle behavior.
+`agents.Daytona()` / `sandbox: daytona` is unaffected: that is delegated Python
+execution for code the subagent writes, and remains the backend's to run.
 
-See `../../artemis-impl` in the sibling workspace for the runnable support
-application, its two-repository configuration and the explicit docs compiler contract.
+See `../../artemis-impl` in the sibling workspace for an agent that does own one: the
+runnable support application, its repository catalog and the explicit docs compiler
+contract.
 
 ## Persistent text conversations
 
@@ -1188,7 +1179,7 @@ Pending data stays visibly unsaved and is overlaid on resumed history. Abandoned
 work is marked interrupted on restart. Stream credentials are required; Postgres
 and Redis are not. This implementation assumes one backend process owns the local
 outbox. Closing the last client of a persisted text session ends that session;
-the saved channel and managed research workspace remain available.
+the saved channel remains available.
 
 The Go SDK exposes `agents.ChatOptions{Persist: true, ConversationID: cid}`,
 `Session.ConversationID()`, `Session.ContextTruncated()`,

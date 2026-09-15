@@ -140,10 +140,6 @@ func TestActivityPersistsAndRestores(t *testing.T) {
 	c.Progress("one", "queued")
 	require.Equal(t, "queued", current(c).State)
 	require.Nil(t, current(c).Tools[0].ExecutionStartedAt)
-	c.Progress("one", "recovering_workspace")
-	require.Nil(t, current(c).Tools[0].ExecutionStartedAt)
-	c.Progress("one", "starting_worker")
-	require.Nil(t, current(c).Tools[0].ExecutionStartedAt)
 	c.Progress("one", "searching")
 	execAt := current(c).Tools[0].ExecutionStartedAt
 	require.NotNil(t, execAt)

@@ -108,8 +108,7 @@ type Spec struct {
 	KnowledgeNamespace string
 	// Sandbox names where the subagent may run code it writes, "daytona" being the one
 	// provider there is. Empty means it runs none, and works everything out in its head.
-	SandboxProfile string
-	Sandbox        string
+	Sandbox string
 	// Tools are what the voice model may do rather than say. These are the caller's own
 	// functions: the session carries the request out to whoever asked for the session
 	// and waits for them to answer it.
@@ -188,7 +187,6 @@ func FromConfig(config store.AgentConfig) Spec {
 		Keyterms:           config.Keyterms,
 		KnowledgeNamespace: config.KnowledgeNamespace,
 		Sandbox:            config.Sandbox,
-		SandboxProfile:     config.SandboxProfile,
 		Tags:               routing.Tags(config.Tags),
 	}
 }

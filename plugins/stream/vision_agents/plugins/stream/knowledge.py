@@ -27,7 +27,9 @@ class Knowledge:
         self.namespace = namespace
         self.backend = backend
 
-    async def add_url(self, url: str) -> KnowledgePage:
+    async def add_url(
+        self, url: str, title: str = "", description: str = ""
+    ) -> KnowledgePage:
         """Keep the knowledge base filled from a page published elsewhere.
 
         The page is read straight away and cut into passages the same way a document is,
@@ -37,6 +39,8 @@ class Knowledge:
 
         Args:
             url: The http or https address to read.
+            title: What to call the page. Defaults to what it calls itself.
+            description: What the page is, in the caller's own words.
 
         Returns:
             The page as stored, including how many passages it became and why it failed if
@@ -48,10 +52,13 @@ class Knowledge:
                 "from a stored config, e.g. Agent(config=...)"
             )
 
-        added = await add_knowledge_url.asyncio(
-            client=self.backend.client(),
-            body=KnowledgeUrlRequest(namespace=self.namespace, url=url),
-        )
+        body = KnowledgeUrlRequest(namespace=self.namespace, url=url)
+        if title:
+            body.title = title
+        if description:
+            body.description = description
+
+        added = await add_knowledge_url.asyncio(client=self.backend.client(), body=body)
         if isinstance(added, Error):
             raise RuntimeError(added.error)
         if added is None:

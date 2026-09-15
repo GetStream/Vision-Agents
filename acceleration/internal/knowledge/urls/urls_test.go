@@ -133,7 +133,7 @@ func (s *URLsSuite) SetupTest() {
 }
 
 func (s *URLsSuite) TestAddingAPageIndexesItAndStampsWhenItWasRead() {
-	page, err := s.service.Add(s.ctx, "acme", "docs", "https://example.com/pricing")
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
 	s.Require().NoError(err)
 
 	s.Equal(store.KnowledgeURLIndexed, page.State)
@@ -153,7 +153,7 @@ func (s *URLsSuite) TestAPageThatCouldNotBeReadIsKeptWithTheReason() {
 	// is not, on a row they can retry, is more use than refusing and forgetting.
 	s.reader.err = errors.New("CRAWL_NOT_FOUND")
 
-	page, err := s.service.Add(s.ctx, "acme", "docs", "https://example.com/gone")
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/gone"})
 	s.Require().NoError(err)
 
 	s.Equal(store.KnowledgeURLFailed, page.State)
@@ -164,7 +164,7 @@ func (s *URLsSuite) TestAPageThatCouldNotBeReadIsKeptWithTheReason() {
 }
 
 func (s *URLsSuite) TestRemovingAPageTakesItsPassagesWithIt() {
-	page, err := s.service.Add(s.ctx, "acme", "docs", "https://example.com/pricing")
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
 	s.Require().NoError(err)
 	s.Require().NotEmpty(s.base.ids())
 
@@ -177,7 +177,7 @@ func (s *URLsSuite) TestRemovingAPageTakesItsPassagesWithIt() {
 }
 
 func (s *URLsSuite) TestAPageThatGotShorterLeavesNoOrphans() {
-	page, err := s.service.Add(s.ctx, "acme", "docs", "https://example.com/pricing")
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
 	s.Require().NoError(err)
 	s.Require().Equal(2, page.Passages)
 
@@ -192,7 +192,7 @@ func (s *URLsSuite) TestAPageThatGotShorterLeavesNoOrphans() {
 }
 
 func (s *URLsSuite) TestReindexingRecordsWhenThePageWasLastRead() {
-	page, err := s.service.Add(s.ctx, "acme", "docs", "https://example.com/pricing")
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
 	s.Require().NoError(err)
 	first := *page.LastIndexedAt
 
@@ -204,7 +204,7 @@ func (s *URLsSuite) TestReindexingRecordsWhenThePageWasLastRead() {
 }
 
 func (s *URLsSuite) TestAPageThatBrokeKeepsTheDateItLastWorked() {
-	page, err := s.service.Add(s.ctx, "acme", "docs", "https://example.com/pricing")
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
 	s.Require().NoError(err)
 	worked := *page.LastIndexedAt
 
@@ -219,9 +219,9 @@ func (s *URLsSuite) TestAPageThatBrokeKeepsTheDateItLastWorked() {
 }
 
 func (s *URLsSuite) TestListingIsScopedToOneKnowledgeBase() {
-	_, err := s.service.Add(s.ctx, "acme", "docs", "https://example.com/pricing")
+	_, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
 	s.Require().NoError(err)
-	_, err = s.service.Add(s.ctx, "acme", "handbook", "https://example.com/leave")
+	_, err = s.service.Add(s.ctx, "acme", Subscription{Namespace: "handbook", URL: "https://example.com/leave"})
 	s.Require().NoError(err)
 
 	listed, err := s.service.List(s.ctx, "acme", "docs")
@@ -236,7 +236,7 @@ func (s *URLsSuite) TestListingIsScopedToOneKnowledgeBase() {
 }
 
 func (s *URLsSuite) TestAnotherCustomersPageIsNotThereToRead() {
-	page, err := s.service.Add(s.ctx, "acme", "docs", "https://example.com/pricing")
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
 	s.Require().NoError(err)
 
 	_, err = s.service.Get(s.ctx, "globex", page.ID)
@@ -246,7 +246,7 @@ func (s *URLsSuite) TestAnotherCustomersPageIsNotThereToRead() {
 
 func (s *URLsSuite) TestSomethingThatIsNotAFetchablePageIsRefused() {
 	for _, address := range []string{"", "  ", "not a url at all", "mailto:sales@example.com", "file:///etc/passwd"} {
-		_, err := s.service.Add(s.ctx, "acme", "docs", address)
+		_, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: address})
 		s.Errorf(err, "%q should not be stored as a page to crawl", address)
 	}
 
@@ -256,24 +256,51 @@ func (s *URLsSuite) TestSomethingThatIsNotAFetchablePageIsRefused() {
 }
 
 func (s *URLsSuite) TestKnowledgeIsNeverSharedSoANamespaceIsRequired() {
-	_, err := s.service.Add(s.ctx, "acme", "  ", "https://example.com/pricing")
+	_, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "  ", URL: "https://example.com/pricing"})
 
 	s.ErrorContains(err, "namespace")
 }
 
-func (s *URLsSuite) TestAddingTheSamePageTwiceIsRefusedRatherThanDuplicated() {
-	// Both copies would write the same passage ids, so the second row would be a
-	// subscription that removing the first one silently breaks.
-	_, err := s.service.Add(s.ctx, "acme", "docs", "https://example.com/pricing")
+func (s *URLsSuite) TestAddingTheSamePageAgainRereadsItRatherThanDuplicatingIt() {
+	// Two rows would write the same passage ids, so the second would be a subscription
+	// that removing the first one silently breaks. Re-reading instead is also what lets a
+	// declaration of what an agent reads be applied again as it stands.
+	first, err := s.service.Add(s.ctx, "acme",
+		Subscription{Namespace: "docs", URL: "https://example.com/pricing", Title: "Pricing"})
 	s.Require().NoError(err)
 
-	_, err = s.service.Add(s.ctx, "acme", "docs", "https://example.com/pricing")
+	again, err := s.service.Add(s.ctx, "acme",
+		Subscription{Namespace: "docs", URL: "https://example.com/pricing", Description: "What a call costs."})
+	s.Require().NoError(err)
 
-	s.Error(err)
+	s.Equal(first.ID, again.ID)
+	s.Equal("What a call costs.", again.Description, "the declaration is the one last written")
+	s.Empty(again.DeclaredTitle, "a page that no longer says what it is called does not keep the old name")
+
+	listed, err := s.service.List(s.ctx, "acme", "docs")
+	s.Require().NoError(err)
+	s.Len(listed, 1)
+}
+
+func (s *URLsSuite) TestWhatAPageWasSubscribedAsIsKeptThroughAReread() {
+	page, err := s.service.Add(s.ctx, "acme", Subscription{
+		Namespace: "docs", URL: "https://example.com/pricing",
+		Title: "What a call costs", Description: "The page sales points at.",
+	})
+	s.Require().NoError(err)
+
+	s.Equal("What a call costs", page.DeclaredTitle)
+	s.Equal("Pricing", page.Title, "what the page calls itself is kept apart from what it was filed as")
+
+	reindexed, err := s.service.Reindex(s.ctx, "acme", page.ID)
+	s.Require().NoError(err)
+
+	s.Equal("What a call costs", reindexed.DeclaredTitle, "a read must not overwrite the caller's words")
+	s.Equal("The page sales points at.", reindexed.Description)
 }
 
 func (s *URLsSuite) TestPassageIDsCoverExactlyWhatWasWritten() {
-	page, err := s.service.Add(s.ctx, "acme", "docs", "https://example.com/pricing")
+	page, err := s.service.Add(s.ctx, "acme", Subscription{Namespace: "docs", URL: "https://example.com/pricing"})
 	s.Require().NoError(err)
 
 	written := s.base.ids()

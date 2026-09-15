@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+	glamourstyles "github.com/charmbracelet/glamour/styles"
 )
 
 // conversationAt is a question and the answer being written to it, as the backend reports
@@ -192,6 +193,27 @@ func TestAnAnswerIsRenderedAsMarkdownAndKeptForTheNextFrame(t *testing.T) {
 	}
 	if len(m.cache) != 2 {
 		t.Errorf("the cache holds %d renders", len(m.cache))
+	}
+}
+
+// An answer still being written is re-rendered on every token, so building a renderer per
+// render is how the composer filled up with escape sequences: glamour's auto style asks
+// the terminal for its background colour each time one is built, and Bubble Tea, holding
+// the terminal by then, reads the reply as though it had been typed.
+func TestAStreamingAnswerBuildsOneRendererAndNeverAsksTheTerminal(t *testing.T) {
+	m := newModel(t, Options{})
+	answer := "Sunlight contains many colors. Passing through the atmosphere, the short ones scatter."
+	for i := range answer {
+		m.markdown(answer[:i+1], 70)
+	}
+	if len(m.renderers) != 1 {
+		t.Errorf("rendering one answer built %d renderers, each of them a terminal query", len(m.renderers))
+	}
+	if m.markdown(answer, 40); len(m.renderers) != 2 {
+		t.Errorf("a second width should build one more renderer, not %d", len(m.renderers))
+	}
+	if markdownStyle() == glamourstyles.AutoStyle {
+		t.Error("the style is glamour's auto style, which asks the terminal every time")
 	}
 }
 

@@ -72,6 +72,16 @@ func New(options Options) (*Service, error) {
 	}, nil
 }
 
+// Subscription is a page a knowledge base is to be kept filled from: the url, and what the
+// caller says it is. Title and Description are optional, and are theirs to write rather
+// than anything the page claims about itself.
+type Subscription struct {
+	Namespace   string
+	URL         string
+	Title       string
+	Description string
+}
+
 // Add subscribes a knowledge base to a page and reads it for the first time.
 //
 // The row is written before the page is fetched, so a read that dies halfway through
@@ -79,24 +89,35 @@ func New(options Options) (*Service, error) {
 // not be read is still a row, in the failed state with the reason on it: the caller asked
 // for this url to be part of the knowledge base, and telling them why it is not is more
 // use than refusing and forgetting.
-func (s *Service) Add(ctx context.Context, customerID, namespace, address string) (store.KnowledgeURL, error) {
-	namespace = strings.TrimSpace(namespace)
+//
+// A page the base already has is re-read rather than subscribed to twice, since the
+// subscription is the url and both would write the same passages anyway. That is what lets
+// a declaration of what an agent reads be applied again as it stands, without the caller
+// first working out which pages are new.
+func (s *Service) Add(ctx context.Context, customerID string, wanted Subscription) (store.KnowledgeURL, error) {
+	namespace := strings.TrimSpace(wanted.Namespace)
 	if namespace == "" {
 		return store.KnowledgeURL{}, errors.New("urls: a namespace is required, knowledge is never shared")
 	}
-	address, err := clean(address)
+	address, err := clean(wanted.URL)
 	if err != nil {
 		return store.KnowledgeURL{}, err
 	}
 
-	page := store.KnowledgeURL{
-		CustomerID: customerID,
-		Namespace:  namespace,
-		URL:        address,
-		State:      store.KnowledgeURLPending,
-	}
-	if err := s.store.CreateKnowledgeURL(ctx, &page); err != nil {
+	page, subscribed, err := s.store.SubscribedKnowledgeURL(ctx, customerID, namespace, address)
+	if err != nil {
 		return store.KnowledgeURL{}, err
+	}
+	page.DeclaredTitle = wanted.Title
+	page.Description = wanted.Description
+	if !subscribed {
+		page.CustomerID = customerID
+		page.Namespace = namespace
+		page.URL = address
+		page.State = store.KnowledgeURLPending
+		if err := s.store.CreateKnowledgeURL(ctx, &page); err != nil {
+			return store.KnowledgeURL{}, err
+		}
 	}
 	return s.index(ctx, page), nil
 }

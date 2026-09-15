@@ -47,7 +47,7 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 
 	result, err := s.db.NewUpdate().Model(config).
 		Column("name", "mode", "stt", "tts", "sts", "voice", "llm", "subagent", "subagents", "video_source", "video_max_frames", "search", "instructions",
-			"greeting", "skills", "plugins", "keyterms", "knowledge_namespace", "sandbox", "sandbox_profile", "tags",
+			"greeting", "skills", "plugins", "keyterms", "knowledge_namespace", "sandbox", "tags",
 			"sync_hash", "updated_at").
 		Where("id = ?", config.ID).
 		Where("customer_id = ?", config.CustomerID).

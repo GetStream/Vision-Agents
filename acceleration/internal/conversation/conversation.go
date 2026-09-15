@@ -544,7 +544,7 @@ func (c *Conversation) Progress(id, phase string) {
 		} else {
 			t.Status = "running"
 			c.state("tools")
-			if t.ExecutionStartedAt == nil && phase != "recovering_workspace" && phase != "starting_worker" {
+			if t.ExecutionStartedAt == nil {
 				now := time.Now().UTC()
 				t.ExecutionStartedAt = &now
 				c.save()

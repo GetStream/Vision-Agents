@@ -269,7 +269,6 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 	spec.Backchannel = override(spec.Backchannel, request.Backchannel)
 	spec.MinConfidence = override(spec.MinConfidence, request.MinConfidence)
 
-	spec.SandboxProfile = override(spec.SandboxProfile, request.SandboxProfile)
 	if request.Sandbox != nil {
 		spec.Sandbox = string(*request.Sandbox)
 	}

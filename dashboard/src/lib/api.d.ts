@@ -4,6 +4,60 @@
  */
 
 export interface paths {
+    "/v1/agents/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Latest structured agent logs, with backward cursor pagination */
+        get: operations["listAgentLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/logs/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read-only SSE of durable logs with replay
+         * @description logs events carry AgentLog arrays in ingestion order; checkpoint events advance the resume cursor; reset requires reloading history. Last-Event-ID resumes on reconnect. No agent controls are accepted.
+         */
+        get: operations["streamAgentLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/logs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Redacted structured log details scoped to the customer */
+        get: operations["getAgentLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -662,6 +716,7 @@ export interface paths {
          * Keep a knowledge base filled from a page
          * @description Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
          *     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+         *     Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         post: operations["addKnowledgeUrl"];
@@ -1409,6 +1464,36 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AgentLog: {
+            id: string;
+            cursor?: string;
+            config_id: string;
+            agent_id: string;
+            session_id: string;
+            user_id?: string;
+            /** @enum {string} */
+            source: "user" | "agent" | "tool" | "system";
+            /** @enum {string} */
+            severity: "info" | "error";
+            event_type: string;
+            message: string;
+            /** Format: date-time */
+            occurred_at: string;
+            /** Format: date-time */
+            ingested_at: string;
+            details?: {
+                [key: string]: unknown;
+            };
+        };
+        AgentLogPage: {
+            items: components["schemas"]["AgentLog"][];
+            has_more: boolean;
+            next_cursor: string;
+            resume_cursor: string;
+            /** Format: int64 */
+            dropped_logs: number;
+            coverage: string;
+        };
         Error: {
             error: string;
         };
@@ -2238,6 +2323,16 @@ export interface components {
              * @example https://example.com/pricing
              */
             url: string;
+            /**
+             * @description What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read.
+             * @example Pricing
+             */
+            title?: string;
+            /**
+             * @description What the page is, for a reader of the subscription. Optional, and kept as written: it says why this page is subscribed to, which a crawler cannot know.
+             * @example What each plan includes and where the limits are.
+             */
+            description?: string;
         };
         /**
          * @description Where the page has got to. Pending means it has been added but not yet read, which is also what a read that died halfway through leaves behind.
@@ -2248,8 +2343,10 @@ export interface components {
             id: string;
             namespace: string;
             url: string;
-            /** @description What the page called itself when it was last read. */
+            /** @description What the page is called: the title it was subscribed with, or what it called itself when it was last read. */
             title?: string;
+            /** @description What the page was subscribed as being. Empty unless it was given one. */
+            description?: string;
             state: components["schemas"]["KnowledgeUrlState"];
             /** @description Why the last read failed. Empty otherwise. */
             error?: string;
@@ -3150,6 +3247,129 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listAgentLogs: {
+        parameters: {
+            query?: {
+                config_id?: string;
+                session_id?: string;
+                user_id?: string;
+                severity?: "info" | "error";
+                /** @description Comma-separated user/agent/tool/system sources. */
+                source?: string;
+                q?: string;
+                from?: string;
+                to?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first; resume cursor marks the history/live handoff. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLogPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Log storage is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    streamAgentLogs: {
+        parameters: {
+            query?: {
+                config_id?: string;
+                session_id?: string;
+                user_id?: string;
+                severity?: "info" | "error";
+                /** @description Comma-separated user/agent/tool/system sources. */
+                source?: string;
+                q?: string;
+                from?: string;
+                to?: string;
+                cursor?: string;
+            };
+            header?: {
+                "Last-Event-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE events logs, checkpoint and reset. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Log storage is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getAgentLog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One log with full safe metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentLog"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Log storage is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     getHealth: {
         parameters: {
             query?: never;

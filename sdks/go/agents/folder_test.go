@@ -99,6 +99,74 @@ func TestNestedKnowledgeKeepsThePathItWasFoundAt(t *testing.T) {
 	}
 }
 
+func TestDeclaredPagesAreReadWithoutBeingIngested(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
+	write(t, root, "knowledge/urls.yaml", `- https://example.com/pricing
+- url: https://example.com/plans
+  title: Plans
+  description: What each plan includes.
+`)
+	// Only the one at the root is the declaration.
+	write(t, root, "knowledge/reference/urls.yaml", "the urls we used to have\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(folder.Knowledge) != 2 {
+		t.Fatalf("ingesting %+v", folder.Knowledge)
+	}
+	if folder.Knowledge[0].Source != "pricing.md" || folder.Knowledge[1].Source != "reference/urls.yaml" {
+		t.Errorf("the declaration is being looked things up in: %+v", folder.Knowledge)
+	}
+
+	if len(folder.KnowledgeURLs) != 2 {
+		t.Fatalf("read %+v", folder.KnowledgeURLs)
+	}
+	bare, described := folder.KnowledgeURLs[0], folder.KnowledgeURLs[1]
+	if bare.URL != "https://example.com/pricing" || bare.Title != "" || bare.Description != "" {
+		t.Errorf("a url on its own read as %+v", bare)
+	}
+	if described.URL != "https://example.com/plans" || described.Title != "Plans" ||
+		described.Description != "What each plan includes." {
+		t.Errorf("a described page read as %+v", described)
+	}
+}
+
+func TestADirectoryWithOnlyPagesHasSomewhereToLookThingsUpIn(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "knowledge/urls.yaml", "- https://example.com/pricing\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(folder.Knowledge) != 0 {
+		t.Errorf("ingesting %+v", folder.Knowledge)
+	}
+	if folder.KnowledgeNamespace() != "jean" {
+		t.Errorf("the namespace is %q, so the pages would be written where nothing reads them",
+			folder.KnowledgeNamespace())
+	}
+}
+
+func TestAPageThatCannotBeFetchedOrDescribedIsRefused(t *testing.T) {
+	for _, declaration := range []string{
+		"- example.com/pricing\n",
+		"- url: https://example.com/plans\n  heading: Plans\n",
+		"- [https://example.com/plans]\n",
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "knowledge/urls.yaml", declaration)
+
+		if _, err := Load(root); err == nil {
+			t.Errorf("accepted %q", declaration)
+		}
+	}
+}
+
 func TestASkillWithoutADescriptionIsRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
 	write(t, root, "skills/think.md", "Just a body, with nothing saying when to use it.\n")

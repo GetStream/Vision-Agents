@@ -143,6 +143,7 @@ agents/jean/
   instructions.md       the system prompt
   skills/think.md       frontmatter (name, description, deadline) and a body
   knowledge/*.md        what the agent may look things up in
+  knowledge/urls.yaml   pages to keep that filled from, as urls or url/title/description
 ```
 
 ```go
@@ -150,9 +151,10 @@ agent, _ := agents.New(agents.Options{Dir: "agents/jean", LLM: llm})
 agent.Sync(ctx)
 ```
 
-`Sync` stores the skills, fills a knowledge base named after the agent, and stores a config
-pointing at both. It finds each by name first, so running it twice edits what is there
-rather than storing another copy. What is written in code wins over what the directory says,
+`Sync` stores the skills, fills a knowledge base named after the agent from both its files
+and its pages, and stores a config pointing at all of it. It finds each by name first, and a
+page is keyed by its url, so running it twice edits and re-reads what is there rather than
+storing another copy. What is written in code wins over what the directory says,
 so a directory is a starting point rather than an override.
 
 ## Layout

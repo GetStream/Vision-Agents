@@ -27,6 +27,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 )
 
 const (
@@ -84,6 +85,9 @@ type Model struct {
 	input textarea.Model
 	view  viewport.Model
 	cache map[string]string
+	// renderers is one markdown renderer per wrap width. It outlives a resize, since a
+	// width already built for is the width the terminal may be returning to.
+	renderers map[int]*glamour.TermRenderer
 
 	// generation counts the sessions opened, so that what a session said after it was
 	// replaced is recognised and dropped.
@@ -135,6 +139,7 @@ func New(ctx context.Context, options Options) (*Model, error) {
 		input:          composer(branding, appearance),
 		view:           viewport.New(80, 15),
 		cache:          map[string]string{},
+		renderers:      map[int]*glamour.TermRenderer{},
 		conversationID: options.ConversationID,
 		status:         "Starting…",
 		// A size to draw at until the terminal says what it really is.

@@ -270,9 +270,8 @@ type AgentConfig struct {
 	KnowledgeNamespace string `bun:"knowledge_namespace,notnull"`
 	// Sandbox is where the subagent may run code it writes, "daytona" being the one
 	// provider there is. Empty means it runs none.
-	SandboxProfile string            `bun:"sandbox_profile,notnull"`
-	Sandbox        string            `bun:"sandbox,notnull"`
-	Tags           map[string]string `bun:"tags,type:jsonb"`
+	Sandbox string            `bun:"sandbox,notnull"`
+	Tags    map[string]string `bun:"tags,type:jsonb"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
@@ -456,6 +455,11 @@ type KnowledgeURL struct {
 	URL       string `bun:"url,notnull"`
 	// Title is what the page called itself, as of the last time it was read.
 	Title string `bun:"title,notnull"`
+	// DeclaredTitle and Description are what the subscription says the page is. They are
+	// the caller's words and are left alone by a read, which is why the title a page gives
+	// itself is kept apart from the one it was subscribed with.
+	DeclaredTitle string `bun:"declared_title,notnull"`
+	Description   string `bun:"description,notnull"`
 	// State is pending, indexed or failed.
 	State string `bun:"state,notnull"`
 	// Error is why the last read failed, and is empty otherwise.

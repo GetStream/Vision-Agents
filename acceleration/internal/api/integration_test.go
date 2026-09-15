@@ -639,6 +639,30 @@ func (s *APIIntegrationSuite) TestAKnowledgeUrlIsReadStoredAndListed() {
 	s.Equal("https://example.com/pricing", listed[0].Url)
 }
 
+func (s *APIIntegrationSuite) TestAPageIsNamedByWhatSubscribedToItRatherThanWhatItCallsItself() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/knowledge/urls",
+		`{"namespace":"docs","url":"https://example.com/pricing","title":"What a call costs","description":"The page sales points at."}`)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	var created KnowledgeUrl
+	s.Require().NoError(json.Unmarshal(payload, &created))
+	s.Require().NotNil(created.Title)
+	s.Equal("What a call costs", *created.Title, "the crawler called it Pricing")
+	s.Require().NotNil(created.Description)
+	s.Equal("The page sales points at.", *created.Description)
+
+	// The same declaration applied again is a re-read, so a caller with a file of pages
+	// does not have to work out which of them the base already has.
+	response, payload = s.do(http.MethodPost, "/v1/agents/knowledge/urls",
+		`{"namespace":"docs","url":"https://example.com/pricing","title":"What a call costs"}`)
+	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
+
+	var again KnowledgeUrl
+	s.Require().NoError(json.Unmarshal(payload, &again))
+	s.Equal(created.Id, again.Id)
+	s.Nil(again.Description)
+}
+
 func (s *APIIntegrationSuite) TestADeletedKnowledgeUrlIsNoLongerSubscribedTo() {
 	_, payload := s.do(http.MethodPost, "/v1/agents/knowledge/urls",
 		`{"namespace":"docs","url":"https://example.com/pricing"}`)

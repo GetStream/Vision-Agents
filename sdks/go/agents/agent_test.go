@@ -22,6 +22,7 @@ type backend struct {
 	configs   []acceleration.AgentConfig
 	skills    []acceleration.Skill
 	knowledge []acceleration.IngestKnowledgeRequest
+	pages     []acceleration.KnowledgeUrlRequest
 	updates   []string
 }
 
@@ -113,6 +114,20 @@ func newBackend(t *testing.T) *backend {
 			Passages: len(request.Documents),
 		})
 	})
+	mux.HandleFunc("POST /v1/agents/knowledge/urls", func(w http.ResponseWriter, r *http.Request) {
+		var request acceleration.KnowledgeUrlRequest
+		_ = json.NewDecoder(r.Body).Decode(&request)
+
+		router.mu.Lock()
+		defer router.mu.Unlock()
+		router.pages = append(router.pages, request)
+		reply(w, http.StatusCreated, acceleration.KnowledgeUrl{
+			Id: "page-" + request.Url, Namespace: request.Namespace, Url: request.Url,
+			Title: request.Title, Description: request.Description,
+			State: acceleration.KnowledgeUrlStateIndexed, Passages: 1,
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		})
+	})
 
 	router.Server = httptest.NewServer(mux)
 	t.Cleanup(router.Close)
@@ -191,6 +206,7 @@ func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 	write(t, root, "instructions.md", "You are Jean.\n")
 	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
 	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
+	write(t, root, "knowledge/urls.yaml", "- url: https://example.com/plans\n  title: Plans\n")
 
 	router := newBackend(t)
 	agent := agentOn(t, router, Options{Dir: root})
@@ -211,6 +227,17 @@ func TestSyncPushesADirectorysSkillsAndKnowledge(t *testing.T) {
 	}
 	if router.knowledge[0].Namespace != "jean" {
 		t.Errorf("the knowledge went to %q", router.knowledge[0].Namespace)
+	}
+	// Files and pages share the namespace, so one lookup covers both.
+	if len(router.pages) != 1 {
+		t.Fatalf("the pages subscribed are %+v", router.pages)
+	}
+	page := router.pages[0]
+	if page.Namespace != "jean" || page.Url != "https://example.com/plans" {
+		t.Errorf("the page subscribed is %+v", page)
+	}
+	if page.Title == nil || *page.Title != "Plans" || page.Description != nil {
+		t.Errorf("the declaration reached the router as %+v", page)
 	}
 	if stored.KnowledgeNamespace == nil || *stored.KnowledgeNamespace != "jean" {
 		t.Errorf("the config does not point at the knowledge: %+v", stored)

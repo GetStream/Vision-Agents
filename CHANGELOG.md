@@ -2,6 +2,27 @@
 
 ## Breaking Changes
 
+### Source research belongs to the agent, and managed research sandboxes are gone
+
+An agent that reads source now owns its own Daytona VM and offers `investigate_sdk` as
+one of its own tools, which the session dispatches back to it like any other caller-owned
+tool. The backend holds no research workspaces and needs neither a Daytona nor a Cursor
+key to serve one.
+
+Removed: `sandbox_profile` on agent configs and session requests, the `agent_configs`
+column behind it, `RESEARCH_PROFILES` and `RESEARCH_DEPLOYMENT_ID`, the backend's
+`investigate_sdk` and its `research_progress` events, and `agents.ManagedSandbox` in the
+Go SDK. An agent that set a profile should register the tool itself instead; the reserved
+name that used to refuse it is gone too.
+
+The reason is ownership rather than tidiness. Which repositories an agent may read, and
+whose Cursor and Daytona keys it reads them with, are decisions belonging to whoever
+deploys the agent; a profile on a config could only ever be a copy of one made elsewhere,
+checked against a customer and agent id to guess at who was allowed to use it.
+
+`agents.Daytona()` / `sandbox: daytona` is unaffected. That is delegated Python execution
+for code the subagent writes, and remains the backend's to run.
+
 ### The Go SDK authenticates with a Stream app, and `Backend.Headers` is now `Credentials`
 
 A hosted router sits behind a proxy that verifies a Stream app rather than trusting a
@@ -153,6 +174,31 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 `description`.
 
 ## New Features
+
+### An agent directory declares the pages it reads, in `knowledge/urls.yaml`
+
+An agent folder can name the pages its knowledge base is kept filled from, alongside the
+files it is filled from directly. An entry is a url, or a url with what to call the page
+and what it is:
+
+```yaml
+# jean/knowledge/urls.yaml
+- https://example.com/pricing
+- url: https://example.com/plans
+  title: Plans
+  description: What each plan includes and where the limits are.
+```
+
+`agents.Load` reads it into `Folder.KnowledgeURLs` and leaves it out of the documents it
+ingests, and `Sync` subscribes the pages to the same namespace the directory's files go to,
+so one lookup covers both. `agents.SubscribeKnowledgeURLs` does it on its own for an
+application that fills a base under a namespace of its own choosing.
+
+`POST /v1/agents/knowledge/urls` takes an optional `title` and `description`, kept as the
+caller wrote them: a declared title is what the page is reported as, and what it calls
+itself is the fallback. Adding a page a knowledge base already has now re-reads it rather
+than being refused, so a declaration can be applied again without first working out which
+pages are new. In Python, `agent.knowledge.add_url(url, title=..., description=...)`.
 
 ### A terminal UI for a conversation, in `tui/`
 

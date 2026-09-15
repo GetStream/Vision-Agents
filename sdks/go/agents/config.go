@@ -27,9 +27,12 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 	}
 
 	namespace := ""
-	if a.folder != nil && len(a.folder.Knowledge) > 0 {
+	if a.folder != nil {
 		namespace = a.folder.KnowledgeNamespace()
 		if err := IngestKnowledge(ctx, client, namespace, a.folder.Knowledge); err != nil {
+			return nil, err
+		}
+		if err := SubscribeKnowledgeURLs(ctx, client, namespace, a.folder.KnowledgeURLs); err != nil {
 			return nil, err
 		}
 	}
@@ -181,6 +184,32 @@ func IngestKnowledge(
 	}
 	_, err = answer(written.JSON200, written.JSON400, written.JSON401, nil, written.Status())
 	return err
+}
+
+// SubscribeKnowledgeURLs keeps a knowledge base filled from the pages a directory declares.
+//
+// A page is subscribed by url, so this is safe to call with the same declaration again: the
+// backend re-reads a page it already has rather than storing a second copy of it.
+func SubscribeKnowledgeURLs(
+	ctx context.Context,
+	client *acceleration.ClientWithResponses,
+	namespace string,
+	pages []KnowledgeURL,
+) error {
+	for _, page := range pages {
+		body := acceleration.KnowledgeUrlRequest{Namespace: namespace, Url: page.URL}
+		setString(&body.Title, page.Title)
+		setString(&body.Description, page.Description)
+
+		added, err := client.AddKnowledgeUrlWithResponse(ctx, body)
+		if err != nil {
+			return fmt.Errorf("agents: reading %s: %w", page.URL, err)
+		}
+		if _, err := answer(added.JSON201, added.JSON400, added.JSON401, added.JSON403, added.Status()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // answer returns what the router sent, raising what it said went wrong instead.

@@ -26,7 +26,9 @@ class KnowledgeUrl:
         passages (int): How many passages the page was last cut into.
         created_at (datetime.datetime):
         updated_at (datetime.datetime):
-        title (str | Unset): What the page called itself when it was last read.
+        title (str | Unset): What the page is called: the title it was subscribed with, or what it called itself when it
+            was last read.
+        description (str | Unset): What the page was subscribed as being. Empty unless it was given one.
         error (str | Unset): Why the last read failed. Empty otherwise.
         last_indexed_at (datetime.datetime | None | Unset): When it was last read successfully. Absent means never,
             which is what separates a page that has never worked from one that worked and has since broken.
@@ -40,6 +42,7 @@ class KnowledgeUrl:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     title: str | Unset = UNSET
+    description: str | Unset = UNSET
     error: str | Unset = UNSET
     last_indexed_at: datetime.datetime | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -60,6 +63,8 @@ class KnowledgeUrl:
         updated_at = self.updated_at.isoformat()
 
         title = self.title
+
+        description = self.description
 
         error = self.error
 
@@ -86,6 +91,8 @@ class KnowledgeUrl:
         )
         if title is not UNSET:
             field_dict["title"] = title
+        if description is not UNSET:
+            field_dict["description"] = description
         if error is not UNSET:
             field_dict["error"] = error
         if last_indexed_at is not UNSET:
@@ -111,6 +118,8 @@ class KnowledgeUrl:
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         title = d.pop("title", UNSET)
+
+        description = d.pop("description", UNSET)
 
         error = d.pop("error", UNSET)
 
@@ -140,6 +149,7 @@ class KnowledgeUrl:
             created_at=created_at,
             updated_at=updated_at,
             title=title,
+            description=description,
             error=error,
             last_indexed_at=last_indexed_at,
         )

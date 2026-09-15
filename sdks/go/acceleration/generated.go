@@ -17,6 +17,48 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for AgentLogSeverity.
+const (
+	AgentLogSeverityError AgentLogSeverity = "error"
+	AgentLogSeverityInfo  AgentLogSeverity = "info"
+)
+
+// Valid indicates whether the value is a known member of the AgentLogSeverity enum.
+func (e AgentLogSeverity) Valid() bool {
+	switch e {
+	case AgentLogSeverityError:
+		return true
+	case AgentLogSeverityInfo:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AgentLogSource.
+const (
+	Agent  AgentLogSource = "agent"
+	System AgentLogSource = "system"
+	Tool   AgentLogSource = "tool"
+	User   AgentLogSource = "user"
+)
+
+// Valid indicates whether the value is a known member of the AgentLogSource enum.
+func (e AgentLogSource) Valid() bool {
+	switch e {
+	case Agent:
+		return true
+	case System:
+		return true
+	case Tool:
+		return true
+	case User:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentMode.
 const (
 	AgentModeText  AgentMode = "text"
@@ -851,6 +893,42 @@ func (e VoiceBindingState) Valid() bool {
 	}
 }
 
+// Defines values for ListAgentLogsParamsSeverity.
+const (
+	ListAgentLogsParamsSeverityError ListAgentLogsParamsSeverity = "error"
+	ListAgentLogsParamsSeverityInfo  ListAgentLogsParamsSeverity = "info"
+)
+
+// Valid indicates whether the value is a known member of the ListAgentLogsParamsSeverity enum.
+func (e ListAgentLogsParamsSeverity) Valid() bool {
+	switch e {
+	case ListAgentLogsParamsSeverityError:
+		return true
+	case ListAgentLogsParamsSeverityInfo:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamAgentLogsParamsSeverity.
+const (
+	StreamAgentLogsParamsSeverityError StreamAgentLogsParamsSeverity = "error"
+	StreamAgentLogsParamsSeverityInfo  StreamAgentLogsParamsSeverity = "info"
+)
+
+// Valid indicates whether the value is a known member of the StreamAgentLogsParamsSeverity enum.
+func (e StreamAgentLogsParamsSeverity) Valid() bool {
+	switch e {
+	case StreamAgentLogsParamsSeverityError:
+		return true
+	case StreamAgentLogsParamsSeverityInfo:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListSimulationRunsParamsState.
 const (
 	ListSimulationRunsParamsStateCancelled ListSimulationRunsParamsState = "cancelled"
@@ -894,12 +972,9 @@ type AgentConfig struct {
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox `json:"sandbox,omitempty"`
-
-	// SandboxProfile Backend-managed research profile, scoped to this customer and agent.
-	SandboxProfile *string   `json:"sandbox_profile,omitempty"`
-	Search         *string   `json:"search,omitempty"`
-	Skills         *[]string `json:"skills,omitempty"`
+	Sandbox *Sandbox  `json:"sandbox,omitempty"`
+	Search  *string   `json:"search,omitempty"`
+	Skills  *[]string `json:"skills,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string `json:"sts,omitempty"`
@@ -944,9 +1019,6 @@ type AgentConfigRequest struct {
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxProfile Backend-managed research profile, scoped to this customer and agent.
-	SandboxProfile *string `json:"sandbox_profile,omitempty"`
-
 	// Search What the agent finds out today's answers with, as a provider/model or a capability shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
 	Search *string `json:"search,omitempty"`
 
@@ -972,6 +1044,39 @@ type AgentConfigRequest struct {
 
 	// Voice Provider-specific voice id.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// AgentLog defines model for AgentLog.
+type AgentLog struct {
+	AgentId    string                  `json:"agent_id"`
+	ConfigId   string                  `json:"config_id"`
+	Cursor     *string                 `json:"cursor,omitempty"`
+	Details    *map[string]interface{} `json:"details,omitempty"`
+	EventType  string                  `json:"event_type"`
+	Id         string                  `json:"id"`
+	IngestedAt time.Time               `json:"ingested_at"`
+	Message    string                  `json:"message"`
+	OccurredAt time.Time               `json:"occurred_at"`
+	SessionId  string                  `json:"session_id"`
+	Severity   AgentLogSeverity        `json:"severity"`
+	Source     AgentLogSource          `json:"source"`
+	UserId     *string                 `json:"user_id,omitempty"`
+}
+
+// AgentLogSeverity defines model for AgentLog.Severity.
+type AgentLogSeverity string
+
+// AgentLogSource defines model for AgentLog.Source.
+type AgentLogSource string
+
+// AgentLogPage defines model for AgentLogPage.
+type AgentLogPage struct {
+	Coverage     string     `json:"coverage"`
+	DroppedLogs  int64      `json:"dropped_logs"`
+	HasMore      bool       `json:"has_more"`
+	Items        []AgentLog `json:"items"`
+	NextCursor   string     `json:"next_cursor"`
+	ResumeCursor string     `json:"resume_cursor"`
 }
 
 // AgentMode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
@@ -1309,9 +1414,6 @@ type CreateSessionRequest struct {
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
 
-	// SandboxProfile Backend-managed research profile, scoped to this customer and agent.
-	SandboxProfile *string `json:"sandbox_profile,omitempty"`
-
 	// Search Omit it and the config decides, or search-fast when there is no config.
 	Search *string `json:"search,omitempty"`
 
@@ -1460,6 +1562,9 @@ type KnowledgeDocument struct {
 type KnowledgeUrl struct {
 	CreatedAt time.Time `json:"created_at"`
 
+	// Description What the page was subscribed as being. Empty unless it was given one.
+	Description *string `json:"description,omitempty"`
+
 	// Error Why the last read failed. Empty otherwise.
 	Error *string `json:"error,omitempty"`
 	Id    string  `json:"id"`
@@ -1474,7 +1579,7 @@ type KnowledgeUrl struct {
 	// State Where the page has got to. Pending means it has been added but not yet read, which is also what a read that died halfway through leaves behind.
 	State KnowledgeUrlState `json:"state"`
 
-	// Title What the page called itself when it was last read.
+	// Title What the page is called: the title it was subscribed with, or what it called itself when it was last read.
 	Title     *string   `json:"title,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Url       string    `json:"url"`
@@ -1482,11 +1587,23 @@ type KnowledgeUrl struct {
 
 // KnowledgeUrlRequest defines model for KnowledgeUrlRequest.
 type KnowledgeUrlRequest struct {
+	// Description What the page is, for a reader of the subscription. Optional, and kept as written: it says why this page is subscribed to, which a crawler cannot know.
+	//
+	//
+	// Example: What each plan includes and where the limits are.
+	Description *string `json:"description,omitempty"`
+
 	// Namespace The knowledge base to fill, which is what a config's knowledge_namespace names.
 	//
 	//
 	// Example: docs
 	Namespace string `json:"namespace"`
+
+	// Title What to call the page, for a reader of the subscription. Optional: a page that is not named here is named by what it called itself when it was last read.
+	//
+	//
+	// Example: Pricing
+	Title *string `json:"title,omitempty"`
 
 	// Url The page to read. It must be http or https: this is handed to a crawler and then used to key the passages it becomes.
 	//
@@ -2450,12 +2567,9 @@ type SyncAgentRequest struct {
 	Plugins *[]string `json:"plugins,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
-	Sandbox *Sandbox `json:"sandbox,omitempty"`
-
-	// SandboxProfile Backend-managed research profile, scoped to this customer and agent.
-	SandboxProfile *string         `json:"sandbox_profile,omitempty"`
-	Search         *string         `json:"search,omitempty"`
-	Skills         *[]SkillRequest `json:"skills,omitempty"`
+	Sandbox *Sandbox        `json:"sandbox,omitempty"`
+	Search  *string         `json:"search,omitempty"`
+	Skills  *[]SkillRequest `json:"skills,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
 	Sts      *string `json:"sts,omitempty"`
@@ -2858,6 +2972,44 @@ type ListKnowledgeUrlsParams struct {
 	// Namespace One knowledge base. Omit to list every page the customer has.
 	Namespace *string `form:"namespace,omitempty" json:"namespace,omitempty"`
 }
+
+// ListAgentLogsParams defines parameters for ListAgentLogs.
+type ListAgentLogsParams struct {
+	ConfigId  *string                      `form:"config_id,omitempty" json:"config_id,omitempty"`
+	SessionId *string                      `form:"session_id,omitempty" json:"session_id,omitempty"`
+	UserId    *string                      `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Severity  *ListAgentLogsParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
+
+	// Source Comma-separated user/agent/tool/system sources.
+	Source *string    `form:"source,omitempty" json:"source,omitempty"`
+	Q      *string    `form:"q,omitempty" json:"q,omitempty"`
+	From   *time.Time `form:"from,omitempty" json:"from,omitempty"`
+	To     *time.Time `form:"to,omitempty" json:"to,omitempty"`
+	Cursor *string    `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListAgentLogsParamsSeverity defines parameters for ListAgentLogs.
+type ListAgentLogsParamsSeverity string
+
+// StreamAgentLogsParams defines parameters for StreamAgentLogs.
+type StreamAgentLogsParams struct {
+	ConfigId  *string                        `form:"config_id,omitempty" json:"config_id,omitempty"`
+	SessionId *string                        `form:"session_id,omitempty" json:"session_id,omitempty"`
+	UserId    *string                        `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Severity  *StreamAgentLogsParamsSeverity `form:"severity,omitempty" json:"severity,omitempty"`
+
+	// Source Comma-separated user/agent/tool/system sources.
+	Source      *string    `form:"source,omitempty" json:"source,omitempty"`
+	Q           *string    `form:"q,omitempty" json:"q,omitempty"`
+	From        *time.Time `form:"from,omitempty" json:"from,omitempty"`
+	To          *time.Time `form:"to,omitempty" json:"to,omitempty"`
+	Cursor      *string    `form:"cursor,omitempty" json:"cursor,omitempty"`
+	LastEventID *string    `json:"Last-Event-ID,omitempty"`
+}
+
+// StreamAgentLogsParamsSeverity defines parameters for StreamAgentLogs.
+type StreamAgentLogsParamsSeverity string
 
 // ListPluginsParams defines parameters for ListPlugins.
 type ListPluginsParams struct {
@@ -3537,6 +3689,7 @@ type ClientInterface interface {
 	//
 	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
 	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -3548,6 +3701,7 @@ type ClientInterface interface {
 	//
 	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
 	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
@@ -3575,6 +3729,23 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
 	IndexKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAgentLogs Latest structured agent logs, with backward cursor pagination
+	//
+	// Corresponds with GET /v1/agents/logs (the `ListAgentLogs` operationId).
+	ListAgentLogs(ctx context.Context, params *ListAgentLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StreamAgentLogs Read-only SSE of durable logs with replay
+	//
+	// logs events carry AgentLog arrays in ingestion order; checkpoint events advance the resume cursor; reset requires reloading history. Last-Event-ID resumes on reconnect. No agent controls are accepted.
+	//
+	// Corresponds with GET /v1/agents/logs/stream (the `StreamAgentLogs` operationId).
+	StreamAgentLogs(ctx context.Context, params *StreamAgentLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAgentLog Redacted structured log details scoped to the customer
+	//
+	// Corresponds with GET /v1/agents/logs/{id} (the `GetAgentLog` operationId).
+	GetAgentLog(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListPlugins The hosted MCP servers an agent may attach
 	//
@@ -4840,6 +5011,7 @@ func (c *Client) ListKnowledgeUrls(ctx context.Context, params *ListKnowledgeUrl
 //
 // Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
 // The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -4861,6 +5033,7 @@ func (c *Client) AddKnowledgeUrlWithBody(ctx context.Context, contentType string
 //
 // Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
 // The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
@@ -4919,6 +5092,53 @@ func (c *Client) GetKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors 
 // Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
 func (c *Client) IndexKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewIndexKnowledgeUrlRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAgentLogs Latest structured agent logs, with backward cursor pagination
+//
+// Corresponds with GET /v1/agents/logs (the `ListAgentLogs` operationId).
+func (c *Client) ListAgentLogs(ctx context.Context, params *ListAgentLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAgentLogsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StreamAgentLogs Read-only SSE of durable logs with replay
+//
+// logs events carry AgentLog arrays in ingestion order; checkpoint events advance the resume cursor; reset requires reloading history. Last-Event-ID resumes on reconnect. No agent controls are accepted.
+//
+// Corresponds with GET /v1/agents/logs/stream (the `StreamAgentLogs` operationId).
+func (c *Client) StreamAgentLogs(ctx context.Context, params *StreamAgentLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamAgentLogsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAgentLog Redacted structured log details scoped to the customer
+//
+// Corresponds with GET /v1/agents/logs/{id} (the `GetAgentLog` operationId).
+func (c *Client) GetAgentLog(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAgentLogRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -7639,6 +7859,367 @@ func NewIndexKnowledgeUrlRequest(server string, id ResourceID) (*http.Request, e
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListAgentLogsRequest constructs an http.Request for the ListAgentLogs method
+func NewListAgentLogsRequest(server string, params *ListAgentLogsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/logs")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ConfigId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "config_id", *params.ConfigId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.SessionId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "session_id", *params.SessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.UserId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Severity != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "severity", *params.Severity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Source != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "source", *params.Source, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.From != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.To != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStreamAgentLogsRequest constructs an http.Request for the StreamAgentLogs method
+func NewStreamAgentLogsRequest(server string, params *StreamAgentLogsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/logs/stream")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ConfigId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "config_id", *params.ConfigId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.SessionId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "session_id", *params.SessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.UserId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Severity != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "severity", *params.Severity, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Source != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "source", *params.Source, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.From != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "from", *params.From, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.To != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "to", *params.To, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.LastEventID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Last-Event-ID", *params.LastEventID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Last-Event-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetAgentLogRequest constructs an http.Request for the GetAgentLog method
+func NewGetAgentLogRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/logs/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -10583,6 +11164,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
 	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -10594,6 +11176,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
 	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -10627,6 +11210,29 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
 	IndexKnowledgeUrlWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*IndexKnowledgeUrlResponse, error)
+
+	// ListAgentLogsWithResponse Latest structured agent logs, with backward cursor pagination
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/logs (the `ListAgentLogs` operationId).
+	ListAgentLogsWithResponse(ctx context.Context, params *ListAgentLogsParams, reqEditors ...RequestEditorFn) (*ListAgentLogsResponse, error)
+
+	// StreamAgentLogsWithResponse Read-only SSE of durable logs with replay
+	//
+	// logs events carry AgentLog arrays in ingestion order; checkpoint events advance the resume cursor; reset requires reloading history. Last-Event-ID resumes on reconnect. No agent controls are accepted.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/logs/stream (the `StreamAgentLogs` operationId).
+	StreamAgentLogsWithResponse(ctx context.Context, params *StreamAgentLogsParams, reqEditors ...RequestEditorFn) (*StreamAgentLogsResponse, error)
+
+	// GetAgentLogWithResponse Redacted structured log details scoped to the customer
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/logs/{id} (the `GetAgentLog` operationId).
+	GetAgentLogWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentLogResponse, error)
 
 	// ListPluginsWithResponse The hosted MCP servers an agent may attach
 	//
@@ -13185,6 +13791,206 @@ func (r IndexKnowledgeUrlResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r IndexKnowledgeUrlResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListAgentLogsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentLogPage
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAgentLogsResponse) GetJSON200() *AgentLogPage {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListAgentLogsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListAgentLogsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListAgentLogsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ListAgentLogsResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAgentLogsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAgentLogsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAgentLogsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAgentLogsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StreamAgentLogsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r StreamAgentLogsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StreamAgentLogsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r StreamAgentLogsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r StreamAgentLogsResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r StreamAgentLogsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StreamAgentLogsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StreamAgentLogsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StreamAgentLogsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetAgentLogResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentLog
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAgentLogResponse) GetJSON200() *AgentLog {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetAgentLogResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAgentLogResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetAgentLogResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetAgentLogResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAgentLogResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAgentLogResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAgentLogResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAgentLogResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -17084,6 +17890,7 @@ func (c *ClientWithResponses) ListKnowledgeUrlsWithResponse(ctx context.Context,
 //
 // Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
 // The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -17101,6 +17908,7 @@ func (c *ClientWithResponses) AddKnowledgeUrlWithBodyWithResponse(ctx context.Co
 //
 // Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
 // The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -17157,6 +17965,47 @@ func (c *ClientWithResponses) IndexKnowledgeUrlWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseIndexKnowledgeUrlResponse(rsp)
+}
+
+// ListAgentLogsWithResponse Latest structured agent logs, with backward cursor pagination
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/logs (the `ListAgentLogs` operationId).
+func (c *ClientWithResponses) ListAgentLogsWithResponse(ctx context.Context, params *ListAgentLogsParams, reqEditors ...RequestEditorFn) (*ListAgentLogsResponse, error) {
+	rsp, err := c.ListAgentLogs(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAgentLogsResponse(rsp)
+}
+
+// StreamAgentLogsWithResponse Read-only SSE of durable logs with replay
+//
+// logs events carry AgentLog arrays in ingestion order; checkpoint events advance the resume cursor; reset requires reloading history. Last-Event-ID resumes on reconnect. No agent controls are accepted.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/logs/stream (the `StreamAgentLogs` operationId).
+func (c *ClientWithResponses) StreamAgentLogsWithResponse(ctx context.Context, params *StreamAgentLogsParams, reqEditors ...RequestEditorFn) (*StreamAgentLogsResponse, error) {
+	rsp, err := c.StreamAgentLogs(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamAgentLogsResponse(rsp)
+}
+
+// GetAgentLogWithResponse Redacted structured log details scoped to the customer
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/logs/{id} (the `GetAgentLog` operationId).
+func (c *ClientWithResponses) GetAgentLogWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentLogResponse, error) {
+	rsp, err := c.GetAgentLog(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAgentLogResponse(rsp)
 }
 
 // ListPluginsWithResponse The hosted MCP servers an agent may attach
@@ -19760,6 +20609,161 @@ func ParseIndexKnowledgeUrlResponse(rsp *http.Response) (*IndexKnowledgeUrlRespo
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListAgentLogsResponse parses an HTTP response from a ListAgentLogsWithResponse call
+func ParseListAgentLogsResponse(rsp *http.Response) (*ListAgentLogsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAgentLogsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentLogPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStreamAgentLogsResponse parses an HTTP response from a StreamAgentLogsWithResponse call
+func ParseStreamAgentLogsResponse(rsp *http.Response) (*StreamAgentLogsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StreamAgentLogsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAgentLogResponse parses an HTTP response from a GetAgentLogWithResponse call
+func ParseGetAgentLogResponse(rsp *http.Response) (*GetAgentLogResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAgentLogResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentLog
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 

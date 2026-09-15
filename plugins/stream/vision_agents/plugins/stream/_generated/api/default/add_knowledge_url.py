@@ -84,6 +84,9 @@ def sync_detailed(
     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
     endpoints around it. A page that could not be read is still stored, in the failed state with the
     reason on it, rather than refused and forgotten.
+    Adding a page a knowledge base already has is a re-read of it rather than a second copy: the
+    subscription is the url, so a declaration of what an agent reads can be applied again without being
+    diffed first.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -122,6 +125,9 @@ def sync(
     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
     endpoints around it. A page that could not be read is still stored, in the failed state with the
     reason on it, rather than refused and forgotten.
+    Adding a page a knowledge base already has is a re-read of it rather than a second copy: the
+    subscription is the url, so a declaration of what an agent reads can be applied again without being
+    diffed first.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -155,6 +161,9 @@ async def asyncio_detailed(
     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
     endpoints around it. A page that could not be read is still stored, in the failed state with the
     reason on it, rather than refused and forgotten.
+    Adding a page a knowledge base already has is a re-read of it rather than a second copy: the
+    subscription is the url, so a declaration of what an agent reads can be applied again without being
+    diffed first.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -191,6 +200,9 @@ async def asyncio(
     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
     endpoints around it. A page that could not be read is still stored, in the failed state with the
     reason on it, rather than refused and forgotten.
+    Adding a page a knowledge base already has is a re-read of it rather than a second copy: the
+    subscription is the url, so a declaration of what an agent reads can be applied again without being
+    diffed first.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:

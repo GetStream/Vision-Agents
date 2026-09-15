@@ -15,13 +15,9 @@ import (
 type Sandbox struct {
 	// Provider is the sandbox provider's name, as the backend knows it.
 	Provider string
-	// Profile selects a backend-managed research workspace instead of Python execution.
-	Profile string
 }
 
 // Daytona is a Daytona sandbox. The backend needs DAYTONA_API_KEY for it to do anything.
-func ManagedSandbox(name string) *Sandbox { return &Sandbox{Profile: name} }
-
 func Daytona() *Sandbox {
 	return &Sandbox{Provider: "daytona"}
 }
@@ -96,10 +92,7 @@ func (h *Harness) Validate() error {
 			return errors.New("agents: " + skill.Name + " needs instructions, since they are what the subagent answers under")
 		}
 	}
-	if h.VM != nil && h.VM.Provider != "" && h.VM.Profile != "" {
-		return errors.New("agents: choose Python sandbox or managed research profile")
-	}
-	if h.VM != nil && h.VM.Provider == "" && h.VM.Profile == "" {
+	if h.VM != nil && h.VM.Provider == "" {
 		return errors.New("agents: a sandbox needs a provider")
 	}
 	return nil
@@ -122,7 +115,6 @@ func (h *Harness) apply(call *stream.Call) {
 	call.Tasks = h.Tasks
 	if h.VM != nil {
 		call.Sandbox = h.VM.Provider
-		call.SandboxProfile = h.VM.Profile
 	}
 	if h.ReplacesSkills() {
 		replacements := make([]acceleration.SessionSkill, 0, len(h.Skills))

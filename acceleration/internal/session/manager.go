@@ -23,7 +23,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/managed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
@@ -80,10 +79,9 @@ type ManagerOptions struct {
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 
-	Research *managed.Manager
-	Store    *store.Store
-	Live     *live.Client
-	Logger   *slog.Logger
+	Store  *store.Store
+	Live   *live.Client
+	Logger *slog.Logger
 }
 
 // Manager owns the sessions this process is running.
@@ -155,26 +153,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, errors.New("session: the manager is shut down")
 	}
 	m.mu.Unlock()
-
-	var workspace *managed.Workspace
-	if spec.SandboxProfile != "" {
-		if spec.Sandbox != "" {
-			return nil, errors.New("session: choose Python sandbox or managed research profile")
-		}
-		for _, tool := range spec.Tools {
-			if tool.Name == "investigate_sdk" {
-				return nil, errors.New("session: investigate_sdk is reserved by the managed profile")
-			}
-		}
-		if m.options.Research == nil {
-			return nil, errors.New("session: managed sandbox profiles unavailable")
-		}
-		var err error
-		workspace, err = m.options.Research.Find(spec.SandboxProfile, spec.CustomerID, spec.AgentID)
-		if err != nil {
-			return nil, err
-		}
-	}
 
 	var remembering memory.Store
 	if spec.Memory.UserID != "" {
@@ -274,15 +252,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if mcp != nil {
 		runner = &pluginRunner{mcp: mcp, next: created.tools}
 		created.closers = append(created.closers, mcp.Close)
-	}
-
-	if workspace != nil {
-		tools = append(tools, researchTool(workspace.Profile))
-		research := &researchRunner{workspace: workspace, next: runner, emit: created.broadcast}
-		if conv != nil {
-			research.progress = conv.Progress
-		}
-		runner = research
 	}
 
 	var toolStarted func(agent.ToolStarted)

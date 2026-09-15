@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -63,7 +64,15 @@ func (s *Server) AddKnowledgeUrl(
 		return AddKnowledgeUrl400JSONResponse{badRequest("a request body is required")}, nil
 	}
 
-	page, err := s.pages.Add(ctx, customerID, request.Body.Namespace, request.Body.Url)
+	wanted := urls.Subscription{Namespace: request.Body.Namespace, URL: request.Body.Url}
+	if request.Body.Title != nil {
+		wanted.Title = *request.Body.Title
+	}
+	if request.Body.Description != nil {
+		wanted.Description = *request.Body.Description
+	}
+
+	page, err := s.pages.Add(ctx, customerID, wanted)
 	if err != nil {
 		return AddKnowledgeUrl400JSONResponse{badRequest(err.Error())}, nil
 	}
@@ -139,8 +148,17 @@ func knowledgeURLOf(page store.KnowledgeURL) KnowledgeUrl {
 		CreatedAt:     page.CreatedAt,
 		UpdatedAt:     page.UpdatedAt,
 	}
-	if page.Title != "" {
-		described.Title = &page.Title
+	// What the subscription calls the page wins over what the page calls itself: a caller
+	// who named it said what they wanted it filed under.
+	title := page.DeclaredTitle
+	if title == "" {
+		title = page.Title
+	}
+	if title != "" {
+		described.Title = &title
+	}
+	if page.Description != "" {
+		described.Description = &page.Description
 	}
 	if page.Error != "" {
 		described.Error = &page.Error

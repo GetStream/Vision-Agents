@@ -1,14 +1,18 @@
 package tui
 
 import (
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 	"github.com/charmbracelet/glamour"
+	glamourstyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"golang.org/x/term"
 )
 
 // spinnerFrames is what work still going looks like.
@@ -197,6 +201,51 @@ func elapsed(start time.Time, end *time.Time) time.Duration {
 	return time.Since(start)
 }
 
+// markdownStyle is the style answers are rendered in, decided once for the process.
+//
+// It follows the terminal's background, but it must not be glamour's own "auto" style to
+// do it. Auto asks the terminal directly, writing an OSC 11 query to the tty and reading
+// the reply back off it, and every renderer built with it asks again. By the time an
+// answer is being rendered, Bubble Tea holds that tty in raw mode and is reading it: the
+// reply reaches Bubble Tea first and is parsed as though it had been typed, so the
+// escape sequence lands in the composer, while the query waits for a reply that has
+// already been taken and stalls the frame until it times out.
+//
+// Lipgloss answers the same question without asking again, because Bubble Tea's own
+// package init asks it once before any program starts and caches it. That is early
+// enough to be safe, since nothing owns the terminal yet.
+var markdownStyle = sync.OnceValue(func() string {
+	// Not a terminal, so there is no background to match and nothing to ask anyway.
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return glamourstyles.NoTTYStyle
+	}
+	if lipgloss.HasDarkBackground() {
+		return glamourstyles.DarkStyle
+	}
+	return glamourstyles.LightStyle
+})
+
+// renderer returns the renderer for one wrap width, building each at most once.
+//
+// Glamour compiles a style into a chain of markdown extensions, which is not work worth
+// repeating for every token of an answer still being written. Rendering does not mutate
+// the renderer, so one serves every answer at that width.
+func (m *Model) renderer(width int) *glamour.TermRenderer {
+	if existing, ok := m.renderers[width]; ok {
+		return existing
+	}
+	built, err := glamour.NewTermRenderer(glamour.WithStandardStyle(markdownStyle()),
+		glamour.WithWordWrap(max(minContent, width-2)))
+	if err != nil {
+		return nil
+	}
+	if m.renderers == nil {
+		m.renderers = map[int]*glamour.TermRenderer{}
+	}
+	m.renderers[width] = built
+	return built
+}
+
 // markdown renders an answer, falling back to what was written if it cannot be rendered:
 // an answer nobody can read is worse than an unstyled one.
 func (m *Model) markdown(text string, width int) string {
@@ -205,9 +254,8 @@ func (m *Model) markdown(text string, width int) string {
 		return rendered
 	}
 	rendered := text
-	// The style follows the terminal's own background, and the wrap leaves room for the
-	// margin the style puts around a document.
-	if renderer, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(max(minContent, width-2))); err == nil {
+	// The wrap leaves room for the margin the style puts around a document.
+	if renderer := m.renderer(width); renderer != nil {
 		if out, err := renderer.Render(text); err == nil {
 			rendered = strings.Trim(out, "\n")
 		}

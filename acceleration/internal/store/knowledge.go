@@ -36,8 +36,35 @@ func (s *Store) CreateKnowledgeURL(ctx context.Context, page *KnowledgeURL) erro
 	return nil
 }
 
+// SubscribedKnowledgeURL returns the page a knowledge base is already filled from at this
+// url, if it is.
+func (s *Store) SubscribedKnowledgeURL(
+	ctx context.Context, customerID, namespace, address string,
+) (KnowledgeURL, bool, error) {
+	if customerID == "" || namespace == "" || address == "" {
+		return KnowledgeURL{}, false, errors.New("store: a customer, a namespace and a url are required")
+	}
+
+	var page KnowledgeURL
+	err := s.db.NewSelect().Model(&page).
+		Where("customer_id = ?", customerID).
+		Where("namespace = ?", namespace).
+		Where("url = ?", address).
+		Where("deleted_at IS NULL").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return KnowledgeURL{}, false, nil
+	}
+	if err != nil {
+		return KnowledgeURL{}, false, fmt.Errorf("store: subscribed knowledge url: %w", err)
+	}
+	return page, true, nil
+}
+
 // SaveKnowledgeURL records what reading a page made of it: where it got to, what it was
-// called, how many passages it became and when.
+// called, how many passages it became and when. The declaration is saved with it, so
+// subscribing to a page again can say something different about it.
 func (s *Store) SaveKnowledgeURL(ctx context.Context, page *KnowledgeURL) error {
 	if page.CustomerID == "" || page.ID == "" {
 		return errors.New("store: a customer and a knowledge url id are required")
@@ -46,7 +73,8 @@ func (s *Store) SaveKnowledgeURL(ctx context.Context, page *KnowledgeURL) error 
 	page.UpdatedAt = time.Now().UTC()
 
 	result, err := s.db.NewUpdate().Model(page).
-		Column("title", "state", "error", "passages", "last_indexed_at", "updated_at").
+		Column("title", "declared_title", "description",
+			"state", "error", "passages", "last_indexed_at", "updated_at").
 		Where("id = ?", page.ID).
 		Where("customer_id = ?", page.CustomerID).
 		Where("deleted_at IS NULL").

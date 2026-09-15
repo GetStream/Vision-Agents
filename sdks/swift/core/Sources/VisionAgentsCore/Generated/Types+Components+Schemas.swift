@@ -327,10 +327,6 @@ extension Components {
             internal var keyterms: [Swift.String]?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/knowledge_namespace`.
             internal var knowledgeNamespace: Swift.String?
-            /// Backend-managed research profile, scoped to this customer and agent.
-            ///
-            /// - Remark: Generated from `#/components/schemas/AgentConfig/sandbox_profile`.
-            internal var sandboxProfile: Swift.String?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/sandbox`.
             internal var sandbox: Components.Schemas.Sandbox?
             /// - Remark: Generated from `#/components/schemas/AgentConfig/tags`.
@@ -383,7 +379,6 @@ extension Components {
             ///   - plugins:
             ///   - keyterms:
             ///   - knowledgeNamespace:
-            ///   - sandboxProfile: Backend-managed research profile, scoped to this customer and agent.
             ///   - sandbox:
             ///   - tags:
             ///   - syncHash: Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
@@ -408,7 +403,6 @@ extension Components {
                 plugins: [Swift.String]? = nil,
                 keyterms: [Swift.String]? = nil,
                 knowledgeNamespace: Swift.String? = nil,
-                sandboxProfile: Swift.String? = nil,
                 sandbox: Components.Schemas.Sandbox? = nil,
                 tags: Components.Schemas.AgentConfig.TagsPayload? = nil,
                 syncHash: Swift.String? = nil,
@@ -433,7 +427,6 @@ extension Components {
                 self.plugins = plugins
                 self.keyterms = keyterms
                 self.knowledgeNamespace = knowledgeNamespace
-                self.sandboxProfile = sandboxProfile
                 self.sandbox = sandbox
                 self.tags = tags
                 self.syncHash = syncHash
@@ -459,7 +452,6 @@ extension Components {
                 case plugins
                 case keyterms
                 case knowledgeNamespace = "knowledge_namespace"
-                case sandboxProfile = "sandbox_profile"
                 case sandbox
                 case tags
                 case syncHash = "sync_hash"
@@ -2665,10 +2657,6 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/tasks`.
             internal var tasks: Swift.Int?
-            /// Backend-managed research profile, scoped to this customer and agent.
-            ///
-            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/sandbox_profile`.
-            internal var sandboxProfile: Swift.String?
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/sandbox`.
             internal var sandbox: Components.Schemas.Sandbox?
             /// Murmur while a participant is still talking, the way a person does.
@@ -2753,7 +2741,6 @@ extension Components {
             ///   - keyterms: Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
             ///   - maxTokens:
             ///   - tasks: How much delegated work may run at once.
-            ///   - sandboxProfile: Backend-managed research profile, scoped to this customer and agent.
             ///   - sandbox:
             ///   - backchannel: Murmur while a participant is still talking, the way a person does.
             ///   - minConfidence: How sure the transcriber must be before the agent answers rather than checks what was meant.
@@ -2791,7 +2778,6 @@ extension Components {
                 keyterms: [Swift.String]? = nil,
                 maxTokens: Swift.Int? = nil,
                 tasks: Swift.Int? = nil,
-                sandboxProfile: Swift.String? = nil,
                 sandbox: Components.Schemas.Sandbox? = nil,
                 backchannel: Swift.Bool? = nil,
                 minConfidence: Swift.Double? = nil,
@@ -2829,7 +2815,6 @@ extension Components {
                 self.keyterms = keyterms
                 self.maxTokens = maxTokens
                 self.tasks = tasks
-                self.sandboxProfile = sandboxProfile
                 self.sandbox = sandbox
                 self.backchannel = backchannel
                 self.minConfidence = minConfidence
@@ -2868,7 +2853,6 @@ extension Components {
                 case keyterms
                 case maxTokens = "max_tokens"
                 case tasks
-                case sandboxProfile = "sandbox_profile"
                 case sandbox
                 case backchannel
                 case minConfidence = "min_confidence"

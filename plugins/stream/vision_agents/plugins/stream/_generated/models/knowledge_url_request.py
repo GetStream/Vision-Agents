@@ -7,6 +7,8 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="KnowledgeUrlRequest")
 
 
@@ -19,16 +21,28 @@ class KnowledgeUrlRequest:
         url (str): The page to read. It must be http or https: this is handed to a crawler and then used to key the
             passages it becomes.
              Example: https://example.com/pricing.
+        title (str | Unset): What to call the page, for a reader of the subscription. Optional: a page that is not named
+            here is named by what it called itself when it was last read.
+             Example: Pricing.
+        description (str | Unset): What the page is, for a reader of the subscription. Optional, and kept as written: it
+            says why this page is subscribed to, which a crawler cannot know.
+             Example: What each plan includes and where the limits are..
     """
 
     namespace: str
     url: str
+    title: str | Unset = UNSET
+    description: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         namespace = self.namespace
 
         url = self.url
+
+        title = self.title
+
+        description = self.description
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -38,6 +52,10 @@ class KnowledgeUrlRequest:
                 "url": url,
             }
         )
+        if title is not UNSET:
+            field_dict["title"] = title
+        if description is not UNSET:
+            field_dict["description"] = description
 
         return field_dict
 
@@ -48,9 +66,15 @@ class KnowledgeUrlRequest:
 
         url = d.pop("url")
 
+        title = d.pop("title", UNSET)
+
+        description = d.pop("description", UNSET)
+
         knowledge_url_request = cls(
             namespace=namespace,
             url=url,
+            title=title,
+            description=description,
         )
 
         knowledge_url_request.additional_properties = d

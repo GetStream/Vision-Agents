@@ -94,8 +94,7 @@ type Call struct {
 	// Tasks is how much delegated work may run at once.
 	Tasks int
 	// Sandbox is where the subagent may run code it writes.
-	Sandbox        string
-	SandboxProfile string
+	Sandbox string
 	// Skills replace the built-in set. Nil leaves them alone, and an empty non-nil slice
 	// turns delegation off: the two mean different things.
 	Skills *[]acceleration.SessionSkill
@@ -122,8 +121,6 @@ type Participant struct {
 // error and left. The fields below are filled from whichever of those carry them, and Frame
 // is the whole thing for anything they do not cover.
 type Event struct {
-	// Research carries safe progress for a managed sandbox investigation.
-	Research    *ResearchProgress
 	Kind        string
 	Text        string
 	Participant Participant
@@ -131,13 +128,6 @@ type Event struct {
 	Interrupted bool
 	Error       string
 	Frame       Frame
-}
-
-type ResearchProgress struct {
-	VerifiedCitations int
-	ToolCallID        string
-	Phase             string
-	ElapsedMS         float64
 }
 
 // Pipeline is a whole voice or text pipeline, running in the acceleration backend.
@@ -435,9 +425,6 @@ func (p *Pipeline) request(call Call, config string) acceleration.CreateSessionR
 	if call.Tasks > 0 {
 		request.Tasks = &call.Tasks
 	}
-	if call.SandboxProfile != "" {
-		request.SandboxProfile = &call.SandboxProfile
-	}
 	if call.Sandbox != "" {
 		sandbox := acceleration.Sandbox(call.Sandbox)
 		request.Sandbox = &sandbox
@@ -584,11 +571,6 @@ func eventOf(frame Frame) Event {
 		PendingWork: frame.Bool("pending_work"),
 		Error:       frame.String("error"),
 		Frame:       frame,
-	}
-	if frame.Type() == "research_progress" {
-		count, _ := frame["verified_citations"].(float64)
-		ms, _ := frame["elapsed_ms"].(float64)
-		event.Research = &ResearchProgress{VerifiedCitations: int(count), ToolCallID: frame.String("tool_call_id"), Phase: frame.String("phase"), ElapsedMS: ms}
 	}
 	if participant := frame.Frame("participant"); participant != nil {
 		event.Participant = Participant{

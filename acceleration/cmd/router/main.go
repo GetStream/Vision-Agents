@@ -33,7 +33,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/managed"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search/exa"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -451,22 +450,7 @@ func run(logger *slog.Logger) error {
 	// Conversations need all three modalities, so a deployment configured for only one
 	// still inspects routing and reports statistics while the session paths say there
 	// are none.
-	var researchWorkspaces *managed.Manager
-	if path := os.Getenv("RESEARCH_PROFILES"); path != "" {
-		researchWorkspaces, err = managed.Start(ctx, path)
-		if err != nil {
-			if researchWorkspaces != nil {
-				err = errors.Join(err, researchWorkspaces.Close())
-			}
-			return err
-		}
-		defer func() {
-			if err := researchWorkspaces.Close(); err != nil {
-				logger.Error("research shutdown", "error", err)
-			}
-		}()
-	}
-	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, finding, researchWorkspaces, logger)
+	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, finding, logger)
 	if err != nil {
 		return err
 	}
@@ -653,7 +637,6 @@ func buildSessions(
 	telephony *phone.Service,
 	base *turbopuffer.Store,
 	finding *searchrouter.Router,
-	researchWorkspaces *managed.Manager,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.STT == nil || streams.TTS == nil || streams.LLM == nil {
@@ -676,7 +659,6 @@ func buildSessions(
 	}
 
 	return session.NewManager(session.ManagerOptions{
-		Research:  researchWorkspaces,
 		LLM:       streams.LLM,
 		STT:       streams.STT,
 		TTS:       streams.TTS,

@@ -1498,6 +1498,10 @@ paths:
         slower than the endpoints around it. A page that could not be read is still stored,
         in the failed state with the reason on it, rather than refused and forgotten.
 
+        Adding a page a knowledge base already has is a re-read of it rather than a second
+        copy: the subscription is the url, so a declaration of what an agent reads can be
+        applied again without being diffed first.
+
         Server-side only: it needs a server-side token, so it cannot be reached from an
         end user's device.
       requestBody:
@@ -2452,7 +2456,7 @@ paths:
 
         The server sends what the conversation did: `joined`, `heard`, `responding`,
         `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`,
-        `task_settled`, `task_cancelled`, `research_progress` (tool_call_id, phase, elapsed_ms, verified_citations), `tool_call`, `tool_ran`, `transferred`,
+        `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`, `transferred`,
         `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
         `conversation_compacted`, `error` and `left`.
 
@@ -3084,9 +3088,6 @@ components:
           description: >
             What the agent may look things up in. Empty means it knows only what it was
             told.
-        sandbox_profile:
-          type: string
-          description: Backend-managed research profile, scoped to this customer and agent.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
         tags:
@@ -3148,9 +3149,6 @@ components:
             type: string
         knowledge_namespace:
           type: string
-        sandbox_profile:
-          type: string
-          description: Backend-managed research profile, scoped to this customer and agent.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
         tags:
@@ -4060,9 +4058,6 @@ components:
           type: array
           items:
             type: string
-        sandbox_profile:
-          type: string
-          description: Backend-managed research profile, scoped to this customer and agent.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
         tags:
@@ -4321,6 +4316,18 @@ components:
             The page to read. It must be http or https: this is handed to a crawler and
             then used to key the passages it becomes.
           example: https://example.com/pricing
+        title:
+          type: string
+          description: >
+            What to call the page, for a reader of the subscription. Optional: a page that
+            is not named here is named by what it called itself when it was last read.
+          example: Pricing
+        description:
+          type: string
+          description: >
+            What the page is, for a reader of the subscription. Optional, and kept as
+            written: it says why this page is subscribed to, which a crawler cannot know.
+          example: What each plan includes and where the limits are.
 
     KnowledgeUrlState:
       type: string
@@ -4341,7 +4348,12 @@ components:
           type: string
         title:
           type: string
-          description: What the page called itself when it was last read.
+          description: >
+            What the page is called: the title it was subscribed with, or what it called
+            itself when it was last read.
+        description:
+          type: string
+          description: What the page was subscribed as being. Empty unless it was given one.
         state:
           $ref: "#/components/schemas/KnowledgeUrlState"
         error:
@@ -5054,9 +5066,6 @@ components:
         tasks:
           type: integer
           description: How much delegated work may run at once.
-        sandbox_profile:
-          type: string
-          description: Backend-managed research profile, scoped to this customer and agent.
         sandbox:
           $ref: "#/components/schemas/Sandbox"
         backchannel:

@@ -257,8 +257,6 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 // with the SDKs: a field renamed in Go should break this function, not a client.
 func frameOf(event session.Event) (frame, bool) {
 	switch typed := event.(type) {
-	case session.ResearchProgress:
-		return frame{"type": "research_progress", "tool_call_id": typed.ToolCallID, "phase": typed.Phase, "elapsed_ms": typed.ElapsedMS, "verified_citations": typed.VerifiedCitations}, true
 	case session.ToolCall:
 		if typed.Cancel {
 			return frame{"type": "tool_cancel", "id": typed.ID}, true
