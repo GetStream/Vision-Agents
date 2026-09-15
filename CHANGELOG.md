@@ -663,6 +663,9 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- Disconnecting a session event socket promptly detaches its watcher. Persistent text
+  conversations can reopen without waiting for the next server ping to notice the lost client.
+
 - Worker ping replies now share the dispatch socket's single writer with ready,
   call and message frames, preventing concurrent writes during call delivery.
 

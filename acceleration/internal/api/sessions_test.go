@@ -354,6 +354,27 @@ func (s *SessionAPISuite) TestCreatingASessionJoinsTheCallAndDescribesIt() {
 	s.Nil(created.Stt, "transcription starts when somebody is heard, not on joining")
 }
 
+func (s *SessionAPISuite) TestDisconnectReleasesTheEventHandlerWithoutWaitingForAPing() {
+	created := s.creates(CreateSessionRequest{CallId: callID("disconnect-test")})
+	left := make(chan struct{})
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.server.Config.Handler.ServeHTTP(w, r)
+		close(left)
+	}))
+	s.T().Cleanup(endpoint.Close)
+	connection, _, err := websocket.DefaultDialer.Dial(
+		"ws"+strings.TrimPrefix(endpoint.URL, "http")+"/v1/agents/sessions/"+created.Id+"/events",
+		http.Header{CustomerHeader: []string{"acme"}},
+	)
+	s.Require().NoError(err)
+	s.Require().NoError(connection.Close())
+	select {
+	case <-left:
+	case <-time.After(settleFor):
+		s.FailNow("event handler retained a disconnected client")
+	}
+}
+
 func (s *SessionAPISuite) TestASessionNeedsACallToJoin() {
 	response := s.send(http.MethodPost, "/v1/agents/sessions", "acme", CreateSessionRequest{})
 
