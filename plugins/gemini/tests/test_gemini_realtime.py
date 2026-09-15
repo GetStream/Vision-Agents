@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -7,15 +8,19 @@ import websockets
 from dotenv import load_dotenv
 from google.genai.errors import APIError
 from google.genai.types import (
+    Behavior,
     Blob,
     Content,
     FunctionCall,
+    InteractionStatus,
     LiveServerContent,
     LiveServerMessage,
     LiveServerSessionResumptionUpdate,
     LiveServerToolCall,
     Part,
+    ThinkingLevel,
     Transcription,
+    TurnCoverage,
 )
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.realtime import (
@@ -30,7 +35,11 @@ from vision_agents.core.llm.realtime import (
 )
 from vision_agents.core.utils.audio_input_pacer import AudioInputPacer
 from vision_agents.core.utils.audio_input_direct import AudioInputDirect
-from vision_agents.plugins.gemini import Realtime
+from vision_agents.plugins.gemini import (
+    LIVE_EXTENDED_THINKING_MODEL,
+    GeminiModelUnavailableError,
+    Realtime,
+)
 from vision_agents.plugins.gemini.gemini_realtime import (
     DEFAULT_MODEL,
     LIVE_TRANSLATE_MODEL,
@@ -54,13 +63,57 @@ def _make_session(messages: list[LiveServerMessage]) -> AsyncMock:
     return session
 
 
+class _CaptureSession:
+    """Session that records tool responses without mocking."""
+
+    def __init__(self) -> None:
+        self.function_responses: list[Any] = []
+
+    async def send_tool_response(self, function_responses: list[Any]) -> None:
+        self.function_responses = list(function_responses)
+
+
 def _fake_client() -> Any:
     return object()
 
 
-def _make_realtime() -> GeminiRealtime:
+class _FailingLiveConnect:
+    """Async context manager that fails on enter, like a rejected Live handshake."""
+
+    def __init__(self, error: APIError) -> None:
+        self._error = error
+
+    async def __aenter__(self) -> None:
+        raise self._error
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+
+def _client_rejecting_model(detail: str) -> Any:
+    """Build a client whose live.connect fails with an APIError carrying ``detail``."""
+    error = APIError(1008, detail, None)
+
+    def connect(model: str, config: Any) -> _FailingLiveConnect:
+        return _FailingLiveConnect(error)
+
+    return SimpleNamespace(aio=SimpleNamespace(live=SimpleNamespace(connect=connect)))
+
+
+def _make_realtime(**kwargs: Any) -> GeminiRealtime:
     """Create a GeminiRealtime instance without connecting."""
-    return GeminiRealtime(client=_fake_client())
+    kwargs.setdefault("client", _fake_client())
+    return GeminiRealtime(**kwargs)
+
+
+def _audio_model_turn() -> LiveServerMessage:
+    return LiveServerMessage(
+        server_content=LiveServerContent(
+            model_turn=Content(
+                parts=[Part(inline_data=Blob(data=b"\x00" * 100))],
+            ),
+        ),
+    )
 
 
 class TestGeminiRealtimeInputPacing:
@@ -76,7 +129,8 @@ class TestGeminiRealtimeInputPacing:
             input_audio_pacing=None,
         )
 
-        assert DEFAULT_MODEL == "gemini-3.1-flash-live-preview"
+        assert DEFAULT_MODEL == "gemini-3.8-live"
+        assert LIVE_EXTENDED_THINKING_MODEL == "gemini-3.8-live-extended-thinking"
         assert LIVE_TRANSLATE_MODEL == "gemini-3.5-live-translate-preview"
         assert type(default_rt._audio_input_processor) is AudioInputDirect
         assert isinstance(translate_rt._audio_input_processor, AudioInputPacer)
@@ -122,15 +176,7 @@ class TestGeminiRealtimeProcessEvents:
 
     async def test_model_turn_audio(self):
         rt = _make_realtime()
-        audio_bytes = b"\x00" * 100
-        msg = LiveServerMessage(
-            server_content=LiveServerContent(
-                model_turn=Content(
-                    parts=[Part(inline_data=Blob(data=audio_bytes))],
-                ),
-            ),
-        )
-        rt._real_session = _make_session([msg])
+        rt._real_session = _make_session([_audio_model_turn()])
 
         await rt._process_events()
 
@@ -176,6 +222,46 @@ class TestGeminiRealtimeProcessEvents:
         items = rt.output.peek()
         assert len(items) == 1
         assert isinstance(items[0], RealtimeAudioOutputDone)
+
+    @pytest.mark.parametrize(
+        ("turn_complete", "status", "expect_agent_ended", "expect_audio_done"),
+        [
+            (True, InteractionStatus.IN_PROGRESS, False, False),
+            (True, InteractionStatus.IDLE, True, True),
+            (True, InteractionStatus.REQUIRES_ACTION, True, True),
+            (False, InteractionStatus.IDLE, True, True),
+        ],
+    )
+    async def test_interaction_status_after_audio(
+        self,
+        turn_complete: bool,
+        status: InteractionStatus,
+        expect_agent_ended: bool,
+        expect_audio_done: bool,
+    ):
+        rt = _make_realtime()
+        rt._real_session = _make_session(
+            [
+                _audio_model_turn(),
+                LiveServerMessage(
+                    server_content=LiveServerContent(
+                        turn_complete=turn_complete or None,
+                        interaction_status=status,
+                    )
+                ),
+            ]
+        )
+
+        await rt._process_events()
+
+        items = rt.output.peek()
+        assert (
+            any(isinstance(i, RealtimeAudioOutputDone) for i in items)
+            is expect_audio_done
+        )
+        ended = any(isinstance(i, RealtimeAgentSpeechEnded) for i in items)
+        assert ended is expect_agent_ended
+        assert rt._agent_audio_started is not expect_agent_ended
 
     async def test_tool_call(self):
         rt = _make_realtime()
@@ -470,6 +556,27 @@ class TestGeminiRealtimeProcessingLoop:
 
         assert rt.connected is False
 
+    async def test_unavailable_model_raises_actionable_error(self):
+        detail = (
+            "models/gemini-3.8-live is not found for API version v1alpha, "
+            "or is not supported for bidiGenerateContent."
+        )
+        rt = _make_realtime(client=_client_rejecting_model(detail))
+
+        with pytest.raises(GeminiModelUnavailableError) as exc_info:
+            await rt._establish_session()
+
+        assert str(exc_info.value) == (
+            "The requested Gemini Live model is not available. Check the model "
+            "name and that your API key's project can use it."
+        )
+
+    async def test_other_api_errors_are_not_wrapped(self):
+        rt = _make_realtime(client=_client_rejecting_model("quota exceeded"))
+
+        with pytest.raises(APIError):
+            await rt._establish_session()
+
 
 class TestGeminiRealtimeFunctionCalling:
     """Unit tests for Gemini Realtime tool conversion and config wiring."""
@@ -519,6 +626,7 @@ class TestGeminiRealtimeFunctionCalling:
         assert tool1["name"] == "get_weather"
         assert tool1["description"] == "Get weather information"
         assert "location" in tool1["parameters"]["properties"]
+        assert tool1["behavior"] == Behavior.NON_BLOCKING
 
         # Check second tool
         tool2 = result[0]["function_declarations"][1]
@@ -554,6 +662,66 @@ class TestGeminiRealtimeFunctionCalling:
 
         # Verify tools were not added
         assert "tools" not in config
+
+    def test_default_turn_coverage_includes_video(self):
+        realtime = _make_realtime()
+        coverage = realtime._base_config["realtime_input_config"]["turn_coverage"]
+        assert coverage == TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO
+
+    def test_extended_thinking_applies_default_thinking_config(self):
+        realtime = _make_realtime(model=LIVE_EXTENDED_THINKING_MODEL)
+        thinking = realtime._base_config["thinking_config"]
+        assert thinking["thinking_level"] == ThinkingLevel.HIGH
+
+    def test_default_live_omits_thinking_config(self):
+        realtime = _make_realtime()
+        assert "thinking_config" not in realtime._base_config
+
+    def test_blocking_rejected_on_extended_thinking(self):
+        with pytest.raises(ValueError, match="NON_BLOCKING"):
+            _make_realtime(model=LIVE_EXTENDED_THINKING_MODEL, blocking=True)
+
+    def test_convert_tools_blocking_on_live(self):
+        realtime = _make_realtime(blocking=True)
+        result = realtime._convert_tools_to_provider_format(
+            [
+                {
+                    "name": "get_weather",
+                    "description": "Get weather",
+                    "parameters_schema": {"type": "object", "properties": {}},
+                }
+            ]
+        )
+        assert result[0]["function_declarations"][0]["behavior"] == Behavior.BLOCKING
+
+    async def test_send_client_content_forwards_to_session(self):
+        realtime = _make_realtime()
+        session = AsyncMock()
+        realtime._real_session = session
+        turn = Content(role="user", parts=[Part(text="hi")])
+
+        await realtime.send_client_content(turns=turn, turn_complete=True)
+
+        session.send_client_content.assert_awaited_once_with(
+            turns=turn, turn_complete=True
+        )
+
+    async def test_function_response_omits_scheduling(self):
+        """Setting `scheduling` makes several Live models close the socket (1007)."""
+        realtime = _make_realtime()
+        session = _CaptureSession()
+        realtime._real_session = session
+
+        @realtime.register_function(description="Get weather")
+        async def get_weather(city: str) -> dict[str, bool]:
+            return {"ok": True}
+
+        await realtime._handle_function_call(
+            FunctionCall(id="c1", name="get_weather", args={"city": "NYC"})
+        )
+
+        assert len(session.function_responses) == 1
+        assert session.function_responses[0].scheduling is None
 
 
 @pytest.fixture
@@ -714,3 +882,41 @@ class TestGeminiRealtimeIntegration:
         function_names = [call["name"] for call in function_calls]
         assert "get_time" in function_names, "get_time function was not called"
         assert "get_status" in function_names, "get_status function was not called"
+
+
+@pytest.mark.integration
+class TestGeminiRealtimeExtendedThinkingIntegration:
+    """End-to-end tests against Gemini 3.8 Live Extended Thinking."""
+
+    async def test_simple_response_and_tool_call(self):
+        function_calls: list[dict[str, Any]] = []
+        rt = Realtime(model=LIVE_EXTENDED_THINKING_MODEL)
+
+        @rt.register_function(description="Get current weather for a location")
+        async def get_weather(location: str) -> dict[str, str]:
+            function_calls.append({"name": "get_weather", "location": location})
+            return {
+                "location": location,
+                "temperature": "22°C",
+                "condition": "Sunny",
+            }
+
+        try:
+            await rt.connect()
+        except (APIError, GeminiModelUnavailableError) as exc:
+            pytest.skip(f"extended thinking model unavailable: {exc}")
+
+        try:
+            async for _ in rt.simple_response(
+                "What's the weather like in New York? Please use the get_weather function to check."
+            ):
+                pass
+            await asyncio.sleep(12.0)
+
+            items = rt.output.peek()
+            audio = [i for i in items if isinstance(i, RealtimeAudioOutput)]
+            weather_calls = [c for c in function_calls if c["name"] == "get_weather"]
+            assert len(audio) > 0 or len(weather_calls) > 0
+            assert len(weather_calls) > 0, "get_weather was not called"
+        finally:
+            await rt.close()

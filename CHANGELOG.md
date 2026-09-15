@@ -2,6 +2,10 @@
 
 ## Breaking Changes
 
+### `gemini` plugin: Realtime defaults to `gemini-3.8-live` (#647)
+
+`gemini.Realtime` now defaults to `gemini-3.8-live` (was `gemini-3.1-flash-live-preview`). Pass `model=` explicitly to stay on an older Live model.
+
 ### `sarvam` plugin: drop deprecated LLM, STT, and TTS models (#637)
 
 Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-105b` (`sarvam-105b-conversations` is also supported). STT drops `saarika:v2.5` and `saaras:v2` / `saaras:v2.5` and defaults to `saaras:v3-realtime` on `/speech-to-text-realtime/ws` (`saaras:v3` and `saaras:v4` remain on the legacy WebSocket). TTS no longer accepts `bulbul:v3-beta`.
@@ -11,6 +15,10 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 `deepgram.TTS` now streams Flux TTS on `wss://api.deepgram.com/v2/speak` and defaults to `flux-haley-en`. Aura model strings (`aura-*`) are rejected with `ValueError`. Call sites that passed an Aura voice must switch to a Flux model (`flux-{voice}-en`). See the [Flux voice catalog](https://developers.deepgram.com/docs/flux-tts/voices).
 
 ## New Features
+
+### `gemini` plugin: Gemini 3.8 Live and Extended Thinking (#647)
+
+Adds `gemini-3.8-live` and `gemini-3.8-live-extended-thinking`. Agent turn completion follows `interaction_status` (`IDLE`, with deprecated `REQUIRES_ACTION` treated as idle) instead of treating `turn_complete` as session-idle. Live tools default to `NON_BLOCKING`. Video turn coverage defaults to `TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO`. Requires `google-genai>=2.19.0`.
 
 ### `gemini` plugin: Gemini 3.5 speech-to-text
 
