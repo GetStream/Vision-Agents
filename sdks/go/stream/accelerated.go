@@ -232,9 +232,14 @@ func (p *Pipeline) Join(ctx context.Context, call Call) (*acceleration.Session, 
 		return nil, err
 	}
 
+	credentials, err := backend.Credentials()
+	if err != nil {
+		_, _ = client.CloseSessionWithResponse(ctx, session.Id)
+		return nil, err
+	}
 	socket := NewSocket(
 		backend.SocketURL("/v1/agents/sessions/"+session.Id+"/events"),
-		backend.Headers(),
+		credentials,
 		backend.HTTPClient,
 		p.logger,
 	)

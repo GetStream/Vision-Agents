@@ -2,6 +2,41 @@
 
 ## Breaking Changes
 
+### The Go SDK authenticates with a Stream app, and `Backend.Headers` is now `Credentials`
+
+A hosted router sits behind a proxy that verifies a Stream app rather than trusting a
+header, so `stream.Backend` can now carry a credential and sign a token per request:
+
+```go
+backend := stream.Backend{
+	URL:          "https://accelerate.gcp.stream-io-api.com",
+	Authenticate: true, // or STREAM_ACCELERATION_AUTHENTICATE
+}
+// APIKey and APISecret then fall back to STREAM_API_KEY and STREAM_API_SECRET.
+```
+
+It then sends `api_key`, `stream-auth-type: jwt` and `Authorization` on REST calls and on
+the WebSocket handshake, and a customer id is no longer required, since the proxy works the
+tenant out from the credential and strips what this end claims. A token names a user only
+when `UserID` is set; without one it is marked `server: true` and speaks for the app itself,
+which is what a backend wants and what leaves the per-user daily limits out of it.
+
+`Authenticate` is opt-in rather than inferred from a key being present, because a Stream key
+and secret are in the environment for plenty of reasons that have nothing to do with how the
+router is reached — and sending them regardless is not harmless. A router with no proxy in
+front of it reads `stream-auth-type: jwt` as a caller acting for an end user's device, and a
+device may hold a conversation but not rewrite the agent holding it. Talking to a router that
+trusts `X-Customer-Id` is unchanged.
+
+Signing can fail, which `Headers()` had no way to report:
+
+```go
+credentials, err := backend.Credentials()  // was: backend.Headers()
+```
+
+Half a credential is refused by `Resolve` rather than ignored, so a missing secret is not
+quietly downgraded to an unauthenticated request.
+
 ### `agent.simple_response(...)` is now `agent.responses.create(...)`
 
 Matches the shape of OpenAI's `client.responses.create`:

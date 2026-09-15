@@ -608,9 +608,13 @@ func (r Router) open(ctx context.Context, modality string, options Frame) (*Sock
 		return nil, errors.New("stream: routing needs a target, either in the options or in a config")
 	}
 
+	credentials, err := backend.Credentials()
+	if err != nil {
+		return nil, err
+	}
 	socket := NewSocket(
 		backend.SocketURL("/v1/"+modality+"/stream"),
-		backend.Headers(),
+		credentials,
 		backend.HTTPClient,
 		r.logger(),
 	)
