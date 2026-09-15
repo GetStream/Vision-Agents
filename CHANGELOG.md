@@ -2,7 +2,7 @@
 
 ## Breaking Changes
 
-### `gemini` plugin: Realtime defaults to `gemini-3.8-live`
+### `gemini` plugin: Realtime defaults to `gemini-3.8-live` (#647)
 
 `gemini.Realtime` now defaults to `gemini-3.8-live` (was `gemini-3.1-flash-live-preview`). Pass `model=` explicitly to stay on an older Live model.
 
@@ -16,7 +16,7 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
-### `gemini` plugin: Gemini 3.8 Live and Extended Thinking
+### `gemini` plugin: Gemini 3.8 Live and Extended Thinking (#647)
 
 Adds `gemini-3.8-live` and `gemini-3.8-live-extended-thinking`. Agent turn completion follows `interaction_status` (`IDLE`, with deprecated `REQUIRES_ACTION` treated as idle) instead of treating `turn_complete` as session-idle. Live tools default to `NON_BLOCKING`. Video turn coverage defaults to `TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO`. Requires `google-genai>=2.19.0`.
 

@@ -96,6 +96,8 @@ async def test_model(model_name: str, test_tool: bool = False) -> None:
 
         if test_tool:
             logger.info("Tool called: %s", tool_called)
+            if not tool_called:
+                raise RuntimeError("Gemini did not invoke get_weather")
 
     finally:
         await rt.close()

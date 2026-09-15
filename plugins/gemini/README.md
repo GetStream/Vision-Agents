@@ -68,7 +68,7 @@ from vision_agents.plugins.gemini import LIVE_EXTENDED_THINKING_MODEL, Realtime
 llm = Realtime(model=LIVE_EXTENDED_THINKING_MODEL)
 ```
 
-`turn_complete` only ends a streaming chunk. Agent turn-complete events wait for `interaction_status=IDLE` (or the deprecated `REQUIRES_ACTION` alias) so thinking and async tool calls can continue. Tools are declared `NON_BLOCKING` by default; `blocking=True` is allowed only on `gemini-3.8-live`. Use `send_client_content(..., turn_complete=True)` to inject structured turns; that interrupts ongoing generation.
+`turn_complete` only ends a streaming chunk. Agent turn-complete events wait for `interaction_status=IDLE` (or the deprecated `REQUIRES_ACTION` alias) so thinking and async tool calls can continue. Tools are declared `NON_BLOCKING` by default; `blocking=True` is allowed only on `gemini-3.8-live`. Use `send_client_content` to inject structured turns; `turn_complete=True` starts a response, `False` waits for more client content. Sending client content can interrupt ongoing generation.
 
 The `Agent` subscribes to track events internally, so no manual wiring is needed.
 For full runnable examples, see `plugins/gemini/example/gemini_realtime_example.py`, `plugins/gemini/example/gemini_live_standalone_example.py` (no Stream SFU), and `examples/02_golf_coach_example/golf_coach_example.py`.
@@ -150,7 +150,7 @@ Key configuration knobs for `GeminiVLM`: `fps`, `frame_buffer_seconds`,
 
 - **Bidirectional audio**: The Agent streams call audio into Gemini Live and publishes Gemini speech back into the call.
 - **Video**: Set `fps=` on `gemini.Realtime()` to forward remote participant frames. Default turn coverage is `TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO`.
-- **Text**: Use `agent.simple_response(text=...)` or `await llm.send_client_content(..., turn_complete=True)` (the latter interrupts ongoing generation).
+- **Text**: Use `agent.simple_response(text=...)` or `await llm.send_client_content(...)`. Sending client content can interrupt generation; `turn_complete=True` starts a response.
 - **Tools**: Function declarations default to `NON_BLOCKING`. `blocking=True` is allowed only on `gemini-3.8-live`.
 - **Barge-in**: User speech interrupts the current agent turn via the Agent interrupt path (`await llm.interrupt()`).
 
@@ -159,7 +159,7 @@ Key configuration knobs for `GeminiVLM`: `fps`, `frame_buffer_seconds`,
 - **`gemini.Realtime(model: str = "gemini-3.8-live", blocking: bool = False, thinking_level: ThinkingLevel | None = None, config: LiveConnectConfigDict | None = None, fps: int = 1, ...)`**: Live speech-to-speech. Reads `GOOGLE_API_KEY` or `GEMINI_API_KEY` when `api_key` is omitted. Use `LIVE_EXTENDED_THINKING_MODEL` (`gemini-3.8-live-extended-thinking`) for background reasoning; that model applies `thinking_level=HIGH` when `thinking_config` is omitted and rejects `blocking=True`.
 - **`gemini.VLM(model: str = "gemini-3-flash-preview", fps: int = 1, frame_buffer_seconds: int = 10, ...)`**: Vision-language model that buffers video frames and sends them with prompts.
 - **`await simple_response(text)`**: Send a text instruction over the Live session.
-- **`await send_client_content(turns, turn_complete=True)`**: Inject structured turns. `turn_complete=True` interrupts generation.
+- **`await send_client_content(turns, turn_complete=True)`**: Inject structured turns. Sending client content can interrupt generation. `turn_complete=True` starts a response; `False` waits for more client content.
 - **`await interrupt()`**: Stop the current agent turn.
 - **`await watch_video_track(track)` / `await stop_watching_video_track()`**: Low-level video forwarding; the Agent calls these when `fps` is set.
 - **`await close()`**: Close the session and background tasks.

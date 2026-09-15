@@ -330,7 +330,9 @@ class GeminiRealtime(realtime.Realtime):
     ) -> None:
         """Send structured conversation turns via send_client_content.
 
-        ``turn_complete=True`` immediately interrupts ongoing model generation.
+        Sending client content can interrupt ongoing model generation.
+        ``turn_complete=True`` starts a response; ``False`` waits for more
+        client content.
         """
         await self._session.send_client_content(
             turns=turns, turn_complete=turn_complete
@@ -577,7 +579,7 @@ class GeminiRealtime(realtime.Realtime):
             elif server_content and server_content.turn_complete:
                 if not _is_in_progress(server_content.interaction_status):
                     self._end_agent_speech_if_started()
-                self._emit_audio_output_done_event()
+                    self._emit_audio_output_done_event()
                 handled = True
             elif server_content and _is_idle(server_content.interaction_status):
                 self._end_agent_speech_if_started()

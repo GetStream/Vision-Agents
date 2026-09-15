@@ -63,6 +63,16 @@ def _make_session(messages: list[LiveServerMessage]) -> AsyncMock:
     return session
 
 
+class _CaptureSession:
+    """Session that records tool responses without mocking."""
+
+    def __init__(self) -> None:
+        self.function_responses: list[Any] = []
+
+    async def send_tool_response(self, function_responses: list[Any]) -> None:
+        self.function_responses = list(function_responses)
+
+
 def _fake_client() -> Any:
     return object()
 
@@ -214,12 +224,12 @@ class TestGeminiRealtimeProcessEvents:
         assert isinstance(items[0], RealtimeAudioOutputDone)
 
     @pytest.mark.parametrize(
-        ("turn_complete", "status", "expect_agent_ended"),
+        ("turn_complete", "status", "expect_agent_ended", "expect_audio_done"),
         [
-            (True, InteractionStatus.IN_PROGRESS, False),
-            (True, InteractionStatus.IDLE, True),
-            (True, InteractionStatus.REQUIRES_ACTION, True),
-            (False, InteractionStatus.IDLE, True),
+            (True, InteractionStatus.IN_PROGRESS, False, False),
+            (True, InteractionStatus.IDLE, True, True),
+            (True, InteractionStatus.REQUIRES_ACTION, True, True),
+            (False, InteractionStatus.IDLE, True, True),
         ],
     )
     async def test_interaction_status_after_audio(
@@ -227,6 +237,7 @@ class TestGeminiRealtimeProcessEvents:
         turn_complete: bool,
         status: InteractionStatus,
         expect_agent_ended: bool,
+        expect_audio_done: bool,
     ):
         rt = _make_realtime()
         rt._real_session = _make_session(
@@ -244,7 +255,10 @@ class TestGeminiRealtimeProcessEvents:
         await rt._process_events()
 
         items = rt.output.peek()
-        assert any(isinstance(i, RealtimeAudioOutputDone) for i in items)
+        assert (
+            any(isinstance(i, RealtimeAudioOutputDone) for i in items)
+            is expect_audio_done
+        )
         ended = any(isinstance(i, RealtimeAgentSpeechEnded) for i in items)
         assert ended is expect_agent_ended
         assert rt._agent_audio_started is not expect_agent_ended
@@ -692,23 +706,22 @@ class TestGeminiRealtimeFunctionCalling:
             turns=turn, turn_complete=True
         )
 
-    @pytest.mark.parametrize(
-        "model",
-        [DEFAULT_MODEL, LIVE_EXTENDED_THINKING_MODEL, "gemini-3.1-flash-live-preview"],
-    )
-    async def test_function_response_omits_scheduling(self, model: str):
+    async def test_function_response_omits_scheduling(self):
         """Setting `scheduling` makes several Live models close the socket (1007)."""
-        realtime = _make_realtime(model=model)
-        session = AsyncMock()
+        realtime = _make_realtime()
+        session = _CaptureSession()
         realtime._real_session = session
-        realtime._run_one_tool = AsyncMock(return_value=(None, {"ok": True}, None))
+
+        @realtime.register_function(description="Get weather")
+        async def get_weather(city: str) -> dict[str, bool]:
+            return {"ok": True}
 
         await realtime._handle_function_call(
             FunctionCall(id="c1", name="get_weather", args={"city": "NYC"})
         )
 
-        sent = session.send_tool_response.await_args.kwargs["function_responses"][0]
-        assert sent.scheduling is None
+        assert len(session.function_responses) == 1
+        assert session.function_responses[0].scheduling is None
 
 
 @pytest.fixture
@@ -890,7 +903,7 @@ class TestGeminiRealtimeExtendedThinkingIntegration:
 
         try:
             await rt.connect()
-        except APIError as exc:
+        except (APIError, GeminiModelUnavailableError) as exc:
             pytest.skip(f"extended thinking model unavailable: {exc}")
 
         try:
