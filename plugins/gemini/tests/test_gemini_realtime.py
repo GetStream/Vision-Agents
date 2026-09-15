@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -35,7 +36,11 @@ from vision_agents.core.llm.realtime import (
 )
 from vision_agents.core.utils.audio_input_pacer import AudioInputPacer
 from vision_agents.core.utils.audio_input_direct import AudioInputDirect
-from vision_agents.plugins.gemini import LIVE_EXTENDED_THINKING_MODEL, Realtime
+from vision_agents.plugins.gemini import (
+    LIVE_EXTENDED_THINKING_MODEL,
+    GeminiModelUnavailableError,
+    Realtime,
+)
 from vision_agents.plugins.gemini.gemini_realtime import (
     DEFAULT_MODEL,
     LIVE_TRANSLATE_MODEL,
@@ -61,6 +66,29 @@ def _make_session(messages: list[LiveServerMessage]) -> AsyncMock:
 
 def _fake_client() -> Any:
     return object()
+
+
+class _FailingLiveConnect:
+    """Async context manager that fails on enter, like a rejected Live handshake."""
+
+    def __init__(self, error: APIError) -> None:
+        self._error = error
+
+    async def __aenter__(self) -> None:
+        raise self._error
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+
+def _client_rejecting_model(detail: str) -> Any:
+    """Build a client whose live.connect fails with an APIError carrying ``detail``."""
+    error = APIError(1008, detail, None)
+
+    def connect(model: str, config: Any) -> _FailingLiveConnect:
+        return _FailingLiveConnect(error)
+
+    return SimpleNamespace(aio=SimpleNamespace(live=SimpleNamespace(connect=connect)))
 
 
 def _make_realtime(**kwargs: Any) -> GeminiRealtime:
@@ -202,13 +230,15 @@ class TestGeminiRealtimeProcessEvents:
         expect_agent_ended: bool,
     ):
         rt = _make_realtime()
-        follow_up: dict[str, object] = {"interaction_status": status}
-        if turn_complete:
-            follow_up["turn_complete"] = True
         rt._real_session = _make_session(
             [
                 _audio_model_turn(),
-                LiveServerMessage(server_content=LiveServerContent(**follow_up)),
+                LiveServerMessage(
+                    server_content=LiveServerContent(
+                        turn_complete=turn_complete or None,
+                        interaction_status=status,
+                    )
+                ),
             ]
         )
 
@@ -512,6 +542,27 @@ class TestGeminiRealtimeProcessingLoop:
         await rt._processing_loop()
 
         assert rt.connected is False
+
+    async def test_unavailable_model_raises_actionable_error(self):
+        detail = (
+            "models/gemini-3.8-live is not found for API version v1alpha, "
+            "or is not supported for bidiGenerateContent."
+        )
+        rt = _make_realtime(client=_client_rejecting_model(detail))
+
+        with pytest.raises(GeminiModelUnavailableError) as exc_info:
+            await rt._establish_session()
+
+        assert str(exc_info.value) == (
+            "The requested Gemini Live model is not available. Check the model "
+            "name and that your API key's project can use it."
+        )
+
+    async def test_other_api_errors_are_not_wrapped(self):
+        rt = _make_realtime(client=_client_rejecting_model("quota exceeded"))
+
+        with pytest.raises(APIError):
+            await rt._establish_session()
 
 
 class TestGeminiRealtimeFunctionCalling:

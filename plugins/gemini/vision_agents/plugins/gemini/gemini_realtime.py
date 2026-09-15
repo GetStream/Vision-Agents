@@ -127,6 +127,10 @@ def _classify_loop_error(exc: Exception) -> tuple[str, str, bool]:
     return RETRY, str(exc), False
 
 
+class GeminiModelUnavailableError(Exception):
+    """Raised when Gemini rejects the requested Live model."""
+
+
 def _normalized_model(model: str) -> str:
     return model.lower().removeprefix("models/")
 
@@ -145,6 +149,14 @@ def _is_in_progress(status: InteractionStatus | None) -> bool:
 
 def _is_idle(status: InteractionStatus | None) -> bool:
     return status in (InteractionStatus.IDLE, InteractionStatus.REQUIRES_ACTION)
+
+
+def _is_model_unavailable(exc: APIError) -> bool:
+    """Whether the API rejected the model as unknown or not Live-capable."""
+    text = str(exc)
+    return "is not found for API version" in text or (
+        "is not supported for bidiGenerateContent" in text
+    )
 
 
 class GeminiRealtime(realtime.Realtime):
@@ -406,11 +418,19 @@ class GeminiRealtime(realtime.Realtime):
         self._agent_audio_started = False
         self._user_audio_started = False
         logger.debug("Connecting to Gemini live, config set to %s", self._base_config)
-        self._real_session = await self._exit_stack.enter_async_context(
-            self._client.aio.live.connect(  # type: ignore[arg-type]
-                model=self.model, config=self.get_config()
+        try:
+            self._real_session = await self._exit_stack.enter_async_context(
+                self._client.aio.live.connect(  # type: ignore[arg-type]
+                    model=self.model, config=self.get_config()
+                )
             )
-        )
+        except APIError as exc:
+            if not _is_model_unavailable(exc):
+                raise
+            raise GeminiModelUnavailableError(
+                "The requested Gemini Live model is not available. Check the model "
+                "name and that your API key's project can use it."
+            ) from exc
         self._on_connected(
             session_config={"model": self.model},
             capabilities=["text", "audio", "function_calling"],
