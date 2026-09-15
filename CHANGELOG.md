@@ -175,6 +175,8 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+- Added the Go `meta` LLM provider for Muse Spark 1.3 through Meta's hosted API, with streamed text/usage, tool-result replay, reasoning-effort selection and cancellation. Applications opt in through their routing configuration using `META_API_KEY`.
+
 ### An agent directory declares the pages it reads, in `knowledge/urls.yaml`
 
 An agent folder can name the pages its knowledge base is kept filled from, alongside the

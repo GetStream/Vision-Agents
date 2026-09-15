@@ -6,6 +6,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/deepseek"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/gemini"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/gemma"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/meta"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openai"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -16,6 +17,10 @@ func NewRegistry() *Registry { return routing.NewRegistry[Provider]() }
 // DefaultRegistry returns a registry with every LLM provider this build supports.
 func DefaultRegistry() *Registry {
 	registry := NewRegistry()
+
+	registry.Register(meta.ProviderName, func(spec routing.Spec) (Provider, error) {
+		return Started(meta.New(meta.Options{Model: spec.Model, Logger: spec.Logger}))
+	})
 
 	registry.Register(openai.ProviderName, func(spec routing.Spec) (Provider, error) {
 		return Started(openai.New(openai.Options{Model: spec.Model, Logger: spec.Logger}))
