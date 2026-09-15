@@ -2544,6 +2544,12 @@ paths:
         `complete` per response; a `complete` reports the `status` the response ended in,
         what it cost in tokens and how long the caller waited for the first of them.
         `messages[].content` is a string, or an array of parts `[{type: text|image_url,
+        ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`,
+        with arguments encoded as a JSON string and optional opaque signature. Tool-result
+        messages use `role: tool` and `tool_call_id` to correlate their content. Completed
+        tool calls include the same replay fields; incomplete responses additionally report
+        `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises
+        `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url,
         ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images
         is refused with an `error` frame naming the model and the modality, before anything
         is billed. An

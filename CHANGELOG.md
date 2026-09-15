@@ -650,6 +650,10 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- Model WebSocket requests preserve assistant tool calls and correlated tool results,
+  including opaque signatures. Completed responses expose their incomplete reason, and
+  the LLM handshake advertises tool-history support for external worker clients.
+
 - Chat readers are explicitly added to existing agent channels before their token is
   issued, so opening a members-only transcript no longer fails with `ReadChannel`.
 

@@ -83,10 +83,9 @@ def sync_detailed(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `research_progress`
-    (tool_call_id, phase, elapsed_ms, verified_citations), `tool_call`, `tool_ran`, `transferred`,
-    `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
-    `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
+    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
+    `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
     duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
@@ -150,10 +149,9 @@ def sync(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `research_progress`
-    (tool_call_id, phase, elapsed_ms, verified_citations), `tool_call`, `tool_ran`, `transferred`,
-    `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
-    `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
+    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
+    `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
     duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
@@ -212,10 +210,9 @@ async def asyncio_detailed(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `research_progress`
-    (tool_call_id, phase, elapsed_ms, verified_citations), `tool_call`, `tool_ran`, `transferred`,
-    `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
-    `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
+    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
+    `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
     duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
@@ -277,10 +274,9 @@ async def asyncio(
     `type` and the fields of that event.
     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`,
     `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`,
-    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `research_progress`
-    (tool_call_id, phase, elapsed_ms, verified_citations), `tool_call`, `tool_ran`, `transferred`,
-    `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`,
-    `error` and `left`.
+    `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`,
+    `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
+    `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
     message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
     duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has

@@ -66,7 +66,6 @@ class CreateSessionRequest:
             terms, and providers that cannot be told about vocabulary ignore them.
         max_tokens (int | Unset):
         tasks (int | Unset): How much delegated work may run at once.
-        sandbox_profile (str | Unset): Backend-managed research profile, scoped to this customer and agent.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
@@ -111,7 +110,6 @@ class CreateSessionRequest:
     keyterms: list[str] | Unset = UNSET
     max_tokens: int | Unset = UNSET
     tasks: int | Unset = UNSET
-    sandbox_profile: str | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     backchannel: bool | Unset = False
     min_confidence: float | Unset = UNSET
@@ -181,8 +179,6 @@ class CreateSessionRequest:
         max_tokens = self.max_tokens
 
         tasks = self.tasks
-
-        sandbox_profile = self.sandbox_profile
 
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
@@ -281,8 +277,6 @@ class CreateSessionRequest:
             field_dict["max_tokens"] = max_tokens
         if tasks is not UNSET:
             field_dict["tasks"] = tasks
-        if sandbox_profile is not UNSET:
-            field_dict["sandbox_profile"] = sandbox_profile
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if backchannel is not UNSET:
@@ -378,8 +372,6 @@ class CreateSessionRequest:
 
         tasks = d.pop("tasks", UNSET)
 
-        sandbox_profile = d.pop("sandbox_profile", UNSET)
-
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
@@ -467,7 +459,6 @@ class CreateSessionRequest:
             keyterms=keyterms,
             max_tokens=max_tokens,
             tasks=tasks,
-            sandbox_profile=sandbox_profile,
             sandbox=sandbox,
             backchannel=backchannel,
             min_confidence=min_confidence,

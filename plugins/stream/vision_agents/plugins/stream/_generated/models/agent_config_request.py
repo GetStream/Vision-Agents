@@ -51,7 +51,6 @@ class AgentConfigRequest:
             or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
         knowledge_namespace (str | Unset): What the agent may look things up in. Empty means it knows only what it was
             told.
-        sandbox_profile (str | Unset): Backend-managed research profile, scoped to this customer and agent.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
@@ -75,7 +74,6 @@ class AgentConfigRequest:
     plugins: list[str] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
-    sandbox_profile: str | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     tags: AgentConfigRequestTags | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -127,8 +125,6 @@ class AgentConfigRequest:
 
         knowledge_namespace = self.knowledge_namespace
 
-        sandbox_profile = self.sandbox_profile
-
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
             sandbox = self.sandbox.value
@@ -176,8 +172,6 @@ class AgentConfigRequest:
             field_dict["keyterms"] = keyterms
         if knowledge_namespace is not UNSET:
             field_dict["knowledge_namespace"] = knowledge_namespace
-        if sandbox_profile is not UNSET:
-            field_dict["sandbox_profile"] = sandbox_profile
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if tags is not UNSET:
@@ -245,8 +239,6 @@ class AgentConfigRequest:
 
         knowledge_namespace = d.pop("knowledge_namespace", UNSET)
 
-        sandbox_profile = d.pop("sandbox_profile", UNSET)
-
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
@@ -279,7 +271,6 @@ class AgentConfigRequest:
             plugins=plugins,
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
-            sandbox_profile=sandbox_profile,
             sandbox=sandbox,
             tags=tags,
         )
