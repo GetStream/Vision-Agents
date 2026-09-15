@@ -42,7 +42,7 @@ async def create_agent(**kwargs: Any) -> Agent:
     model_name = os.getenv("GEMINI_LIVE_MODEL", DEFAULT_MODEL)
 
     llm = Realtime(
-        model=model_name,
+        # model=model_name,
         fps=2,
     )
 
