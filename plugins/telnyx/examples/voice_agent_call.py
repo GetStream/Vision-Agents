@@ -23,6 +23,7 @@ from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from vision_agents.core import Agent, User
+from vision_agents.core.warmup import WarmupCache
 from vision_agents.plugins import getstream, smart_turn, telnyx
 from vision_agents.plugins.getstream.stream_edge_transport import StreamEdge
 from vision_agents.plugins.telnyx.example_helpers import (
@@ -152,6 +153,11 @@ async def media_stream(websocket: WebSocket, call_id: str, token: str):
 
         await telnyx.attach_phone_to_call(stream_call, telnyx_stream, phone_user.id)
         await wait_for_start(telnyx_stream)
+
+        # This example bypasses AgentLauncher, so component warmup never runs.
+        # Smart Turn is the only turn detector here (Telnyx STT sends no VAD
+        # signals), and it raises until its VAD/ONNX models are loaded.
+        await agent.turn_detection.warmup(WarmupCache())
 
         async with agent.join(stream_call, participant_wait_timeout=0):
             await agent.simple_response(
