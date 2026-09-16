@@ -48,6 +48,7 @@ load_dotenv()
 app = FastAPI()
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 call_registry = telnyx.TelnyxCallRegistry()
+warmup_cache = WarmupCache()
 telnyx_client: TelnyxClient | None = None
 telnyx_config: TelnyxConfig | None = None
 telnyx_public_key: str | None = None
@@ -156,8 +157,9 @@ async def media_stream(websocket: WebSocket, call_id: str, token: str):
 
         # This example bypasses AgentLauncher, so component warmup never runs.
         # Smart Turn is the only turn detector here (Telnyx STT sends no VAD
-        # signals), and it raises until its VAD/ONNX models are loaded.
-        await agent.turn_detection.warmup(WarmupCache())
+        # signals), and it raises until its VAD/ONNX models are loaded. The
+        # cache is shared across calls so the models load only once.
+        await agent.turn_detection.warmup(warmup_cache)
 
         async with agent.join(stream_call, participant_wait_timeout=0):
             await agent.simple_response(
