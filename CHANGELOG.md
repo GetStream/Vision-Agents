@@ -183,6 +183,11 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+- Per-app model policies can restrict each modality to approved concrete models,
+  including alias resolution, priority lists and fallback attempts. An empty app
+  allowlist disables routing. Policy-owned usage labels override client labels in
+  recorded success and failure rows; apps without a policy retain existing behavior.
+
 - Persistent text commands return stable user/assistant message IDs and suppress
   duplicate inference. Acceptance records both initial Chat writes and the command
   mapping atomically. Restarted unfinished commands report interruption instead of

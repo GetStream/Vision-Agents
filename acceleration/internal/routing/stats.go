@@ -61,10 +61,11 @@ type Stat struct {
 // never wait on a database, so recording is asynchronous and stats are the thing that
 // gets dropped when the backend cannot keep up.
 type Recorder struct {
-	modality Modality
-	store    *store.Store
-	live     *live.Client
-	logger   *slog.Logger
+	modality         Modality
+	store            *store.Store
+	live             *live.Client
+	logger           *slog.Logger
+	customerPolicies map[string]CustomerPolicy
 
 	queue chan store.Request
 	done  chan struct{}
@@ -105,7 +106,7 @@ func (r *Recorder) Record(config ProviderConfig, entry Stat) {
 		CustomerID:        entry.CustomerID,
 		AgentID:           entry.AgentID,
 		CallID:            entry.CallID,
-		Tags:              entry.Tags,
+		Tags:              r.customerPolicies[entry.CustomerID].attributed(entry.Tags),
 		Provider:          config.Provider,
 		Model:             config.Model,
 		StartedAt:         entry.StartedAt,
