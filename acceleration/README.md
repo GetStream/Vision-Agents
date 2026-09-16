@@ -359,8 +359,38 @@ A shortcut normally describes what it wants and takes whoever meets it, so addin
 a config edit and nothing else. `en-low-latency` for speech-to-text is the exception: every
 live transcriber is realtime, low-latency and speaks English, so nothing any of them declares
 tells one from another, and it names both Deepgram Flux models, Grok and Muse outright with
-`only`. Gemini and the two Parakeets stay reachable by `provider/model` and through the other
-shortcuts.
+`only`. Gemini, the two Parakeets, Ink 2, Inworld and Scribe stay reachable by
+`provider/model` and through the other shortcuts.
+
+### The base groups
+
+Speech-to-text adds two shortcuts of a different kind, for the caller who wants the models we
+would pick rather than a list of their own to keep:
+
+| Group                         | What it is                                                        |
+| ----------------------------- | ----------------------------------------------------------------- |
+| `base/stt-realtime-fast`      | Flux, Ink 2, Inworld and Nemotron, pinned to `deepgram/flux-general-en` |
+| `base/stt-realtime-accurate`  | Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse       |
+
+```yaml
+stt:
+  providers:
+    - base/stt-realtime-accurate
+```
+
+`base/` marks them as ours. It is not a vendor and nothing is declared under it; the prefix is
+there because a customer's own stored config may well be called `stt-realtime-fast`, and a
+priority list naming `base/stt-realtime-fast` means this group rather than that config.
+
+Both name their members with `only`, which is the thing the field exists for and the thing it
+warns about: a name is a judgement about which models are wanted rather than a fact about what
+they can do, so it goes stale in a way a requirement does not. That is what these are — an
+opinion with a date on it — and the date is in the config beside them.
+
+A group is its models and nothing else. It carries no terms, so a config that wants the label
+still writes `diarize: true`, and the accurate group then narrows to Muse, which is the one of
+its four that declares it and the one the pin already starts with. Both groups are the live
+path only; a recording belongs at `en-recorded`, where the batch models are.
 
 Speech-to-text also keeps its sprint-1 names (`en-realtime-best` and friends) as synonyms.
 LLM adds two of its own. `llm-fast` is a fast answer, in whatever language, and `llm-thinking`
@@ -429,10 +459,13 @@ Google reports it as a token count rather than streaming it, so there are no
 
 | Model                                                      | Languages | Per audio hour |
 | ---------------------------------------------------------- | --------- | -------------- |
+| `cartesia/ink-2`                                           | en        | ~$0.54         |
 | `deepgram/flux-general-en`                                 | en        | $0.276         |
 | `deepgram/flux-general-multi`                              | 12        | $0.276         |
+| `elevenlabs/scribe_v2_realtime`                            | 57        | $0.39          |
 | `gemini/gemini-3.5-transcribe-live`                        | 85+       | ~$0.54         |
 | `grok/grok-stt`                                            | 25        | $0.20          |
+| `inworld/inworld-stt-1`                                    | 30        | $0.15          |
 | `muse/muse-voice-transcribe-1.0`                           | 25        | $0.18          |
 | `parakeet/parakeet-tdt-0.6b-v3`                            | 25        | $0.079         |
 | `together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b`   | en        | $0.09          |
@@ -461,11 +494,26 @@ the caller and settles on the flag the transcript carries rather than on `speech
 Turns can overlap, so the provider keys its bookkeeping on the `turnId` the server sends
 rather than on the order the frames arrive in.
 
+Ink 2 is the second model here that decides where a turn ended itself, and Cartesia publish
+a migration guide from Flux to it because they are much the same shape of protocol. The
+three thresholds that move that boundary are reachable through `overwrites`, not as shared
+terms: Cartesia's own guide says theirs and Deepgram's do not mean the same thing at the
+same value. Closing the socket transcribes whatever the server was still holding, so the
+tail of a caller who was cut off is not lost.
+
+Inworld STT 1 and Scribe v2 Realtime both take their configuration where it cannot be
+changed afterwards — Inworld in an opening `transcribeConfig` frame, Scribe in the query
+string — and both send audio as base64 inside a JSON frame rather than as binary. Scribe has
+no control frame at all: committing the tail of a call means sending a chunk with the commit
+flag set, which is why the provider sends a fiftieth of a second of silence to carry it. It
+also does not start transcribing until it has about two seconds of audio, so its first
+interim transcript lands later than the others' while the turn still settles as quickly.
+
 Muse and Grok are the only two of these that can tell one voice from another. What that is
 for is the microphone with more than one person at it: a track says who joined the call,
 which is the wrong answer for everybody else in the room with them, so the label is what
 lets the agent leave a bystander's question alone. It is a label the session made up rather
-than an identity, and the four transcribers that cannot hear the difference leave it empty.
+than an identity, and the transcribers that cannot hear the difference leave it empty.
 
 Grok names the voice on every session, because it costs nothing to ask for. Muse does it
 only when a request asks, because its `DIARIZATION` mode looks for a speaker change rather
@@ -474,7 +522,8 @@ where `ENDPOINTING` takes about 770ms, and that second and a half is time the ca
 waiting. Both declare `diarize` and both honour it, so asking narrows an English call to
 those two rather than serving it unlabelled from one of the others.
 
-Deepgram, Grok, Muse, Parakeet and Nemotron are speech recognisers. Gemini 3.5 Transcribe
+Deepgram, Cartesia, ElevenLabs, Grok, Inworld, Muse, Parakeet and Nemotron are speech
+recognisers. Gemini 3.5 Transcribe
 is a Gemini model that happens to be listening, reached over the Live API's
 `BidiGenerateContent` socket with the talking half turned off, and that difference shows
 in three places.

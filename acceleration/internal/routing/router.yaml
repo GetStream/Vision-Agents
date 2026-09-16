@@ -386,7 +386,7 @@ stt:
       realtime: true
       tier: low-latency
       supports: [keyterms, diarize]
-      # The weakest disclosure of the six, and the reason unknown is a value this field
+      # The weakest disclosure here, and the reason unknown is a value this field
       # can take. Meta's terms commit to purposes for retention and never to a clock: no
       # duration, no deletion commitment, no page defining the zero-retention policy that
       # the handshake's own zdrOverride field overrides. Nothing states that audio sent to
@@ -398,6 +398,187 @@ stt:
         retention: unknown
       price:
         per_audio_hour: 0.18
+
+    # Cartesia's Ink 2 on the socket that detects turns for itself, which is the same job
+    # Flux does and much the same shape of protocol - Cartesia publish a migration guide
+    # from one to the other. English only: they say multilingual is coming, and until it
+    # does ink-whisper is where the other languages are, on the batch endpoint.
+    #
+    # Billed in credits at three a second of audio, silence included, which at the entry
+    # self-serve rate of $50 a million credits is the figure below.
+    - provider: cartesia
+      model: ink-2
+      languages: [en]
+      realtime: true
+      tier: low-latency
+      # keyterm is repeated on the query string, up to a hundred terms and 1200
+      # characters, and turn_end_timeout_ms caps how long the model waits after the caller
+      # stops before ending the turn, which is what asking for silence endpointing asks
+      # for. The three turn-detection thresholds are this model's own and are reachable
+      # through overwrites rather than standardised.
+      supports: [keyterms, endpointing]
+      # Cartesia's account, so the same answer as the Sonic entry in the tts block below:
+      # opted in to training unless the account files the form, and Zero Data Retention an
+      # Enterprise setting per workspace.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+      price:
+        per_audio_hour: 0.54
+
+    # Inworld's own STT model on their bidirectional streaming socket.
+    #
+    # That socket is a gateway in front of AssemblyAI, Soniox, Groq and Deepgram as well,
+    # and none of those are reachable through this entry. Two of them are providers of
+    # their own here, and reaching a model through somebody else's gateway would route
+    # around the health and the price that make a fallback list mean anything.
+    #
+    # $0.15 an audio hour on demand, which is the rate below; a paid plan brings it to
+    # $0.10 and a deployment on one edits this.
+    - provider: inworld
+      model: inworld-stt-1
+      languages:
+        [
+          ar,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          fa,
+          fi,
+          fil,
+          fr,
+          hi,
+          hu,
+          id,
+          it,
+          ja,
+          ko,
+          mk,
+          ms,
+          nl,
+          pl,
+          pt,
+          ro,
+          ru,
+          sv,
+          th,
+          tr,
+          vi,
+          yue,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      # prompts is what this API calls keyterms, and it is the one biasing field the
+      # gateway offers on every model. Turn detection is the model's own and tunable:
+      # minEndOfTurnSilenceWhenConfident is the silence a caller asking for endpointing
+      # means, and the confidence threshold behind it is an overwrite.
+      supports: [keyterms, endpointing]
+      # Inworld's account, so the same answer as the TTS entry below. Zero Data Retention
+      # is arranged per workspace with their team rather than sent with a request, and
+      # their published terms say what we may not do with their output and nothing about
+      # what they do with our audio.
+      data_policy:
+        trains_on_data: unknown
+        retention: unspecified
+      price:
+        per_audio_hour: 0.15
+
+    # Scribe v2 Realtime, the streaming half of Scribe. The batch model below the fold in
+    # the recording path is the more capable one - it diarises up to 32 speakers, tags
+    # audio events and covers more languages - and this one is built for the 150ms a live
+    # call needs instead.
+    #
+    # The languages are the two accuracy tiers ElevenLabs publish a word error rate for at
+    # 10% or better, out of the ninety the model recognises. The rest are left out for the
+    # reason Nemotron's third tier is: a language the vendor's own figures say it
+    # transcribes badly is not one to route a call to.
+    #
+    # $0.39 an audio hour at the standard rate, before the $0.05 an hour keyterm prompting
+    # adds; an annual Business plan brings the base to $0.28.
+    - provider: elevenlabs
+      model: scribe_v2_realtime
+      languages:
+        [
+          az,
+          be,
+          bg,
+          bn,
+          bs,
+          ca,
+          cs,
+          da,
+          de,
+          el,
+          en,
+          es,
+          et,
+          fa,
+          fi,
+          fil,
+          fr,
+          gl,
+          gu,
+          hi,
+          hr,
+          hu,
+          hy,
+          id,
+          is,
+          it,
+          ja,
+          ka,
+          kk,
+          kn,
+          lt,
+          lv,
+          mk,
+          ml,
+          mr,
+          ms,
+          mt,
+          ne,
+          nl,
+          no,
+          or,
+          pl,
+          pt,
+          ro,
+          ru,
+          sk,
+          sl,
+          sr,
+          sv,
+          sw,
+          ta,
+          te,
+          tr,
+          uk,
+          vi,
+          yue,
+          zh,
+        ]
+      realtime: true
+      tier: low-latency
+      # Fifty keyterms of twenty characters, against the batch model's thousand of fifty,
+      # and a voice activity detector whose silence threshold is what endpointing asks
+      # for. diarize is deliberately absent: ElevenLabs say plainly that the realtime
+      # model does not name the speaker and that batch Scribe is where that lives, so a
+      # request asking to be told who spoke is routed elsewhere rather than answered by
+      # something that cannot. no_verbatim is real here and undeclared for now, because
+      # nothing sends it.
+      supports: [keyterms, endpointing]
+      # ElevenLabs' account, so the same answer as the three TTS entries below: self-serve
+      # accounts are opted in to training, history is kept with no published window, and
+      # Zero Retention Mode is Enterprise-only.
+      data_policy:
+        trains_on_data: "yes"
+        retention: unspecified
+      price:
+        per_audio_hour: 0.39
 
     # Nova-3 on the batch listen endpoint, which is the recording path rather than the
     # live one. It is not a Flux model: Flux exists to decide where a turn ended while
@@ -437,10 +618,11 @@ stt:
   aliases:
     # The transcribers an English call is trusted to. Every live model here is realtime
     # and low-latency and speaks English, so nothing any of them declares tells these
-    # apart from the rest and the names have to be given outright. Gemini and the two
-    # Parakeets stay reachable through the shortcuts below and by naming a provider and
-    # model. Grok is the one of these four that names the voice without being asked, and
-    # so the one that can tell a bystander at the caller's microphone from the caller.
+    # apart from the rest and the names have to be given outright. Gemini, the two
+    # Parakeets, Ink 2, Inworld and Scribe stay reachable through the shortcuts below and
+    # by naming a provider and model. Grok is the one of these four that names the voice
+    # without being asked, and so the one that can tell a bystander at the caller's
+    # microphone from the caller.
     en-low-latency:
       languages: [en]
       require_realtime: true
@@ -477,6 +659,57 @@ stt:
     multilingual-high-accuracy:
       multilingual: true
       require_realtime: true
+
+    # The two groups Vision Agents maintains so that a config does not have to. A customer
+    # who wants the models we would pick for a live call names one of these and gets the
+    # list as it is reviewed here, rather than copying today's answer into their own config
+    # and keeping it.
+    #
+    # base/ marks them as ours. It is not a vendor, and nothing is declared under it: the
+    # prefix is there because a customer's own stored config may well be called
+    # stt-realtime-fast, and a priority list saying base/stt-realtime-fast is naming this
+    # group rather than that config.
+    #
+    # Both name their members outright, which everything above avoids and the field's own
+    # documentation warns about: a name here is a judgement about which models are wanted
+    # rather than a fact about what they can do, so it goes stale in the way a requirement
+    # does not. That is what these are for, and the cost of it is that the lists have to be
+    # re-read rather than trusted. Last reviewed 2026-09.
+
+    # Fast: answering before the caller wonders whether the line dropped. Flux is pinned
+    # because Deepgram's turn detector is the one the other three are measured against,
+    # with the multilingual Flux beside it so a caller who is not speaking English still
+    # lands on Deepgram; then Ink 2, whose migration guide is written from that exact
+    # model, then Inworld, then Nemotron on Together, the cheapest of them by a factor of
+    # six. Health orders the four behind the pin, which is what naming a group means.
+    base/stt-realtime-fast:
+      require_realtime: true
+      tier: low-latency
+      prefer: deepgram/flux-general-en
+      only:
+        - deepgram/flux-general-en
+        - deepgram/flux-general-multi
+        - cartesia/ink-2
+        - inworld/inworld-stt-1
+        - together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b
+
+    # Accurate: the same live path, ordered by how well it hears rather than how quickly.
+    # Muse is pinned because it is the one of the four that names the voice as well, so a
+    # config that goes on to ask for diarize: true narrows to the model this group already
+    # starts with rather than to a different one.
+    #
+    # No tier requirement, for the reason en-high-accuracy gives: accuracy is worth waiting
+    # for, so a slower live model belongs here. All four happen to be low-latency today, and
+    # declaring that would turn replacing one of them with a better, slower model into a
+    # config that refuses to load.
+    base/stt-realtime-accurate:
+      require_realtime: true
+      prefer: muse/muse-voice-transcribe-1.0
+      only:
+        - muse/muse-voice-transcribe-1.0
+        - elevenlabs/scribe_v2_realtime
+        - cartesia/ink-2
+        - together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b
 
     # The names sprint 1 shipped, kept so existing callers keep working.
     en-realtime-best:

@@ -198,6 +198,92 @@ func (s *RoutingSuite) TestDefaultConfigDeclaresTheSameShortcutsForEveryModality
 	}
 }
 
+// shippedSTT is a router over the configuration the binary ships, for the shortcuts whose
+// membership is the thing being tested rather than the mechanism behind it. Every provider
+// builds, since what a base group resolves to is a question about the config and not about
+// whether the vendor's own factory is happy.
+func (s *RoutingSuite) shippedSTT() *Router[*stubProvider] {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	registry := NewRegistry[*stubProvider]()
+	for _, provider := range config[STT].Providers {
+		registry.Register(provider.Provider, func(spec Spec) (*stubProvider, error) {
+			return &stubProvider{model: spec.Model}, nil
+		})
+	}
+
+	router, err := New(Options[*stubProvider]{
+		Modality: STT,
+		Config:   config[STT],
+		Registry: registry,
+		Logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	return router
+}
+
+func (s *RoutingSuite) TestABaseGroupResolvesToTheModelsVisionAgentsPicked() {
+	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
+		Providers: []string{"base/stt-realtime-fast"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("deepgram/flux-general-en", names(candidates)[0],
+		"the pinned model heads the group while it is up")
+	s.ElementsMatch([]string{
+		"deepgram/flux-general-en",
+		"deepgram/flux-general-multi",
+		"cartesia/ink-2",
+		"inworld/inworld-stt-1",
+		"together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b",
+	}, names(candidates),
+		"a group is the list it names and nothing else, so a model joining the router does not join it")
+}
+
+func (s *RoutingSuite) TestTheAccurateBaseGroupLeadsWithTheModelThatNamesTheVoice() {
+	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
+		Providers: []string{"base/stt-realtime-accurate"},
+	})
+	s.Require().NoError(err)
+
+	s.Equal("muse/muse-voice-transcribe-1.0", names(candidates)[0],
+		"a config that goes on to ask for diarize should narrow to the model this group already starts with")
+	s.ElementsMatch([]string{
+		"muse/muse-voice-transcribe-1.0",
+		"elevenlabs/scribe_v2_realtime",
+		"cartesia/ink-2",
+		"together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b",
+	}, names(candidates))
+}
+
+func (s *RoutingSuite) TestABaseGroupIsALiveGroupOnly() {
+	batch := false
+	_, err := s.shippedSTT().resolveChain(s.ctx, Request{
+		Providers: []string{"base/stt-realtime-accurate"},
+		Realtime:  &batch,
+	})
+
+	s.ErrorContains(err, "nothing in the priority list base/stt-realtime-accurate",
+		"a recording belongs at en-recorded, where the batch models are")
+}
+
+func (s *RoutingSuite) TestABaseGroupNarrowsToWhatCanServeTheTermsAsked() {
+	// The whole of what these groups do not carry: naming one asks for its models, not for
+	// its options. Of the accurate group only Muse declares diarize, so a config that names
+	// the group and then asks to be told who spoke gets that one rather than all four.
+	candidates, err := s.shippedSTT().resolveChain(s.ctx, Request{
+		Providers: []string{"base/stt-realtime-accurate"},
+	})
+	s.Require().NoError(err)
+
+	serving, err := serving(candidates, []options.Term{options.Diarize})
+	s.Require().NoError(err)
+
+	s.Equal([]string{"muse/muse-voice-transcribe-1.0"}, names(serving))
+}
+
 func (s *RoutingSuite) TestDefaultConfigPricesEveryProvider() {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)

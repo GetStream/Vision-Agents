@@ -274,6 +274,56 @@ No configuration is needed. On a `noauth` deployment behind a proxy, the proxy's
 `Stream-Auth-Type` and `X-Stream-User-Id` decide; in `api_key` mode the token's `user_id`
 and `role` claims do.
 
+### Two base provider groups for transcription: `base/stt-realtime-fast` and `base/stt-realtime-accurate`
+
+The models we would pick for a live call, named rather than copied:
+
+```yaml
+stt:
+  providers:
+    - base/stt-realtime-accurate
+```
+
+The fast group is Flux, Ink 2, Inworld and Nemotron with `deepgram/flux-general-en` pinned at
+the front; the accurate one is Muse, Scribe v2 Realtime, Ink 2 and Nemotron, pinned to Muse.
+Both are capability shortcuts, so they go anywhere a `provider/model` goes, in a priority list
+or as a target, and the rest of each group stays behind the pin as failover.
+
+`base/` marks them as ours: a customer's own stored config may well be called
+`stt-realtime-fast`, and naming `base/stt-realtime-fast` means this group rather than that
+config. A group carries its models and nothing else — a config that wants diarization still
+asks for it, and the accurate group then narrows to Muse.
+
+The point of them is that the list is reviewed here instead of in every config that wanted
+today's answer. The cost is that it is an opinion with a date on it rather than something that
+follows from what the models declare, which is why the date is in the config beside them.
+
+### Three more realtime transcription models: Ink 2, Inworld STT 1 and Scribe v2 Realtime
+
+The router now streams to Cartesia's `cartesia/ink-2`, Inworld's `inworld/inworld-stt-1`
+and ElevenLabs' `elevenlabs/scribe_v2_realtime`, reachable by name or by any shortcut whose
+terms they satisfy. Inworld needs `INWORLD_API_KEY`; Cartesia and ElevenLabs reuse the keys
+their voices already use.
+
+Ink 2 and Flux are the two models that detect turns themselves, and their thresholds are
+each vendor's own rather than a shared term, so Ink 2's live in `overwrites` the way Flux's
+do (`turn_end_threshold`, `turn_end_timeout_ms`). Inworld and Scribe take
+`silence_ms` as endpointing and expose the rest of their detectors the same way.
+
+Scribe is the case `supports:` exists for: ElevenLabs say plainly that the realtime model
+does not diarize and that batch Scribe is where that lives, so it declares `keyterms` and
+`endpointing` and not `diarize`, and a request that asks to be told who spoke routes past
+it rather than being served something that cannot answer.
+
+### Muse and Nemotron read their `overwrites` block
+
+Both had a setting the shared vocabulary has no word for and no way to be told it, so a
+block addressed to either was accepted and dropped. Muse now takes `mode`, which is the only
+vocabulary it has for a turn boundary and the sole way to ask it for `PUSH_TO_TALK`, and
+Nemotron takes `turn_grace_ms` — the router's own wait for the transcript to stop changing,
+since nothing on that protocol says where a turn ended. A field neither has is still an
+error rather than a setting that goes nowhere.
+
 ### An agent directory declares the pages it reads, in `knowledge/urls.yaml`
 
 An agent folder can name the pages its knowledge base is kept filled from, alongside the

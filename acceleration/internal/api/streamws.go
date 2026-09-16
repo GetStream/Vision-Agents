@@ -891,11 +891,15 @@ func sttFrame(event stt.Event) (frame, bool) {
 	switch typed := event.(type) {
 	case stt.Transcript:
 		return frame{
-			"type":               "transcript",
-			"text":               typed.Text,
-			"final":              typed.Final(),
-			"confidence":         typed.Confidence,
-			"language":           typed.Language,
+			"type":       "transcript",
+			"text":       typed.Text,
+			"final":      typed.Final(),
+			"confidence": typed.Confidence,
+			"language":   typed.Language,
+			// The voice the provider heard, for the models that tell one voice on a track
+			// from another. Empty from the rest, which is what a caller asking who spoke
+			// has to be able to tell from a label.
+			"speaker":            typed.Speaker,
 			"provider":           typed.Provider,
 			"model":              typed.Model,
 			"processing_time_ms": typed.ProcessingTimeMs,

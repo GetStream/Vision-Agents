@@ -82,7 +82,13 @@ func (s *STTRouterSuite) TestAnEnglishCallGoesToTheFourTrustedModelsAndNowhereEl
 func (s *STTRouterSuite) TestTheModelsLeftOutOfTheEnglishShortcutAreStillReachable() {
 	router := s.newRouter()
 
-	for _, name := range []string{"gemini/gemini-3.5-transcribe-live", "parakeet/parakeet-tdt-0.6b-v3"} {
+	for _, name := range []string{
+		"gemini/gemini-3.5-transcribe-live",
+		"parakeet/parakeet-tdt-0.6b-v3",
+		"cartesia/ink-2",
+		"inworld/inworld-stt-1",
+		"elevenlabs/scribe_v2_realtime",
+	} {
 		candidates, err := router.Resolve(s.ctx, name, nil)
 		s.Require().NoErrorf(err, "target %s", name)
 		s.Require().Lenf(candidates, 1, "target %s", name)
@@ -177,6 +183,117 @@ func (s *STTRouterSuite) TestRegistryBuildsTheTogetherHostedParakeet() {
 	s.Equal("nvidia/parakeet-tdt-0.6b-v3-realtime", built.Model())
 	s.Equal("together-parakeet", built.Provider(),
 		"the self-hosted deployment of the same weights is a different provider")
+}
+
+// TestRegistryBuildsTheThreeRealtimeModelsThatNameTheirVendorTwice covers the models whose
+// wire name and routing name differ. Together's are namespaced by the lab that trained
+// them and Inworld's by Inworld itself, and a provider that reported the wire name would
+// not match the row in router.yaml that chose it.
+func (s *STTRouterSuite) TestRegistryBuildsTheThreeRealtimeModelsThatNameTheirVendorTwice() {
+	registry := DefaultRegistry()
+	s.T().Setenv("CARTESIA_API_KEY", "test-key")
+	s.T().Setenv("INWORLD_API_KEY", "test-key")
+	s.T().Setenv("ELEVENLABS_API_KEY", "test-key")
+
+	for provider, model := range map[string]string{
+		"cartesia":   "ink-2",
+		"inworld":    "inworld-stt-1",
+		"elevenlabs": "scribe_v2_realtime",
+	} {
+		built, err := registry.Build(provider, routing.Spec{Model: model})
+		s.Require().NoError(err)
+		s.Equal(provider, built.Provider())
+		s.Equal(model, built.Model(),
+			"the model is reported as router.yaml names it, whatever the vendor calls it on the wire")
+	}
+}
+
+// TestMuseTakesTheTurnBoundaryAsAModeAndRefusesOneItHasNot covers the vendor whose only
+// vocabulary for the boundary is a mode. A caller who wrote it out meant it, so it wins
+// over the mode the shared diarize term worked out.
+func (s *STTRouterSuite) TestMuseTakesTheTurnBoundaryAsAModeAndRefusesOneItHasNot() {
+	registry := DefaultRegistry()
+	s.T().Setenv("META_API_KEY", "test-key")
+	diarize := true
+
+	built, err := registry.Build("muse", routing.Spec{
+		Model:      "muse-voice-transcribe-1.0",
+		STT:        options.STT{Diarize: &diarize},
+		Overwrites: json.RawMessage(`{"mode":"PUSH_TO_TALK"}`),
+	})
+	s.Require().NoError(err)
+	s.Equal("muse-voice-transcribe-1.0", built.Model())
+
+	_, err = registry.Build("muse", routing.Spec{
+		Model:      "muse-voice-transcribe-1.0",
+		Overwrites: json.RawMessage(`{"mode":"WHENEVER"}`),
+	})
+	s.ErrorContains(err, "WHENEVER",
+		"a mode this model does not have has to be reported rather than sent")
+}
+
+// TestNemotronsTurnGraceIsTheRoutersOwnWait is the overwrite that is not the vendor's knob
+// at all: nothing on that protocol says where a turn ended, so the wait is ours.
+func (s *STTRouterSuite) TestNemotronsTurnGraceIsTheRoutersOwnWait() {
+	var settings togetherNemotronSettings
+	s.Require().NoError(routing.Spec{
+		Overwrites: json.RawMessage(`{"turn_grace_ms":400}`),
+	}.Settings(&settings))
+	s.Equal(400, settings.TurnGraceMs)
+
+	registry := DefaultRegistry()
+	s.T().Setenv("TOGETHER_API_KEY", "test-key")
+
+	_, err := registry.Build("together-nemotron", routing.Spec{
+		Model:      "nvidia/nemotron-3-asr-streaming-0.6b",
+		Overwrites: json.RawMessage(`{"silence_ms":400}`),
+	})
+	s.ErrorContains(err, "silence_ms",
+		"this provider has no server-side endpointer, so it cannot be asked for one")
+}
+
+func (s *STTRouterSuite) TestRegistryReadsInk2sTurnThresholdsFromOverwrites() {
+	var settings cartesiaSettings
+	spec := routing.Spec{
+		Model:      "ink-2",
+		Overwrites: json.RawMessage(`{"turn_end_threshold":0.7,"turn_end_timeout_ms":600}`),
+	}
+
+	s.Require().NoError(spec.Settings(&settings))
+
+	s.InDelta(0.7, settings.TurnEndThreshold, 0.001)
+	s.Equal(600, settings.TurnEndTimeoutMs)
+	s.Zero(settings.TurnStartThreshold, "what was not named keeps Ink 2's own default")
+}
+
+// TestRegistryTellsInworldsVadThresholdOffFromAnAbsentOne is why that one field is a
+// pointer. Zero turns the server's turn detection off, which on a live call means nothing
+// settles until the call ends, so it cannot also be how an unset field reads.
+func (s *STTRouterSuite) TestRegistryTellsInworldsVadThresholdOffFromAnAbsentOne() {
+	var off inworldSettings
+	s.Require().NoError(routing.Spec{
+		Overwrites: json.RawMessage(`{"vad_threshold":0}`),
+	}.Settings(&off))
+	s.Require().NotNil(off.VadThreshold)
+	s.Zero(*off.VadThreshold)
+
+	var unset inworldSettings
+	s.Require().NoError(routing.Spec{Overwrites: json.RawMessage(`{}`)}.Settings(&unset))
+	s.Nil(unset.VadThreshold, "a request that said nothing leaves the detector on")
+}
+
+func (s *STTRouterSuite) TestRegistryReadsScribesDetectorFromOverwrites() {
+	var settings elevenlabsSettings
+	spec := routing.Spec{
+		Model:      "scribe_v2_realtime",
+		Overwrites: json.RawMessage(`{"vad_silence_threshold_secs":0.4,"min_silence_duration_ms":200}`),
+	}
+
+	s.Require().NoError(spec.Settings(&settings))
+
+	s.InDelta(0.4, settings.VadSilenceThresholdSecs, 0.001)
+	s.Equal(200, settings.MinSilenceDurationMs)
+	s.Zero(settings.MinSpeechDurationMs, "what was not named keeps Scribe's own default")
 }
 
 func (s *STTRouterSuite) TestRegistryReadsTheFluxTurnThresholdsFromOverwrites() {
