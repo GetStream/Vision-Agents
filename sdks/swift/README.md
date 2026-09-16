@@ -24,15 +24,19 @@ Shipping these means splitting each into its own repository from CI, or a packag
 let agents = VisionAgents(url: URL(string: "https://your-router")!, customerID: "acme")
 
 // In writing. No call is joined, nothing is transcribed or spoken.
-let chat = try await agents.chat(agent: "swift_demo")
+let chat = try await agents.chat(agent: configID)
 await chat.start()
 try await chat.send("What are your opening hours?")
 // chat.turns grows as the reply streams in; chat.state says what the agent is doing.
 
 // Out loud. The agent joins a call and so does this device.
-let voice = try await VoiceSession.start(agents: agents, agent: "swift_demo")
-await voice.join()
+let voice = try await VoiceSession.start(agents: agents, agent: configID)
+await voice.join(credentials: yourBackend.callCredentials)
 ```
+
+`agent:` is a config id, not a name, and `join` is handed a closure rather than minting its
+own token. Both are the same fact: reading the configs and minting a call token are server-side
+only, so the app is told which agent it talks to and is handed the token to join with.
 
 With `VisionAgentsUI` a whole conversation is one view:
 
@@ -57,51 +61,47 @@ let lookup = AgentTool(
     await Orders.local.find(arguments["order_id"]?.stringValue ?? "")
 }
 
-let chat = try await agents.chat(agent: "swift_demo", tools: [lookup])
+let chat = try await agents.chat(agent: configID, tools: [lookup])
 ```
 
-### One modality at a time
+### Looking something up
 
-`Router` routes transcription, a voice, a model or a search on its own, without a call and
-without WebRTC. It takes a stored router config and every option overrides one field of it:
+`Router.search` is the one routed modality a device may reach, because a question and its
+answer are one round trip and the answer is for whoever asked:
 
 ```swift
 let router = Router(url: url, customerID: "acme", config: "healthcare")
-
-var wanted = TranscriptionOptions()
-wanted.diarize = true
-let transcript = try await router.stt.recording(.url(recording), options: wanted)
-
-let voice = try router.tts.realtime()
-for try await speech in try await voice.audio() {
-    // 16-bit PCM, with the rate and channel count it should be played at
-}
-try await voice.speak("hello there")
-
 let found = try await router.search("perioperative antibiotic guidance")
 ```
 
-`realtime()` opens a socket and yields what arrives; `recording()` is the non-realtime form,
-served by the batch half of a vendor rather than the streaming one. Writing a router config is
-server-side only, like the rest of configuration, so `configs()` reads them and the Go or
-Python SDK writes them.
-
 ## What is deliberately not here
 
-**Configuring an agent.** Writing a config, defining skills, ingesting knowledge and waiting
-for dispatched calls are marked `x-server-side-only` in the spec, and the router answers a
-device 403 for all of them. `generate.py` asserts that none of them are in the client, so the
-SDK cannot grow a method that only ever fails. Use the Go or Python SDK from your backend —
-[`examples/voice_agents/swift_demo`](../../examples/voice_agents/swift_demo) shows both halves.
+The router is server-side only by default: five operations are marked `x-client-accessible` in
+the spec and everything else answers a device 403. So this SDK has five methods' worth of
+surface, and `generate.py` fails if the filter names anything the spec does not open — which is
+what stops it growing a method that only ever fails.
+
+What that leaves out, and where it went instead:
+
+| Not here | Ask your backend for |
+| --- | --- |
+| Writing a config, defining skills, ingesting knowledge | The agent id, which is all the app needs |
+| A token to join the agent's call | `CallCredentials`, which `join` is handed |
+| A Stream Chat token | Credentials, if you bring the dependency |
+| What was said on an earlier call, the call records | Whatever of it the app should see |
+| Transcription, a voice, a model on their own | Nothing: a pipeline of your own is a backend |
+
+[`examples/voice_agents/swift_demo`](../../examples/voice_agents/swift_demo) shows both halves:
+`configure/` writes the agent and `backend/` mints the call tokens.
 
 Every request and socket handshake sends `Stream-Auth-Type: jwt`, which is what declares this
 caller a device. It is sent even against a local router with no proxy in front, where the
 router would otherwise assume a caller is a backend.
 
-**A Stream Chat dependency.** The live conversation comes off the session socket and the stored
-one comes from the router, which reads the chat channel for you, so Stream Chat would be a
-second way to do what `core` already does. If you want it anyway, `agents.chatToken(agentID:)`
-gives you the credentials and you bring the dependency.
+**Somebody else's conversation.** A session belongs to whoever opened it, so `sessions()` only
+ever lists this caller's own and `attach(sessionID:)` does not find one opened elsewhere. On a
+deployment verifying tokens, that boundary is the `user_id` the token names; a caller with no
+token is anonymous, and an anonymous claim to a signed-in user's name reaches nothing.
 
 ## Regenerating the client
 

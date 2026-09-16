@@ -11,67 +11,6 @@ import struct Foundation.Date
 #endif
 /// A type that performs HTTP operations defined by the OpenAPI document.
 internal protocol APIProtocol: Sendable {
-    /// The router configs the calling customer holds
-    ///
-    /// A router config is what an agent config is for a session, for a caller that routes one modality at a time: the target, the language and every per-modality option, decided once and named. It is separate from an agent config because it configures transcribing, speaking, answering and searching on their own, with no conversation behind them.
-    ///
-    ///
-    /// - Remark: HTTP `GET /v1/router/configs`.
-    /// - Remark: Generated from `#/paths//v1/router/configs/get(listRouterConfigs)`.
-    func listRouterConfigs(_ input: Operations.ListRouterConfigs.Input) async throws -> Operations.ListRouterConfigs.Output
-    /// One router config
-    ///
-    /// - Remark: HTTP `GET /v1/router/configs/{id}`.
-    /// - Remark: Generated from `#/paths//v1/router/configs/{id}/get(getRouterConfig)`.
-    func getRouterConfig(_ input: Operations.GetRouterConfig.Input) async throws -> Operations.GetRouterConfig.Output
-    /// The agent configs the calling customer holds
-    ///
-    /// - Remark: HTTP `GET /v1/agents/configs`.
-    /// - Remark: Generated from `#/paths//v1/agents/configs/get(listAgentConfigs)`.
-    func listAgentConfigs(_ input: Operations.ListAgentConfigs.Input) async throws -> Operations.ListAgentConfigs.Output
-    /// One agent config
-    ///
-    /// - Remark: HTTP `GET /v1/agents/configs/{id}`.
-    /// - Remark: Generated from `#/paths//v1/agents/configs/{id}/get(getAgentConfig)`.
-    func getAgentConfig(_ input: Operations.GetAgentConfig.Input) async throws -> Operations.GetAgentConfig.Output
-    /// The calls the calling customer has run
-    ///
-    /// A session lives in memory and is gone when the process is, so a call is recorded as it starts and again as it ends. This is what answers what happened yesterday, and what is happening now after a restart.
-    ///
-    ///
-    /// - Remark: HTTP `GET /v1/agents/calls`.
-    /// - Remark: Generated from `#/paths//v1/agents/calls/get(listCalls)`.
-    func listCalls(_ input: Operations.ListCalls.Input) async throws -> Operations.ListCalls.Output
-    /// One call, with whatever was made of it afterwards
-    ///
-    /// - Remark: HTTP `GET /v1/agents/calls/{id}`.
-    /// - Remark: Generated from `#/paths//v1/agents/calls/{id}/get(getCall)`.
-    func getCall(_ input: Operations.GetCall.Input) async throws -> Operations.GetCall.Output
-    /// What was said on a call
-    ///
-    /// Read back from the chat channel the conversation was written to as it happened, rather than copied into a second place that could disagree with it.
-    ///
-    ///
-    /// - Remark: HTTP `GET /v1/agents/calls/{id}/transcript`.
-    /// - Remark: Generated from `#/paths//v1/agents/calls/{id}/transcript/get(getCallTranscript)`.
-    func getCallTranscript(_ input: Operations.GetCallTranscript.Input) async throws -> Operations.GetCallTranscript.Output
-    /// What a browser needs to join this call
-    ///
-    /// Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/agents/calls/{id}/token`.
-    /// - Remark: Generated from `#/paths//v1/agents/calls/{id}/token/post(createCallToken)`.
-    func createCallToken(_ input: Operations.CreateCallToken.Input) async throws -> Operations.CreateCallToken.Output
-    /// What a browser needs to read an agent's conversation
-    ///
-    /// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
-    /// The secret stays here, the same as for a call token: the browser is handed something that expires.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/agents/chat-token`.
-    /// - Remark: Generated from `#/paths//v1/agents/chat-token/post(createChatToken)`.
-    func createChatToken(_ input: Operations.CreateChatToken.Input) async throws -> Operations.CreateChatToken.Output
     /// The sessions the calling customer is running
     ///
     /// - Remark: HTTP `GET /v1/agents/sessions`.
@@ -86,45 +25,11 @@ internal protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /v1/agents/sessions`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/post(createSession)`.
     func createSession(_ input: Operations.CreateSession.Input) async throws -> Operations.CreateSession.Output
-    /// One session
-    ///
-    /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.
-    func getSession(_ input: Operations.GetSession.Input) async throws -> Operations.GetSession.Output
     /// Leave the call and end the session
     ///
     /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/delete(closeSession)`.
     func closeSession(_ input: Operations.CloseSession.Input) async throws -> Operations.CloseSession.Output
-    /// Speak a piece of text without going through the model
-    ///
-    /// For when the caller already knows what should be said, such as a greeting. A model would only add latency and cost to words that were never in question.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/say`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/say/post(saySession)`.
-    func saySession(_ input: Operations.SaySession.Input) async throws -> Operations.SaySession.Output
-    /// Answer a piece of text through the model, as though it had been said
-    ///
-    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/respond`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/respond/post(respondSession)`.
-    func respondSession(_ input: Operations.RespondSession.Input) async throws -> Operations.RespondSession.Output
-    /// Abandon the reply being spoken
-    ///
-    /// What a caller outside the call has instead of a voice. A murmur is not interrupted, because it was meant to overlap with whoever is talking.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/interrupt`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/interrupt/post(interruptSession)`.
-    func interruptSession(_ input: Operations.InterruptSession.Input) async throws -> Operations.InterruptSession.Output
-    /// Change what the agent is told to be
-    ///
-    /// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-    ///
-    ///
-    /// - Remark: HTTP `PUT /v1/agents/sessions/{id}/instructions`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/instructions/put(setSessionInstructions)`.
-    func setSessionInstructions(_ input: Operations.SetSessionInstructions.Input) async throws -> Operations.SetSessionInstructions.Output
     /// Answer a question out of what is true now
     ///
     /// The fourth routed modality, reachable on its own rather than only as a tool an agent reaches for. One question, one answer: routed, failed over and billed like the rest, and with no socket because nothing arrives in pieces.
@@ -133,160 +38,10 @@ internal protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /v1/search`.
     /// - Remark: Generated from `#/paths//v1/search/post(search)`.
     func search(_ input: Operations.Search.Input) async throws -> Operations.Search.Output
-    /// Transcribe a recording, off the live path
-    ///
-    /// The non-realtime half of speech-to-text: a whole recording in, a whole transcript out. It is a job rather than a response because an hour of audio takes minutes to transcribe, so this returns immediately with an id to poll, or calls a callback when it is done.
-    /// Routing works as it does everywhere else, except that the candidates are the providers registered as not realtime - the batch APIs, which are cheaper and more accurate than the same vendor's streaming model.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/stt/recordings`.
-    /// - Remark: Generated from `#/paths//v1/stt/recordings/post(transcribeRecording)`.
-    func transcribeRecording(_ input: Operations.TranscribeRecording.Input) async throws -> Operations.TranscribeRecording.Output
-    /// One transcription job, and its transcript once it has one
-    ///
-    /// - Remark: HTTP `GET /v1/stt/recordings/{id}`.
-    /// - Remark: Generated from `#/paths//v1/stt/recordings/{id}/get(getTranscription)`.
-    func getTranscription(_ input: Operations.GetTranscription.Input) async throws -> Operations.GetTranscription.Output
-    /// Speak a whole text into one audio file, off the live path
-    ///
-    /// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/tts/recordings`.
-    /// - Remark: Generated from `#/paths//v1/tts/recordings/post(recordSpeech)`.
-    func recordSpeech(_ input: Operations.RecordSpeech.Input) async throws -> Operations.RecordSpeech.Output
-    /// One speech job, and its audio once it has some
-    ///
-    /// - Remark: HTTP `GET /v1/tts/recordings/{id}`.
-    /// - Remark: Generated from `#/paths//v1/tts/recordings/{id}/get(getSpeech)`.
-    func getSpeech(_ input: Operations.GetSpeech.Input) async throws -> Operations.GetSpeech.Output
 }
 
 /// Convenience overloads for operation inputs.
 extension APIProtocol {
-    /// The router configs the calling customer holds
-    ///
-    /// A router config is what an agent config is for a session, for a caller that routes one modality at a time: the target, the language and every per-modality option, decided once and named. It is separate from an agent config because it configures transcribing, speaking, answering and searching on their own, with no conversation behind them.
-    ///
-    ///
-    /// - Remark: HTTP `GET /v1/router/configs`.
-    /// - Remark: Generated from `#/paths//v1/router/configs/get(listRouterConfigs)`.
-    internal func listRouterConfigs(headers: Operations.ListRouterConfigs.Input.Headers = .init()) async throws -> Operations.ListRouterConfigs.Output {
-        try await listRouterConfigs(Operations.ListRouterConfigs.Input(headers: headers))
-    }
-    /// One router config
-    ///
-    /// - Remark: HTTP `GET /v1/router/configs/{id}`.
-    /// - Remark: Generated from `#/paths//v1/router/configs/{id}/get(getRouterConfig)`.
-    internal func getRouterConfig(
-        path: Operations.GetRouterConfig.Input.Path,
-        headers: Operations.GetRouterConfig.Input.Headers = .init()
-    ) async throws -> Operations.GetRouterConfig.Output {
-        try await getRouterConfig(Operations.GetRouterConfig.Input(
-            path: path,
-            headers: headers
-        ))
-    }
-    /// The agent configs the calling customer holds
-    ///
-    /// - Remark: HTTP `GET /v1/agents/configs`.
-    /// - Remark: Generated from `#/paths//v1/agents/configs/get(listAgentConfigs)`.
-    internal func listAgentConfigs(headers: Operations.ListAgentConfigs.Input.Headers = .init()) async throws -> Operations.ListAgentConfigs.Output {
-        try await listAgentConfigs(Operations.ListAgentConfigs.Input(headers: headers))
-    }
-    /// One agent config
-    ///
-    /// - Remark: HTTP `GET /v1/agents/configs/{id}`.
-    /// - Remark: Generated from `#/paths//v1/agents/configs/{id}/get(getAgentConfig)`.
-    internal func getAgentConfig(
-        path: Operations.GetAgentConfig.Input.Path,
-        headers: Operations.GetAgentConfig.Input.Headers = .init()
-    ) async throws -> Operations.GetAgentConfig.Output {
-        try await getAgentConfig(Operations.GetAgentConfig.Input(
-            path: path,
-            headers: headers
-        ))
-    }
-    /// The calls the calling customer has run
-    ///
-    /// A session lives in memory and is gone when the process is, so a call is recorded as it starts and again as it ends. This is what answers what happened yesterday, and what is happening now after a restart.
-    ///
-    ///
-    /// - Remark: HTTP `GET /v1/agents/calls`.
-    /// - Remark: Generated from `#/paths//v1/agents/calls/get(listCalls)`.
-    internal func listCalls(
-        query: Operations.ListCalls.Input.Query = .init(),
-        headers: Operations.ListCalls.Input.Headers = .init()
-    ) async throws -> Operations.ListCalls.Output {
-        try await listCalls(Operations.ListCalls.Input(
-            query: query,
-            headers: headers
-        ))
-    }
-    /// One call, with whatever was made of it afterwards
-    ///
-    /// - Remark: HTTP `GET /v1/agents/calls/{id}`.
-    /// - Remark: Generated from `#/paths//v1/agents/calls/{id}/get(getCall)`.
-    internal func getCall(
-        path: Operations.GetCall.Input.Path,
-        headers: Operations.GetCall.Input.Headers = .init()
-    ) async throws -> Operations.GetCall.Output {
-        try await getCall(Operations.GetCall.Input(
-            path: path,
-            headers: headers
-        ))
-    }
-    /// What was said on a call
-    ///
-    /// Read back from the chat channel the conversation was written to as it happened, rather than copied into a second place that could disagree with it.
-    ///
-    ///
-    /// - Remark: HTTP `GET /v1/agents/calls/{id}/transcript`.
-    /// - Remark: Generated from `#/paths//v1/agents/calls/{id}/transcript/get(getCallTranscript)`.
-    internal func getCallTranscript(
-        path: Operations.GetCallTranscript.Input.Path,
-        headers: Operations.GetCallTranscript.Input.Headers = .init()
-    ) async throws -> Operations.GetCallTranscript.Output {
-        try await getCallTranscript(Operations.GetCallTranscript.Input(
-            path: path,
-            headers: headers
-        ))
-    }
-    /// What a browser needs to join this call
-    ///
-    /// Mints a Stream token so a person can join the call from a browser and talk to the agent, and says which call to join with it. The secret stays here: the browser is handed a token that expires, never the key that signs one.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/agents/calls/{id}/token`.
-    /// - Remark: Generated from `#/paths//v1/agents/calls/{id}/token/post(createCallToken)`.
-    internal func createCallToken(
-        path: Operations.CreateCallToken.Input.Path,
-        headers: Operations.CreateCallToken.Input.Headers = .init(),
-        body: Operations.CreateCallToken.Input.Body? = nil
-    ) async throws -> Operations.CreateCallToken.Output {
-        try await createCallToken(Operations.CreateCallToken.Input(
-            path: path,
-            headers: headers,
-            body: body
-        ))
-    }
-    /// What a browser needs to read an agent's conversation
-    ///
-    /// An agent writes what was said into the Stream Chat channel agent:{agent_id}, so a client that can read that channel needs no transcript API. This mints the token to read it with, and adds the reader to the channel, since a conversation they are not a member of is one they cannot watch.
-    /// The secret stays here, the same as for a call token: the browser is handed something that expires.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/agents/chat-token`.
-    /// - Remark: Generated from `#/paths//v1/agents/chat-token/post(createChatToken)`.
-    internal func createChatToken(
-        headers: Operations.CreateChatToken.Input.Headers = .init(),
-        body: Operations.CreateChatToken.Input.Body
-    ) async throws -> Operations.CreateChatToken.Output {
-        try await createChatToken(Operations.CreateChatToken.Input(
-            headers: headers,
-            body: body
-        ))
-    }
     /// The sessions the calling customer is running
     ///
     /// - Remark: HTTP `GET /v1/agents/sessions`.
@@ -311,19 +66,6 @@ extension APIProtocol {
             body: body
         ))
     }
-    /// One session
-    ///
-    /// - Remark: HTTP `GET /v1/agents/sessions/{id}`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/get(getSession)`.
-    internal func getSession(
-        path: Operations.GetSession.Input.Path,
-        headers: Operations.GetSession.Input.Headers = .init()
-    ) async throws -> Operations.GetSession.Output {
-        try await getSession(Operations.GetSession.Input(
-            path: path,
-            headers: headers
-        ))
-    }
     /// Leave the call and end the session
     ///
     /// - Remark: HTTP `DELETE /v1/agents/sessions/{id}`.
@@ -335,73 +77,6 @@ extension APIProtocol {
         try await closeSession(Operations.CloseSession.Input(
             path: path,
             headers: headers
-        ))
-    }
-    /// Speak a piece of text without going through the model
-    ///
-    /// For when the caller already knows what should be said, such as a greeting. A model would only add latency and cost to words that were never in question.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/say`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/say/post(saySession)`.
-    internal func saySession(
-        path: Operations.SaySession.Input.Path,
-        headers: Operations.SaySession.Input.Headers = .init(),
-        body: Operations.SaySession.Input.Body
-    ) async throws -> Operations.SaySession.Output {
-        try await saySession(Operations.SaySession.Input(
-            path: path,
-            headers: headers,
-            body: body
-        ))
-    }
-    /// Answer a piece of text through the model, as though it had been said
-    ///
-    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/respond`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/respond/post(respondSession)`.
-    internal func respondSession(
-        path: Operations.RespondSession.Input.Path,
-        headers: Operations.RespondSession.Input.Headers = .init(),
-        body: Operations.RespondSession.Input.Body
-    ) async throws -> Operations.RespondSession.Output {
-        try await respondSession(Operations.RespondSession.Input(
-            path: path,
-            headers: headers,
-            body: body
-        ))
-    }
-    /// Abandon the reply being spoken
-    ///
-    /// What a caller outside the call has instead of a voice. A murmur is not interrupted, because it was meant to overlap with whoever is talking.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/interrupt`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/interrupt/post(interruptSession)`.
-    internal func interruptSession(
-        path: Operations.InterruptSession.Input.Path,
-        headers: Operations.InterruptSession.Input.Headers = .init()
-    ) async throws -> Operations.InterruptSession.Output {
-        try await interruptSession(Operations.InterruptSession.Input(
-            path: path,
-            headers: headers
-        ))
-    }
-    /// Change what the agent is told to be
-    ///
-    /// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
-    ///
-    ///
-    /// - Remark: HTTP `PUT /v1/agents/sessions/{id}/instructions`.
-    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/instructions/put(setSessionInstructions)`.
-    internal func setSessionInstructions(
-        path: Operations.SetSessionInstructions.Input.Path,
-        headers: Operations.SetSessionInstructions.Input.Headers = .init(),
-        body: Operations.SetSessionInstructions.Input.Body
-    ) async throws -> Operations.SetSessionInstructions.Output {
-        try await setSessionInstructions(Operations.SetSessionInstructions.Input(
-            path: path,
-            headers: headers,
-            body: body
         ))
     }
     /// Answer a question out of what is true now
@@ -418,65 +93,6 @@ extension APIProtocol {
         try await search(Operations.Search.Input(
             headers: headers,
             body: body
-        ))
-    }
-    /// Transcribe a recording, off the live path
-    ///
-    /// The non-realtime half of speech-to-text: a whole recording in, a whole transcript out. It is a job rather than a response because an hour of audio takes minutes to transcribe, so this returns immediately with an id to poll, or calls a callback when it is done.
-    /// Routing works as it does everywhere else, except that the candidates are the providers registered as not realtime - the batch APIs, which are cheaper and more accurate than the same vendor's streaming model.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/stt/recordings`.
-    /// - Remark: Generated from `#/paths//v1/stt/recordings/post(transcribeRecording)`.
-    internal func transcribeRecording(
-        headers: Operations.TranscribeRecording.Input.Headers = .init(),
-        body: Operations.TranscribeRecording.Input.Body
-    ) async throws -> Operations.TranscribeRecording.Output {
-        try await transcribeRecording(Operations.TranscribeRecording.Input(
-            headers: headers,
-            body: body
-        ))
-    }
-    /// One transcription job, and its transcript once it has one
-    ///
-    /// - Remark: HTTP `GET /v1/stt/recordings/{id}`.
-    /// - Remark: Generated from `#/paths//v1/stt/recordings/{id}/get(getTranscription)`.
-    internal func getTranscription(
-        path: Operations.GetTranscription.Input.Path,
-        headers: Operations.GetTranscription.Input.Headers = .init()
-    ) async throws -> Operations.GetTranscription.Output {
-        try await getTranscription(Operations.GetTranscription.Input(
-            path: path,
-            headers: headers
-        ))
-    }
-    /// Speak a whole text into one audio file, off the live path
-    ///
-    /// The non-realtime half of text-to-speech: a chapter in, a file out. A job for the same reason transcription is - an audiobook is not a conversation, and nothing is waiting to hear the first chunk.
-    ///
-    ///
-    /// - Remark: HTTP `POST /v1/tts/recordings`.
-    /// - Remark: Generated from `#/paths//v1/tts/recordings/post(recordSpeech)`.
-    internal func recordSpeech(
-        headers: Operations.RecordSpeech.Input.Headers = .init(),
-        body: Operations.RecordSpeech.Input.Body
-    ) async throws -> Operations.RecordSpeech.Output {
-        try await recordSpeech(Operations.RecordSpeech.Input(
-            headers: headers,
-            body: body
-        ))
-    }
-    /// One speech job, and its audio once it has some
-    ///
-    /// - Remark: HTTP `GET /v1/tts/recordings/{id}`.
-    /// - Remark: Generated from `#/paths//v1/tts/recordings/{id}/get(getSpeech)`.
-    internal func getSpeech(
-        path: Operations.GetSpeech.Input.Path,
-        headers: Operations.GetSpeech.Input.Headers = .init()
-    ) async throws -> Operations.GetSpeech.Output {
-        try await getSpeech(Operations.GetSpeech.Input(
-            path: path,
-            headers: headers
         ))
     }
 }

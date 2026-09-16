@@ -65,6 +65,25 @@ Making the agent answer, listing configs, minting a call or chat token and readi
 transcript are all now server-side. A frontend that called them wants its own backend in
 front: the same call from there, with whatever of the answer that frontend should see.
 
+### The Swift SDK is the same short list, and joining a call takes credentials
+
+`VisionAgentsCore` no longer has what the router no longer answers a device. Removed:
+`agents.agentConfigs()`, `agentConfig(named:)`, `callToken()`, `chatToken()`, `calls()`,
+`transcript()`, `Router.stt` / `.tts` / `.llm` / `.sts`, `Router.configs()`,
+`ModalitySocket` and the option and model types belonging to them. `Router.search` stays.
+
+`agent:` is now a config id rather than a name, since resolving a name meant reading the
+configs. `VoiceSession.join` and `VoiceCallView` take a `CallCredentialsProvider` — a
+closure your backend answers — instead of minting a token themselves:
+
+```swift
+let voice = try await VoiceSession.start(agents: agents, agent: configID)
+await voice.join(credentials: yourBackend.callCredentials)
+```
+
+`examples/voice_agents/swift_demo` shows the backend half: `configure/` writes the agent,
+and `backend/` mints the tokens.
+
 ### Source research belongs to the agent, and managed research sandboxes are gone
 
 An agent that reads source now owns its own Daytona VM and offers `investigate_sdk` as

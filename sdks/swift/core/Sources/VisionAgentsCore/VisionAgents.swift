@@ -7,7 +7,11 @@ import OpenAPIRuntime
 /// what it does not say, and the router decides what the config does not. Setting a field here
 /// overrides both, for this session only.
 public struct SessionOptions: Sendable {
-    /// An agent config to start from, by name or by id. Names are resolved first.
+    /// An agent config to start from, by id.
+    ///
+    /// An id rather than a name: reading the configs is server-side only, so there is
+    /// nothing here to resolve a name against. Whoever built the app knows which agent it
+    /// talks to, and passes the id down.
     public var agent: String?
     /// The system prompt.
     public var instructions: String?
@@ -33,11 +37,13 @@ public struct SessionOptions: Sendable {
 /// Two lines get a conversation going:
 ///
 ///     let agents = VisionAgents(url: url, customerID: "acme")
-///     let chat = try await agents.chat(agent: "swift_demo")
+///     let chat = try await agents.chat(agent: configID)
 ///
-/// Configuring what an agent is, ingesting knowledge and waiting for dispatched calls are not
-/// here and cannot be: the router refuses them from a device. They belong to a backend, which
-/// has the Go or the Python SDK.
+/// Opening a conversation, finding and ending one is the whole of what is here, because it is
+/// the whole of what the router lets a device do. What an agent is configured as, what it
+/// said on an earlier call and a token to join a call with are all server-side only: they
+/// belong to a backend, which has the Go or the Python SDK, and which hands down what the app
+/// needs.
 public struct VisionAgents: Sendable {
     public let backend: Backend
 
@@ -47,29 +53,6 @@ public struct VisionAgents: Sendable {
 
     public init(backend: Backend) {
         self.backend = backend
-    }
-
-    /// The agent configs this customer holds, newest first.
-    public func agentConfigs() async throws -> [AgentConfig] {
-        let output = try await call { try await $0.listAgentConfigs(.init()) }
-        switch output {
-        case .ok(let response):
-            return try response.body.json.map(AgentConfig.init)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
-        }
-    }
-
-    /// The config with this name.
-    public func agentConfig(named name: String) async throws -> AgentConfig {
-        guard let found = try await agentConfigs().first(where: { $0.name == name }) else {
-            throw AgentsError.unknownAgent(name)
-        }
-        return found
     }
 
     /// Holds a conversation in writing: no call is joined, nothing is transcribed or spoken.
@@ -111,13 +94,7 @@ public struct VisionAgents: Sendable {
 
     /// Starts a session without following it, for a caller building its own state layer.
     public func createSession(_ options: SessionOptions, callID: String?) async throws -> Session {
-        var configID: String?
-        if let agent = options.agent, !agent.isEmpty {
-            // The router looks configs up by id, so a name is resolved here. Passing an id
-            // through costs one list call and is worth not making callers care which they hold.
-            configID = try? await agentConfig(named: agent).id
-            if configID == nil { configID = agent }
-        }
+        let configID = options.agent.flatMap { $0.isEmpty ? nil : $0 }
 
         let body = Components.Schemas.CreateSessionRequest(
             callId: callID,
@@ -153,106 +130,40 @@ public struct VisionAgents: Sendable {
         }
     }
 
-    /// Follows a session that already exists, without creating one.
+    /// The sessions this caller has open, newest first.
     ///
-    /// Use this when something else started the agent — a Python process, another
-    /// device — and this one should listen to the same conversation.
+    /// Only ever this caller's own. The router owns a session by whoever opened it, so a
+    /// device is never told about anybody else's conversation.
+    public func sessions() async throws -> [Session] {
+        let output = try await call { try await $0.listSessions(.init()) }
+        switch output {
+        case .ok(let response):
+            return try response.body.json.map(Session.init)
+        case .unauthorized(let response):
+            throw AgentsError.http(status: 401, message: try response.body.json.error)
+        case .undocumented(let status, _):
+            throw AgentsError.http(status: status, message: "unexpected")
+        }
+    }
+
+    /// Follows a session this caller already has open, without creating one.
+    ///
+    /// Use this when the app opened a session and is coming back to it — after a relaunch,
+    /// or on another screen. A session opened by somebody else is not found, because reading
+    /// one is reading a conversation.
     public func attach(sessionID: String, tools: [AgentTool] = []) async throws -> AgentSession {
-        let session = try await session(id: sessionID)
+        guard let session = try await sessions().first(where: { $0.id == sessionID }) else {
+            throw AgentsError.http(status: 404, message: "no such session")
+        }
         return await AgentSession(backend: backend, session: session, tools: tools)
     }
 
-    /// The session the router holds by this id.
-    private func session(id: String) async throws -> Session {
-        let output = try await call { try await $0.getSession(path: .init(id: id)) }
+    /// Ends a session, which is how the agent leaves.
+    public func close(sessionID: String) async throws {
+        let output = try await call { try await $0.closeSession(path: .init(id: sessionID)) }
         switch output {
-        case .ok(let response):
-            return Session(try response.body.json)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
-        }
-    }
-
-    /// Credentials for joining the Stream call an agent is on.
-    ///
-    /// `sessionID` is the session's own id, not its call id. The token names the call to join.
-    public func callToken(
-        sessionID: String,
-        userID: String? = nil,
-        userName: String? = nil
-    ) async throws -> CallToken {
-        let output = try await call {
-            try await $0.createCallToken(
-                path: .init(id: sessionID),
-                body: .json(.init(userId: userID, userName: userName)))
-        }
-        switch output {
-        case .ok(let response):
-            return CallToken(try response.body.json)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .notFound(let response):
-            throw AgentsError.http(status: 404, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
-        }
-    }
-
-    /// Credentials for reading and writing an agent's conversation channel.
-    public func chatToken(
-        agentID: String,
-        userID: String? = nil,
-        userName: String? = nil
-    ) async throws -> ChatToken {
-        let output = try await call {
-            try await $0.createChatToken(
-                body: .json(.init(agentId: agentID, userId: userID, userName: userName)))
-        }
-        switch output {
-        case .ok(let response):
-            return ChatToken(try response.body.json)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
-        }
-    }
-
-    /// The calls this customer has a record of, newest first.
-    public func calls(agentID: String? = nil, limit: Int? = nil) async throws -> [CallRecord] {
-        let output = try await call {
-            try await $0.listCalls(query: .init(agentId: agentID, limit: limit))
-        }
-        switch output {
-        case .ok(let response):
-            return try response.body.json.map(CallRecord.init)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
-        case .unauthorized(let response):
-            throw AgentsError.http(status: 401, message: try response.body.json.error)
-        case .undocumented(let status, _):
-            throw AgentsError.http(status: status, message: "unexpected")
-        }
-    }
-
-    /// What was said on a call, oldest first.
-    public func transcript(callID: String) async throws -> [TranscriptMessage] {
-        let output = try await call {
-            try await $0.getCallTranscript(path: .init(id: callID))
-        }
-        switch output {
-        case .ok(let response):
-            return try response.body.json.map(TranscriptMessage.init)
-        case .badRequest(let response):
-            throw AgentsError.http(status: 400, message: try response.body.json.error)
+        case .noContent:
+            return
         case .unauthorized(let response):
             throw AgentsError.http(status: 401, message: try response.body.json.error)
         case .notFound(let response):

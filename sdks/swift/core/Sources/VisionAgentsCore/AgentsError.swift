@@ -11,8 +11,6 @@ public enum AgentsError: Error, Sendable {
     case transport(any Error)
     /// The socket ended before the session did.
     case socketClosed(code: Int, reason: String)
-    /// No agent config of that name belongs to this customer.
-    case unknownAgent(String)
     /// The router answered with something this SDK cannot read.
     case unreadable(String)
 }
@@ -28,8 +26,6 @@ extension AgentsError: LocalizedError {
             return reason.isEmpty
                 ? "the session socket closed (\(code))"
                 : "the session socket closed (\(code)): \(reason)"
-        case .unknownAgent(let name):
-            return "no agent config called \(name)"
         case .unreadable(let what):
             return "could not read the router's answer: \(what)"
         }

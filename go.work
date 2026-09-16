@@ -3,6 +3,7 @@ go 1.26
 use (
 	./acceleration
 	./benchmark
+	./examples/voice_agents/swift_demo/backend
 	./examples/voice_agents/swift_demo/configure
 	./sdks/go
 	./tui

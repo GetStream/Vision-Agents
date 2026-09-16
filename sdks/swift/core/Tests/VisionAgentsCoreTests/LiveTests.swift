@@ -13,7 +13,9 @@ struct Live {
     static let url = ProcessInfo.processInfo.environment["VISION_AGENTS_URL"]
     static let customerID =
         ProcessInfo.processInfo.environment["VISION_AGENTS_CUSTOMER_ID"] ?? "acme"
-    static let agent = ProcessInfo.processInfo.environment["VISION_AGENTS_AGENT"] ?? "swift_demo"
+    /// An agent config id. An id rather than a name, because reading the configs to resolve
+    /// one is server-side only; `go run ./configure` prints the id it wrote.
+    static let agent = ProcessInfo.processInfo.environment["VISION_AGENTS_AGENT"] ?? ""
 
     static var available: Bool { url != nil }
 
@@ -27,19 +29,6 @@ struct Live {
 @MainActor
 @Suite(.enabled(if: Live.available), .serialized)
 struct LiveTests {
-    @Test func theAgentTheGoExampleConfiguredIsThere() async throws {
-        let config = try await Live.agents.agentConfig(named: Live.agent)
-
-        #expect(!config.id.isEmpty)
-        #expect(!config.instructions.isEmpty, "run `go run ./configure` first")
-    }
-
-    @Test func aNameThatIsNotAnAgentIsReportedAsOne() async {
-        await #expect(throws: AgentsError.self) {
-            try await Live.agents.agentConfig(named: "no-such-agent")
-        }
-    }
-
     @Test func aTextSessionJoinsNoCallAndOpensASocket() async throws {
         let session = try await Live.agents.chat(agent: Live.agent)
         defer { Task { await session.close() } }

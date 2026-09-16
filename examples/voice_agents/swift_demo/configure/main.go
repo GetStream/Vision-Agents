@@ -1,9 +1,12 @@
 // Command configure stores the agent this directory describes on the router.
 //
 // This is the server-side half of the Swift demo, and it is deliberately a separate program.
-// Writing an agent config, defining its skills and filling its knowledge base are all marked
-// x-server-side-only in the OpenAPI spec, and the router refuses them from a phone. The app
-// only ever names the agent this leaves behind.
+// Writing an agent config, defining its skills and filling its knowledge base are none of
+// them marked x-client-accessible in the OpenAPI spec, so the router refuses all three from a
+// phone. The app only ever names the agent this leaves behind.
+//
+// ./backend is the other server-side piece, and it stays running: it mints the token a phone
+// joins a call with, which is server-side only for the same reason.
 //
 // Two calls, with distinct jobs:
 //
@@ -125,7 +128,11 @@ func run(ctx context.Context, dir string) error {
 	if result.Unchanged {
 		fmt.Println("\nthe directory has not changed since the last sync")
 	}
-	fmt.Printf("\nopen       examples/voice_agents/swift_demo/app/SwiftDemo.xcodeproj and run it\n")
+	// The id rather than the name, because the app is told which agent it talks to: reading
+	// the configs to resolve a name is server-side only.
+	fmt.Printf("\nnext       put the config id above in Demo.agentID, then:\n")
+	fmt.Printf("           go run ./backend\n")
+	fmt.Printf("           open examples/voice_agents/swift_demo/app/SwiftDemo.xcodeproj and run it\n")
 	return nil
 }
 

@@ -1161,15 +1161,18 @@ uv run ../sdks/swift/generate.py
 ```
 
 The Swift client is generated from a filter rather than from the whole spec, and
-`generate.py --check` fails if anything in that filter is marked `x-server-side-only`. Marking
-an operation server-side only is therefore the whole of removing it from the iOS SDK.
+`generate.py --check` fails if anything in that filter is not marked `x-client-accessible`.
+Dropping that mark is therefore the whole of removing an operation from the iOS SDK.
 
 The three sockets are declared in the spec with a `101` response so a reader and a client
 generator know they exist, and excluded from generation: a strict server cannot express an
 upgrade. Their handlers are hand-written in `internal/api/sessionws.go`, `streamws.go` and
 `dispatchws.go`, and the Python side of them in `plugins/stream/.../_socket.py`. Excluding
-an operation also drops it from the embedded spec, which is why a socket that is
-server-side only makes that check in its own handler rather than in the middleware.
+an operation also drops it from the embedded spec, so the middleware cannot read their marks
+off it. Those, and the three agent-log handlers excluded for the same reason, are listed in
+`unspecifiedRoutes` in `server.go` instead. A test reads `exclude-operation-ids` and fails if
+that list and this map disagree, because an operation the spec cannot see is the one place a
+default that refuses by default could fail open.
 
 ## Design notes
 

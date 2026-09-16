@@ -6,9 +6,9 @@ so building the package needs no code generation and no build-tool plugin to be 
 Xcode, which matches what the Python and Go clients already do.
 
 Only the operations a phone is allowed to call are generated. The filter is the point: an
-endpoint marked ``x-server-side-only`` in the spec configures an agent or listens for
-dispatched calls, and a client SDK that had a method for it would only be offering callers a
-403. ``--check`` verifies the filter still agrees with the spec without regenerating.
+endpoint the spec does not mark ``x-client-accessible`` is server-side only, and a client
+SDK that had a method for one would only be offering callers a 403. ``--check`` verifies the
+filter still agrees with the spec without regenerating.
 
 WebSockets are not generated. OpenAPI cannot describe a socket past the upgrade, so the
 session events socket is hand-written in ``SessionSocket.swift``.
@@ -31,33 +31,16 @@ SPEC = ROOT / "acceleration" / "api" / "openapi.yaml"
 TARGET = SWIFT / "core" / "Sources" / "VisionAgentsCore"
 GENERATED = TARGET / "Generated"
 
-# What a client is allowed to reach. Sessions and the two token endpoints are the whole of
-# holding a conversation; the configs and calls reads are what an app shows about one; the
-# recordings, the search and the router config reads are the routed modalities on their own,
-# which a phone reaches for without holding a conversation at all.
+# What a client is allowed to reach: opening a conversation, finding and ending one, and
+# looking something up. Everything else about an agent — what it is configured as, what it
+# has said before, a token to join a call with, and the routed modalities on their own — is
+# the app's own backend to ask for and to hand down. Holding the conversation is driven over
+# the session socket, which is hand-written rather than generated.
 OPERATIONS = [
     "closeSession",
-    "createCallToken",
-    "createChatToken",
     "createSession",
-    "getAgentConfig",
-    "getCall",
-    "getCallTranscript",
-    "getRouterConfig",
-    "getSession",
-    "getSpeech",
-    "getTranscription",
-    "interruptSession",
-    "listAgentConfigs",
-    "listCalls",
-    "listRouterConfigs",
     "listSessions",
-    "recordSpeech",
-    "respondSession",
-    "saySession",
     "search",
-    "setSessionInstructions",
-    "transcribeRecording",
 ]
 
 CONFIG = {
@@ -69,7 +52,7 @@ CONFIG = {
 
 
 def audit(spec: dict) -> list[str]:
-    """Report the named operations that the spec says are server-side only, or unknown."""
+    """Report the named operations the spec does not open to a client, or does not have."""
     found: dict[str, dict] = {}
     for operations in spec["paths"].values():
         for operation in operations.values():
@@ -81,7 +64,7 @@ def audit(spec: dict) -> list[str]:
         operation = found.get(name)
         if operation is None:
             complaints.append(f"{name} is not in the spec")
-        elif operation.get("x-server-side-only"):
+        elif not operation.get("x-client-accessible"):
             complaints.append(
                 f"{name} is server-side only and cannot be in a client SDK"
             )

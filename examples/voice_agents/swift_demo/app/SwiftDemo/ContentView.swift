@@ -1,80 +1,36 @@
 import SwiftUI
 import VisionAgentsCore
 
-/// Picks an agent, then talks to it in writing or out loud.
+/// Talks to the agent, in writing or out loud.
+///
+/// There is no agent picker. Reading the configs is server-side only, so a device cannot ask
+/// which agents exist; it is told which one it talks to, the way a real app would be. The id
+/// goes in `Demo.agentID`, and `go run ./configure` prints it.
 struct ContentView: View {
-    @State private var configs: [AgentConfig] = []
-    @State private var failure: String?
-    @State private var isLoading = true
-
     var body: some View {
         NavigationStack {
             content
-                .navigationTitle("Agents")
+                .navigationTitle("Larkspur support")
+                .navigationBarTitleDisplayMode(.inline)
         }
-        .task(load)
     }
 
     @ViewBuilder private var content: some View {
-        if isLoading {
-            ProgressView()
-        } else if let failure {
+        if Demo.agentID.isEmpty {
             ContentUnavailableView {
-                Label("Cannot reach the router", systemImage: "network.slash")
+                Label("No agent yet", systemImage: "person.crop.circle.badge.questionmark")
             } description: {
-                Text(failure)
-            } actions: {
-                Button("Try again") { Task { await load() } }
-            }
-        } else if configs.isEmpty {
-            ContentUnavailableView {
-                Label("No agents yet", systemImage: "person.crop.circle.badge.questionmark")
-            } description: {
-                Text("Run `go run ./configure` in examples/voice_agents/swift_demo first.")
+                Text(
+                    "Run `go run ./configure` in examples/voice_agents/swift_demo, "
+                        + "then put the config id it prints in Demo.agentID.")
             }
         } else {
-            List(configs) { config in
-                NavigationLink(value: config) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(config.name).font(.headline)
-                        if !config.skills.isEmpty {
-                            Text(config.skills.joined(separator: ", "))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
+            TabView {
+                ChatView(agent: Demo.agentID)
+                    .tabItem { Label("Chat", systemImage: "text.bubble") }
+                VoiceView(agent: Demo.agentID)
+                    .tabItem { Label("Voice", systemImage: "waveform") }
             }
-            .navigationDestination(for: AgentConfig.self) { AgentView(config: $0) }
         }
-    }
-
-    @Sendable private func load() async {
-        isLoading = true
-        failure = nil
-        do {
-            configs = try await Demo.agents.agentConfigs()
-        } catch is CancellationError {
-            return
-        } catch {
-            failure = error.localizedDescription
-        }
-        isLoading = false
-    }
-}
-
-/// One agent, two ways to talk to it.
-struct AgentView: View {
-    let config: AgentConfig
-
-    var body: some View {
-        TabView {
-            ChatView(agent: config.name)
-                .tabItem { Label("Chat", systemImage: "text.bubble") }
-            VoiceView(agent: config.name)
-                .tabItem { Label("Voice", systemImage: "waveform") }
-        }
-        .navigationTitle(config.name)
-        .navigationBarTitleDisplayMode(.inline)
     }
 }

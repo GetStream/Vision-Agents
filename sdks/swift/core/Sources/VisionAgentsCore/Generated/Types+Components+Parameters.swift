@@ -16,9 +16,5 @@ extension Components {
         ///
         /// - Remark: Generated from `#/components/parameters/SessionID`.
         internal typealias SessionID = Swift.String
-        /// The resource, as returned when it was created.
-        ///
-        /// - Remark: Generated from `#/components/parameters/ResourceID`.
-        internal typealias ResourceID = Swift.String
     }
 }
