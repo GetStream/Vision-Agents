@@ -53,6 +53,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			db.channels[id] = data
 		}
 		result["channel"] = db.channels[id]
+		result["members"] = db.channels[id]["members"]
 		messages := []map[string]any{}
 		for _, id := range db.order {
 			if db.messages[id]["cid"] == "agent:"+parts[len(parts)-2] {

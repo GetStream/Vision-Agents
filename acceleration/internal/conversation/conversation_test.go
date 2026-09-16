@@ -56,6 +56,7 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 				db.channels[id] = data
 			}
 			result["channel"] = db.channels[id]
+			result["members"] = db.channels[id]["members"]
 			before := ""
 			if p, ok := body["messages"].(map[string]any); ok {
 				before, _ = p["id_lt"].(string)
@@ -423,6 +424,39 @@ func TestPersonalConversationBindsMembershipMessagesAndHistoryToCaller(t *testin
 		c.Release()
 		service.Close()
 	}
+}
+
+func TestEmptyCallerOwnedChannelInitializesCommandLedgerWithoutRecreatingIt(t *testing.T) {
+	db, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	conversation, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	cid := conversation.CID()
+	conversation.Release()
+	service.Close()
+	require.NoError(t, os.RemoveAll(filepath.Join(root, strings.TrimPrefix(cid, "agent:"))))
+
+	service, err = newService(root, client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	conversation, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "employee")
+	require.NoError(t, err)
+	receipt, err := conversation.BeginCommand("external-command", "Question")
+	require.NoError(t, err)
+	require.Equal(t, "thinking", receipt.State)
+	conversation.Release()
+
+	_, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "another-employee")
+	require.Error(t, err)
+	db.mu.Lock()
+	db.channels[strings.TrimPrefix(cid, "agent:")]["members"] = []any{
+		map[string]any{"user_id": "agent"},
+	}
+	db.mu.Unlock()
+	_, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "employee")
+	require.ErrorContains(t, err, "not a channel member")
 }
 
 func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {

@@ -57,6 +57,7 @@ type Message struct {
 }
 type Page struct {
 	memoryScope memory.Scope
+	empty       bool
 	Messages    []Message `json:"messages"`
 	Before      string    `json:"before,omitempty"`
 	Truncated   bool      `json:"context_truncated"`
@@ -289,9 +290,10 @@ func (s *Service) OpenForCaller(ctx context.Context, customer, agentID, cid, cal
 	if !sameMemoryScope(page.memoryScope, scope) {
 		return nil, nil, false, errors.New("conversation belongs to another memory scope; reopen with its original organization")
 	}
-	c := s.make(disk{CID: cid, Customer: customer, Agent: agentID, Owner: caller, CommandLedger: fresh})
+	initializeLedger := fresh || caller != "" && page.empty
+	c := s.make(disk{CID: cid, Customer: customer, Agent: agentID, Owner: caller, CommandLedger: initializeLedger})
 	c.active = true
-	if fresh {
+	if initializeLedger {
 		c.mu.Lock()
 		err := c.persist()
 		c.mu.Unlock()
@@ -355,6 +357,21 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
 		return CommandReceipt{}, ErrCommandNotFound
 	}
+	if caller != "" {
+		if r.Data.Channel.Custom[TriggerField] != SessionCommandTrigger {
+			return CommandReceipt{}, ErrCommandNotFound
+		}
+		member := false
+		for _, candidate := range r.Data.Members {
+			if candidate.UserID != nil && *candidate.UserID == caller {
+				member = true
+				break
+			}
+		}
+		if !member {
+			return CommandReceipt{}, ErrCommandNotFound
+		}
+	}
 
 	if open != nil {
 		return open.receipt(commandID)
@@ -395,7 +412,22 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
 		return Page{}, err
 	}
-	p := Page{Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
+	if caller != "" {
+		if r.Data.Channel.Custom[TriggerField] != SessionCommandTrigger {
+			return Page{}, errors.New("conversation is not a session-command channel")
+		}
+		member := false
+		for _, candidate := range r.Data.Members {
+			if candidate.UserID != nil && *candidate.UserID == caller {
+				member = true
+				break
+			}
+		}
+		if !member {
+			return Page{}, errors.New("conversation caller is not a channel member")
+		}
+	}
+	p := Page{empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
 		b, err := json.Marshal(raw)
 		if err != nil {
