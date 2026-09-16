@@ -102,15 +102,20 @@ func (c *configured) count() int {
 	return len(c.stored)
 }
 
-func backendFor(server *configured) Backend {
-	return Backend{URL: server.URL, CustomerID: "acme"}
+func clientFor(t *testing.T, server *configured) *Client {
+	t.Helper()
+	client, err := NewClient(Backend{URL: server.URL, CustomerID: "acme"})
+	if err != nil {
+		t.Fatalf("pointing a client at the backend: %v", err)
+	}
+	return client
 }
 
 func TestAConfigIsStoredUnderItsNameAndEditedNextTime(t *testing.T) {
 	server := newConfigured(t)
 	no := false
 
-	stored, err := DefineRouter(t.Context(), backendFor(server), RouterOptions{
+	stored, err := clientFor(t, server).DefineRouter(t.Context(), RouterOptions{
 		Name: "healthcare",
 		STT: &acceleration.SttOptions{
 			Providers:  &[]string{"deepgram", "parakeet"},
@@ -124,7 +129,7 @@ func TestAConfigIsStoredUnderItsNameAndEditedNextTime(t *testing.T) {
 		t.Fatalf("the priority list came back as %v", got)
 	}
 
-	again, err := DefineRouter(t.Context(), backendFor(server), RouterOptions{
+	again, err := clientFor(t, server).DefineRouter(t.Context(), RouterOptions{
 		Name: "healthcare",
 		STT:  &acceleration.SttOptions{Providers: &[]string{"grok"}},
 	})
@@ -147,7 +152,7 @@ func TestAConfigIsStoredUnderItsNameAndEditedNextTime(t *testing.T) {
 func TestAConfigNeedsAName(t *testing.T) {
 	server := newConfigured(t)
 
-	_, err := DefineRouter(t.Context(), backendFor(server), RouterOptions{})
+	_, err := clientFor(t, server).DefineRouter(t.Context(), RouterOptions{})
 
 	if err == nil || !strings.Contains(err.Error(), "needs a name") {
 		t.Fatalf("an unnamed config should be refused, got %v", err)
@@ -158,14 +163,14 @@ func TestConfigureSTTCarriesTheOtherModalitiesForward(t *testing.T) {
 	server := newConfigured(t)
 	voice := "sonic"
 
-	if _, err := DefineRouter(t.Context(), backendFor(server), RouterOptions{
+	if _, err := clientFor(t, server).DefineRouter(t.Context(), RouterOptions{
 		Name: "healthcare",
 		TTS:  &acceleration.TtsOptions{Voice: &voice},
 	}); err != nil {
 		t.Fatalf("defining the config: %v", err)
 	}
 
-	router := Router{Config: "healthcare", Backend: backendFor(server)}
+	router := clientFor(t, server).Router("healthcare")
 	stored, err := router.ConfigureSTT(t.Context(),
 		&acceleration.SttOptions{Providers: &[]string{"deepgram"}})
 	if err != nil {
@@ -185,7 +190,7 @@ func TestConfigureSTTCarriesTheOtherModalitiesForward(t *testing.T) {
 
 func TestConfigureSTTNeedsANamedRouter(t *testing.T) {
 	server := newConfigured(t)
-	router := Router{Backend: backendFor(server)}
+	router := clientFor(t, server).Router("")
 
 	_, err := router.ConfigureSTT(t.Context(), &acceleration.SttOptions{})
 
@@ -198,14 +203,14 @@ func TestConfigureTTSCarriesTheOtherModalitiesForward(t *testing.T) {
 	server := newConfigured(t)
 	no := false
 
-	if _, err := DefineRouter(t.Context(), backendFor(server), RouterOptions{
+	if _, err := clientFor(t, server).DefineRouter(t.Context(), RouterOptions{
 		Name: "healthcare",
 		STT:  &acceleration.SttOptions{Providers: &[]string{"deepgram"}},
 	}); err != nil {
 		t.Fatalf("defining the config: %v", err)
 	}
 
-	router := Router{Config: "healthcare", Backend: backendFor(server)}
+	router := clientFor(t, server).Router("healthcare")
 	voice := "custom:receptionist"
 	stored, err := router.ConfigureTTS(t.Context(), &acceleration.TtsOptions{
 		Providers:  &[]string{"elevenlabs", "en-low-latency"},
@@ -235,7 +240,7 @@ func TestConfigureTTSCarriesTheOtherModalitiesForward(t *testing.T) {
 
 func TestConfigureTTSNeedsANamedRouter(t *testing.T) {
 	server := newConfigured(t)
-	router := Router{Backend: backendFor(server)}
+	router := clientFor(t, server).Router("")
 
 	_, err := router.ConfigureTTS(t.Context(), &acceleration.TtsOptions{})
 
@@ -259,7 +264,7 @@ stt:
 `)
 	write(t, directory, "support.yaml", "name: support-desk\nstt:\n  providers: [grok]\n")
 
-	stored, err := SyncRouters(t.Context(), backendFor(server), directory)
+	stored, err := clientFor(t, server).SyncRouters(t.Context(), directory)
 	if err != nil {
 		t.Fatalf("syncing: %v", err)
 	}
@@ -289,13 +294,13 @@ func TestSyncingTheSameDirectoryTwiceEditsWhatIsStored(t *testing.T) {
 	directory := t.TempDir()
 
 	write(t, directory, "healthcare.yaml", "stt:\n  providers: [deepgram]\n")
-	first, err := SyncRouters(t.Context(), backendFor(server), directory)
+	first, err := clientFor(t, server).SyncRouters(t.Context(), directory)
 	if err != nil {
 		t.Fatalf("syncing: %v", err)
 	}
 
 	write(t, directory, "healthcare.yaml", "stt:\n  providers: [grok]\n")
-	again, err := SyncRouters(t.Context(), backendFor(server), directory)
+	again, err := clientFor(t, server).SyncRouters(t.Context(), directory)
 	if err != nil {
 		t.Fatalf("syncing again: %v", err)
 	}
@@ -317,7 +322,7 @@ func TestAMisspeltOptionInAFileIsRefused(t *testing.T) {
 	directory := t.TempDir()
 	write(t, directory, "healthcare.yaml", "stt:\n  diarise: true\n")
 
-	_, err := SyncRouters(t.Context(), backendFor(server), directory)
+	_, err := clientFor(t, server).SyncRouters(t.Context(), directory)
 
 	if err == nil || !strings.Contains(err.Error(), "diarise") {
 		t.Fatalf("a misspelt option should be reported rather than stored, got %v", err)
@@ -332,7 +337,7 @@ func TestADirectoryWithNoYamlInItIsRefused(t *testing.T) {
 	directory := t.TempDir()
 	write(t, directory, "notes.txt", "nothing to route")
 
-	_, err := SyncRouters(t.Context(), backendFor(server), directory)
+	_, err := clientFor(t, server).SyncRouters(t.Context(), directory)
 
 	if err == nil || !strings.Contains(err.Error(), "no .yaml") {
 		t.Fatalf("a directory with nothing to sync should say so, got %v", err)

@@ -27,7 +27,10 @@ const audio = 64
 // search has neither, because a question and its answer are one round trip. Everything the
 // named config holds is a default that a per-call option overrides.
 //
-//	router := stream.Router{Config: "healthcare"}
+// Client.Router is how one of these is usually had, since that is where the backend was
+// settled; the fields are exported for a caller who wants tags or a logger on top.
+//
+//	router := client.Router("healthcare")
 //
 //	transcript, err := router.STT().Recording(ctx, stream.Recorded{URL: "call.mp3"},
 //	    &acceleration.SttOptions{Diarize: &yes})
@@ -301,6 +304,11 @@ type Transcript struct {
 	// Speaker is who said it, when diarization was asked for.
 	Speaker  string
 	Language string
+	// Provider and Model are what answered. A config names several and routing picks
+	// between them per session, so which one is heard from is a fact about the run rather
+	// than about the config.
+	Provider string
+	Model    string
 	Error    string
 	Frame    Frame
 }
@@ -337,6 +345,8 @@ func (t *Transcriber) read(logger *slog.Logger) {
 			Final:    frame.Bool("final"),
 			Speaker:  frame.String("speaker"),
 			Language: frame.String("language"),
+			Provider: frame.String("provider"),
+			Model:    frame.String("model"),
 			Error:    frame.String("error"),
 			Frame:    frame,
 		}

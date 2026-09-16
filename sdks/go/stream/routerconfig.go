@@ -44,23 +44,22 @@ type RouterOptions struct {
 // set of options repeated at every call site. It is written by name, so calling this twice
 // edits what is stored rather than storing a second copy of it.
 //
-//	_, err := stream.DefineRouter(ctx, stream.Backend{}, stream.RouterOptions{
+//	_, err := client.DefineRouter(ctx, stream.RouterOptions{
 //	    Name: "healthcare",
 //	    STT: &acceleration.SttOptions{
 //	        Providers:  &[]string{"deepgram", "parakeet"},
 //	        DataPolicy: &acceleration.DataPolicy{AllowTraining: &no},
 //	    },
 //	})
-func DefineRouter(
+func (c *Client) DefineRouter(
 	ctx context.Context,
-	backend Backend,
 	wanted RouterOptions,
 ) (*acceleration.RouterConfig, error) {
 	if strings.TrimSpace(wanted.Name) == "" {
 		return nil, errors.New("stream: a router config needs a name")
 	}
 
-	client, err := backend.Client()
+	client, err := c.backend.Client()
 	if err != nil {
 		return nil, err
 	}
@@ -158,9 +157,8 @@ func (r Router) ConfigureTTS(
 //	  data_policy:
 //	    allow_training: false
 //	    retention: none
-func SyncRouters(
+func (c *Client) SyncRouters(
 	ctx context.Context,
-	backend Backend,
 	directory string,
 ) ([]*acceleration.RouterConfig, error) {
 	paths, err := routerConfigFiles(directory)
@@ -177,7 +175,7 @@ func SyncRouters(
 		if err != nil {
 			return nil, err
 		}
-		written, err := DefineRouter(ctx, backend, wanted)
+		written, err := c.DefineRouter(ctx, wanted)
 		if err != nil {
 			return nil, err
 		}

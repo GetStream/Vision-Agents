@@ -140,6 +140,26 @@ credentials, err := backend.Credentials()  // was: backend.Headers()
 Half a credential is refused by `Resolve` rather than ignored, so a missing secret is not
 quietly downgraded to an unauthenticated request.
 
+### Routing in the Go SDK starts from a client, and `SyncRouters` / `DefineRouter` moved onto it
+
+Where the router is and who is calling it is now said once, to `stream.NewClient`, rather
+than handed to every call that needs it:
+
+```go
+client, err := stream.NewClient(stream.Backend{}) // the zero Backend reads the environment
+if _, err := client.SyncRouters(ctx, "routers"); err != nil { ... }
+transcriber, err := client.Router("healthcare").STT().Realtime(ctx, nil)
+```
+
+`stream.SyncRouters(ctx, backend, dir)` and `stream.DefineRouter(ctx, backend, options)` are
+now `client.SyncRouters(ctx, dir)` and `client.DefineRouter(ctx, options)`. `stream.Router`
+itself is unchanged and its fields are still exported, so a caller wanting tags or a logger
+can still build one directly; `client.Router(name)` is the short way to the common case.
+
+Resolving the backend happens when the client is made rather than at the first call, so a
+missing credential is reported where it was configured instead of in the middle of a session
+that was about to stream audio.
+
 ### `agent.simple_response(...)` is now `agent.responses.create(...)`
 
 Matches the shape of OpenAI's `client.responses.create`:
@@ -314,6 +334,29 @@ Scribe is the case `supports:` exists for: ElevenLabs say plainly that the realt
 does not diarize and that batch Scribe is where that lives, so it declares `keyterms` and
 `endpointing` and not `diarize`, and a request that asks to be told who spoke routes past
 it rather than being served something that cannot answer.
+
+### A recorded call, for a Go program with nobody at a microphone
+
+`stream.RecordedCall` reads a 16 kHz mono PCM16 WAV and hands it over the way a call
+delivers audio — 100 ms at a time paced to real time, then the two seconds of silence that
+tell a streaming model the turn is over:
+
+```go
+call, err := stream.RecordedCall("saturday_seven_thirty.wav")
+for chunk := range call {
+	err := transcriber.Send(chunk)
+}
+```
+
+It is the counterpart of `recorded_call` in the Python SDK, and it is what lets an example
+be about routing rather than about parsing RIFF chunks.
+
+### A transcript says which model heard it
+
+`stream.Transcript` in the Go SDK now carries `Provider` and `Model`, and the router sends
+`speaker` on every transcript frame rather than only in the batch transcript. A config names
+several models and routing picks between them per session, so which one answered is a fact
+about the run that the SDK no longer makes callers dig out of the raw frame.
 
 ### Muse and Nemotron read their `overwrites` block
 

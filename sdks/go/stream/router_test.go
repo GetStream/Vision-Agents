@@ -49,9 +49,17 @@ func newRouted(t *testing.T) *routed {
 			}
 			switch frame.Type() {
 			case "start":
+				modality := r.PathValue("modality")
 				backend.mu.Lock()
-				backend.opened[r.PathValue("modality")] = frame
+				backend.opened[modality] = frame
 				backend.mu.Unlock()
+				if modality == "stt" {
+					_ = connection.WriteJSON(Frame{
+						"type": "transcript", "text": "who is speaking", "final": true,
+						"speaker": "B", "language": "en",
+						"provider": "muse", "model": "muse-voice-transcribe-1.0",
+					})
+				}
 			case "speak":
 				_ = connection.WriteJSON(Frame{"type": "synthesis_complete"})
 			case "respond":
@@ -186,6 +194,33 @@ func TestATranscriptionSocketOpensFromTheNamedConfig(t *testing.T) {
 	}
 	if opening.Frame("tags").String("project") != "clinic" {
 		t.Errorf("the cost labels did not travel: %+v", opening["tags"])
+	}
+}
+
+func TestATranscriptSaysWhichModelHeardItAndWhichVoice(t *testing.T) {
+	// A config names several models and routing picks between them per session, so which
+	// one answered is a fact about the run. Reaching into the raw frame for it would make
+	// the one thing a fallback list leaves open the one thing the SDK does not say.
+	backend := newRouted(t)
+
+	transcriber, err := routerFor(backend).STT().Realtime(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transcriber.Close()
+
+	heard, ok := <-transcriber.Transcripts()
+	if !ok {
+		t.Fatal("the socket closed without a transcript")
+	}
+	if heard.Provider != "muse" || heard.Model != "muse-voice-transcribe-1.0" {
+		t.Errorf("nobody said who heard it: %+v", heard)
+	}
+	if heard.Speaker != "B" {
+		t.Errorf("the diarised voice did not travel: %+v", heard)
+	}
+	if !heard.Final || heard.Text != "who is speaking" {
+		t.Errorf("the transcript itself is %+v", heard)
 	}
 }
 

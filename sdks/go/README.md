@@ -109,11 +109,22 @@ should buy it once and pass it to `WaitForCall`.
 
 ## One modality at a time
 
-`stream.Router` routes a modality on its own, live or from a recording, with the options said
-once in a stored config:
+A client is where the router is and who is calling it, said once. Anything routed through one
+reads the same whether that turned out to be localhost or the hosted proxy:
 
 ```go
-router := stream.Router{Config: "healthcare"}
+client, _ := stream.NewClient(stream.Backend{})
+```
+
+The zero `Backend` reads the environment. A hosted router authenticates a Stream app rather
+than naming a customer, which is `stream.Backend{URL: ..., Authenticate: true}` and the key
+and secret in the environment.
+
+`client.Router` then routes a modality on its own, live or from a recording, with the options
+said once in a stored config:
+
+```go
+router := client.Router("healthcare")
 
 yes := true
 transcript, _ := router.STT().Recording(ctx,
