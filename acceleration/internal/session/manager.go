@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -442,14 +443,61 @@ func sameSeat(existing, wanted Spec) bool {
 		existing.UserID == wanted.UserID
 }
 
-// Get returns a session belonging to a customer. Two customers cannot see each other's,
-// so an id that exists but belongs to someone else is reported as not existing at all.
-func (m *Manager) Get(id, customerID string) (*Session, bool) {
+// Owner is who a session belongs to: the customer it is billed to, and the end user it is
+// for. That user is whoever asked from their own device, or whoever the customer's backend
+// said it was asking on behalf of.
+type Owner struct {
+	CustomerID string
+	UserID     string
+	Kind       auth.Kind
+}
+
+// OwnerOf is who the session a spec describes will belong to.
+func OwnerOf(spec Spec) Owner {
+	return Owner{CustomerID: spec.CustomerID, UserID: spec.Caller.UserID, Kind: spec.CallerKind}
+}
+
+// reaches reports whether a caller may have a session owned by other.
+//
+// A backend reaches every session its customer has: it runs the application, so closing a
+// session a device left behind is its job. An end user reaches only their own, and both
+// halves of who they are have to match. The kind is half of it because an anonymous
+// caller may go by any name it likes: without it, typing somebody else's user id into a
+// query parameter would be enough to read their conversation.
+//
+// An anonymous caller that names nobody at all owns nothing anybody else can be told
+// apart from, so for those the session id is the whole of the authority — it is random
+// and it is never listed. Naming a user id is what makes an anonymous session private.
+//
+// The one place the kinds need not be equal is a session a backend opened in somebody's
+// name, which that person then reaches from their own device: a backend opening the
+// conversation and handing over the id is the ordinary shape of an integration, and
+// requiring equality would refuse them the session that was made for them. Anonymous is
+// left out of that, because an anonymous name is a claim nobody checked and allowing it
+// would make guessing whose a session was enough to read it.
+func (o Owner) reaches(other Owner) bool {
+	if o.CustomerID != other.CustomerID {
+		return false
+	}
+	if o.Kind == auth.KindServer {
+		return true
+	}
+	if o.UserID != other.UserID {
+		return false
+	}
+	return o.Kind == other.Kind ||
+		(other.Kind == auth.KindServer && o.Kind.Verified() && o.UserID != "")
+}
+
+// Get returns a session its owner may have. Two customers cannot see each other's and
+// neither can two people, so an id that exists but belongs to somebody else is reported
+// as not existing at all: a refusal would confirm it was real.
+func (m *Manager) Get(id string, owner Owner) (*Session, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	found, ok := m.sessions[id]
-	if !ok || found.spec.CustomerID != customerID {
+	if !ok || !owner.reaches(OwnerOf(found.spec)) {
 		return nil, false
 	}
 	return found, true
@@ -483,16 +531,25 @@ func (m *Manager) ByAgent(agentID string) (*Session, bool) {
 	return newest, newest != nil
 }
 
-// List returns a customer's sessions, newest first.
-func (m *Manager) List(customerID string) []*Session {
+// List returns the sessions an owner may have, newest first. A backend gets its
+// customer's; an end user gets their own, which is what stops a list being a way to find
+// out who else is talking to the agent.
+func (m *Manager) List(owner Owner) []*Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	var theirs []*Session
 	for _, found := range m.sessions {
-		if found.spec.CustomerID == customerID {
-			theirs = append(theirs, found)
+		if !owner.reaches(OwnerOf(found.spec)) {
+			continue
 		}
+		// An anonymous caller that named nobody is told about nothing. It reaches its
+		// own session by holding the id, and listing them would hand one stranger
+		// another's.
+		if owner.Kind != auth.KindServer && owner.UserID == "" {
+			continue
+		}
+		theirs = append(theirs, found)
 	}
 	sort.Slice(theirs, func(i, j int) bool {
 		return theirs[i].created.After(theirs[j].created)
@@ -500,9 +557,9 @@ func (m *Manager) List(customerID string) []*Session {
 	return theirs
 }
 
-// Close ends a customer's session, reporting whether they had one by that id.
-func (m *Manager) Close(id, customerID string) (bool, error) {
-	found, ok := m.Get(id, customerID)
+// Close ends a session its owner may have, reporting whether they had one by that id.
+func (m *Manager) Close(id string, owner Owner) (bool, error) {
+	found, ok := m.Get(id, owner)
 	if !ok {
 		return false, nil
 	}

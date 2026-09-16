@@ -2,6 +2,69 @@
 
 ## Breaking Changes
 
+### `ROUTER_AUTH_MODE` defaults to `api_key`, and `noauth` has been split in two
+
+The old `noauth` did two unrelated jobs: it trusted the headers a proxy set, and it was
+what a laptop ran. Those are now separate modes, and the default is neither of them.
+
+| Mode | What it does |
+| --- | --- |
+| `api_key` | The new default. Verifies a key and an HS256 token signed with its secret |
+| `proxy` | The old `noauth`. Reads `X-Stream-App-Id`, `X-Stream-Organization-Id`, `X-Stream-User-Id` and `Stream-Auth-Type` as already authenticated |
+| `noauth` | Reads `X-Customer-Id` only, and every caller is that customer's backend |
+| `custom` | An `auth.Authenticator` the embedder passes to `api.WithAuthenticator` |
+
+**A deployment behind a proxy must set `ROUTER_AUTH_MODE=proxy`.** Left on `noauth` it
+keeps working, but it stops reading the user and the auth type, so every end user becomes a
+server-side caller of the app named in `X-Customer-Id`.
+
+**A deployment that set nothing must now set `ROUTER_AUTH_MODE=noauth`,** or supply
+`ROUTER_POSTGRES_URL` and `ROUTER_AUTH_KEK` and mint a key. Naming no mode used to mean
+"trust everything"; it now means "verify a key", and a router with nothing to verify
+against refuses to start and says which piece is missing.
+
+A local deployment naming `noauth` explicitly, and sending `X-Customer-Id`, is unaffected.
+
+### An app may turn away anonymous and guest users
+
+`apps` gains a `settings` JSONB column, read in the same query that resolves an API key.
+`allow_anonymous` and `allow_guest` both default to yes; an app that sets either to `false`
+answers 403 to that level of caller on every path. It applies in `api_key` mode, the only
+one where the app is a row in these tables. There is no endpoint for it yet: it is an
+`UPDATE` by hand.
+
+### A server-side caller may name a user, and reading a session is open to devices
+
+A backend can send `X-Stream-User-Id` to say which of its users it is acting for. The
+session it opens then belongs to that user, so that user's own device reaches it — which is
+the point, since a backend opening the conversation and handing over the id is the ordinary
+shape of an integration. The backend stays server-side, reaches everything, and is charged
+no daily limit. Anonymous callers are excluded: an unverified name does not reach a
+session a backend created.
+
+### The router is server-side only unless the spec says otherwise
+
+An end user's device may now reach six operations, and is answered 403 on everything
+else:
+
+| Operation | |
+| --- | --- |
+| `GET /v1/search` | ask a question |
+| `POST /v1/agents/sessions` | open a conversation |
+| `GET /v1/agents/sessions` | find the one it has |
+| `GET /v1/agents/sessions/{id}` | read the one it is having |
+| `DELETE /v1/agents/sessions/{id}` | hang up |
+| `GET /v1/agents/sessions/{id}/events` | the conversation itself |
+
+`x-server-side-only` in `openapi.yaml` is replaced by `x-client-accessible: true` on those
+six. A caller is a device when it presents `Stream-Auth-Type: jwt` and a token naming a
+`user_id`; a backend is unaffected, and so is a `noauth` deployment, where every caller is
+taken to be a backend.
+
+Making the agent answer, listing configs, minting a call or chat token and reading a
+transcript are all now server-side. A frontend that called them wants its own backend in
+front: the same call from there, with whatever of the answer that frontend should see.
+
 ### Source research belongs to the agent, and managed research sandboxes are gone
 
 An agent that reads source now owns its own Daytona VM and offers `investigate_sdk` as
@@ -174,6 +237,23 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 `description`.
 
 ## New Features
+
+### A session belongs to whoever opened it, anonymous, guest or signed in
+
+Sessions now record their owner — the customer, the user id and which sort of caller
+claimed it — and every later request for one is matched against that. One person cannot
+read, close or write into another's conversation, on the events socket or anywhere else.
+
+Four kinds of caller, decided by the credential rather than by the request: `server`
+reaches every session of its customer, `authenticated` and `guest` reach their own user's,
+and `anonymous` reaches what it opened under the name it claimed. The kind travels with the
+user id because an unverified name is not the verified one: an anonymous caller naming
+`alice` never matches the `alice` a token proved, so claiming a name buys nothing. An
+anonymous caller naming nobody at all holds its session by id and is listed nothing.
+
+No configuration is needed. On a `noauth` deployment behind a proxy, the proxy's
+`Stream-Auth-Type` and `X-Stream-User-Id` decide; in `api_key` mode the token's `user_id`
+and `role` claims do.
 
 ### An agent directory declares the pages it reads, in `knowledge/urls.yaml`
 

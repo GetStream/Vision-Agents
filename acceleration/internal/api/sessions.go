@@ -49,8 +49,11 @@ func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequest
 	spec := specOf(*request.Body, customerID, config)
 	// Who asked comes from the credential rather than from specOf, which merges the request
 	// with the config and so only ever sees what the caller was willing to say about
-	// themselves.
+	// themselves. Both halves are recorded, because the name is only worth what the kind
+	// says it is: this pair is what the session is owned by and what every later request
+	// for it is matched against.
 	spec.Caller = CallerFrom(ctx)
+	spec.CallerKind = KindFrom(ctx)
 	created, err := s.sessions.Create(ctx, spec)
 	if err != nil {
 		// Everything that can go wrong here is the caller's spec or a provider that would
@@ -63,15 +66,14 @@ func (s *Server) CreateSession(ctx context.Context, request CreateSessionRequest
 
 // ListSessions returns the calling customer's sessions, newest first.
 func (s *Server) ListSessions(ctx context.Context, _ ListSessionsRequestObject) (ListSessionsResponseObject, error) {
-	customerID, ok := CustomerFrom(ctx)
-	if !ok {
+	if _, ok := CustomerFrom(ctx); !ok {
 		return ListSessions401JSONResponse{missingCustomer()}, nil
 	}
 	if s.sessions == nil {
 		return ListSessions200JSONResponse{}, nil
 	}
 
-	running := s.sessions.List(customerID)
+	running := s.sessions.List(OwnerFrom(ctx))
 	listed := make([]Session, 0, len(running))
 	for _, found := range running {
 		listed = append(listed, sessionOf(found))
@@ -95,15 +97,14 @@ func (s *Server) GetSession(ctx context.Context, request GetSessionRequestObject
 
 // CloseSession ends a session, which is how the agent leaves the call.
 func (s *Server) CloseSession(ctx context.Context, request CloseSessionRequestObject) (CloseSessionResponseObject, error) {
-	customerID, ok := CustomerFrom(ctx)
-	if !ok {
+	if _, ok := CustomerFrom(ctx); !ok {
 		return CloseSession401JSONResponse{missingCustomer()}, nil
 	}
 	if s.sessions == nil {
 		return CloseSession404JSONResponse{NotFoundJSONResponse{Error: noSessions}}, nil
 	}
 
-	closed, err := s.sessions.Close(request.Id, customerID)
+	closed, err := s.sessions.Close(request.Id, OwnerFrom(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -201,14 +202,13 @@ type lookupFailure struct {
 
 // session finds a session belonging to the calling customer.
 func (s *Server) session(ctx context.Context, id string) (*session.Session, *lookupFailure) {
-	customerID, ok := CustomerFrom(ctx)
-	if !ok {
+	if _, ok := CustomerFrom(ctx); !ok {
 		return nil, &lookupFailure{status: unauthorized}
 	}
 	if s.sessions == nil {
 		return nil, &lookupFailure{status: notFound, message: noSessions}
 	}
-	found, ok := s.sessions.Get(id, customerID)
+	found, ok := s.sessions.Get(id, OwnerFrom(ctx))
 	if !ok {
 		return nil, &lookupFailure{status: notFound, message: unknownSession}
 	}

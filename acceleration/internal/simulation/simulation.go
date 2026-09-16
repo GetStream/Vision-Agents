@@ -412,7 +412,7 @@ func (r *Runner) spec(
 // the list of sessions as well as ending it.
 func (r *Runner) hang(over transport) {
 	created := over.Session()
-	if _, err := r.sessions.Close(created.ID(), created.Spec().CustomerID); err != nil {
+	if _, err := r.sessions.Close(created.ID(), session.OwnerOf(created.Spec())); err != nil {
 		r.logger.Error("could not end a simulated conversation",
 			"session", created.ID(), "error", err)
 	}

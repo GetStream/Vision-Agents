@@ -39,9 +39,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 )
 
-// CustomerHeader names the tenant directly. It is only read in noauth mode, where a proxy
-// in front of the router has already decided who the caller is, and it is what a local
-// deployment with no proxy and no keys uses.
+// CustomerHeader names the tenant directly, with no organization around it. It is what a
+// local deployment with no proxy and no keys uses, and it is read in noauth and proxy
+// modes and ignored entirely in api_key mode.
 const CustomerHeader = auth.CustomerHeader
 
 // CustomerParam carries the same identifier on the sockets, because the browser WebSocket
@@ -62,10 +62,19 @@ type serverSideContextKey struct{}
 // is what a daily limit is counted against.
 type callerContextKey struct{}
 
-// serverSideExtension is what the spec marks an operation only a backend may reach with.
-// The check reads it from the embedded spec rather than from a list kept here, so what a
-// generated SDK documents and what the server refuses cannot drift apart.
-const serverSideExtension = "x-server-side-only"
+// kindContextKey holds what sort of caller it is, which is what qualifies the end user's
+// name when one person's sessions are kept from another's.
+type kindContextKey struct{}
+
+// clientAccessibleExtension is what the spec marks the few operations an end user's device
+// may reach with. Everything else is server-side only, and the check reads the mark from
+// the embedded spec rather than from a list kept here, so what a generated SDK documents
+// and what the server refuses cannot drift apart.
+//
+// The default is that way round because the two mistakes do not cost the same. An
+// operation nobody thought about is refused to a browser, which arrives as a bug report;
+// under the old default it was served to one, which arrives as a breach.
+const clientAccessibleExtension = "x-client-accessible"
 
 // Options configures a Server. The store and live client are optional; endpoints that
 // need them report the dependency as unavailable rather than panicking.
@@ -124,9 +133,12 @@ type Options struct {
 	PublicURL string
 	// DashboardURL is where a finished plugin login sends the browser.
 	DashboardURL string
-	// Auth decides who a request is from. Absent means noauth, which trusts the customer
-	// header and is right for a local deployment and for one behind a proxy that has
-	// already authenticated the caller.
+	// Auth decides who a request is from. Absent means noauth, which reads the customer
+	// header and takes every caller for that customer's own backend. That is the right
+	// default for a server built in code rather than from configuration — a test, or a
+	// deployment embedding this package — because there the absence is deliberate, where
+	// an unset environment variable is somebody who has not thought about it yet and
+	// gets api_key instead.
 	Auth auth.Authenticator
 	// Quota caps what one end user may spend in a day. Absent means nothing is capped,
 	// which is right for a deployment with no Redis to count in and for one whose callers
@@ -170,8 +182,27 @@ type Server struct {
 	logger     *slog.Logger
 }
 
+// Option adjusts the options a server is built from. It exists for the settings a
+// deployment supplies as code rather than as configuration, which cannot be written in the
+// struct a configuration file is decoded into.
+type Option func(*Options)
+
+// WithAuthenticator supplies an authenticator of the deployment's own, which is the whole
+// of auth.Custom: the mode names an answer this module does not have, and this is where
+// the answer arrives. Anything satisfying auth.Authenticator will do, and auth.Func makes
+// one out of a function.
+//
+// It overrides whatever ROUTER_AUTH_MODE asked for, because a deployment that compiled an
+// authenticator in meant it.
+func WithAuthenticator(authenticator auth.Authenticator) Option {
+	return func(options *Options) { options.Auth = authenticator }
+}
+
 // NewServer wires the handlers.
-func NewServer(options Options) (*Server, error) {
+func NewServer(options Options, with ...Option) (*Server, error) {
+	for _, option := range with {
+		option(&options)
+	}
 	if len(options.Routers) == 0 {
 		return nil, errors.New("api: at least one router is required")
 	}
@@ -349,12 +380,36 @@ func (l *loggedResponse) Unwrap() http.ResponseWriter {
 	return l.ResponseWriter
 }
 
-// serverSideRoutes builds the matcher for the operations the spec marks server-side only.
+// unspecifiedRoutes are the hand-written handlers, and whether a client may reach each.
+//
+// They are named here because they are excluded from generation — a strict server can
+// express neither an upgrade nor a stream — and excluding an operation drops it from the
+// embedded spec. An operation the spec cannot see is the one place an inverted default
+// could fail open, so this is the complement's other half rather than a note about
+// sockets. A test holds it to naming exactly what api/oapi-codegen.yaml excludes.
+var unspecifiedRoutes = map[string]bool{
+	"GET /v1/agents/sessions/{id}/events": true,
+	"GET /v1/{modality}/stream":           false,
+	"GET /v1/dispatch":                    false,
+	"GET /v1/agents/logs":                 false,
+	"GET /v1/agents/logs/stream":          false,
+	"GET /v1/agents/logs/{id}":            false,
+	// Reached before there is a caller to classify: the browser arrives from the identity
+	// provider and the state parameter is the secret.
+	"GET /v1/agents/plugins/callback": true,
+}
+
+// serverSideRoutes builds the matcher for every operation an end user's device may not
+// reach, which is every operation the spec does not mark client-accessible.
 //
 // The spec's own path templates are the patterns, because OpenAPI writes a parameter as
 // {id} and so does ServeMux: a route is registered rather than translated. Matching is
-// then the same routing the generated handlers get, so a marked operation cannot be
-// reached by a path that spells it differently.
+// then the same routing the generated handlers get, so an operation cannot be reached by
+// a path that spells it differently.
+//
+// An operation declaring no security at all is skipped in both directions. It is reached
+// before there is a caller to classify — the health check and the plugin redirect, where
+// the browser arrives from the identity provider — so there is nobody to refuse.
 func serverSideRoutes() (*http.ServeMux, error) {
 	spec, err := GetSpec()
 	if err != nil {
@@ -365,9 +420,18 @@ func serverSideRoutes() (*http.ServeMux, error) {
 	nothing := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	for path, item := range spec.Paths.Map() {
 		for method, operation := range item.Operations() {
-			if marked, ok := operation.Extensions[serverSideExtension].(bool); ok && marked {
-				routes.Handle(method+" "+path, nothing)
+			if operation.Security != nil && len(*operation.Security) == 0 {
+				continue
 			}
+			if open, ok := operation.Extensions[clientAccessibleExtension].(bool); ok && open {
+				continue
+			}
+			routes.Handle(method+" "+path, nothing)
+		}
+	}
+	for route, open := range unspecifiedRoutes {
+		if !open {
+			routes.Handle(route, nothing)
 		}
 	}
 	return routes, nil
@@ -376,9 +440,9 @@ func serverSideRoutes() (*http.ServeMux, error) {
 // withServerSide refuses the generated operations only a backend may reach.
 //
 // It sits after withCustomer, because refusing a caller for what it is means having worked
-// out what it is first. It covers the generated routes only: an operation left out of
-// generation is left out of the embedded spec with it, so the three sockets ask the same
-// question for themselves through refuseClientSide.
+// out what it is first. The three sockets are left out of the embedded spec by being left
+// out of generation, so socketRoutes puts them back rather than leaving them to be open by
+// omission.
 //
 // A caller that authenticated and asked for one of these gets a 403 rather than a 401: it
 // has already proved who it is, so there is nothing to be learned from a specific answer
@@ -419,22 +483,35 @@ func (s *Server) refuseClientSide(w http.ResponseWriter, r *http.Request) bool {
 //
 // It also means one 401 for every reason authentication failed. A caller that could tell an
 // unknown key from a bad token could use the difference to find out which keys exist.
-// It also works out who to count a daily limit against, which is only asked of a caller
-// that authenticated as an end user's device: a backend the customer runs is trusted with
-// its own tokens, so naming a user for one would only be a bucket nothing is counted in.
+//
+// The one failure it does answer is a caller whose level the app turns away. That caller
+// proved who it is, so there is nothing to protect by staying quiet, and the advice it
+// needs is the opposite of the advice a 401 gives: its credential is fine and this app
+// does not take guests.
+//
+// The caller is recorded for a backend too, even though a backend is charged no limit. It
+// is how a backend says which of its users it is opening a session for, so that the user's
+// own device can reach that session afterwards; what keeps the limit off it is that
+// withQuota looks at whether the caller is server-side rather than at whether there is one.
 func (s *Server) withCustomer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, err := s.authenticator.Authenticate(r.Context(), r)
+		if errors.Is(err, auth.ErrLevelRefused) {
+			s.logger.Debug("refused a level of user this app turns away",
+				"method", r.Method, "path", r.URL.Path, "kind", principal.Kind)
+			writeError(w, http.StatusForbidden, "this app does not accept "+
+				"requests from this level of user")
+			return
+		}
 		if err == nil && principal.AppID != "" {
 			ctx := context.WithValue(r.Context(), customerContextKey{}, principal.AppID)
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
-			if !principal.ServerSide {
-				ctx = context.WithValue(ctx, callerContextKey{}, routing.Caller{
-					UserID: principal.UserID,
-					IP:     clientIP(r, s.trusted),
-				})
-			}
+			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
+			ctx = context.WithValue(ctx, callerContextKey{}, routing.Caller{
+				UserID: principal.UserID,
+				IP:     clientIP(r, s.trusted),
+			})
 			r = r.WithContext(ctx)
 		}
 		next.ServeHTTP(w, r)
@@ -516,11 +593,32 @@ func ServerSideFrom(ctx context.Context) bool {
 }
 
 // CallerFrom returns the end user the request is for and where they made it from, which is
-// what a daily limit is counted against. It is empty for a request a backend the customer
-// runs made for itself, and empty means nothing is counted.
+// what a daily limit is counted against. It is empty for a request nobody authenticated,
+// and empty means nothing is counted. A backend acting for a named user has one and is
+// still counted nothing, which withQuota decides by asking whether the caller is
+// server-side rather than by asking whether there is one.
 func CallerFrom(ctx context.Context) routing.Caller {
 	caller, _ := ctx.Value(callerContextKey{}).(routing.Caller)
 	return caller
+}
+
+// KindFrom returns what sort of caller made the request.
+func KindFrom(ctx context.Context) auth.Kind {
+	kind, _ := ctx.Value(kindContextKey{}).(auth.Kind)
+	return kind
+}
+
+// OwnerFrom is who the request may reach sessions as: the customer, the end user behind
+// it and which sort of caller that is. A backend reaches all of its customer's sessions
+// whether or not it names a user; anybody else reaches only what they opened themselves,
+// or what their own backend opened in their name.
+func OwnerFrom(ctx context.Context) session.Owner {
+	customerID, _ := CustomerFrom(ctx)
+	return session.Owner{
+		CustomerID: customerID,
+		UserID:     CallerFrom(ctx).UserID,
+		Kind:       KindFrom(ctx),
+	}
 }
 
 // routerFor returns the router serving a modality, or false when this deployment does not

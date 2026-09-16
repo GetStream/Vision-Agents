@@ -49,7 +49,6 @@ class AgentConfig:
         plugins (list[str] | Unset):
         keyterms (list[str] | Unset):
         knowledge_namespace (str | Unset):
-        sandbox_profile (str | Unset): Backend-managed research profile, scoped to this customer and agent.
         sandbox (Sandbox | Unset): Where the subagent may run code it writes. Only the subagent is offered it: running
             code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works
             everything out in its head.
@@ -78,7 +77,6 @@ class AgentConfig:
     plugins: list[str] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
-    sandbox_profile: str | Unset = UNSET
     sandbox: Sandbox | Unset = UNSET
     tags: AgentConfigTags | Unset = UNSET
     sync_hash: str | Unset = UNSET
@@ -135,8 +133,6 @@ class AgentConfig:
 
         knowledge_namespace = self.knowledge_namespace
 
-        sandbox_profile = self.sandbox_profile
-
         sandbox: str | Unset = UNSET
         if not isinstance(self.sandbox, Unset):
             sandbox = self.sandbox.value
@@ -188,8 +184,6 @@ class AgentConfig:
             field_dict["keyterms"] = keyterms
         if knowledge_namespace is not UNSET:
             field_dict["knowledge_namespace"] = knowledge_namespace
-        if sandbox_profile is not UNSET:
-            field_dict["sandbox_profile"] = sandbox_profile
         if sandbox is not UNSET:
             field_dict["sandbox"] = sandbox
         if tags is not UNSET:
@@ -258,8 +252,6 @@ class AgentConfig:
 
         knowledge_namespace = d.pop("knowledge_namespace", UNSET)
 
-        sandbox_profile = d.pop("sandbox_profile", UNSET)
-
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
@@ -297,7 +289,6 @@ class AgentConfig:
             plugins=plugins,
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
-            sandbox_profile=sandbox_profile,
             sandbox=sandbox,
             tags=tags,
             sync_hash=sync_hash,

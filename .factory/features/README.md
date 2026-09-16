@@ -33,7 +33,7 @@ edits them.
 | [The Python SDK](sdk.md)                       | sprints 8, 13, 14    | Built; Daytona is the only sandbox      |
 | [The Go SDK](go-sdk.md)                        | sprint 10            | Built; no dispatch worker               |
 | [The dashboard](dashboard.md)                  | sprints 9, 15        | Built; the review score is a placeholder |
-| [Authentication](auth.md)                      | sprint 17            | Built; nothing creates a key but a database call |
+| [Authentication](auth.md)                      | sprint 17            | Four modes; nothing creates a key or a setting but a database call |
 | [Hosting](hosting.md)                          | sprints 9, 17        | Built in the chat repository; not deployed |
 
 Everything lives in [acceleration/](../../acceleration), a Go module beside the Python

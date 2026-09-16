@@ -42,22 +42,84 @@ func lookupOf(key string, app App) Lookup {
 }
 
 func TestParseMode(t *testing.T) {
-	for _, value := range []string{"", "noauth"} {
+	// Naming nothing gets the mode that verifies something. A default that trusts
+	// whatever reaches it is only correct when something else guarantees nothing does,
+	// which is not a guarantee a deployment should get by saying nothing.
+	for _, value := range []string{"", "api_key"} {
 		mode, err := ParseMode(value)
 		require.NoError(t, err)
-		require.Equal(t, NoAuth, mode)
+		require.Equal(t, APIKey, mode)
 	}
 
-	mode, err := ParseMode("api_key")
-	require.NoError(t, err)
-	require.Equal(t, APIKey, mode)
+	for value, want := range map[string]Mode{"proxy": Proxy, "noauth": NoAuth, "custom": Custom} {
+		mode, err := ParseMode(value)
+		require.NoError(t, err)
+		require.Equal(t, want, mode)
+	}
 
-	_, err = ParseMode("open")
+	_, err := ParseMode("open")
 	require.Error(t, err)
+}
+
+func TestCustomBuildsNothing(t *testing.T) {
+	// The mode is understood so a deployment naming it is not rejected at startup, but
+	// the authenticator is the deployment's own and arrives another way.
+	_, err := New(Custom, nil)
+	require.ErrorContains(t, err, "WithAuthenticator")
 }
 
 func TestNoAuth(t *testing.T) {
 	authenticator, err := New(NoAuth, nil)
+	require.NoError(t, err)
+
+	t.Run("takes the customer header and calls it a backend", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		r.Header.Set(CustomerHeader, "examples")
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, Principal{
+			AppID: "examples", Kind: KindServer, ServerSide: true,
+		}, principal)
+	})
+
+	t.Run("reads the customer query parameter for a socket", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/dispatch?customer_id=examples", nil)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, "examples", principal.AppID)
+	})
+
+	t.Run("names nobody when the request names nobody", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+
+		_, err := authenticator.Authenticate(context.Background(), r)
+		require.ErrorIs(t, err, ErrUnauthenticated)
+	})
+
+	t.Run("ignores the headers a proxy would have set", func(t *testing.T) {
+		// This is the whole reason the mode was split out of the one behind a proxy.
+		// Nothing here verified any of these, so believing them would let a caller on
+		// the same laptop call itself any user of any app it liked, and a user id is
+		// what one person's conversations are kept from another's by.
+		r := httptest.NewRequest(http.MethodGet, "/v1/calls?user_id=user-2", nil)
+		r.Header.Set(CustomerHeader, "examples")
+		r.Header.Set(AppHeader, "somebody-elses-app")
+		r.Header.Set(OrganizationHeader, "somebody-elses-org")
+		r.Header.Set(UserHeader, "user-1")
+		r.Header.Set(AuthTypeHeader, AuthTypeJWT)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, Principal{
+			AppID: "examples", Kind: KindServer, ServerSide: true,
+		}, principal)
+	})
+}
+
+func TestProxy(t *testing.T) {
+	authenticator, err := New(Proxy, nil)
 	require.NoError(t, err)
 
 	t.Run("reads the principal the proxy named", func(t *testing.T) {
@@ -67,8 +129,9 @@ func TestNoAuth(t *testing.T) {
 
 		principal, err := authenticator.Authenticate(context.Background(), r)
 		require.NoError(t, err)
-		require.Equal(t,
-			Principal{OrganizationID: "org-1", AppID: "app-1", ServerSide: true}, principal)
+		require.Equal(t, Principal{
+			OrganizationID: "org-1", AppID: "app-1", Kind: KindServer, ServerSide: true,
+		}, principal)
 	})
 
 	t.Run("believes the auth type the proxy named", func(t *testing.T) {
@@ -82,8 +145,8 @@ func TestNoAuth(t *testing.T) {
 	})
 
 	t.Run("treats a caller that names no auth type as a backend", func(t *testing.T) {
-		// A deployment in this mode with no proxy in front is a local one, where a
-		// router that refused to accept an agent config would be useless.
+		// A proxy that has classified a caller says so, so one that says nothing is a
+		// deployment whose callers are all backends.
 		r := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
 		r.Header.Set(CustomerHeader, "examples")
 
@@ -159,10 +222,13 @@ func TestAPIKey(t *testing.T) {
 	}
 
 	t.Run("resolves the app the key belongs to", func(t *testing.T) {
+		// A token naming nobody and claiming nothing leaves the caller anonymous: the
+		// key says which app it is, and nothing says which person.
 		principal, err := authenticator.Authenticate(context.Background(),
 			request(key, signed(t, secret, time.Hour)))
 		require.NoError(t, err)
-		require.Equal(t, Principal{OrganizationID: "org-1", AppID: "app-1"}, principal)
+		require.Equal(t,
+			Principal{OrganizationID: "org-1", AppID: "app-1", Kind: KindAnonymous}, principal)
 	})
 
 	t.Run("names the end user the token was minted for", func(t *testing.T) {
@@ -202,6 +268,20 @@ func TestAPIKey(t *testing.T) {
 			serverSide(jwt.MapClaims{"server": "true"}))
 		require.NoError(t, err)
 		require.True(t, principal.ServerSide)
+	})
+
+	t.Run("lets a backend say which of its users it is acting for", func(t *testing.T) {
+		// A server token names no user by definition, so the header is the only place a
+		// backend can say whose session it is opening. Believing it costs nothing: a
+		// caller holding the secret could mint a token for that user instead.
+		r := serverSide(jwt.MapClaims{"server": true})
+		r.Header.Set(UserHeader, "user-1")
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, KindServer, principal.Kind)
+		require.True(t, principal.ServerSide)
+		require.Equal(t, "user-1", principal.UserID)
 	})
 
 	t.Run("keeps a token naming a user client-side, whatever the header says", func(t *testing.T) {
@@ -297,6 +377,73 @@ func TestAPIKey(t *testing.T) {
 	t.Run("needs somewhere to look keys up", func(t *testing.T) {
 		_, err := New(APIKey, nil)
 		require.Error(t, err)
+	})
+}
+
+func TestLevelsDefaultToAdmittingEverybody(t *testing.T) {
+	// The zero value is what every caller in every mode but api_key is measured against,
+	// and what an app nobody has configured gets. If it denied, turning authentication on
+	// would lock out every end user of every deployment that had not written a row yet.
+	var none Levels
+	for _, kind := range []Kind{KindServer, KindAuthenticated, KindGuest, KindAnonymous} {
+		require.True(t, none.Admits(kind), string(kind))
+	}
+}
+
+func TestAnAppTurnsAwayTheLevelsItDoesNotWant(t *testing.T) {
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+
+	// An app taking neither of the two levels below a signed-in user.
+	closed := App{
+		OrganizationID: "org-1", AppID: "app-1", Secret: secret,
+		Levels: Levels{NoAnonymous: true, NoGuest: true},
+	}
+	authenticator, err := New(APIKey, lookupOf(key, closed))
+	require.NoError(t, err)
+
+	presenting := func(claims jwt.MapClaims) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/v1/calls", nil)
+		r.Header.Set(APIKeyHeader, key)
+		r.Header.Set("Authorization", "Bearer "+signedClaims(t, secret, claims))
+		return r
+	}
+
+	t.Run("refuses an anonymous caller", func(t *testing.T) {
+		_, err := authenticator.Authenticate(context.Background(), presenting(jwt.MapClaims{}))
+		require.ErrorIs(t, err, ErrLevelRefused)
+	})
+
+	t.Run("refuses a guest", func(t *testing.T) {
+		_, err := authenticator.Authenticate(context.Background(),
+			presenting(jwt.MapClaims{"user_id": "user-1", "role": "guest"}))
+		require.ErrorIs(t, err, ErrLevelRefused)
+	})
+
+	t.Run("says which level it turned away", func(t *testing.T) {
+		// The one failure here that comes with a principal, because it is the one
+		// reached by a caller that has already proved who it is: there is nothing left
+		// to withhold, and an operator wants to know which level is being refused.
+		refused, err := authenticator.Authenticate(context.Background(), presenting(jwt.MapClaims{}))
+		require.ErrorIs(t, err, ErrLevelRefused)
+		require.Equal(t, KindAnonymous, refused.Kind)
+	})
+
+	t.Run("still admits a signed-in user", func(t *testing.T) {
+		principal, err := authenticator.Authenticate(context.Background(),
+			presenting(jwt.MapClaims{"user_id": "user-1"}))
+		require.NoError(t, err)
+		require.Equal(t, KindAuthenticated, principal.Kind)
+	})
+
+	t.Run("never refuses the customer's own backend", func(t *testing.T) {
+		// A backend holds the secret, so a switch it could turn off for itself is not a
+		// control, and refusing it would only lock the customer out of their own app.
+		r := presenting(jwt.MapClaims{"server": true})
+		r.Header.Set(AuthTypeHeader, AuthTypeServer)
+
+		principal, err := authenticator.Authenticate(context.Background(), r)
+		require.NoError(t, err)
+		require.Equal(t, KindServer, principal.Kind)
 	})
 }
 

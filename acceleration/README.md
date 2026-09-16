@@ -96,7 +96,7 @@ to play audio, or `-out` to write a file instead.
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
 | `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless a browser app calls this deployment. The same list decides which origins may open a socket. A deployment reached through Stream's proxy needs the proxy to let a preflight through as well, since a browser cannot authenticate one |
-| `ROUTER_AUTH_MODE`      | `noauth` (default) or `api_key`. See [Authentication](#authentication) |
+| `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user may ask for in a UTC day, defaults to `200`. `0` turns it off. See [Daily limits](#daily-limits) |
 | `ROUTER_RATE_LIMIT_TOKENS_PER_DAY` | Tokens one end user may spend in a UTC day, defaults to `500000`. `0` turns it off |
@@ -141,16 +141,19 @@ to play audio, or `-out` to write a file instead.
 
 ## Authentication
 
-`ROUTER_AUTH_MODE` picks between the two deployments this serves.
+`ROUTER_AUTH_MODE` picks between the four deployments this serves.
 
-`noauth`, the default, believes what it is told. The caller is named by `X-Stream-App-Id`
-and `X-Stream-Organization-Id`, or by `X-Customer-Id` alone, and a socket may say the same
-thing as a `customer_id` query parameter because a browser WebSocket carries no headers.
-Nothing is verified, so it is only safe where a proxy in front has already authenticated
-the caller and nothing else can reach the router. That proxy owns rate limiting, and it has
-to overwrite both headers rather than pass a caller's own through.
+`api_key`, the default, verifies the caller itself. `proxy` believes what something in
+front of it already decided. `noauth` asks for nothing and treats every caller as the
+customer's own backend. `custom` is an authenticator the deployment supplies in code.
 
-`api_key` verifies the caller itself, and needs Postgres to look keys up in. A request
+The default is the one that verifies something, because a default that trusts whatever
+reaches it is only correct when something else guarantees nothing does, and that guarantee
+is a NetworkPolicy in one deployment and nothing at all in the next. `api_key` refuses to
+start without a store and a key encryption key, and says which is missing, rather than
+starting and refusing every request for a reason only visible in a 401.
+
+`api_key` needs Postgres to look keys up in. A request
 carries the key in `X-Api-Key` and a token in `Authorization: Bearer`, signed HS256 with the
 secret belonging to that key; a socket takes the same two as `api_key` and `token`. The
 proxy headers are ignored entirely in this mode, since reading them would be a way around
@@ -169,13 +172,47 @@ Every failure is one 401 with one body, because a caller that could tell an unkn
 from a bad signature could use the difference to find out which keys exist. Revoking a key
 keeps the row: a year of request rows pointing at a deleted key is unattributable noise.
 
+`proxy` names the caller by `X-Stream-App-Id` and `X-Stream-Organization-Id`, the end user
+by `X-Stream-User-Id` and the sort of caller by `Stream-Auth-Type`. Nothing is verified, so
+it is only safe where a proxy in front has already authenticated the caller and nothing
+else can reach the router. That proxy owns rate limiting, and it has to overwrite all four
+rather than pass a caller's own through.
+
+`noauth` reads `X-Customer-Id`, or a `customer_id` query parameter on a socket since a
+browser WebSocket carries no headers, and takes every caller for that customer's own
+backend. It deliberately reads neither the user nor the auth type: nothing here verified
+them, so believing them would only let a caller name itself anything it liked, and a user
+id is what one person's conversations are kept from another's by. It is for a laptop, and
+it says so in a warning at startup.
+
+`custom` builds nothing. A deployment embedding this module passes its own
+`auth.Authenticator` to `api.NewServer` through `api.WithAuthenticator`; `auth.Func` makes
+one out of a function. The stock router binary has none compiled in and refuses to start in
+this mode rather than pretending.
+
 ### Server-side only
 
-Some paths configure the agent rather than talk to it, and a device holding a token its own
-backend minted has no business on them. Rewriting a config, replacing what an agent knows
-or waiting on the dispatch socket are all of that kind, and each is marked
-`x-server-side-only` in the spec, which is where the generated SDKs and the check in front
-of the handlers both read it from.
+Everything is server-side only unless the spec says otherwise. An operation a device may
+reach is marked `x-client-accessible: true`, and six are:
+
+| Operation | Why a device may |
+| --- | --- |
+| `GET /v1/search` | A question and its answer are one round trip, for whoever asked |
+| `POST /v1/agents/sessions` | Opening a conversation is the point |
+| `GET /v1/agents/sessions` | Finding the conversation it already has |
+| `GET /v1/agents/sessions/{id}` | Reading the one conversation it is having |
+| `DELETE /v1/agents/sessions/{id}` | Hanging up on its own |
+| `GET /v1/agents/sessions/{id}/events` | The conversation itself, as it happens |
+
+The default is inverted rather than enumerated because the failure modes are not
+symmetrical: a new operation nobody marked is refused to devices until somebody decides it
+should not be, and the cost of getting that wrong is a 403 in front of a feature. Listing
+what to close instead means a new operation is open by accident, and the cost of getting
+that wrong is a config a phone can rewrite. The generated SDKs and the check in front of the
+handlers both read the same marks, so there is one answer rather than two that can drift.
+
+Unauthenticated paths — health, the plugin OAuth callback — declare `security: []` and sit
+outside this entirely: there is no caller to classify.
 
 A server-side caller says so twice. `Stream-Auth-Type: server` is the declaration, and a
 token carrying `server: true` and no `user_id` claim is the proof; `jwt` and a `user_id` are
@@ -191,19 +228,70 @@ opening a dispatch socket and answering somebody else's callers.
 
 The refusal is a 403 rather than a 401: the caller has already proved who it is, so a
 specific answer gives nothing away, and one told "unauthenticated" would go looking for a
-credential problem it does not have. In `noauth` the auth type is believed the same way the
-app id is, and a caller that names none is taken to be a backend — a deployment with no
-proxy in front is a local one where every caller is, and a local router that refused to
-accept an agent config would be no use. The gateway overwrites the header from the
-credential it verified, so in production a caller cannot name its own.
+credential problem it does not have. In `proxy` the auth type is believed the same way the
+app id is, and a caller that names none is taken to be a backend, since a proxy that has
+classified a caller says so. The gateway overwrites the header from the credential it
+verified, so a caller cannot name its own. In `noauth` there is nothing to declare: every
+caller is a backend because nothing there could make it anything else.
+
+A backend may still say which of its users it is working for, in `X-Stream-User-Id`. A
+server token names no user by definition, so the header is the only place to put it, and it
+is unsigned because a caller holding the secret could mint a token for that user anyway.
+What it buys is that the session the backend opens belongs to that user, so the user's own
+device can reach it afterwards. It costs nothing: the caller is still server-side, still
+reaches everything, and is still charged no daily limit.
+
+### Who a session belongs to
+
+Sessions are the one thing a device opens, so they are the one thing that needs a boundary
+inside a customer. A session records who opened it — the customer, the user id and which
+sort of caller claimed it — and every later request for it is matched against that.
+
+A caller is one of four kinds, decided by the credential and not by the request:
+
+| Kind | How | Reaches |
+| --- | --- | --- |
+| server | `Stream-Auth-Type: server` and `server: true` | every session of its customer |
+| authenticated | a token naming a `user_id` | its own user's sessions |
+| guest | a token naming a `user_id`, minted for a guest | its own guest's sessions |
+| anonymous | no token, a user id merely claimed | the sessions opened under that claim |
+
+The three that are not `server` are levels of end user, and an app may turn the bottom two
+away. That is a `settings` document on the app row — `allow_anonymous` and `allow_guest`,
+both defaulting to yes — read in the same query that resolves the API key. A level an app
+refuses is answered 403 at the door rather than given a narrower API, so a new endpoint
+cannot forget, and a missing key or a missing app row admits: `proxy` and `noauth` resolve
+no app row here at all, so the levels are enforced in `api_key` mode only.
+
+The kind is part of the identity and not a property of it, which is what makes an anonymous
+claim harmless: an anonymous caller saying `user_id=alice` is stored as anonymous alice and
+never matches the alice a token proved, so claiming a name buys nothing. That is also why
+guest and authenticated are separate kinds rather than one "has a token" — a guest id is
+issued per device and reused by nobody, but nothing in a token distinguishes the two, so the
+declaration does.
+
+An anonymous caller naming no user at all is refused a listing rather than shown a customer's
+sessions: it has opened nothing that can be found again, and a caller that names nothing is
+not the same caller twice.
+
+Reaching a session means the customer matches and either the caller is server-side or both
+the user id and the kind match. The one exception is a session a backend opened in a named
+user's name: an authenticated or guest caller of that name reaches it, because a backend
+opening the conversation and handing over the id is the ordinary shape of an integration.
+Anonymous is left out of that, since an anonymous name is a claim nobody checked and
+allowing it would make guessing whose a session was enough to read it.
+
+`internal/session` enforces all of this rather than the handlers, so `getSession`,
+`closeSession`, the events socket, the call token and the session actions cannot each be
+wrong in their own way.
 
 Not built yet, in the order [.factory/features/auth.md](../.factory/features/auth.md) puts
-them: scopes, and the single-use ticket that would get the credential out of a socket's
-query string.
+them: an endpoint that creates a key or writes a setting, scopes, and the single-use ticket
+that would get the credential out of a socket's query string.
 
 ### Running behind a proxy
 
-`noauth` exists for one deployment in particular. On Stream's own infrastructure
+`proxy` exists for one deployment in particular. On Stream's own infrastructure
 the router runs with authentication off, reachable only from `stream-accelerate`,
 a proxy in the chat repository that verifies a Stream API key and the token
 signed with that app's secret, rate limits the caller, and sets the two headers

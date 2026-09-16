@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
@@ -420,10 +421,231 @@ func (s *SessionSuite) TestASessionIsListedAndFoundByTheCustomerRunningIt() {
 	s.Equal("call-7", created.Spec().CallID)
 	s.Equal("call-7", created.Spec().AgentID, "an agent id defaults to the call id")
 
-	found, ok := s.manager.Get(created.ID(), "acme")
+	found, ok := s.manager.Get(created.ID(), backend("acme"))
 	s.Require().True(ok)
 	s.Same(created, found)
-	s.Len(s.manager.List("acme"), 1)
+	s.Len(s.manager.List(backend("acme")), 1)
+}
+
+// backend is the owner a process the customer runs reaches sessions as, acting for itself
+// and naming nobody.
+func backend(customerID string) Owner {
+	return Owner{CustomerID: customerID, Kind: auth.KindServer}
+}
+
+// backendFor is the same backend saying which of its users it is opening a session for.
+func backendFor(customerID, userID string) Owner {
+	return Owner{CustomerID: customerID, UserID: userID, Kind: auth.KindServer}
+}
+
+// device is the owner an end user's device reaches sessions as.
+func device(customerID, userID string, kind auth.Kind) Owner {
+	return Owner{CustomerID: customerID, UserID: userID, Kind: kind}
+}
+
+// opened is a session an end user's device asked for, as that device.
+func (s *SessionSuite) opened(callID string, owner Owner) *Session {
+	return s.joins(Spec{
+		CallID:     callID,
+		CustomerID: owner.CustomerID,
+		Caller:     routing.Caller{UserID: owner.UserID, IP: "203.0.113.1"},
+		CallerKind: owner.Kind,
+	})
+}
+
+func (s *SessionSuite) TestAPersonReachesTheSessionTheyOpened() {
+	s.manages()
+	alice := device("acme", "alice", auth.KindAuthenticated)
+
+	created := s.opened("call-alice", alice)
+
+	found, ok := s.manager.Get(created.ID(), alice)
+	s.Require().True(ok)
+	s.Same(created, found)
+}
+
+func (s *SessionSuite) TestAPersonDoesNotReachSomebodyElsesSession() {
+	// The whole point of recording who opened it: two people talking to the same agent
+	// are having two conversations, and neither is the other's to read.
+	s.manages()
+	alice := device("acme", "alice", auth.KindAuthenticated)
+	bob := device("acme", "bob", auth.KindAuthenticated)
+
+	created := s.opened("call-alice", alice)
+
+	_, ok := s.manager.Get(created.ID(), bob)
+	s.False(ok, "bob reached alice's session")
+}
+
+func (s *SessionSuite) TestAPersonReachesTheSessionTheirBackendOpenedForThem() {
+	// The ordinary shape of an integration: the customer's server opens the conversation
+	// and hands the id to the device. Requiring the kinds to match would refuse that
+	// device the session that was made for it.
+	s.manages()
+
+	created := s.opened("call-alice", backendFor("acme", "alice"))
+
+	_, ok := s.manager.Get(created.ID(), device("acme", "alice", auth.KindAuthenticated))
+	s.True(ok, "alice could not reach the session her own backend opened for her")
+}
+
+func (s *SessionSuite) TestAGuestReachesTheSessionTheirBackendOpenedForThem() {
+	// A guest is verified too, so the name on the session is one somebody checked.
+	s.manages()
+
+	created := s.opened("call-guest", backendFor("acme", "guest-7"))
+
+	_, ok := s.manager.Get(created.ID(), device("acme", "guest-7", auth.KindGuest))
+	s.True(ok)
+}
+
+func (s *SessionSuite) TestAnAnonymousCallerDoesNotReachABackendsSessionByGuessingTheName() {
+	// The exception stops at verified callers. An anonymous name is a claim nobody
+	// checked, so allowing it would make guessing whose a session is enough to read it —
+	// and a backend names real users, which are exactly the names worth guessing.
+	s.manages()
+
+	created := s.opened("call-alice", backendFor("acme", "alice"))
+
+	_, ok := s.manager.Get(created.ID(), device("acme", "alice", auth.KindAnonymous))
+	s.False(ok, "an unverified claim to alice's name reached the session made for her")
+}
+
+func (s *SessionSuite) TestABackendsSessionForOnePersonIsNotAnothersToRead() {
+	s.manages()
+
+	created := s.opened("call-alice", backendFor("acme", "alice"))
+
+	_, ok := s.manager.Get(created.ID(), device("acme", "bob", auth.KindAuthenticated))
+	s.False(ok, "bob reached the session alice's backend opened")
+}
+
+func (s *SessionSuite) TestASessionABackendOpenedForNobodyStaysItsOwn() {
+	// A backend that named no user opened it for itself, and the empty name is not one a
+	// device can match: a caller with no name of its own would otherwise reach every
+	// session the customer's backend ever opened for itself.
+	s.manages()
+
+	created := s.opened("call-1", backend("acme"))
+
+	_, ok := s.manager.Get(created.ID(), device("acme", "", auth.KindAuthenticated))
+	s.False(ok, "a nameless device reached a backend's own session")
+}
+
+func (s *SessionSuite) TestAnAnonymousCallerCannotTakeAVerifiedUsersName() {
+	// This is what the token buys. An anonymous caller names itself, so without the kind
+	// beside the name, typing alice into a query parameter would be enough to read her
+	// conversation.
+	s.manages()
+	alice := device("acme", "alice", auth.KindAuthenticated)
+
+	created := s.opened("call-alice", alice)
+
+	_, ok := s.manager.Get(created.ID(), device("acme", "alice", auth.KindAnonymous))
+	s.False(ok, "an unverified claim to alice's name reached her session")
+}
+
+func (s *SessionSuite) TestAGuestCannotTakeAVerifiedUsersName() {
+	// A guest is verified too, but it is a different account that happens to have been
+	// issued the same name, so it is a different owner.
+	s.manages()
+	alice := device("acme", "alice", auth.KindAuthenticated)
+
+	created := s.opened("call-alice", alice)
+
+	_, ok := s.manager.Get(created.ID(), device("acme", "alice", auth.KindGuest))
+	s.False(ok, "a guest reached a permanent user's session by name")
+}
+
+func (s *SessionSuite) TestAGuestReachesTheirOwnSessionAndNobodyElses() {
+	s.manages()
+	first := device("acme", "guest-1", auth.KindGuest)
+	second := device("acme", "guest-2", auth.KindGuest)
+
+	created := s.opened("call-guest-1", first)
+
+	found, ok := s.manager.Get(created.ID(), first)
+	s.Require().True(ok)
+	s.Same(created, found)
+
+	_, ok = s.manager.Get(created.ID(), second)
+	s.False(ok, "one guest reached another's session")
+}
+
+func (s *SessionSuite) TestAnAnonymousCallerReachesTheirOwnSessionAndNobodyElses() {
+	s.manages()
+	first := device("acme", "device-1", auth.KindAnonymous)
+	second := device("acme", "device-2", auth.KindAnonymous)
+
+	created := s.opened("call-device-1", first)
+
+	found, ok := s.manager.Get(created.ID(), first)
+	s.Require().True(ok)
+	s.Same(created, found)
+
+	_, ok = s.manager.Get(created.ID(), second)
+	s.False(ok, "one anonymous caller reached another's session")
+}
+
+func (s *SessionSuite) TestABackendReachesEverySessionItsCustomerIsRunning() {
+	// It runs the application, so closing a session a device walked away from is its job.
+	s.manages()
+	alice := device("acme", "alice", auth.KindAuthenticated)
+
+	created := s.opened("call-alice", alice)
+
+	found, ok := s.manager.Get(created.ID(), backend("acme"))
+	s.Require().True(ok)
+	s.Same(created, found)
+}
+
+func (s *SessionSuite) TestAnotherCustomersBackendReachesNothing() {
+	s.manages()
+	alice := device("acme", "alice", auth.KindAuthenticated)
+
+	created := s.opened("call-alice", alice)
+
+	_, ok := s.manager.Get(created.ID(), backend("globex"))
+	s.False(ok, "another customer's backend reached a session")
+	s.Empty(s.manager.List(backend("globex")))
+}
+
+func (s *SessionSuite) TestAPersonIsListedOnlyTheirOwnSessions() {
+	s.manages()
+	alice := device("acme", "alice", auth.KindAuthenticated)
+	bob := device("acme", "bob", auth.KindAuthenticated)
+	hers := s.opened("call-alice", alice)
+	s.opened("call-bob", bob)
+
+	listed := s.manager.List(alice)
+
+	s.Require().Len(listed, 1)
+	s.Same(hers, listed[0])
+	s.Len(s.manager.List(backend("acme")), 2, "the backend sees both")
+}
+
+func (s *SessionSuite) TestAnAnonymousCallerThatNamesNobodyIsListedNothing() {
+	// It reaches its own session by holding the id. Listing would hand one stranger
+	// another's, since there is no name to tell them apart by.
+	s.manages()
+	nameless := device("acme", "", auth.KindAnonymous)
+
+	s.opened("call-nameless", nameless)
+
+	s.Empty(s.manager.List(nameless))
+}
+
+func (s *SessionSuite) TestClosingSomebodyElsesSessionDoesNothing() {
+	s.manages()
+	alice := device("acme", "alice", auth.KindAuthenticated)
+	bob := device("acme", "bob", auth.KindAuthenticated)
+	created := s.opened("call-alice", alice)
+
+	closed, err := s.manager.Close(created.ID(), bob)
+
+	s.Require().NoError(err)
+	s.False(closed, "bob closed alice's session")
+	s.Equal(Live, created.State(), "alice's session was ended by somebody else")
 }
 
 func (s *SessionSuite) TestASessionIsFoundByTheAgentItWritesTo() {
@@ -515,7 +737,7 @@ func (s *SessionSuite) TestRejoiningACallEndsTheSessionTheAgentLeftBehind() {
 	s.True(s.edges[0].gone(), "the agent left behind is still in the call")
 	s.False(s.edges[1].gone())
 
-	listed := s.manager.List("acme")
+	listed := s.manager.List(backend("acme"))
 	s.Require().Len(listed, 1)
 	s.Same(rejoined, listed[0])
 }
@@ -530,7 +752,7 @@ func (s *SessionSuite) TestASecondAgentCanJoinTheSameCall() {
 
 	s.Equal(Live, first.State())
 	s.Equal(Live, second.State())
-	s.Len(s.manager.List("acme"), 2)
+	s.Len(s.manager.List(backend("acme")), 2)
 }
 
 func (s *SessionSuite) TestTheRecordedCallSaysWhatItWasRunWith() {
@@ -652,12 +874,12 @@ func (s *SessionSuite) TestAnotherCustomersSessionDoesNotExist() {
 	s.manages()
 	created := s.joins(Spec{})
 
-	_, ok := s.manager.Get(created.ID(), "other")
+	_, ok := s.manager.Get(created.ID(), backend("other"))
 
 	s.False(ok)
-	s.Empty(s.manager.List("other"))
+	s.Empty(s.manager.List(backend("other")))
 
-	closed, err := s.manager.Close(created.ID(), "other")
+	closed, err := s.manager.Close(created.ID(), backend("other"))
 	s.Require().NoError(err)
 	s.False(closed)
 	s.Equal(Live, created.State(), "another customer ended the call")
@@ -667,14 +889,14 @@ func (s *SessionSuite) TestClosingASessionLeavesTheCallAndForgetsIt() {
 	s.manages()
 	created := s.joins(Spec{})
 
-	closed, err := s.manager.Close(created.ID(), "acme")
+	closed, err := s.manager.Close(created.ID(), backend("acme"))
 
 	s.Require().NoError(err)
 	s.True(closed)
 	s.Equal(Ended, created.State())
 	s.Require().Len(s.edges, 1)
 	s.True(s.edges[0].gone(), "the agent stayed in the call")
-	s.Empty(s.manager.List("acme"))
+	s.Empty(s.manager.List(backend("acme")))
 }
 
 func (s *SessionSuite) TestAGreetingIsSpokenWithoutGoingThroughTheModel() {

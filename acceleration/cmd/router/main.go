@@ -69,9 +69,12 @@ const (
 	// comma separated. It exists for the dashboard, which talks to the router rather than
 	// through a server of its own. Unset means no browser may.
 	corsOriginsEnvVar = "ROUTER_CORS_ORIGINS"
-	// authModeEnvVar decides who the router believes a caller is. "noauth" trusts the
-	// headers a proxy in front of it sets, and is only safe when nothing else can reach
-	// it; "api_key" verifies a key and the token signed with its secret.
+	// authModeEnvVar decides who the router believes a caller is, and defaults to
+	// "api_key", which verifies a key and the token signed with its secret. "proxy"
+	// trusts the headers something in front of it sets and is only safe when nothing else
+	// can reach it. "noauth" asks for nothing and takes every caller for the customer's
+	// own backend, which is for a laptop. "custom" is an authenticator a deployment
+	// embedding this module supplies, and the stock binary has none.
 	authModeEnvVar = "ROUTER_AUTH_MODE"
 	// authKEKEnvVar unseals the stored key secrets. It lives outside the database on
 	// purpose: it is what makes a leaked backup ciphertext rather than credentials.
@@ -186,11 +189,22 @@ func newAuthenticator(pgStore *store.Store, logger *slog.Logger) (auth.Authentic
 		return nil, err
 	}
 
-	if mode == auth.NoAuth {
+	switch mode {
+	case auth.NoAuth:
 		logger.Warn("running without authentication: anyone who can reach this router can "+
-			"read and spend any customer's account, so only a trusted proxy should be able to",
+			"read and spend any customer's account, and every one of them is treated as "+
+			"that customer's own backend, so nothing but a laptop should run this way",
 			"mode", auth.NoAuth, "set", authModeEnvVar)
 		return auth.New(mode, nil)
+	case auth.Proxy:
+		logger.Warn("authenticating nothing: the caller is whoever the headers in front of "+
+			"this router say, so only a proxy that overwrites them should be able to reach it",
+			"mode", auth.Proxy, "set", authModeEnvVar)
+		return auth.New(mode, nil)
+	case auth.Custom:
+		return nil, fmt.Errorf("%s=%s has no authenticator in this binary: a deployment "+
+			"answering for itself embeds the module and passes api.WithAuthenticator",
+			authModeEnvVar, auth.Custom)
 	}
 
 	if pgStore == nil {
@@ -219,10 +233,19 @@ func newAuthenticator(pgStore *store.Store, logger *slog.Logger) (auth.Authentic
 		if err := pgStore.TouchAPIKey(ctx, key, lastUsedInterval); err != nil {
 			logger.Debug("could not record key use", "key", key, "error", err)
 		}
+		// The app's settings came back on the same row, so which levels of end user it
+		// admits costs nothing beyond the lookup that was already happening. They are
+		// inverted on the way across because auth measures a caller against a zero value
+		// in the three modes that resolve no app at all, and that zero value has to admit
+		// everybody.
 		return auth.App{
 			OrganizationID: owner.OrganizationID,
 			AppID:          owner.AppID,
 			Secret:         secret,
+			Levels: auth.Levels{
+				NoAnonymous: !owner.Settings.AnonymousAllowed(),
+				NoGuest:     !owner.Settings.GuestAllowed(),
+			},
 		}, nil
 	})
 }

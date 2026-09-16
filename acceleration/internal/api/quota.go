@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -20,6 +21,21 @@ func retryAfter(now time.Time) int {
 	return seconds
 }
 
+// exemptFromQuota reports whether the day's limit says nothing about this request.
+//
+// Three reasons, and only the middle one is a decision. A request nobody authenticated has
+// no account to count against; a caller with neither a name nor an address has no bucket
+// to count in.
+//
+// The middle one is that a process the customer runs is trusted with its own spend. It is
+// asked about directly rather than inferred from having no caller, because a backend may
+// name one — that is how it says which of its users a session belongs to — and counting
+// that name would charge a person's day for work their customer chose to do for them.
+func exemptFromQuota(ctx context.Context) bool {
+	_, known := CustomerFrom(ctx)
+	return !known || ServerSideFrom(ctx) || CallerFrom(ctx).Anonymous()
+}
+
 // withQuota refuses a caller who has spent their day before any work is started.
 //
 // It is not the only place the limit is enforced, and it is not the one that matters most:
@@ -37,12 +53,12 @@ func (s *Server) withQuota(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		customerID, known := CustomerFrom(r.Context())
-		caller := CallerFrom(r.Context())
-		if !known || caller.Anonymous() {
+		if exemptFromQuota(r.Context()) {
 			next.ServeHTTP(w, r)
 			return
 		}
+		customerID, _ := CustomerFrom(r.Context())
+		caller := CallerFrom(r.Context())
 
 		if err := s.quota.Allow(r.Context(), customerID, caller); err != nil {
 			if !errors.Is(err, quota.ErrExhausted) {

@@ -21,10 +21,11 @@ const defaultCapacity = 4
 // the customer's own process which this service cannot reach. It is a socket rather than
 // long polling because a call that is ringing has seconds, not a poll interval.
 //
-// Server-side only, as the spec marks it, and this is the clearest case of why: a worker is
-// offered other people's callers, so anything that can open this socket can answer for the
-// whole app. The check is here rather than in withServerSide because a socket is left out
-// of generation, which leaves it out of the embedded spec the middleware reads.
+// Server-side only, and this is the clearest case of why: a worker is offered other
+// people's callers, so anything that can open this socket can answer for the whole app.
+// socketRoutes already refuses a client-side caller in the middleware; the same question
+// is asked again here because this is the socket where being wrong is worst, and a second
+// check costs one comparison.
 func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	customerID, ok := CustomerFrom(r.Context())
 	if !ok {

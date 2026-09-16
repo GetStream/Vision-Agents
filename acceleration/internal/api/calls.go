@@ -121,7 +121,7 @@ func (s *Server) CreateCallToken(ctx context.Context, request CreateCallTokenReq
 
 	callType := defaultCallType
 	if s.sessions != nil {
-		if found, running := s.sessions.Get(call.ID, customerID); running {
+		if found, running := s.sessions.Get(call.ID, OwnerFrom(ctx)); running {
 			callType = found.Spec().CallType
 		}
 	}
@@ -427,7 +427,7 @@ func callOf(call store.Call) Call {
 // satisfies the target is the one shown.
 func (s *Server) attachUsed(ctx context.Context, customerID string, call store.Call, rendered *Call) {
 	if s.sessions != nil {
-		if found, ok := s.sessions.Get(call.ID, customerID); ok {
+		if found, ok := s.sessions.Get(call.ID, OwnerFrom(ctx)); ok {
 			stt, llm, tts, subagent := found.Resolved()
 			rendered.SttUsed = optional(stt)
 			rendered.LlmUsed = optional(llm)

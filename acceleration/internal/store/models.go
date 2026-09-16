@@ -886,10 +886,36 @@ type Organization struct {
 type App struct {
 	bun.BaseModel `bun:"table:apps,alias:ap"`
 
-	ID             string    `bun:"id,pk"`
-	OrganizationID string    `bun:"organization_id,notnull"`
-	Name           string    `bun:"name,notnull"`
-	CreatedAt      time.Time `bun:"created_at,notnull"`
+	ID             string      `bun:"id,pk"`
+	OrganizationID string      `bun:"organization_id,notnull"`
+	Name           string      `bun:"name,notnull"`
+	Settings       AppSettings `bun:"settings,type:jsonb,notnull"`
+	CreatedAt      time.Time   `bun:"created_at,notnull"`
+}
+
+// AppSettings is what an app has turned on or off.
+//
+// Every field is a pointer because the document is sparse and the absent key has to mean
+// something other than false. A key nobody has written is a feature nobody has expressed
+// an opinion on, and reading that as "off" would turn every app that predates a setting
+// into one that has opted out of it.
+type AppSettings struct {
+	// AllowAnonymous and AllowGuest are which levels of end user this app admits. Nil is
+	// yes for both: an app that has never been configured takes everybody, and a
+	// deployment turning authentication on for the first time must not lock its users
+	// out on the way.
+	AllowAnonymous *bool `json:"allow_anonymous,omitempty"`
+	AllowGuest     *bool `json:"allow_guest,omitempty"`
+}
+
+// AnonymousAllowed reports whether the app takes callers who presented no token.
+func (s AppSettings) AnonymousAllowed() bool {
+	return s.AllowAnonymous == nil || *s.AllowAnonymous
+}
+
+// GuestAllowed reports whether the app takes callers holding a guest token.
+func (s AppSettings) GuestAllowed() bool {
+	return s.AllowGuest == nil || *s.AllowGuest
 }
 
 // APIKey is one credential belonging to an app. Several may be live at once, because

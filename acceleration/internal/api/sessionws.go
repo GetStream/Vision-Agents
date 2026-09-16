@@ -64,8 +64,7 @@ type frame map[string]any
 // do is a request. It is here rather than in the generated server because an upgrade
 // returns a connection and a strict handler has to return a response.
 func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
-	customerID, ok := CustomerFrom(r.Context())
-	if !ok {
+	if _, ok := CustomerFrom(r.Context()); !ok {
 		writeError(w, http.StatusUnauthorized, "the "+CustomerHeader+" header is required")
 		return
 	}
@@ -73,7 +72,7 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, noSessions)
 		return
 	}
-	found, ok := s.sessions.Get(r.PathValue("id"), customerID)
+	found, ok := s.sessions.Get(r.PathValue("id"), OwnerFrom(r.Context()))
 	if !ok {
 		writeError(w, http.StatusNotFound, unknownSession)
 		return

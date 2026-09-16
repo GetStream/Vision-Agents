@@ -64,14 +64,15 @@ func (s *Store) CreateAPIKey(ctx context.Context, key *APIKey) error {
 	return nil
 }
 
-// APIKeyOwner is the app a live key belongs to, plus the sealed secret to verify the
-// caller's token with. It is one row rather than two lookups because it is read on every
-// authenticated request.
+// APIKeyOwner is the app a live key belongs to, the sealed secret to verify the caller's
+// token with, and what that app has turned on. It is one row rather than three lookups
+// because it is read on every authenticated request.
 type APIKeyOwner struct {
-	AppID          string `bun:"app_id"`
-	OrganizationID string `bun:"organization_id"`
-	Sealed         []byte `bun:"secret_sealed"`
-	KEKVersion     int    `bun:"kek_version"`
+	AppID          string      `bun:"app_id"`
+	OrganizationID string      `bun:"organization_id"`
+	Sealed         []byte      `bun:"secret_sealed"`
+	KEKVersion     int         `bun:"kek_version"`
+	Settings       AppSettings `bun:"settings,type:jsonb"`
 }
 
 // LiveAPIKey returns the owner of the key with that id, provided it has not been revoked
@@ -81,7 +82,7 @@ func (s *Store) LiveAPIKey(ctx context.Context, id string) (APIKeyOwner, error) 
 
 	err := s.db.NewSelect().Model((*APIKey)(nil)).
 		ColumnExpr("k.app_id, k.secret_sealed, k.kek_version").
-		ColumnExpr("ap.organization_id").
+		ColumnExpr("ap.organization_id, ap.settings").
 		Join("JOIN apps AS ap ON ap.id = k.app_id").
 		Where("k.id = ?", id).
 		Where("k.revoked_at IS NULL").

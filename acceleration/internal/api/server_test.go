@@ -8,13 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"gopkg.in/yaml.v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
@@ -66,11 +69,24 @@ func (s *ServerSuite) SetupTest() {
 	// unserved modality gets. No store and no live client: this suite covers the HTTP
 	// contract, so the endpoints that need a database report that rather than being
 	// exercised here.
+	//
+	// Proxy mode, because the contract under test is the one with every sort of caller
+	// in it. The mode that asks for nothing has only backends, so a suite running under
+	// it could not tell a refusal from an answer.
 	server, err := NewServer(Options{
 		Routers: map[routing.Modality]routing.Inspector{routing.STT: speech},
+		Auth:    s.proxyAuth(),
 	})
 	s.Require().NoError(err)
 	s.handler = server.Handler()
+}
+
+// proxyAuth is the authenticator for a deployment behind something that has already
+// worked out who the caller is.
+func (s *ServerSuite) proxyAuth() auth.Authenticator {
+	authenticator, err := auth.New(auth.Proxy, nil)
+	s.Require().NoError(err)
+	return authenticator
 }
 
 // get issues a request, optionally with the customer header.
@@ -204,6 +220,7 @@ func (s *ServerSuite) logging() (http.Handler, *bytes.Buffer) {
 	server, err := NewServer(Options{
 		Routers:     map[routing.Modality]routing.Inspector{routing.STT: speech},
 		CORSOrigins: []string{"https://dash.example"},
+		Auth:        s.proxyAuth(),
 		Logger: slog.New(slog.NewTextHandler(written, &slog.HandlerOptions{
 			Level: slog.LevelInfo,
 		})),
@@ -547,8 +564,8 @@ func (s *ServerSuite) TestAnUnknownPluginIsRefused() {
 	s.Equal(http.StatusBadRequest, recorder.Code)
 }
 
-// keyed builds a handler in api_key mode where one key resolves to one app.
-func (s *ServerSuite) keyed(key, secret string) http.Handler {
+// speech is a speech-to-text router over the default configuration.
+func (s *ServerSuite) speech() routing.Inspector {
 	config, err := routing.DefaultConfig()
 	s.Require().NoError(err)
 	speech, err := sttrouter.New(sttrouter.Options{
@@ -557,19 +574,33 @@ func (s *ServerSuite) keyed(key, secret string) http.Handler {
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(speech.Close)
+	return speech
+}
 
+// keyed builds a handler in api_key mode where one key resolves to one app.
+func (s *ServerSuite) keyed(key, secret string) http.Handler {
+	return s.serving(s.speech(), s.keyAuth(key, auth.App{
+		OrganizationID: "org-1", AppID: "app-1", Secret: secret,
+	}))
+}
+
+// keyAuth is an api_key authenticator over a single key belonging to one app.
+func (s *ServerSuite) keyAuth(key string, app auth.App) auth.Authenticator {
 	authenticator, err := auth.New(auth.APIKey, func(_ context.Context, presented string) (auth.App, error) {
 		if presented != key {
 			return auth.App{}, auth.ErrUnauthenticated
 		}
-		return auth.App{OrganizationID: "org-1", AppID: "app-1", Secret: secret}, nil
+		return app, nil
 	})
 	s.Require().NoError(err)
+	return authenticator
+}
 
+// serving builds a handler over one router and one way of deciding who a caller is.
+func (s *ServerSuite) serving(speech routing.Inspector, authenticator auth.Authenticator) http.Handler {
 	server, err := NewServer(Options{
 		Routers: map[routing.Modality]routing.Inspector{routing.STT: speech},
-		Auth:    authenticator,
-	})
+	}, WithAuthenticator(authenticator))
 	s.Require().NoError(err)
 	return server.Handler()
 }
@@ -618,6 +649,53 @@ func (s *ServerSuite) TestAProxyNamesTheCustomerAndItsOrganization() {
 	s.Equal(http.StatusOK, recorder.Code)
 }
 
+func (s *ServerSuite) TestAnAppTurnsAwayALevelWithAForbidden() {
+	// A level an app refuses is not a caller that gets a narrower API, it is a caller
+	// that does not get in, so it is answered at the door and for every path alike.
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.serving(s.speech(), s.keyAuth(key, auth.App{
+		OrganizationID: "org-1", AppID: "app-1", Secret: secret,
+		Levels: auth.Levels{NoAnonymous: true},
+	}))
+
+	// A token naming no user is an anonymous caller, however good its signature.
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/agents/sessions", nil)
+	handler.ServeHTTP(recorder, s.asUser(request, key, secret))
+
+	s.Equal(http.StatusForbidden, recorder.Code)
+	s.Contains(recorder.Body.String(), "level of user",
+		"a caller that has proved who it is should be told what the problem is")
+}
+
+func (s *ServerSuite) TestAnAppTakesTheLevelsItHasNotTurnedAway() {
+	// The other half: the default admits, so an app with no settings written is not one
+	// whose users have all been locked out.
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.keyed(key, secret)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/agents/sessions", nil)
+	handler.ServeHTTP(recorder, s.asUser(request, key, secret))
+
+	s.NotEqual(http.StatusForbidden, recorder.Code)
+}
+
+func (s *ServerSuite) TestADeploymentCanAnswerForItself() {
+	// The custom mode. Nothing about who a caller is has to come from this package: a
+	// deployment embedding it supplies the whole answer and the rest of the chain —
+	// server-side, ownership, quota — reads it the same as any other.
+	handler := s.serving(s.speech(), auth.Func(
+		func(context.Context, *http.Request) (auth.Principal, error) {
+			return auth.Principal{AppID: "from-the-embedder", Kind: auth.KindServer, ServerSide: true}, nil
+		}))
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/stt/providers", nil))
+
+	s.Equal(http.StatusOK, recorder.Code, "a caller presenting nothing at all was admitted")
+}
+
 func (s *ServerSuite) TestAKeyedDeploymentIgnoresTheHeadersAProxyWouldSet() {
 	// Without this the mode is theatre: anyone could skip the key by naming themselves the
 	// way the trusted proxy would.
@@ -638,10 +716,10 @@ func (s *ServerSuite) TestAKeyedDeploymentAcceptsAKeyAndItsToken() {
 	handler := s.keyed(key, secret)
 
 	recorder := httptest.NewRecorder()
+	// As a backend, because listing providers is server-side only like everything the
+	// spec does not open. What is under test here is that the credential is accepted.
 	request := httptest.NewRequest(http.MethodGet, "/v1/stt/providers", nil)
-	request.Header.Set(auth.APIKeyHeader, key)
-	request.Header.Set("Authorization", "Bearer "+s.token(secret))
-	handler.ServeHTTP(recorder, request)
+	handler.ServeHTTP(recorder, s.asBackend(request, key, secret))
 
 	s.Equal(http.StatusOK, recorder.Code)
 }
@@ -792,9 +870,9 @@ func (s *ServerSuite) TestABackendMayConfigureAnAgent() {
 	s.Equal(http.StatusBadRequest, recorder.Code)
 }
 
-func (s *ServerSuite) TestAUsersDeviceMayStillReadTheAgentsItTalksTo() {
-	// Only the writes are server-side only. A device that could not read a config could
-	// not show the user which agent answered them.
+func (s *ServerSuite) TestAUsersDeviceMayNotReadTheAgentsItTalksTo() {
+	// Reading a config is server-side only like writing one. What an app shows about the
+	// agent is what its own backend chose to tell it, not what it can ask this service.
 	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
 	handler := s.keyed(key, secret)
 
@@ -802,7 +880,7 @@ func (s *ServerSuite) TestAUsersDeviceMayStillReadTheAgentsItTalksTo() {
 	request := httptest.NewRequest(http.MethodGet, "/v1/agents/configs", nil)
 	handler.ServeHTTP(recorder, s.asUser(request, key, secret))
 
-	s.NotEqual(http.StatusForbidden, recorder.Code)
+	s.Equal(http.StatusForbidden, recorder.Code)
 }
 
 func (s *ServerSuite) TestAUsersDeviceMayNotWaitForOtherPeoplesCalls() {
@@ -836,22 +914,26 @@ func (s *ServerSuite) TestACallerWithNoCredentialIsToldToAuthenticateFirst() {
 	s.Equal(http.StatusUnauthorized, recorder.Code)
 }
 
-func (s *ServerSuite) TestEveryServerSideOperationTheSpecMarksIsRefusedToAUsersDevice() {
-	// The middleware reads the spec, so this is what proves the marking reaches all of
-	// them rather than only the one path a test happened to name.
+func (s *ServerSuite) TestEveryOperationTheSpecDoesNotOpenIsRefusedToAUsersDevice() {
+	// The middleware reads the spec, so this is what proves the default reaches every
+	// operation rather than only the ones a test happened to name. It is the whole point
+	// of the inverted default: an operation nobody thought about is refused here.
 	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
 	handler := s.keyed(key, secret)
 
 	spec, err := GetSpec()
 	s.Require().NoError(err)
 
-	marked := 0
+	refused := 0
 	for path, item := range spec.Paths.Map() {
 		for method, operation := range item.Operations() {
-			if flagged, ok := operation.Extensions[serverSideExtension].(bool); !ok || !flagged {
+			if operation.Security != nil && len(*operation.Security) == 0 {
 				continue
 			}
-			marked++
+			if open, ok := operation.Extensions[clientAccessibleExtension].(bool); ok && open {
+				continue
+			}
+			refused++
 
 			// A path parameter is filled with anything: the refusal comes before the
 			// handler that would look the resource up.
@@ -864,7 +946,119 @@ func (s *ServerSuite) TestEveryServerSideOperationTheSpecMarksIsRefusedToAUsersD
 			s.Equal(http.StatusForbidden, recorder.Code, method+" "+path)
 		}
 	}
-	s.NotZero(marked, "the spec marks nothing server-side only")
+	s.NotZero(refused, "the spec leaves nothing server-side only")
+}
+
+func (s *ServerSuite) TestEveryOperationTheSpecOpensIsReachableByAUsersDevice() {
+	// The other half. A default that refused everything would pass the test above and
+	// leave nobody able to hold a conversation.
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.keyed(key, secret)
+
+	spec, err := GetSpec()
+	s.Require().NoError(err)
+
+	opened := 0
+	for path, item := range spec.Paths.Map() {
+		for method, operation := range item.Operations() {
+			if open, ok := operation.Extensions[clientAccessibleExtension].(bool); !ok || !open {
+				continue
+			}
+			opened++
+
+			target := regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(path, "x")
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(method, target, strings.NewReader(`{}`))
+			request.Header.Set("Content-Type", "application/json")
+			handler.ServeHTTP(recorder, s.asUser(request, key, secret))
+
+			s.NotEqual(http.StatusForbidden, recorder.Code, method+" "+path)
+		}
+	}
+	s.NotZero(opened, "the spec opens nothing to a client")
+}
+
+func (s *ServerSuite) TestTheRoutesLeftOutOfTheSpecAreStillDecidedOneWayOrTheOther() {
+	// Excluding an operation from generation drops it from the embedded spec the two
+	// tests above read, which is the one way an inverted default can fail open: nothing
+	// refuses what nothing can see. So unspecifiedRoutes has to name every excluded
+	// operation, not merely be right about the ones it happens to name.
+	const key, secret = "vak_live_0123456789abcdef00000000", "vas_live_s3cret"
+	handler := s.keyed(key, secret)
+
+	for route, open := range excludedRoutes(s.T()) {
+		s.Contains(unspecifiedRoutes, route,
+			"%s is excluded from generation, so the middleware cannot see it", route)
+		s.Equal(open, unspecifiedRoutes[route], "%s is open in the spec but not here", route)
+
+		method, path, found := strings.Cut(route, " ")
+		s.Require().True(found, route)
+		target := regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(path, "x")
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(method, target, nil)
+		handler.ServeHTTP(recorder, s.asUser(request, key, secret))
+
+		if open {
+			s.NotEqual(http.StatusForbidden, recorder.Code, route)
+		} else {
+			s.Equal(http.StatusForbidden, recorder.Code, route)
+		}
+	}
+}
+
+// excludedRoutes reads the operations kept out of generation, as routes and whether each
+// is open to a client.
+//
+// Both files are read off disk rather than from the embedded spec, because what is being
+// checked is the very thing the embedded spec is missing: the generator's exclude list on
+// one side and the operations it names on the other.
+func excludedRoutes(t *testing.T) map[string]bool {
+	t.Helper()
+
+	var codegen struct {
+		OutputOptions struct {
+			Excluded []string `yaml:"exclude-operation-ids"`
+		} `yaml:"output-options"`
+	}
+	read(t, "../../api/oapi-codegen.yaml", &codegen)
+
+	var spec struct {
+		Paths map[string]map[string]struct {
+			OperationID string `yaml:"operationId"`
+			Open        bool   `yaml:"x-client-accessible"`
+			Security    *[]map[string][]string
+		} `yaml:"paths"`
+	}
+	read(t, "../../api/openapi.yaml", &spec)
+
+	excluded := map[string]bool{}
+	for _, id := range codegen.OutputOptions.Excluded {
+		excluded[id] = false
+	}
+
+	routes := map[string]bool{}
+	for path, item := range spec.Paths {
+		for method, operation := range item {
+			if _, ok := excluded[operation.OperationID]; !ok {
+				continue
+			}
+			free := operation.Security != nil && len(*operation.Security) == 0
+			routes[strings.ToUpper(method)+" "+path] = operation.Open || free
+			excluded[operation.OperationID] = true
+		}
+	}
+	for id, found := range excluded {
+		require.True(t, found, "%s is excluded from generation but is not in the spec", id)
+	}
+	return routes
+}
+
+func read(t *testing.T, path string, into any) {
+	t.Helper()
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, yaml.Unmarshal(raw, into))
 }
 
 // forwarded is a request from proxyAddr carrying an X-Forwarded-For chain.
@@ -948,7 +1142,18 @@ func (s *ServerSuite) callerSeenBy(server *Server, request *http.Request) routin
 	return seen
 }
 
-// proxiedServer is a server in noauth mode that believes one range of proxies.
+// contextSeenBy runs a request through withCustomer and returns the context the handler
+// was given, for the tests that read more than one thing off it.
+func (s *ServerSuite) contextSeenBy(server *Server, request *http.Request) context.Context {
+	seen := context.Background()
+	handler := server.withCustomer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		seen = r.Context()
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	return seen
+}
+
+// proxiedServer is a server in proxy mode that believes one range of proxies.
 func (s *ServerSuite) proxiedServer() *Server {
 	config, err := routing.DefaultConfig()
 	s.Require().NoError(err)
@@ -961,6 +1166,7 @@ func (s *ServerSuite) proxiedServer() *Server {
 
 	server, err := NewServer(Options{
 		Routers:        map[routing.Modality]routing.Inspector{routing.STT: speech},
+		Auth:           s.proxyAuth(),
 		TrustedProxies: s.trusted("10.0.0.0/8"),
 	})
 	s.Require().NoError(err)
@@ -978,15 +1184,45 @@ func (s *ServerSuite) TestAnEndUserIsNamedAndPlacedForTheLimitToCount() {
 	s.Equal(routing.Caller{UserID: "user-1", IP: "203.0.113.9"}, seen)
 }
 
-func (s *ServerSuite) TestABackendIsCountedAgainstNobody() {
-	// A process the customer runs is trusted with its own spend, so there is no bucket.
+func (s *ServerSuite) TestABackendSaysWhichUserItIsActingFor() {
+	// The user a backend names is what the session it opens will belong to, so it is
+	// carried rather than dropped. What keeps the day's limit off it is that the caller
+	// is server-side, not that there is no caller: see TestABackendIsCountedAgainstNobody.
 	request := s.forwarded("10.0.0.5:44321", "203.0.113.9")
 	request.Header.Set(CustomerHeader, "acme")
 	request.Header.Set(auth.UserHeader, "user-1")
 
-	seen := s.callerSeenBy(s.proxiedServer(), request)
+	ctx := s.contextSeenBy(s.proxiedServer(), request)
 
-	s.True(seen.Anonymous())
+	s.Equal("user-1", CallerFrom(ctx).UserID)
+	s.True(ServerSideFrom(ctx))
+	s.Equal(auth.KindServer, KindFrom(ctx))
+}
+
+func (s *ServerSuite) TestABackendIsCountedAgainstNobody() {
+	// A process the customer runs is trusted with its own spend, even when it has said
+	// whose behalf it is working on: that name is a user the customer chose to do work
+	// for, and charging their day for it would be charging them for their own backend.
+	request := s.forwarded("10.0.0.5:44321", "203.0.113.9")
+	request.Header.Set(CustomerHeader, "acme")
+	request.Header.Set(auth.UserHeader, "user-1")
+
+	ctx := s.contextSeenBy(s.proxiedServer(), request)
+
+	s.True(exemptFromQuota(ctx))
+}
+
+func (s *ServerSuite) TestAnEndUserOfTheSameNameIsNotExempt() {
+	// The other half: the exemption is about what the caller is, not what it is called,
+	// so naming yourself the same user a backend would is no way out of the limit.
+	request := s.forwarded("10.0.0.5:44321", "203.0.113.9")
+	request.Header.Set(CustomerHeader, "acme")
+	request.Header.Set(auth.UserHeader, "user-1")
+	request.Header.Set(auth.AuthTypeHeader, auth.AuthTypeJWT)
+
+	ctx := s.contextSeenBy(s.proxiedServer(), request)
+
+	s.False(exemptFromQuota(ctx))
 }
 
 func (s *ServerSuite) TestAnEndUserWithNoNameIsStillCountedByAddress() {

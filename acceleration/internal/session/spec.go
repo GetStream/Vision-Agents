@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -53,6 +54,10 @@ type Spec struct {
 	// what the session's daily limits are counted against. Empty for a session a
 	// customer's own backend started, which is not limited.
 	Caller routing.Caller
+	// CallerKind is what sort of caller that was, and it qualifies Caller.UserID: an
+	// anonymous caller may go by any name, so the name alone cannot be what one person's
+	// conversation is kept from another by. The API fills it in from the credential.
+	CallerKind auth.Kind
 	// ConfigID names the agent config this session was created from, so a call can later
 	// say what the agent was configured as. Empty for a session that spelled itself out.
 	ConfigID string
