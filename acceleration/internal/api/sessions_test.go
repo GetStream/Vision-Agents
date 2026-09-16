@@ -191,6 +191,7 @@ type SessionAPISuite struct {
 	vision        *scriptedLLM
 	voice         *recordingTTS
 	conversations *conversation.Service
+	outbox        string
 }
 
 func TestSessionAPISuite(t *testing.T) {
@@ -239,7 +240,8 @@ func (s *SessionAPISuite) SetupTest() {
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 
-	s.conversations, err = conversation.NewForChat(s.T().TempDir(), chattest.Client(s.T()))
+	s.outbox = s.T().TempDir()
+	s.conversations, err = conversation.NewForChat(s.outbox, chattest.Client(s.T()))
 	s.Require().NoError(err)
 	s.T().Cleanup(s.conversations.Close)
 

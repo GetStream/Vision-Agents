@@ -3,6 +3,9 @@ package api
 import (
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -116,6 +119,30 @@ func (s *SessionAPISuite) TestAnotherCustomerCannotStopACommand() {
 		"a caller who may not see the session learns nothing about its commands")
 
 	s.Equal("thinking", s.reads(created.Id, "command-a", "acme").State)
+}
+
+func (s *SessionAPISuite) TestAStopWithAnUnknownOutcomeIsNotReportedAsStopped() {
+	created := s.writes()
+	s.submits(created.Id, "command-a", "First question")
+
+	// The conversation's durable record is made unwritable, so the stop may or may not
+	// have taken and nothing may claim it did.
+	state := filepath.Join(s.outbox, strings.TrimPrefix(value(created.ConversationId), "agent:"), "state.json")
+	s.Require().NoError(os.Remove(state))
+	s.Require().NoError(os.Mkdir(state, 0700))
+
+	response := s.stops(created.Id, "command-a", "acme")
+	s.Equal(http.StatusServiceUnavailable, response.StatusCode)
+	var failure Error
+	s.decodeBody(response, &failure)
+	s.Contains(failure.Error, "persistence outcome unknown")
+
+	s.Require().NoError(os.Remove(state))
+	retried := s.stops(created.Id, "command-a", "acme")
+	s.Require().Equal(http.StatusOK, retried.StatusCode)
+	var receipt CommandReceipt
+	s.decodeBody(retried, &receipt)
+	s.Equal("cancelled", receipt.State, "the same stop settles once it can be recorded")
 }
 
 func (s *SessionAPISuite) TestTheSocketStopsTheCommandItNames() {

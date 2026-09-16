@@ -294,8 +294,10 @@ type SessionSuite struct {
 	// gated answers the conversation model instead of stubLLM, for a test that needs a
 	// reply it can hold open while something else happens to the session.
 	gated *gatedLLM
-	// conversations persists text commands, for a test that submits one.
+	// conversations persists text commands, for a test that submits one, and outbox is
+	// where it writes them.
 	conversations *persistent.Service
+	outbox        string
 }
 
 func TestSessionSuite(t *testing.T) {

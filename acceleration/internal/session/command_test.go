@@ -2,6 +2,9 @@ package session
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,7 +66,8 @@ func (g *gatedLLM) answers(count int) {
 // persists prepares a manager whose text sessions keep a durable command ledger, answered
 // by a model whose timing the test decides.
 func (s *SessionSuite) persists() {
-	service, err := persistent.NewForChat(s.T().TempDir(), chattest.Client(s.T()))
+	s.outbox = s.T().TempDir()
+	service, err := persistent.NewForChat(s.outbox, chattest.Client(s.T()))
 	s.Require().NoError(err)
 	s.T().Cleanup(service.Close)
 	s.conversations = service
@@ -214,6 +218,31 @@ func (s *SessionSuite) TestRepeatedStopsAndFinishedCommandsConvergeOnOneReceipt(
 	s.Require().ErrorIs(err, persistent.ErrCommandNotFound)
 	_, err = running.Command("command-never-submitted")
 	s.Require().ErrorIs(err, persistent.ErrCommandNotFound)
+}
+
+func (s *SessionSuite) TestAStopThatCouldNotBeRecordedIsNotReportedAsStopped() {
+	s.persists()
+	running := s.commands()
+
+	accepted, err := running.RespondCommand(s.ctx, "command-a", "First question")
+	s.Require().NoError(err)
+	s.Equal("First question", s.asked())
+
+	// The conversation's own record is made unwritable, which is the case where the stop
+	// may have happened but cannot be known to have happened.
+	state := filepath.Join(s.outbox, strings.TrimPrefix(running.Spec().ConversationID, "agent:"), "state.json")
+	s.Require().NoError(os.Remove(state))
+	s.Require().NoError(os.Mkdir(state, 0700))
+
+	_, err = running.InterruptCommand("command-a")
+	s.Require().ErrorContains(err, "persistence outcome unknown")
+
+	// Retrying the same stop once the record is writable again settles it.
+	s.Require().NoError(os.Remove(state))
+	stopped, err := running.InterruptCommand("command-a")
+	s.Require().NoError(err)
+	s.Equal("cancelled", stopped.State)
+	s.Equal(accepted.AssistantMessageID, stopped.AssistantMessageID)
 }
 
 func (s *SessionSuite) TestConcurrentStopsAndSubmissionsKeepEachCommandSeparate() {
