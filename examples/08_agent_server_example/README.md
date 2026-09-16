@@ -71,6 +71,45 @@ async def create_agent(**kwargs) -> Agent:
     return agent
 ```
 
+### Optional web search with Parallel MCP
+
+To let this voice agent look up current public information and read web pages,
+add [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp)
+to `create_agent`. The anonymous endpoint uses Streamable HTTP and needs no
+Parallel account or API key. Your existing model, speech, and Stream credentials
+are still required, and free search access is rate limited.
+
+Import `MCPServerRemote` and create the server inside `create_agent`, before
+constructing the agent:
+
+```python
+from vision_agents.core.mcp import MCPServerRemote
+
+parallel_search = MCPServerRemote(
+    url="https://search.parallel.ai/mcp",
+    # Identify this project for aggregate free MCP usage measurement.
+    # Keep the value shared across users and installations.
+    headers={"User-Agent": "Vision-Agents"},
+    timeout=30.0,
+)
+```
+
+Add `mcp_servers=[parallel_search]` to the existing `Agent(...)` arguments.
+When the agent starts, its MCP manager connects and registers
+`mcp_0_web_search` and `mcp_0_web_fetch` with the LLM. If you already have MCP
+servers, append `parallel_search` to that list; the numeric prefix follows its
+position. The existing weather function remains available.
+
+For example, ask the agent to find the latest Vision Agents release notes and
+summarize them. You can add guidance to its `instructions` to search for current
+facts, read relevant pages, and mention source URLs. Remove this server from
+`mcp_servers` to disable it.
+
+Once enabled, the agent can call these tools during a conversation. Supplied
+search queries, requested URLs, objectives/context, and tool metadata are sent
+to Parallel. The `Vision-Agents` User-Agent identifies the calling project for
+aggregate usage measurement; it contains no user or installation identifier.
+
 ### Joining a Call
 
 The `join_call` function handles what happens when an agent joins:
