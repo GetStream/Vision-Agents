@@ -79,6 +79,9 @@ type ManagerOptions struct {
 	Search *searchrouter.Router
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
+	// Conversations is optional, and is the persistent text store a caller already holds.
+	// Without one the manager opens its own over the configured outbox directory.
+	Conversations *persistent.Service
 
 	Store  *store.Store
 	Live   *live.Client
@@ -115,9 +118,10 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		options:  options,
-		logger:   options.Logger,
-		sessions: map[string]*Session{},
+		options:       options,
+		logger:        options.Logger,
+		sessions:      map[string]*Session{},
+		conversations: options.Conversations,
 	}
 	if options.Store != nil {
 		manager.logs = newLogRecorder(options.Store, options.Logger)
@@ -545,7 +549,8 @@ func (m *Manager) Shutdown() error {
 		m.calls.Close()
 		m.logs.close()
 	}
-	if m.conversations != nil {
+	// A conversation store the caller passed in outlives this manager.
+	if m.conversations != nil && m.options.Conversations == nil {
 		m.conversations.Close()
 	}
 	return errors.Join(failures...)

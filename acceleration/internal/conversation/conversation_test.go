@@ -681,6 +681,49 @@ func TestCancelCommandPersistenceFailureRemainsUnconfirmedUntilRetry(t *testing.
 	require.Equal(t, receipt, snapshot.Commands[accepted.CommandID].CommandReceipt)
 }
 
+func TestLateOutputFromAStoppedCommandNeverJoinsTheNextReply(t *testing.T) {
+	_, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginCommand("stopped", "First question")
+	require.NoError(t, err)
+	c.BindTurn("stopped", "turn-first")
+	c.Observe(agent.ResponseDelta{TurnID: "turn-first", Text: "Partial answer"})
+	cancelled, err := c.CancelCommand("stopped")
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", cancelled.State)
+
+	next, err := c.BeginCommand("next", "Second question")
+	require.NoError(t, err)
+	c.BindTurn("next", "turn-second")
+	// The interrupted generation is still running where the model is, so its events keep
+	// arriving after the reply they belong to was abandoned and a new one accepted.
+	c.Observe(agent.Responding{TurnID: "turn-first"})
+	c.Observe(agent.ResponseDelta{TurnID: "turn-first", Text: " leaked into the next answer"})
+	c.Observe(agent.Responded{TurnID: "turn-first"})
+	c.Observe(agent.Interrupted{TurnID: "turn-first"})
+
+	live, err := c.Command("next")
+	require.NoError(t, err)
+	require.Equal(t, next, live)
+	require.Equal(t, "thinking", live.State)
+	require.Empty(t, current(c).Text)
+
+	c.Observe(agent.ResponseDelta{TurnID: "turn-second", Text: "Second answer"})
+	c.Observe(agent.Responded{TurnID: "turn-second"})
+	require.Equal(t, "Second answer", current(c).Text)
+	saved(t, c)
+	page, err := service.HistoryForCaller(t.Context(), "customer", "agent", c.CID(), "", "employee")
+	require.NoError(t, err)
+	require.Len(t, page.Messages, 4)
+	require.Equal(t, "Partial answer", page.Messages[1].Text)
+	require.Equal(t, "cancelled", page.Messages[1].State)
+	require.Equal(t, "Second answer", page.Messages[3].Text)
+}
+
 func TestConcurrentOldCommandStopsPreserveTheNextReply(t *testing.T) {
 	_, client := newChat(t)
 	service, err := newService(t.TempDir(), client)

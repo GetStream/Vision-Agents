@@ -635,37 +635,42 @@ func (a *Agent) Join(ctx context.Context) error {
 // said it. It returns once the request is on its way: the reply arrives on Events and is
 // spoken as it streams.
 func (a *Agent) SimpleResponse(ctx context.Context, text string) error {
-	return a.RespondTo(ctx, text, nil)
+	_, err := a.RespondTo(ctx, text, nil)
+	return err
 }
 
 // RespondTo answers a piece of text through the model, attaching images to that turn.
-func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePart) error {
+// It returns the turn the reply is being generated under, so a caller that owns the
+// conversation can tell this reply's output from an earlier one it abandoned. A native
+// model names its own responses, so there is no turn to report until it starts.
+func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePart) (string, error) {
 	if a.native() {
-		return a.respondNative(text, images)
+		return "", a.respondNative(text, images)
 	}
 	if len(images) > 0 {
 		a.mu.Lock()
 		current := a.harness
 		a.mu.Unlock()
 		if current == nil {
-			return errors.New("agent: not joined")
+			return "", errors.New("agent: not joined")
 		}
 		id := replyPrefix + turnStamp()
 		parts := llm.TextParts(text)
 		for index, image := range images {
 			if err := image.Validate(); err != nil {
-				return err
+				return "", err
 			}
 			image.Data = append([]byte(nil), image.Data...)
 			metadata, _ := json.Marshal(map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()})
 			parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
 		}
 		if _, err := current.Delegate("vision", text, id, parts, nil); err != nil {
-			return err
+			return "", err
 		}
-		return a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
+		return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
 	}
-	return a.respond(stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, nil)
+	id := replyPrefix + turnStamp()
+	return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", nil)
 }
 
 func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest) ([]llm.ContentPart, error) {

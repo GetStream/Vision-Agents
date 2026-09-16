@@ -256,7 +256,7 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 			return err
 		}
 	}
-	err := s.voiceAgent.RespondTo(ctx, text, images)
+	_, err := s.voiceAgent.RespondTo(ctx, text, images)
 	if err != nil && s.persisted != nil {
 		s.persisted.Cancel()
 	}
@@ -279,10 +279,12 @@ func (s *Session) RespondCommand(ctx context.Context, id, text string) (persiste
 	if receipt.Duplicate {
 		return receipt, nil
 	}
-	if err = s.voiceAgent.RespondTo(ctx, text, nil); err != nil {
+	turnID, err := s.voiceAgent.RespondTo(ctx, text, nil)
+	if err != nil {
 		s.persisted.Cancel()
 		return receipt, err
 	}
+	s.persisted.BindTurn(receipt.CommandID, turnID)
 	return receipt, nil
 }
 
@@ -319,6 +321,15 @@ func (s *Session) Interrupt() {
 	if s.persisted != nil {
 		s.persisted.Cancel()
 	}
+}
+
+// Command reads what is known about a durable command without accepting, running or
+// stopping anything. The caller must already be authorized for this session.
+func (s *Session) Command(id string) (persistent.CommandReceipt, error) {
+	if s.persisted == nil {
+		return persistent.CommandReceipt{}, persistent.ErrCommandNotFound
+	}
+	return s.persisted.Command(id)
 }
 
 // InterruptCommand targets a durable text command, never whichever command starts

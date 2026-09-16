@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
@@ -290,6 +291,11 @@ type SessionSuite struct {
 	// thinks routes the target a session defaults its thinking model to, for a test that
 	// wants delegation without naming anything.
 	thinks bool
+	// gated answers the conversation model instead of stubLLM, for a test that needs a
+	// reply it can hold open while something else happens to the session.
+	gated *gatedLLM
+	// conversations persists text commands, for a test that submits one.
+	conversations *persistent.Service
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -302,6 +308,8 @@ func (s *SessionSuite) SetupTest() {
 	s.remembers = nil
 	s.records = nil
 	s.thinks = false
+	s.gated = nil
+	s.conversations = nil
 }
 
 // thinking is what the LLM router routes. A deployment that routes no high-quality model
@@ -339,6 +347,9 @@ func (s *SessionSuite) manages() {
 	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
 		defer func() { opened++ }()
 		if opened == 0 {
+			if s.gated != nil {
+				return s.gated, nil
+			}
 			return s.model, nil
 		}
 		return &stubLLM{}, nil
@@ -371,12 +382,13 @@ func (s *SessionSuite) manages() {
 	}
 
 	manager, err := NewManager(ManagerOptions{
-		LLM:        reasoner,
-		STT:        transcriber,
-		TTS:        speaker,
-		Memory:     remembering,
-		Transcript: storing,
-		Logger:     logger,
+		LLM:           reasoner,
+		STT:           transcriber,
+		TTS:           speaker,
+		Memory:        remembering,
+		Transcript:    storing,
+		Conversations: s.conversations,
+		Logger:        logger,
 		Edge: func(Spec, *slog.Logger) (agent.Edge, error) {
 			edge := newQuietEdge()
 			s.edges = append(s.edges, edge)

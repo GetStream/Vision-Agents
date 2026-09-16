@@ -142,6 +142,12 @@ func New(root string) (*Service, error) {
 	}
 	return newService(root, client)
 }
+
+// NewForChat is New for a caller that already holds a Chat client rather than
+// reading one out of the environment.
+func NewForChat(root string, client *getstream.Stream) (*Service, error) {
+	return newService(root, client)
+}
 func newService(root string, client *getstream.Stream) (*Service, error) {
 	var err error
 	if root == "" {
@@ -499,6 +505,21 @@ func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceip
 	c.publish(u)
 	c.publish(a)
 	return receipt, nil
+}
+
+// BindTurn records which model turn answers a command before that turn's first event
+// is observed. A turn abandoned with its command then stays owned by the message it was
+// started for, so its late output cannot be appended to whatever command runs next.
+func (c *Conversation) BindTurn(commandID, turnID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.data.Current
+	if m == nil || turnID == "" || commandID == "" || m.CommandID != commandID {
+		return
+	}
+	if _, bound := c.turns[turnID]; !bound {
+		c.turns[turnID] = m.ID
+	}
 }
 
 // CancelCommand changes only the named active command. The session must serialize
