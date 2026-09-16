@@ -199,6 +199,11 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
   command and turn IDs, and persistent sessions reject results that do not repeat the
   matching IDs or replay a resolved call.
 
+- Persistent Stream replies emit bounded schema-v1 observable activity with monotonic
+  revisions, fixed safe summaries for approved caller-owned tools and validated public
+  HTTPS sources. Provider reasoning, prompts, raw tool data and unknown metadata are
+  excluded.
+
 - Added the Go `meta` LLM provider for Muse Spark 1.3 through Meta's hosted API, with streamed text/usage, tool-result replay, reasoning-effort selection and cancellation. Applications opt in through their routing configuration using `META_API_KEY`.
 
 ### An agent directory declares the pages it reads, in `knowledge/urls.yaml`

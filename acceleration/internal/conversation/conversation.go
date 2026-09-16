@@ -40,8 +40,15 @@ type Tool struct {
 	FinishedAt         *time.Time `json:"finished_at,omitempty"`
 	DurationMS         int64      `json:"duration_ms"`
 }
+type Source struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	URL      string `json:"url"`
+	Citation string `json:"citation,omitempty"`
+}
 type Message struct {
 	CommandID      string     `json:"command_id,omitempty"`
+	TurnID         string     `json:"turn_id,omitempty"`
 	ID             string     `json:"id"`
 	QuestionID     string     `json:"question_id,omitempty"`
 	Role           string     `json:"role"`
@@ -51,7 +58,9 @@ type Message struct {
 	StateStartedAt time.Time  `json:"state_started_at"`
 	FinishedAt     *time.Time `json:"finished_at,omitempty"`
 	DurationMS     int64      `json:"duration_ms"`
+	Sequence       int        `json:"sequence"`
 	Tools          []Tool     `json:"attachments"`
+	Sources        []Source   `json:"sources,omitempty"`
 	Saved          bool       `json:"saved"`
 	Error          string     `json:"persistence_error,omitempty"`
 }
@@ -441,6 +450,10 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 		if m.DeletedAt != nil {
 			continue
 		}
+		if msg, err := messageFromWire(m.ID, m.Text, m.Custom); err == nil {
+			p.Messages = append(p.Messages, msg)
+			continue
+		}
 		raw, ok := m.Custom["support_message"]
 		if !ok {
 			continue
@@ -621,6 +634,7 @@ func (c *Conversation) BindTurn(commandID, turnID string) {
 	if _, bound := c.turns[turnID]; !bound {
 		c.turns[turnID] = m.ID
 	}
+	m.TurnID = turnID
 }
 
 func (c *Conversation) CommandForTurn(turnID string) (string, bool) {
@@ -722,6 +736,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		if !c.acceptTurn(e.TurnID, false) {
 			return
 		}
+		changed := false
 		for i := range m.Tools {
 			t := &m.Tools[i]
 			if t.ID != e.ID || t.FinishedAt != nil {
@@ -751,6 +766,13 @@ func (c *Conversation) Observe(event agent.Event) {
 				}
 			}
 			t.Phase = t.Status
+			if e.Err == nil {
+				m.Sources = mergeSources(m.Sources, sourcesOf(e.Tool, e.Result))
+			}
+			changed = true
+		}
+		if !changed {
+			return
 		}
 		c.afterTools()
 		persist = true
@@ -771,6 +793,7 @@ func (c *Conversation) Observe(event agent.Event) {
 		c.state("tools")
 		persist = true
 	case agent.TaskSettled:
+		changed := false
 		for i := range m.Tools {
 			t := &m.Tools[i]
 			if t.ID == e.TaskID && t.FinishedAt == nil {
@@ -784,11 +807,16 @@ func (c *Conversation) Observe(event agent.Event) {
 					t.Summary = "Skill failed"
 				}
 				t.Phase = t.Status
+				changed = true
 			}
+		}
+		if !changed {
+			return
 		}
 		c.afterTools()
 		persist = true
 	case agent.TaskCancelled:
+		changed := false
 		for i := range m.Tools {
 			t := &m.Tools[i]
 			if t.ID == e.TaskID && t.FinishedAt == nil {
@@ -798,7 +826,11 @@ func (c *Conversation) Observe(event agent.Event) {
 				t.Status = "cancelled"
 				t.Phase = "cancelled"
 				t.Summary = "Skill cancelled"
+				changed = true
 			}
+		}
+		if !changed {
+			return
 		}
 		c.afterTools()
 		persist = true
@@ -814,6 +846,7 @@ func (c *Conversation) Observe(event agent.Event) {
 	default:
 		return
 	}
+	m.Sequence++
 	c.dirty = true
 	if persist {
 		c.save()
@@ -828,12 +861,17 @@ func (c *Conversation) acceptTurn(id string, start bool) bool {
 		return true
 	}
 	if owner, exists := c.turns[id]; exists {
-		return owner == c.data.Current.ID
+		if owner != c.data.Current.ID {
+			return false
+		}
+		c.data.Current.TurnID = id
+		return true
 	}
 	if !start {
 		return false
 	}
 	c.turns[id] = c.data.Current.ID
+	c.data.Current.TurnID = id
 	return true
 }
 func (c *Conversation) Progress(id, phase string) {
@@ -846,10 +884,14 @@ func (c *Conversation) Progress(id, phase string) {
 	if m == nil || m.FinishedAt != nil {
 		return
 	}
+	changed := false
 	for i := range m.Tools {
 		t := &m.Tools[i]
 		if t.ID != id || t.FinishedAt != nil {
 			continue
+		}
+		if t.Phase == phase {
+			return
 		}
 		t.Phase = phase
 		if phase == "queued" {
@@ -864,7 +906,13 @@ func (c *Conversation) Progress(id, phase string) {
 				c.save()
 			}
 		}
+		changed = true
+		break
 	}
+	if !changed {
+		return
+	}
+	m.Sequence++
 	c.dirty = true
 	c.publish(*m)
 }
@@ -924,12 +972,14 @@ func (c *Conversation) finish(state string) {
 			t.Summary = "Interrupted"
 		}
 	}
+	m.Sequence++
 	c.save()
 	c.publish(*m)
 }
 func (c *Conversation) publish(m Message) {
 	if c.emit != nil {
 		m.Tools = append([]Tool{}, m.Tools...)
+		m.Sources = append([]Source{}, m.Sources...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
 }
@@ -1018,6 +1068,7 @@ func (c *Conversation) persist() error {
 }
 func (c *Conversation) enqueue(m Message, create bool) error {
 	m.Tools = append([]Tool{}, m.Tools...)
+	m.Sources = append([]Source{}, m.Sources...)
 	c.data.Pending = append(c.data.Pending, operation{m, create})
 	return c.persist()
 }
@@ -1040,18 +1091,26 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool) e
 	}
 	m.Saved = !ephemeral
 	m.Error = ""
-	fields := map[string]any{"text": m.Text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": m, "attachments": m.Tools}
+	metadata, err := metadataOf(m)
+	if err != nil {
+		return err
+	}
+	runtime := runtimeOf(m)
+	fields := map[string]any{
+		"text": m.Text, "generating": m.FinishedAt == nil, "source": "agent",
+		"support_message": metadata, "support_runtime": runtime,
+	}
 	if op.Create {
-		raw, _ := json.Marshal(m.Tools)
-		var attachments []getstream.Attachment
-		_ = json.Unmarshal(raw, &attachments)
-		_, err := c.service.client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{ID: &m.ID, UserID: &user, Text: &m.Text, Attachments: attachments, Custom: map[string]any{"source": "agent", "generating": m.FinishedAt == nil, "support_message": m}}})
+		_, err := c.service.client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
+			ID: &m.ID, UserID: &user, Text: &m.Text,
+			Custom: map[string]any{"source": "agent", "generating": m.FinishedAt == nil,
+				"support_message": metadata, "support_runtime": runtime},
+		}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := c.service.client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})
 			if readErr == nil {
-				raw, _ := json.Marshal(existing.Data.Message.Custom["support_message"])
-				var stored Message
-				if json.Unmarshal(raw, &stored) == nil && stored.ID == m.ID && stored.Role == m.Role && stored.StartedAt.Equal(m.StartedAt) {
+				stored, decodeErr := messageFromWire(existing.Data.Message.ID, existing.Data.Message.Text, existing.Data.Message.Custom)
+				if decodeErr == nil && stored.ID == m.ID && stored.Role == m.Role && stored.StartedAt.Equal(m.StartedAt) {
 					return nil
 				}
 			}
@@ -1062,7 +1121,7 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool) e
 		_, err := c.service.client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields})
 		return err
 	}
-	_, err := c.service.client.Chat().UpdateMessagePartial(ctx, m.ID, &getstream.UpdateMessagePartialRequest{UserID: &user, Set: fields})
+	_, err = c.service.client.Chat().UpdateMessagePartial(ctx, m.ID, &getstream.UpdateMessagePartialRequest{UserID: &user, Set: fields})
 	return err
 }
 func sameSnapshot(a, b Message) bool {
@@ -1149,6 +1208,7 @@ func (c *Conversation) run() {
 			if m != nil {
 				copy := *m
 				copy.Tools = append([]Tool{}, m.Tools...)
+				copy.Sources = append([]Source{}, m.Sources...)
 				m = &copy
 			}
 			if dirty {
