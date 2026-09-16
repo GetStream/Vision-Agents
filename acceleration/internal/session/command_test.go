@@ -2,18 +2,14 @@ package session
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"sync"
 	"time"
 
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	getstream "github.com/GetStream/getstream-go/v5"
 )
 
 // gatedLLM answers only as often as the test says, which is what a command being stopped
@@ -64,78 +60,10 @@ func (g *gatedLLM) answers(count int) {
 	}
 }
 
-// chatStub is Stream Chat with nothing behind it: enough for a persistent conversation to
-// open a channel, write to it and read its own history back.
-type chatStub struct {
-	mu       sync.Mutex
-	channels map[string]map[string]any
-	messages map[string]map[string]any
-	order    []string
-}
-
-func newChatStub(s *SessionSuite) *getstream.Stream {
-	db := &chatStub{channels: map[string]map[string]any{}, messages: map[string]map[string]any{}}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		db.mu.Lock()
-		defer db.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		var body map[string]any
-		if r.Body != nil {
-			_ = json.NewDecoder(r.Body).Decode(&body)
-		}
-		parts := strings.Split(r.URL.Path, "/")
-		result := map[string]any{}
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/query"):
-			id := parts[len(parts)-2]
-			if data, ok := body["data"].(map[string]any); ok {
-				db.channels[id] = data
-			}
-			result["channel"] = db.channels[id]
-			var all []map[string]any
-			for _, mid := range db.order {
-				if db.messages[mid]["cid"] == "agent:"+id {
-					all = append(all, db.messages[mid])
-				}
-			}
-			result["messages"] = all
-		case strings.HasSuffix(r.URL.Path, "/message"):
-			m := body["message"].(map[string]any)
-			id := m["id"].(string)
-			if _, exists := db.messages[id]; !exists {
-				db.order = append(db.order, id)
-				m["cid"] = "agent:" + parts[len(parts)-2]
-				db.messages[id] = m
-			}
-			result["message"] = db.messages[id]
-		case strings.Contains(r.URL.Path, "/messages/"):
-			id := parts[len(parts)-1]
-			if id != "ephemeral" && r.Method == "PUT" {
-				for key, value := range body["set"].(map[string]any) {
-					if key == "text" || key == "attachments" {
-						db.messages[id][key] = value
-					} else {
-						db.messages[id]["custom"].(map[string]any)[key] = value
-					}
-				}
-			}
-			if id == "ephemeral" {
-				id = parts[len(parts)-2]
-			}
-			result["message"] = db.messages[id]
-		}
-		_ = json.NewEncoder(w).Encode(result)
-	}))
-	s.T().Cleanup(server.Close)
-	client, err := getstream.NewClient("test", "secret", getstream.WithBaseUrl(server.URL))
-	s.Require().NoError(err)
-	return client
-}
-
 // persists prepares a manager whose text sessions keep a durable command ledger, answered
 // by a model whose timing the test decides.
 func (s *SessionSuite) persists() {
-	service, err := persistent.NewForChat(s.T().TempDir(), newChatStub(s))
+	service, err := persistent.NewForChat(s.T().TempDir(), chattest.Client(s.T()))
 	s.Require().NoError(err)
 	s.T().Cleanup(service.Close)
 	s.conversations = service

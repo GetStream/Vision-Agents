@@ -3036,6 +3036,436 @@ internal enum Operations {
             }
         }
     }
+    /// What is known about one durable command
+    ///
+    /// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}/commands/{command_id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/get(getSessionCommand)`.
+    internal enum GetSessionCommand {
+        internal static let id: Swift.String = "getSessionCommand"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/GET/path`.
+            internal struct Path: Sendable, Hashable {
+                /// The session, as returned when it was created.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/GET/path/id`.
+                internal var id: Components.Parameters.SessionID
+                /// The client's own command id, as sent when the command was submitted.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/GET/path/command_id`.
+                internal var commandId: Components.Parameters.CommandID
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id: The session, as returned when it was created.
+                ///   - commandId: The client's own command id, as sent when the command was submitted.
+                internal init(
+                    id: Components.Parameters.SessionID,
+                    commandId: Components.Parameters.CommandID
+                ) {
+                    self.id = id
+                    self.commandId = commandId
+                }
+            }
+            internal var path: Operations.GetSessionCommand.Input.Path
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/GET/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetSessionCommand.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.GetSessionCommand.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.GetSessionCommand.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            internal init(
+                path: Operations.GetSessionCommand.Input.Path,
+                headers: Operations.GetSessionCommand.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/GET/responses/200/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/GET/responses/200/content/application\/json`.
+                    case json(Components.Schemas.CommandReceipt)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.CommandReceipt {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.GetSessionCommand.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.GetSessionCommand.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The command's current receipt
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/get(getSessionCommand)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.GetSessionCommand.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            internal var ok: Operations.GetSessionCommand.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/get(getSessionCommand)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// No such modality, provider or shortcut
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/get(getSessionCommand)/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Components.Responses.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            internal var notFound: Components.Responses.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
+    /// Stop one named command, and nothing else
+    ///
+    /// Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives after its command finished replays that command's terminal receipt and leaves the command running now alone, so a delayed stop for one question can never take the answer to the next one.
+    /// A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
+    /// Interrupting model work claims nothing about a tool whose external side effect already happened.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/interrupt/post(interruptSessionCommand)`.
+    internal enum InterruptSessionCommand {
+        internal static let id: Swift.String = "interruptSessionCommand"
+        internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/interrupt/POST/path`.
+            internal struct Path: Sendable, Hashable {
+                /// The session, as returned when it was created.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/interrupt/POST/path/id`.
+                internal var id: Components.Parameters.SessionID
+                /// The client's own command id, as sent when the command was submitted.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/interrupt/POST/path/command_id`.
+                internal var commandId: Components.Parameters.CommandID
+                /// Creates a new `Path`.
+                ///
+                /// - Parameters:
+                ///   - id: The session, as returned when it was created.
+                ///   - commandId: The client's own command id, as sent when the command was submitted.
+                internal init(
+                    id: Components.Parameters.SessionID,
+                    commandId: Components.Parameters.CommandID
+                ) {
+                    self.id = id
+                    self.commandId = commandId
+                }
+            }
+            internal var path: Operations.InterruptSessionCommand.Input.Path
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/interrupt/POST/header`.
+            internal struct Headers: Sendable, Hashable {
+                internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.InterruptSessionCommand.AcceptableContentType>]
+                /// Creates a new `Headers`.
+                ///
+                /// - Parameters:
+                ///   - accept:
+                internal init(accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.InterruptSessionCommand.AcceptableContentType>] = .defaultValues()) {
+                    self.accept = accept
+                }
+            }
+            internal var headers: Operations.InterruptSessionCommand.Input.Headers
+            /// Creates a new `Input`.
+            ///
+            /// - Parameters:
+            ///   - path:
+            ///   - headers:
+            internal init(
+                path: Operations.InterruptSessionCommand.Input.Path,
+                headers: Operations.InterruptSessionCommand.Input.Headers = .init()
+            ) {
+                self.path = path
+                self.headers = headers
+            }
+        }
+        internal enum Output: Sendable, Hashable {
+            internal struct Ok: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/interrupt/POST/responses/200/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/interrupt/POST/responses/200/content/application\/json`.
+                    case json(Components.Schemas.CommandReceipt)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas.CommandReceipt {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.InterruptSessionCommand.Output.Ok.Body
+                /// Creates a new `Ok`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.InterruptSessionCommand.Output.Ok.Body) {
+                    self.body = body
+                }
+            }
+            /// The command's terminal receipt
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/interrupt/post(interruptSessionCommand)/responses/200`.
+            ///
+            /// HTTP response code: `200 ok`.
+            case ok(Operations.InterruptSessionCommand.Output.Ok)
+            /// The associated value of the enum case if `self` is `.ok`.
+            ///
+            /// - Throws: An error if `self` is not `.ok`.
+            /// - SeeAlso: `.ok`.
+            internal var ok: Operations.InterruptSessionCommand.Output.Ok {
+                get throws {
+                    switch self {
+                    case let .ok(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The customer header is missing
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/interrupt/post(interruptSessionCommand)/responses/401`.
+            ///
+            /// HTTP response code: `401 unauthorized`.
+            case unauthorized(Components.Responses.Unauthorized)
+            /// The associated value of the enum case if `self` is `.unauthorized`.
+            ///
+            /// - Throws: An error if `self` is not `.unauthorized`.
+            /// - SeeAlso: `.unauthorized`.
+            internal var unauthorized: Components.Responses.Unauthorized {
+                get throws {
+                    switch self {
+                    case let .unauthorized(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "unauthorized",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// No such modality, provider or shortcut
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/interrupt/post(interruptSessionCommand)/responses/404`.
+            ///
+            /// HTTP response code: `404 notFound`.
+            case notFound(Components.Responses.NotFound)
+            /// The associated value of the enum case if `self` is `.notFound`.
+            ///
+            /// - Throws: An error if `self` is not `.notFound`.
+            /// - SeeAlso: `.notFound`.
+            internal var notFound: Components.Responses.NotFound {
+                get throws {
+                    switch self {
+                    case let .notFound(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "notFound",
+                            response: self
+                        )
+                    }
+                }
+            }
+            internal struct ServiceUnavailable: Sendable, Hashable {
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/interrupt/POST/responses/503/content`.
+                internal enum Body: Sendable, Hashable {
+                    /// - Remark: Generated from `#/paths/v1/agents/sessions/{id}/commands/{command_id}/interrupt/POST/responses/503/content/application\/json`.
+                    case json(Components.Schemas._Error)
+                    /// The associated value of the enum case if `self` is `.json`.
+                    ///
+                    /// - Throws: An error if `self` is not `.json`.
+                    /// - SeeAlso: `.json`.
+                    internal var json: Components.Schemas._Error {
+                        get throws {
+                            switch self {
+                            case let .json(body):
+                                return body
+                            }
+                        }
+                    }
+                }
+                /// Received HTTP response body
+                internal var body: Operations.InterruptSessionCommand.Output.ServiceUnavailable.Body
+                /// Creates a new `ServiceUnavailable`.
+                ///
+                /// - Parameters:
+                ///   - body: Received HTTP response body
+                internal init(body: Operations.InterruptSessionCommand.Output.ServiceUnavailable.Body) {
+                    self.body = body
+                }
+            }
+            /// The stop was accepted but its durable outcome is unknown. The command is not reported stopped; retry the same command id.
+            ///
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/interrupt/post(interruptSessionCommand)/responses/503`.
+            ///
+            /// HTTP response code: `503 serviceUnavailable`.
+            case serviceUnavailable(Operations.InterruptSessionCommand.Output.ServiceUnavailable)
+            /// The associated value of the enum case if `self` is `.serviceUnavailable`.
+            ///
+            /// - Throws: An error if `self` is not `.serviceUnavailable`.
+            /// - SeeAlso: `.serviceUnavailable`.
+            internal var serviceUnavailable: Operations.InterruptSessionCommand.Output.ServiceUnavailable {
+                get throws {
+                    switch self {
+                    case let .serviceUnavailable(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "serviceUnavailable",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// Undocumented response.
+            ///
+            /// A response with a code that is not documented in the OpenAPI document.
+            case undocumented(statusCode: Swift.Int, OpenAPIRuntime.UndocumentedPayload)
+        }
+        internal enum AcceptableContentType: AcceptableProtocol {
+            case json
+            case other(Swift.String)
+            internal init?(rawValue: Swift.String) {
+                switch rawValue.lowercased() {
+                case "application/json":
+                    self = .json
+                default:
+                    self = .other(rawValue)
+                }
+            }
+            internal var rawValue: Swift.String {
+                switch self {
+                case let .other(string):
+                    return string
+                case .json:
+                    return "application/json"
+                }
+            }
+            internal static var allCases: [Self] {
+                [
+                    .json
+                ]
+            }
+        }
+    }
     /// Change what the agent is told to be
     ///
     /// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.

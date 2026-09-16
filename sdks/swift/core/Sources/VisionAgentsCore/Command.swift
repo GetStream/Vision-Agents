@@ -13,6 +13,9 @@ public enum Command: Sendable, Hashable {
     case respondCommand(id: String, text: String)
     /// Abandon the reply in flight.
     case interrupt
+    /// Stop one durable command wherever it got to. A stop arriving after that command
+    /// finished replays its receipt and leaves the command running now alone.
+    case interruptCommand(id: String)
     /// Replace the system prompt, from the next turn on.
     case instructions(String)
     /// Answer a tool call. One of `output` or `error` says how it went.
@@ -41,6 +44,9 @@ extension Command: Encodable {
             try container.encode(id, forKey: .commandID)
         case .interrupt:
             try container.encode("interrupt", forKey: .type)
+        case .interruptCommand(let id):
+            try container.encode("interrupt", forKey: .type)
+            try container.encode(id, forKey: .commandID)
         case .instructions(let instructions):
             try container.encode("instructions", forKey: .type)
             try container.encode(instructions, forKey: .instructions)

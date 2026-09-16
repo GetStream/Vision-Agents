@@ -16,6 +16,10 @@ extension Components {
         ///
         /// - Remark: Generated from `#/components/parameters/SessionID`.
         internal typealias SessionID = Swift.String
+        /// The client's own command id, as sent when the command was submitted.
+        ///
+        /// - Remark: Generated from `#/components/parameters/CommandID`.
+        internal typealias CommandID = Swift.String
         /// The resource, as returned when it was created.
         ///
         /// - Remark: Generated from `#/components/parameters/ResourceID`.

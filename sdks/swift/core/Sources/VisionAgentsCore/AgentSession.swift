@@ -92,6 +92,13 @@ public final class AgentSession {
         try await socket.send(.interrupt)
     }
 
+    /// Stops the named durable command, and only that one. Keep the ID while the stop is
+    /// in flight: a stop that arrives after its command finished reports how it ended
+    /// rather than interrupting the command accepted after it.
+    public func stopCommand(id: String) async throws {
+        try await socket.send(.interruptCommand(id: id))
+    }
+
     /// Replaces the system prompt, from the next turn on.
     public func setInstructions(_ instructions: String) async throws {
         try await socket.send(.instructions(instructions))

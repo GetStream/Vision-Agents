@@ -184,6 +184,56 @@ func (s *Server) InterruptSession(ctx context.Context, request InterruptSessionR
 	return InterruptSession204Response{}, nil
 }
 
+// GetSessionCommand reports what one durable command ended as, without running anything.
+func (s *Server) GetSessionCommand(ctx context.Context, request GetSessionCommandRequestObject) (GetSessionCommandResponseObject, error) {
+	found, failure := s.session(ctx, request.Id)
+	if failure != nil {
+		if failure.status == unauthorized {
+			return GetSessionCommand401JSONResponse{missingCustomer()}, nil
+		}
+		return GetSessionCommand404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+	}
+
+	receipt, err := found.Command(request.CommandId)
+	if err != nil {
+		return GetSessionCommand404JSONResponse{NotFoundJSONResponse{Error: unknownCommand}}, nil
+	}
+	return GetSessionCommand200JSONResponse(receiptOf(receipt)), nil
+}
+
+// InterruptSessionCommand stops the named command and leaves every other one alone.
+func (s *Server) InterruptSessionCommand(ctx context.Context, request InterruptSessionCommandRequestObject) (InterruptSessionCommandResponseObject, error) {
+	found, failure := s.session(ctx, request.Id)
+	if failure != nil {
+		if failure.status == unauthorized {
+			return InterruptSessionCommand401JSONResponse{missingCustomer()}, nil
+		}
+		return InterruptSessionCommand404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+	}
+
+	receipt, err := found.InterruptCommand(request.CommandId)
+	if errors.Is(err, conversation.ErrCommandNotFound) {
+		return InterruptSessionCommand404JSONResponse{NotFoundJSONResponse{Error: unknownCommand}}, nil
+	}
+	if err != nil {
+		// The stop was taken but its durable outcome is not known, so the caller is told
+		// to keep the intent and retry this command id rather than that it stopped.
+		return InterruptSessionCommand503JSONResponse{Error: err.Error()}, nil
+	}
+	return InterruptSessionCommand200JSONResponse(receiptOf(receipt)), nil
+}
+
+// receiptOf renders a durable command receipt for the wire.
+func receiptOf(receipt conversation.CommandReceipt) CommandReceipt {
+	return CommandReceipt{
+		CommandId:          receipt.CommandID,
+		UserMessageId:      receipt.UserMessageID,
+		AssistantMessageId: receipt.AssistantMessageID,
+		State:              receipt.State,
+		Duplicate:          receipt.Duplicate,
+	}
+}
+
 // SetSessionInstructions changes what the agent is told to be.
 func (s *Server) SetSessionInstructions(ctx context.Context, request SetSessionInstructionsRequestObject) (SetSessionInstructionsResponseObject, error) {
 	found, failure := s.session(ctx, request.Id)
@@ -212,6 +262,10 @@ const (
 // unknownSession is what a caller is told about a session that is not theirs, which is the
 // same thing they are told about one that never existed.
 const unknownSession = "no such session"
+
+// unknownCommand is what a caller is told about a command this conversation never
+// accepted, which is the same thing they are told about one they may not touch.
+const unknownCommand = "no such command"
 
 type lookupFailure struct {
 	status  lookupStatus

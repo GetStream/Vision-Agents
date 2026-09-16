@@ -2432,6 +2432,69 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/sessions/{id}/commands/{command_id}:
+    get:
+      operationId: getSessionCommand
+      summary: What is known about one durable command
+      description: >
+        Reads a command's receipt without accepting, running or stopping anything. It is
+        how a client whose stop or submission had an unknown outcome reconciles the same
+        command id rather than inventing another one.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+        - $ref: "#/components/parameters/CommandID"
+      responses:
+        "200":
+          description: The command's current receipt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandReceipt"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}/commands/{command_id}/interrupt:
+    post:
+      operationId: interruptSessionCommand
+      summary: Stop one named command, and nothing else
+      description: >
+        Abandons the reply that command is generating. Unlike interrupting the session, a
+        stop that arrives after its command finished replays that command's terminal
+        receipt and leaves the command running now alone, so a delayed stop for one
+        question can never take the answer to the next one.
+
+        A command accepted but not yet generating is prevented from starting. A command
+        already completed, failed, cancelled or interrupted returns what it ended as. An
+        unknown command is a 404, the same answer as a conversation the caller does not
+        own.
+
+        Interrupting model work claims nothing about a tool whose external side effect
+        already happened.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+        - $ref: "#/components/parameters/CommandID"
+      responses:
+        "200":
+          description: The command's terminal receipt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandReceipt"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: >
+            The stop was accepted but its durable outcome is unknown. The command is not
+            reported stopped; retry the same command id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/agents/sessions/{id}/instructions:
     put:
       operationId: setSessionInstructions
@@ -2488,6 +2551,13 @@ paths:
         reuse with different text emits an error. Commands with IDs currently accept
         text only. After restart an interrupted command is reported, not rerun.
 
+        An `interrupt` command carrying `command_id` stops that command and emits
+        `command_stopped` with its terminal receipt. A stop arriving after its command
+        finished replays that command's receipt and leaves the command running now
+        alone; an unknown command is reported as an error. Without `command_id` the frame
+        stops whichever reply is current, which is what a caller with no command to name
+        means by it.
+
         A `decision` frame is one judgement the conversation made, carrying the same
         fields as a CallEvent. Together they are why the call went the way it did, and
         they are also written down, so a finished call replays them from
@@ -2499,8 +2569,9 @@ paths:
         drops `decision`.
 
         The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`,
-        `interrupt`, `instructions` or `close` to act on the session. A `tool_call`
-        is the only frame that must be answered: everything else is a report.
+        `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act
+        on the session. A `tool_call` is the only frame that must be answered:
+        everything else is a report.
 
         `tool_result.output` is a string, or an array of parts `[{type: text|image_url,
         ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of
@@ -2851,6 +2922,13 @@ components:
       in: path
       required: true
       description: The session, as returned when it was created.
+      schema:
+        type: string
+    CommandID:
+      name: command_id
+      in: path
+      required: true
+      description: The client's own command id, as sent when the command was submitted.
       schema:
         type: string
     ResourceID:

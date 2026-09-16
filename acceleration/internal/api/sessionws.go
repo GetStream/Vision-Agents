@@ -250,6 +250,15 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			}
 
 		case "interrupt":
+			// A stop naming a command stops that command wherever it got to. Without a
+			// name it stops whatever is being said now, which is what a voice caller
+			// talking over the agent means.
+			if command.CommandID != "" {
+				if _, err := found.InterruptCommand(command.CommandID); err != nil {
+					found.Report(err, "command")
+				}
+				continue
+			}
 			found.Interrupt()
 
 		case "instructions":
@@ -404,6 +413,8 @@ func frameOf(event session.Event) (frame, bool) {
 
 	case conversation.CommandReceipt:
 		return frame{"type": "command_accepted", "command": typed}, true
+	case session.CommandStopped:
+		return frame{"type": "command_stopped", "command": typed.CommandReceipt}, true
 	case conversation.Updated:
 		return frame{"type": "conversation_updated", "conversation_id": typed.CID, "message": typed.Message}, true
 	case agent.ToolStarted:

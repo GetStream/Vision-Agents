@@ -117,6 +117,24 @@ internal protocol APIProtocol: Sendable {
     /// - Remark: HTTP `POST /v1/agents/sessions/{id}/interrupt`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/interrupt/post(interruptSession)`.
     func interruptSession(_ input: Operations.InterruptSession.Input) async throws -> Operations.InterruptSession.Output
+    /// What is known about one durable command
+    ///
+    /// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}/commands/{command_id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/get(getSessionCommand)`.
+    func getSessionCommand(_ input: Operations.GetSessionCommand.Input) async throws -> Operations.GetSessionCommand.Output
+    /// Stop one named command, and nothing else
+    ///
+    /// Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives after its command finished replays that command's terminal receipt and leaves the command running now alone, so a delayed stop for one question can never take the answer to the next one.
+    /// A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
+    /// Interrupting model work claims nothing about a tool whose external side effect already happened.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/interrupt/post(interruptSessionCommand)`.
+    func interruptSessionCommand(_ input: Operations.InterruptSessionCommand.Input) async throws -> Operations.InterruptSessionCommand.Output
     /// Change what the agent is told to be
     ///
     /// Applies from the next turn. The reply being spoken keeps the prompt it started with, because rewriting it mid-sentence would have the agent change character in the middle of a thought.
@@ -382,6 +400,40 @@ extension APIProtocol {
         headers: Operations.InterruptSession.Input.Headers = .init()
     ) async throws -> Operations.InterruptSession.Output {
         try await interruptSession(Operations.InterruptSession.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// What is known about one durable command
+    ///
+    /// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+    ///
+    ///
+    /// - Remark: HTTP `GET /v1/agents/sessions/{id}/commands/{command_id}`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/get(getSessionCommand)`.
+    internal func getSessionCommand(
+        path: Operations.GetSessionCommand.Input.Path,
+        headers: Operations.GetSessionCommand.Input.Headers = .init()
+    ) async throws -> Operations.GetSessionCommand.Output {
+        try await getSessionCommand(Operations.GetSessionCommand.Input(
+            path: path,
+            headers: headers
+        ))
+    }
+    /// Stop one named command, and nothing else
+    ///
+    /// Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives after its command finished replays that command's terminal receipt and leaves the command running now alone, so a delayed stop for one question can never take the answer to the next one.
+    /// A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
+    /// Interrupting model work claims nothing about a tool whose external side effect already happened.
+    ///
+    ///
+    /// - Remark: HTTP `POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt`.
+    /// - Remark: Generated from `#/paths//v1/agents/sessions/{id}/commands/{command_id}/interrupt/post(interruptSessionCommand)`.
+    internal func interruptSessionCommand(
+        path: Operations.InterruptSessionCommand.Input.Path,
+        headers: Operations.InterruptSessionCommand.Input.Headers = .init()
+    ) async throws -> Operations.InterruptSessionCommand.Output {
+        try await interruptSessionCommand(Operations.InterruptSessionCommand.Input(
             path: path,
             headers: headers
         ))

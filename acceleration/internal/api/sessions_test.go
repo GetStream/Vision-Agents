@@ -18,6 +18,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -54,21 +56,33 @@ type scriptedLLM struct {
 	calls []llm.ToolCall
 	asked []llm.ResponseParams
 	sees  bool
+	// held, when set, makes each reply wait for the test to let it through, which is what
+	// stopping a command mid-answer needs.
+	held chan struct{}
 }
 
 func (s *scriptedLLM) Start(context.Context) error { return nil }
 
-func (s *scriptedLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.turns++
 	s.asked = append(s.asked, params)
 	first := s.turns == 1
 	reply := s.reply
+	held := s.held
 	var calls []llm.ToolCall
 	if first {
 		calls = append([]llm.ToolCall(nil), s.calls...)
 	}
 	s.mu.Unlock()
+
+	if held != nil {
+		select {
+		case <-held:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 
 	script := llmtest.New(llm.StreamOptions{
 		ResponseID: params.ID,
@@ -172,10 +186,11 @@ func routableConfig() routing.ModalityConfig {
 type SessionAPISuite struct {
 	suite.Suite
 
-	server *httptest.Server
-	model  *scriptedLLM
-	vision *scriptedLLM
-	voice  *recordingTTS
+	server        *httptest.Server
+	model         *scriptedLLM
+	vision        *scriptedLLM
+	voice         *recordingTTS
+	conversations *conversation.Service
 }
 
 func TestSessionAPISuite(t *testing.T) {
@@ -224,11 +239,16 @@ func (s *SessionAPISuite) SetupTest() {
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 
+	s.conversations, err = conversation.NewForChat(s.T().TempDir(), chattest.Client(s.T()))
+	s.Require().NoError(err)
+	s.T().Cleanup(s.conversations.Close)
+
 	sessions, err := session.NewManager(session.ManagerOptions{
-		LLM:    reasoner,
-		STT:    transcriber,
-		TTS:    speaker,
-		Logger: logger,
+		LLM:           reasoner,
+		STT:           transcriber,
+		TTS:           speaker,
+		Conversations: s.conversations,
+		Logger:        logger,
 		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
 		},

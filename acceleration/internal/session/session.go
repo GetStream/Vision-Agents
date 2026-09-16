@@ -73,6 +73,13 @@ const (
 // types declared in this package are the session's own.
 type Event any
 
+// CommandStopped is how one named command ended after somebody asked for it to stop. It
+// is separate from the receipt a submission returns, because a watcher has to tell a
+// command it asked to stop from a command that was just accepted.
+type CommandStopped struct {
+	persistent.CommandReceipt
+}
+
 // ToolCall is the model asking for one of the caller's own tools. It is the only event a
 // watcher is obliged to answer: everything else is a report.
 type ToolCall struct {
@@ -347,10 +354,19 @@ func (s *Session) InterruptCommand(id string) (persistent.CommandReceipt, error)
 	}
 	switch receipt.State {
 	case "completed", "cancelled", "interrupted", "failed":
-		return s.persisted.CancelCommand(id)
+		return s.stopped(s.persisted.CancelCommand(id))
 	}
 	s.voiceAgent.Interrupt()
-	return s.persisted.CancelCommand(id)
+	return s.stopped(s.persisted.CancelCommand(id))
+}
+
+// stopped tells the watchers how the named command ended. An unknown outcome is not
+// published: the caller holding the stop is the one that has to retry it.
+func (s *Session) stopped(receipt persistent.CommandReceipt, err error) (persistent.CommandReceipt, error) {
+	if err == nil {
+		s.broadcast(CommandStopped{CommandReceipt: receipt})
+	}
+	return receipt, err
 }
 
 // Busy reports whether the agent still has something to finish, which is how anything
