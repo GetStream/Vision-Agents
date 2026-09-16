@@ -2280,6 +2280,39 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /v1/agents/conversations/{cid}/commands/{command_id}:
+    get:
+      operationId: getConversationCommand
+      summary: What a command in this conversation ended as
+      description: >
+        Reads one command's receipt from the conversation's own durable record. It opens
+        nothing and starts nothing, so a client whose stop found no session left to reach
+        reconciles that command here rather than reopening a session to ask about it.
+
+        A command still running is reported as it stands; the session holding it is where
+        it can be stopped.
+      parameters:
+        - name: cid
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/CommandID"
+        - name: agent_id
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: The command's current receipt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandReceipt"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/sessions:
     get:
       operationId: listSessions

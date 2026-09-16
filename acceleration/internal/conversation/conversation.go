@@ -309,6 +309,71 @@ func (s *Service) History(ctx context.Context, customer, agentID, cid, before st
 func (s *Service) HistoryForCaller(ctx context.Context, customer, agentID, cid, before, caller string) (Page, error) {
 	return s.history(ctx, customer, agentID, cid, before, caller)
 }
+
+// ownedBy reads a channel's recorded ownership. A channel with no owner is a
+// backend-owned demo channel, which no end user may claim.
+func ownedBy(custom map[string]any, customer, agentID, caller string) error {
+	if custom["support_customer_id"] != customer || custom["support_agent_id"] != agentID {
+		return errors.New("conversation belongs to another customer or agent")
+	}
+	rawOwner, bound := custom["support_owner_id"]
+	owner, valid := rawOwner.(string)
+	if bound && !valid {
+		return errors.New("conversation has invalid ownership metadata")
+	}
+	if owner != caller {
+		return errors.New("conversation belongs to another user")
+	}
+	return nil
+}
+
+// CommandForCaller reports what one command ended as without opening its conversation,
+// starting a session or running anything. It is how a stop whose conversation has no
+// session left to reach reconciles the same command id instead of reopening one to ask.
+func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, caller, commandID string) (CommandReceipt, error) {
+	id := strings.TrimPrefix(cid, "agent:")
+	if cid != "agent:"+id || !validID.MatchString(id) || !validCommandID.MatchString(commandID) {
+		return CommandReceipt{}, ErrCommandNotFound
+	}
+	s.mu.Lock()
+	closed, open, root := s.closed, s.all[cid], s.root
+	s.mu.Unlock()
+	if closed {
+		return CommandReceipt{}, errors.New("conversation service is closed")
+	}
+
+	lookup, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	limit, state := 1, true
+	// Query without Data, so asking about a command can neither create a channel nor
+	// overwrite the ownership recorded on one.
+	r, err := s.client.Chat().GetOrCreateChannel(lookup, "agent", id, &getstream.GetOrCreateChannelRequest{
+		State: &state, Messages: &getstream.MessagePaginationParams{Limit: &limit}})
+	if err != nil {
+		return CommandReceipt{}, err
+	}
+	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
+		return CommandReceipt{}, ErrCommandNotFound
+	}
+
+	if open != nil {
+		return open.receipt(commandID)
+	}
+	var stored disk
+	raw, err := os.ReadFile(filepath.Join(root, id, "state.json"))
+	if err != nil {
+		return CommandReceipt{}, ErrCommandNotFound
+	}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return CommandReceipt{}, errors.New("invalid conversation outbox")
+	}
+	record, known := stored.Commands[commandID]
+	if !stored.CommandLedger || !known {
+		return CommandReceipt{}, ErrCommandNotFound
+	}
+	return record.CommandReceipt, nil
+}
+
 func (s *Service) history(ctx context.Context, customer, agentID, cid, before, caller string) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -327,16 +392,8 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 	if err != nil {
 		return Page{}, err
 	}
-	if r.Data.Channel.Custom["support_customer_id"] != customer || r.Data.Channel.Custom["support_agent_id"] != agentID {
-		return Page{}, errors.New("conversation belongs to another customer or agent")
-	}
-	rawOwner, bound := r.Data.Channel.Custom["support_owner_id"]
-	owner, valid := rawOwner.(string)
-	if bound && !valid {
-		return Page{}, errors.New("conversation has invalid ownership metadata")
-	}
-	if owner != caller {
-		return Page{}, errors.New("conversation belongs to another user")
+	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
+		return Page{}, err
 	}
 	p := Page{Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
@@ -505,6 +562,18 @@ func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceip
 	c.publish(u)
 	c.publish(a)
 	return receipt, nil
+}
+
+// receipt reads a recorded command whether or not the conversation is still open, which
+// is what reconciling a command whose session has ended needs.
+func (c *Conversation) receipt(id string) (CommandReceipt, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	record, known := c.data.Commands[id]
+	if !c.data.CommandLedger || !known {
+		return CommandReceipt{}, ErrCommandNotFound
+	}
+	return record.CommandReceipt, nil
 }
 
 // BindTurn records which model turn answers a command before that turn's first event

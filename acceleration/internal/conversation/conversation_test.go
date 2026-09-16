@@ -724,6 +724,42 @@ func TestLateOutputFromAStoppedCommandNeverJoinsTheNextReply(t *testing.T) {
 	require.Equal(t, "Second answer", page.Messages[3].Text)
 }
 
+func TestACommandIsReconcilableAfterItsConversationClosed(t *testing.T) {
+	_, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	accepted, err := c.BeginCommand("abandoned", "Question")
+	require.NoError(t, err)
+	cid := c.CID()
+
+	// Nobody is watching any more, which ends the reply and the conversation with it.
+	c.Release()
+	reconciled, err := service.CommandForCaller(t.Context(), "customer", "agent", cid, "employee", "abandoned")
+	require.NoError(t, err)
+	require.Equal(t, accepted.AssistantMessageID, reconciled.AssistantMessageID)
+	require.Equal(t, "cancelled", reconciled.State)
+
+	_, err = service.CommandForCaller(t.Context(), "customer", "agent", cid, "employee", "never-submitted")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	_, err = service.CommandForCaller(t.Context(), "customer", "agent", cid, "somebody-else", "abandoned")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	_, err = service.CommandForCaller(t.Context(), "another-customer", "agent", cid, "employee", "abandoned")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+
+	// After a restart the durable record is all there is, and it must still answer.
+	service.Close()
+	restarted, err := newService(root, client)
+	require.NoError(t, err)
+	t.Cleanup(restarted.Close)
+	recovered, err := restarted.CommandForCaller(t.Context(), "customer", "agent", cid, "employee", "abandoned")
+	require.NoError(t, err)
+	require.Equal(t, accepted.AssistantMessageID, recovered.AssistantMessageID)
+	require.Contains(t, []string{"cancelled", "interrupted"}, recovered.State)
+}
+
 func TestConcurrentOldCommandStopsPreserveTheNextReply(t *testing.T) {
 	_, client := newChat(t)
 	service, err := newService(t.TempDir(), client)
