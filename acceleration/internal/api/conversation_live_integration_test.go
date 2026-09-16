@@ -34,6 +34,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
@@ -44,6 +45,26 @@ func TestLiveConversationCommandReconnect(t *testing.T) {
 		t.Skip("ATHENA_SESSION_PROBE=1 required")
 	}
 	require.NotEmpty(t, os.Getenv("META_API_KEY"))
+	var database *store.Store
+	if dsn := os.Getenv("ATHENA_BILLING_PROBE_DSN"); dsn != "" {
+		// Never migrate the shared development database. This optional proof requires
+		// a fresh, explicitly named database in a disposable local Postgres instance.
+		parsed, err := url.Parse(dsn)
+		require.NoError(t, err)
+		require.Equal(t, "127.0.0.1", parsed.Hostname())
+		require.Equal(t, "/athena_billing_probe", parsed.Path)
+		require.NotEmpty(t, os.Getenv("ATHENA_ROUTER_CONFIG"))
+		database, err = store.Open(dsn)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, database.Close()) })
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		var tables int
+		err = database.DB().NewRaw("SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema')").Scan(ctx, &tables)
+		require.NoError(t, err)
+		require.Zero(t, tables, "billing proof requires an empty disposable database")
+		require.NoError(t, database.Migrate(ctx))
+	}
 	key, secret := os.Getenv("STREAM_API_KEY"), os.Getenv("STREAM_API_SECRET")
 	client, err := getstream.NewClient(key, secret)
 	require.NoError(t, err)
@@ -115,7 +136,7 @@ func TestLiveConversationCommandReconnect(t *testing.T) {
 		require.Contains(t, config, routing.LLM)
 		modelConfig = config[routing.LLM]
 	}
-	model, err := llmrouter.New(llmrouter.Options{Registry: registry, Logger: logger, Config: modelConfig})
+	model, err := llmrouter.New(llmrouter.Options{Registry: registry, Logger: logger, Config: modelConfig, Store: database})
 	require.NoError(t, err)
 	t.Cleanup(model.Close)
 	t.Setenv("CHAT_OUTBOX_DIR", t.TempDir())
@@ -133,7 +154,7 @@ func TestLiveConversationCommandReconnect(t *testing.T) {
 		return auth.App{AppID: "1257545", OrganizationID: "1181507", Secret: secret}, nil
 	})
 	require.NoError(t, err)
-	server, err := NewServer(Options{Routers: map[routing.Modality]routing.Inspector{routing.LLM: model}, Sessions: manager, Auth: authenticator, StreamSecret: secret, Logger: logger})
+	server, err := NewServer(Options{Routers: map[routing.Modality]routing.Inspector{routing.LLM: model}, Sessions: manager, Auth: authenticator, StreamSecret: secret, Logger: logger, Store: database})
 	require.NoError(t, err)
 	endpoint := httptest.NewServer(server.Handler())
 	t.Cleanup(endpoint.Close)
@@ -161,6 +182,7 @@ func TestLiveConversationCommandReconnect(t *testing.T) {
 		}
 	}
 	payload := frame{"text": true, "persist_conversation": true, "agent_id": bot, "llm": "meta/muse-spark-1.3", "max_tokens": 512, "instructions": "Reply to this synthetic integration test with the exact text ATHENA_OK. Do not call tools."}
+	payload["tags"] = frame{"application": "caller-forged", "environment": "caller-forged", "probe": prefix}
 	var created Session
 	do("POST", "/v1/agents/sessions", payload, ownerHeaders, 201, &created)
 	require.NotNil(t, created.ConversationId)
@@ -257,4 +279,42 @@ func TestLiveConversationCommandReconnect(t *testing.T) {
 	require.NoError(t, manager.Shutdown())
 	require.EqualValues(t, 1, requests.Load(), "retries, webhook replay and reconnect must make only one actual Meta request")
 	t.Log("one real Meta request, one durable message pair, REST retry/conflict, signed webhook replay and WebSocket reconnect verified")
+	if database != nil {
+		model.Close() // Drain asynchronous usage writes before querying persisted rows.
+		var rows []store.Request
+		require.NoError(t, database.DB().NewSelect().Model(&rows).Scan(ctx))
+		require.Len(t, rows, 1, "duplicate commands must not create duplicate billing rows")
+		row := rows[0]
+		require.True(t, row.Success)
+		require.Equal(t, "1257545", row.CustomerID)
+		require.Equal(t, bot, row.AgentID)
+		require.Equal(t, "llm", row.Modality)
+		require.Equal(t, "meta", row.Provider)
+		require.Equal(t, "muse-spark-1.3", row.Model)
+		require.Equal(t, map[string]string{"application": "athena", "environment": "development", "probe": prefix}, row.Tags)
+		require.Positive(t, row.InputTokens)
+		require.Positive(t, row.OutputTokens)
+		require.GreaterOrEqual(t, row.InputTokens, row.CachedInputTokens)
+		// Independent rate-card calculation; the recorder truncates to whole micros.
+		expectedCost := float64(row.InputTokens-row.CachedInputTokens)*1.25 + float64(row.CachedInputTokens)*0.15 + float64(row.OutputTokens)*4.25
+		require.InDelta(t, expectedCost, row.CostMicros, 1)
+		require.Positive(t, row.CostMicros)
+		from := row.StartedAt.UTC().Truncate(time.Hour)
+		to := from.Add(time.Hour)
+		_, err := database.Rollup(ctx, store.Hourly, from, to)
+		require.NoError(t, err)
+		query := url.Values{"from": {from.Format(time.RFC3339)}, "to": {to.Format(time.RFC3339)}}
+		var buckets []StatsBucket
+		do("GET", "/v1/llm/stats?"+query.Encode(), nil, ownerHeaders, 200, &buckets)
+		require.Len(t, buckets, 1)
+		require.EqualValues(t, 1, buckets[0].RequestCount)
+		require.Equal(t, row.CostMicros, buckets[0].CostMicrosTotal)
+		query.Set("key", "application")
+		var tags []TagStatsBucket
+		do("GET", "/v1/llm/stats/tags?"+query.Encode(), nil, ownerHeaders, 200, &tags)
+		require.Len(t, tags, 1)
+		require.Equal(t, "athena", tags[0].TagValue)
+		require.Equal(t, row.CostMicros, tags[0].CostMicrosTotal)
+		t.Logf("persisted usage and authenticated stats: input=%d cached=%d output=%d cost_micros=%d; server-owned Athena labels verified", row.InputTokens, row.CachedInputTokens, row.OutputTokens, row.CostMicros)
+	}
 }
