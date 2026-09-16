@@ -112,9 +112,14 @@ func TestLiveConversationCommandReconnect(t *testing.T) {
 	direct := proxy.Director
 	proxy.Director = func(r *http.Request) { direct(r); r.Host = target.Host }
 	var requests atomic.Int64
+	var failProvider atomic.Bool
 	providerEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests.Add(1) > 3 {
+		if requests.Add(1) > 6 {
 			http.Error(w, "probe request budget exceeded", http.StatusTooManyRequests)
+			return
+		}
+		if failProvider.Load() {
+			http.Error(w, "synthetic upstream outage", http.StatusServiceUnavailable)
 			return
 		}
 		proxy.ServeHTTP(w, r)
@@ -181,7 +186,17 @@ func TestLiveConversationCommandReconnect(t *testing.T) {
 			require.NoError(t, json.Unmarshal(data, result))
 		}
 	}
-	payload := frame{"text": true, "persist_conversation": true, "agent_id": bot, "llm": "meta/muse-spark-1.3", "max_tokens": 512, "instructions": "Reply to this synthetic integration test with the exact text ATHENA_OK. Do not call tools."}
+	payload := frame{
+		"text": true, "persist_conversation": true, "agent_id": bot,
+		"llm": "meta/muse-spark-1.3", "max_tokens": 512,
+		"instructions": `For ordinary requests, reply with the exact text ATHENA_OK and do not call tools.
+When a request contains TOOL_PROBE, call lookup_probe exactly once before answering, then reply with the exact text TOOL_OK followed by the value the tool returned.`,
+		"tools": []frame{{
+			"name": "lookup_probe", "description": "Return the current opaque integration-probe value.",
+			"parameters": frame{"type": "object", "properties": frame{}, "additionalProperties": false},
+		}},
+		"tool_timeout_ms": 30_000,
+	}
 	payload["tags"] = frame{"application": "caller-forged", "environment": "caller-forged", "probe": prefix}
 	var created Session
 	do("POST", "/v1/agents/sessions", payload, ownerHeaders, 201, &created)
@@ -275,31 +290,106 @@ func TestLiveConversationCommandReconnect(t *testing.T) {
 	var resumedPage conversation.Page
 	do("GET", historyPath, nil, ownerHeaders, 200, &resumedPage)
 	require.Equal(t, page.Messages, resumedPage.Messages)
+
+	toolCommand := frame{"command_id": "one-tool", "text": "TOOL_PROBE: look up the current integration-probe value."}
+	var toolAccepted conversation.CommandReceipt
+	do("POST", "/v1/agents/sessions/"+resumed.Id+"/respond", toolCommand, ownerHeaders, 200, &toolAccepted)
+	require.False(t, toolAccepted.Duplicate)
+	toolAnswered, toolSaved, toolCalled := false, false, false
+	for !toolAnswered || !toolSaved {
+		var event frame
+		require.NoError(t, reconnected.ReadJSON(&event))
+		require.NotEqual(t, "error", event["type"], "%v", event)
+		switch event["type"] {
+		case "tool_call":
+			require.False(t, toolCalled, "Muse called the probe more than once")
+			require.Equal(t, "lookup_probe", event["name"])
+			require.JSONEq(t, `{}`, event["arguments"].(string))
+			require.NoError(t, reconnected.WriteJSON(frame{
+				"type": "tool_result", "tool_call_id": event["id"], "output": "amber-742",
+			}))
+			toolCalled = true
+		case "responded":
+			if strings.Contains(event["text"].(string), "amber-742") {
+				toolAnswered = true
+			}
+		case "conversation_updated":
+			message := event["message"].(map[string]any)
+			toolSaved = message["id"] == toolAccepted.AssistantMessageID &&
+				message["state"] == "completed" && message["saved"] == true
+		}
+	}
+	require.True(t, toolCalled)
+
+	var toolPage conversation.Page
+	do("GET", historyPath, nil, ownerHeaders, 200, &toolPage)
+	require.Len(t, toolPage.Messages, 4)
+	require.Equal(t, toolAccepted.UserMessageID, toolPage.Messages[2].ID)
+	require.Equal(t, toolAccepted.AssistantMessageID, toolPage.Messages[3].ID)
+	require.Contains(t, toolPage.Messages[3].Text, "amber-742")
+
+	failProvider.Store(true)
+	failureCommand := frame{"command_id": "one-failure", "text": "This request must expose the provider outage."}
+	var failureAccepted conversation.CommandReceipt
+	do("POST", "/v1/agents/sessions/"+resumed.Id+"/respond", failureCommand, ownerHeaders, 200, &failureAccepted)
+	failureReported, failureSaved := false, false
+	for !failureReported || !failureSaved {
+		var event frame
+		require.NoError(t, reconnected.ReadJSON(&event))
+		switch event["type"] {
+		case "error":
+			require.Equal(t, "llm", event["context"])
+			require.NotEmpty(t, event["error"])
+			failureReported = true
+		case "conversation_updated":
+			message := event["message"].(map[string]any)
+			failureSaved = message["id"] == failureAccepted.AssistantMessageID &&
+				message["state"] == "failed" && message["saved"] == true
+		}
+	}
+	var failurePage conversation.Page
+	do("GET", historyPath, nil, ownerHeaders, 200, &failurePage)
+	require.Len(t, failurePage.Messages, 6)
+	require.Equal(t, failureAccepted.AssistantMessageID, failurePage.Messages[5].ID)
+	require.Equal(t, "failed", failurePage.Messages[5].State)
+	require.True(t, failurePage.Messages[5].Saved)
+
 	do("DELETE", "/v1/agents/sessions/"+resumed.Id, nil, ownerHeaders, 204, nil)
 	require.NoError(t, manager.Shutdown())
-	require.EqualValues(t, 1, requests.Load(), "retries, webhook replay and reconnect must make only one actual Meta request")
-	t.Log("one real Meta request, one durable message pair, REST retry/conflict, signed webhook replay and WebSocket reconnect verified")
+	require.EqualValues(t, 6, requests.Load(),
+		"ordinary and tool commands make three requests; a failed command uses the adapter's three bounded retries")
+	t.Log("ordinary and tool Muse responses plus a visible provider failure, durable messages, retry/conflict, webhook replay and reconnect verified")
 	if database != nil {
 		model.Close() // Drain asynchronous usage writes before querying persisted rows.
 		var rows []store.Request
 		require.NoError(t, database.DB().NewSelect().Model(&rows).Scan(ctx))
-		require.Len(t, rows, 1, "duplicate commands must not create duplicate billing rows")
-		row := rows[0]
-		require.True(t, row.Success)
-		require.Equal(t, "1257545", row.CustomerID)
-		require.Equal(t, bot, row.AgentID)
-		require.Equal(t, "llm", row.Modality)
-		require.Equal(t, "meta", row.Provider)
-		require.Equal(t, "muse-spark-1.3", row.Model)
-		require.Equal(t, map[string]string{"application": "athena", "environment": "development", "probe": prefix}, row.Tags)
-		require.Positive(t, row.InputTokens)
-		require.Positive(t, row.OutputTokens)
-		require.GreaterOrEqual(t, row.InputTokens, row.CachedInputTokens)
-		// Independent rate-card calculation; the recorder truncates to whole micros.
-		expectedCost := float64(row.InputTokens-row.CachedInputTokens)*1.25 + float64(row.CachedInputTokens)*0.15 + float64(row.OutputTokens)*4.25
-		require.InDelta(t, expectedCost, row.CostMicros, 1)
-		require.Positive(t, row.CostMicros)
-		from := row.StartedAt.UTC().Truncate(time.Hour)
+		require.Len(t, rows, 4, "duplicates must not bill; ordinary, tool and failed provider requests must")
+		var costMicros int64
+		failures := 0
+		for _, row := range rows {
+			require.Equal(t, "1257545", row.CustomerID)
+			require.Equal(t, bot, row.AgentID)
+			require.Equal(t, "llm", row.Modality)
+			require.Equal(t, "meta", row.Provider)
+			require.Equal(t, "muse-spark-1.3", row.Model)
+			require.Equal(t, map[string]string{"application": "athena", "environment": "development", "probe": prefix}, row.Tags)
+			if !row.Success {
+				failures++
+				require.Equal(t, "create_failed", row.ErrorCode)
+				require.Contains(t, row.ErrorMessage, "503")
+				continue
+			}
+			require.Positive(t, row.InputTokens)
+			require.Positive(t, row.OutputTokens)
+			require.GreaterOrEqual(t, row.InputTokens, row.CachedInputTokens)
+			// Independent rate-card calculation; the recorder truncates to whole micros.
+			expectedCost := float64(row.InputTokens-row.CachedInputTokens)*1.25 + float64(row.CachedInputTokens)*0.15 + float64(row.OutputTokens)*4.25
+			require.InDelta(t, expectedCost, row.CostMicros, 1)
+			require.Positive(t, row.CostMicros)
+			costMicros += row.CostMicros
+		}
+		require.Equal(t, 1, failures)
+		from := rows[0].StartedAt.UTC().Truncate(time.Hour)
 		to := from.Add(time.Hour)
 		_, err := database.Rollup(ctx, store.Hourly, from, to)
 		require.NoError(t, err)
@@ -307,14 +397,15 @@ func TestLiveConversationCommandReconnect(t *testing.T) {
 		var buckets []StatsBucket
 		do("GET", "/v1/llm/stats?"+query.Encode(), nil, ownerHeaders, 200, &buckets)
 		require.Len(t, buckets, 1)
-		require.EqualValues(t, 1, buckets[0].RequestCount)
-		require.Equal(t, row.CostMicros, buckets[0].CostMicrosTotal)
+		require.EqualValues(t, 4, buckets[0].RequestCount)
+		require.EqualValues(t, 1, buckets[0].ErrorCount)
+		require.Equal(t, costMicros, buckets[0].CostMicrosTotal)
 		query.Set("key", "application")
 		var tags []TagStatsBucket
 		do("GET", "/v1/llm/stats/tags?"+query.Encode(), nil, ownerHeaders, 200, &tags)
 		require.Len(t, tags, 1)
 		require.Equal(t, "athena", tags[0].TagValue)
-		require.Equal(t, row.CostMicros, tags[0].CostMicrosTotal)
-		t.Logf("persisted usage and authenticated stats: input=%d cached=%d output=%d cost_micros=%d; server-owned Athena labels verified", row.InputTokens, row.CachedInputTokens, row.OutputTokens, row.CostMicros)
+		require.Equal(t, costMicros, tags[0].CostMicrosTotal)
+		t.Logf("four persisted provider requests across ordinary, tool and failed turns; errors=1 total_cost_micros=%d; server-owned Athena labels verified", costMicros)
 	}
 }
