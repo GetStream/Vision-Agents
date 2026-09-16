@@ -652,3 +652,65 @@ func TestCancelCommandPreservesOtherCommandsAndDurableReceipts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, second, active)
 }
+
+func TestCancelCommandPersistenceFailureRemainsUnconfirmedUntilRetry(t *testing.T) {
+	_, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	accepted, err := c.BeginCommand("stop-persist", "Question")
+	require.NoError(t, err)
+	statePath := filepath.Join(c.dir(), "state.json")
+	c.mu.Lock()
+	removeErr := os.Remove(statePath)
+	mkdirErr := os.Mkdir(statePath, 0700)
+	c.mu.Unlock()
+	require.NoError(t, removeErr)
+	require.NoError(t, mkdirErr)
+	receipt, err := c.CancelCommand(accepted.CommandID)
+	require.ErrorContains(t, err, "persistence outcome unknown")
+	require.Empty(t, receipt.CommandID)
+	require.NoError(t, os.Remove(statePath))
+	receipt, err = c.CancelCommand(accepted.CommandID)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", receipt.State)
+	snapshot, err := loadDisk(c.dir())
+	require.NoError(t, err)
+	require.Equal(t, receipt, snapshot.Commands[accepted.CommandID].CommandReceipt)
+}
+
+func TestConcurrentOldCommandStopsPreserveTheNextReply(t *testing.T) {
+	_, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginCommand("old", "First question")
+	require.NoError(t, err)
+	var workers sync.WaitGroup
+	failures := make(chan error, 16)
+	for range 16 {
+		workers.Go(func() { _, err := c.CancelCommand("old"); failures <- err })
+	}
+	var next CommandReceipt
+	require.Eventually(t, func() bool {
+		var err error
+		next, err = c.BeginCommand("next", "Second question")
+		return err == nil
+	}, time.Second, time.Millisecond)
+	workers.Wait()
+	close(failures)
+	for err := range failures {
+		require.NoError(t, err)
+	}
+	active, err := c.Command("next")
+	require.NoError(t, err)
+	require.Equal(t, next, active)
+	require.Equal(t, "thinking", active.State)
+	old, err := c.Command("old")
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", old.State)
+}
