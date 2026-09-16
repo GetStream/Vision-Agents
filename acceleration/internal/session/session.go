@@ -103,7 +103,9 @@ type Session struct {
 	// or nothing at all, and nothing at all means the built-in set.
 	skills harness.Skills
 
-	mu sync.Mutex
+	// Serializes persistent command acceptance/start with command-targeted interruption.
+	commandMu sync.Mutex
+	mu        sync.Mutex
 	// watchers are the connections being fanned out to, keyed so one can detach without
 	// disturbing the others.
 	watchers    map[uint64]*watcher
@@ -244,6 +246,8 @@ func (s *Session) Say(ctx context.Context, text string) error {
 // Respond answers a piece of text through the model, as though a participant had said it.
 // Images attach to that turn as content parts.
 func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart) error {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
 	if s.persisted != nil {
 		if s.spec.Caller.UserID != "" {
 			return errors.New("personal conversations require a command ID")
@@ -262,6 +266,8 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 // RespondCommand accepts one durable text submission. The receipt may be replayed,
 // but only the first successful acceptance is allowed to invoke the model.
 func (s *Session) RespondCommand(ctx context.Context, id, text string) (persistent.CommandReceipt, error) {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
 	if s.persisted == nil {
 		return persistent.CommandReceipt{}, errors.New("command IDs require a persistent text conversation")
 	}
@@ -307,10 +313,33 @@ func (s *Session) Ask(ctx context.Context, text string) (string, error) {
 
 // Interrupt abandons the reply being spoken.
 func (s *Session) Interrupt() {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
 	s.voiceAgent.Interrupt()
 	if s.persisted != nil {
 		s.persisted.Cancel()
 	}
+}
+
+// InterruptCommand targets a durable text command, never whichever command starts
+// later. Holding commandMu across lookup/interruption prevents a new submission
+// from entering the acceptance-to-execution gap.
+func (s *Session) InterruptCommand(id string) (persistent.CommandReceipt, error) {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	if s.persisted == nil {
+		return persistent.CommandReceipt{}, persistent.ErrCommandNotFound
+	}
+	receipt, err := s.persisted.Command(id)
+	if err != nil {
+		return persistent.CommandReceipt{}, err
+	}
+	switch receipt.State {
+	case "completed", "cancelled", "interrupted", "failed":
+		return s.persisted.CancelCommand(id)
+	}
+	s.voiceAgent.Interrupt()
+	return s.persisted.CancelCommand(id)
 }
 
 // Busy reports whether the agent still has something to finish, which is how anything

@@ -500,6 +500,39 @@ func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceip
 	c.publish(a)
 	return receipt, nil
 }
+
+// CancelCommand changes only the named active command. The session must serialize
+// execution interruption with command submission; this method only owns the ledger.
+func (c *Conversation) CancelCommand(id string) (CommandReceipt, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.active || !c.data.CommandLedger {
+		return CommandReceipt{}, ErrCommandNotFound
+	}
+	record, ok := c.data.Commands[id]
+	if !ok {
+		return CommandReceipt{}, ErrCommandNotFound
+	}
+	m := c.data.Current
+	if m != nil && m.CommandID == id {
+		if m.FinishedAt == nil {
+			c.finish("cancelled")
+		} else if m.Error != "" {
+			c.save()
+		}
+		if m.Error != "" {
+			return CommandReceipt{}, errors.New("command cancellation persistence outcome unknown")
+		}
+		return c.data.Commands[id].CommandReceipt, nil
+	}
+	switch record.State {
+	case "completed", "cancelled", "interrupted", "failed":
+		return record.CommandReceipt, nil
+	default:
+		return CommandReceipt{}, ErrCommandNotFound
+	}
+}
+
 func (c *Conversation) Cancel() { c.mu.Lock(); defer c.mu.Unlock(); c.finish("cancelled") }
 func (c *Conversation) Observe(event agent.Event) {
 	c.mu.Lock()
