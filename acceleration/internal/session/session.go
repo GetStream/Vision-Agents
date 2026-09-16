@@ -83,7 +83,9 @@ type CommandStopped struct {
 // ToolCall is the model asking for one of the caller's own tools. It is the only event a
 // watcher is obliged to answer: everything else is a report.
 type ToolCall struct {
-	Cancel bool
+	Cancel    bool
+	CommandID string
+	TurnID    string
 	// ID is what a result must quote to answer this call.
 	ID string
 	// Name is which tool was asked for.
@@ -387,7 +389,21 @@ func (s *Session) ResolveTool(id, output, failure string) bool {
 
 // ResolveToolParts is ResolveTool for a result that may carry images.
 func (s *Session) ResolveToolParts(id string, parts []llm.ContentPart, failure string) bool {
-	return s.tools.Resolve(id, parts, failure)
+	if s.persisted != nil && s.spec.Caller.UserID != "" {
+		return false
+	}
+	return s.tools.Resolve(id, "", parts, failure)
+}
+
+func (s *Session) ResolveCommandTool(id, commandID, turnID string, parts []llm.ContentPart, failure string) bool {
+	if s.persisted == nil || commandID == "" || turnID == "" {
+		return false
+	}
+	expected, bound := s.persisted.CommandForTurn(turnID)
+	if !bound || expected != commandID {
+		return false
+	}
+	return s.tools.Resolve(id, turnID, parts, failure)
 }
 
 // Close leaves the call and releases everything the session opened. It is safe to call
@@ -507,6 +523,12 @@ func (s *Session) broadcast(event Event) {
 // The failure matters: without it the model would wait out the whole timeout on a call the
 // caller disconnected from, and the caller would hear a pause it could not explain.
 func (s *Session) askTool(call ToolCall) error {
+	if call.TurnID != "" && s.persisted != nil {
+		call.CommandID, _ = s.persisted.CommandForTurn(call.TurnID)
+	}
+	if s.persisted != nil && s.spec.Caller.UserID != "" && (call.CommandID == "" || call.TurnID == "") {
+		return errors.New("session: tool call has no durable command binding")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

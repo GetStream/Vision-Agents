@@ -33,8 +33,14 @@ type bridge struct {
 
 	mu sync.Mutex
 	// pending is one channel per call in flight, keyed by the id the model gave it.
-	pending map[string]chan toolResult
+	pending map[string]pendingTool
 	closed  bool
+}
+
+type pendingTool struct {
+	turnID   string
+	answer   chan toolResult
+	resolved bool
 }
 
 // toolResult is what the caller said happened.
@@ -50,7 +56,7 @@ func newBridge(timeout time.Duration, ask func(ToolCall) error) *bridge {
 	return &bridge{
 		timeout: timeout,
 		ask:     ask,
-		pending: map[string]chan toolResult{},
+		pending: map[string]pendingTool{},
 	}
 }
 
@@ -67,7 +73,7 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		b.mu.Unlock()
 		return nil, fmt.Errorf("session: %s was already asked for", call.ID)
 	}
-	b.pending[call.ID] = answer
+	b.pending[call.ID] = pendingTool{turnID: call.TurnID, answer: answer}
 	b.mu.Unlock()
 
 	defer func() {
@@ -76,7 +82,7 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		b.mu.Unlock()
 	}()
 
-	if err := b.ask(ToolCall{ID: call.ID, Name: call.Name, Arguments: call.Arguments}); err != nil {
+	if err := b.ask(ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments}); err != nil {
 		return nil, err
 	}
 
@@ -99,16 +105,19 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 //
 // An answer for a call nobody is waiting on is dropped rather than an error, because the
 // commonest reason for one is a caller answering a tool that has already timed out.
-func (b *bridge) Resolve(id string, parts []llm.ContentPart, failure string) bool {
+func (b *bridge) Resolve(id, turnID string, parts []llm.ContentPart, failure string) bool {
 	b.mu.Lock()
-	answer, waiting := b.pending[id]
-	b.mu.Unlock()
-	if !waiting {
+	pending, waiting := b.pending[id]
+	if !waiting || pending.resolved || turnID != "" && pending.turnID != turnID {
+		b.mu.Unlock()
 		return false
 	}
+	pending.resolved = true
+	b.pending[id] = pending
+	b.mu.Unlock()
 
 	select {
-	case answer <- toolResult{parts: parts, failure: failure}:
+	case pending.answer <- toolResult{parts: parts, failure: failure}:
 		return true
 	default:
 		return false
@@ -122,9 +131,9 @@ func (b *bridge) Close() {
 	defer b.mu.Unlock()
 
 	b.closed = true
-	for _, answer := range b.pending {
+	for _, pending := range b.pending {
 		select {
-		case answer <- toolResult{failure: "the call ended before it finished"}:
+		case pending.answer <- toolResult{failure: "the call ended before it finished"}:
 		default:
 		}
 	}

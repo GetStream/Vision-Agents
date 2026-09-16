@@ -305,8 +305,11 @@ When a request contains TOOL_PROBE, call lookup_probe exactly once before answer
 			require.False(t, toolCalled, "Muse called the probe more than once")
 			require.Equal(t, "lookup_probe", event["name"])
 			require.JSONEq(t, `{}`, event["arguments"].(string))
+			require.Equal(t, "one-tool", event["command_id"])
+			require.NotEmpty(t, event["turn_id"])
 			require.NoError(t, reconnected.WriteJSON(frame{
 				"type": "tool_result", "tool_call_id": event["id"], "output": "amber-742",
+				"command_id": event["command_id"], "turn_id": event["turn_id"],
 			}))
 			toolCalled = true
 		case "responded":

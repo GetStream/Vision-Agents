@@ -623,6 +623,21 @@ func (c *Conversation) BindTurn(commandID, turnID string) {
 	}
 }
 
+func (c *Conversation) CommandForTurn(turnID string) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	messageID, bound := c.turns[turnID]
+	if !bound {
+		return "", false
+	}
+	for commandID, record := range c.data.Commands {
+		if record.AssistantMessageID == messageID {
+			return commandID, true
+		}
+	}
+	return "", false
+}
+
 // CancelCommand changes only the named active command. The session must serialize
 // execution interruption with command submission; this method only owns the ledger.
 func (c *Conversation) CancelCommand(id string) (CommandReceipt, error) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -187,14 +188,15 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			Type string `json:"type"`
 			// ToolCallID names the call a tool_result answers.
 			ToolCallID string `json:"tool_call_id"`
+			CommandID  string `json:"command_id"`
+			TurnID     string `json:"turn_id"`
 			// Output is a string or a parts array, which is what a tool that returns an
 			// image sends.
 			Output json.RawMessage `json:"output"`
 			// Error is what to tell the model instead, when the tool did not work.
 			Error string `json:"error"`
 			// Text carries say and respond.
-			Text      string `json:"text"`
-			CommandID string `json:"command_id"`
+			Text string `json:"text"`
 			// Images attach to a respond command, and become image parts on that turn.
 			Images []wireImage `json:"images"`
 			// Instructions carries the instructions command.
@@ -213,13 +215,13 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			parts, err := parseToolOutput(command.Output)
 			if err != nil {
 				found.Report(err, "tool")
-				if !found.ResolveTool(command.ToolCallID, "", err.Error()) {
+				if !resolveTool(found, command.ToolCallID, command.CommandID, command.TurnID, nil, err.Error()) {
 					s.logger.Debug("a tool result answered nothing",
 						"session", found.ID(), "call", command.ToolCallID)
 				}
 				continue
 			}
-			if !found.ResolveToolParts(command.ToolCallID, parts, command.Error) {
+			if !resolveTool(found, command.ToolCallID, command.CommandID, command.TurnID, parts, command.Error) {
 				s.logger.Debug("a tool result answered nothing",
 					"session", found.ID(), "call", command.ToolCallID)
 			}
@@ -276,6 +278,13 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 	}
 }
 
+func resolveTool(found *session.Session, callID, commandID, turnID string, parts []llm.ContentPart, failure string) bool {
+	if commandID != "" || turnID != "" {
+		return found.ResolveCommandTool(callID, commandID, turnID, parts, failure)
+	}
+	return found.ResolveToolParts(callID, parts, failure)
+}
+
 // frameOf renders one event for the wire, reporting false for anything with no
 // representation.
 //
@@ -285,13 +294,15 @@ func frameOf(event session.Event) (frame, bool) {
 	switch typed := event.(type) {
 	case session.ToolCall:
 		if typed.Cancel {
-			return frame{"type": "tool_cancel", "id": typed.ID}, true
+			return frame{"type": "tool_cancel", "id": typed.ID, "command_id": typed.CommandID, "turn_id": typed.TurnID}, true
 		}
 		return frame{
-			"type":      "tool_call",
-			"id":        typed.ID,
-			"name":      typed.Name,
-			"arguments": typed.Arguments,
+			"type":       "tool_call",
+			"id":         typed.ID,
+			"name":       typed.Name,
+			"arguments":  typed.Arguments,
+			"command_id": typed.CommandID,
+			"turn_id":    typed.TurnID,
 		}, true
 
 	case agent.Joined:

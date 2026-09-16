@@ -194,6 +194,10 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
   duplicate inference. Acceptance records both initial Chat writes and the command
   mapping atomically. Restarted unfinished commands report interruption instead of
   rerunning. Existing per-operation outboxes migrate to the versioned snapshot once.
+  Empty caller-owned channels supplied by an application can initialize the same
+  ledger after ownership and membership validation. Caller-owned tool requests carry
+  command and turn IDs, and persistent sessions reject results that do not repeat the
+  matching IDs or replay a resolved call.
 
 - Added the Go `meta` LLM provider for Muse Spark 1.3 through Meta's hosted API, with streamed text/usage, tool-result replay, reasoning-effort selection and cancellation. Applications opt in through their routing configuration using `META_API_KEY`.
 

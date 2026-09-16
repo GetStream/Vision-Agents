@@ -89,6 +89,34 @@ func (s *SessionSuite) commands() *Session {
 	return created
 }
 
+func (s *SessionSuite) TestPersistentToolResultsStayBoundToTheirCommandAndTurn() {
+	s.persists()
+	running := s.commands()
+	receipt, err := running.persisted.BeginCommand("command-a", "Question")
+	s.Require().NoError(err)
+	running.persisted.BindTurn(receipt.CommandID, "turn-a")
+	events, detach := running.Watch()
+	defer detach()
+
+	resolved := make(chan error, 1)
+	go func() {
+		_, err := running.tools.Run(context.Background(), llm.ToolCall{
+			ID: "call-a", TurnID: "turn-a", Name: "athena_resource_metadata",
+		})
+		resolved <- err
+	}()
+	asked := awaitToolCall(events)
+	s.Require().NotNil(asked)
+	s.Equal("command-a", asked.CommandID)
+	s.Equal("turn-a", asked.TurnID)
+	s.False(running.ResolveTool("call-a", "legacy result", ""))
+	s.False(running.ResolveCommandTool("call-a", "command-b", "turn-a", llm.TextParts("wrong command"), ""))
+	s.False(running.ResolveCommandTool("call-a", "command-a", "turn-b", llm.TextParts("wrong turn"), ""))
+	s.True(running.ResolveCommandTool("call-a", "command-a", "turn-a", llm.TextParts("authorized"), ""))
+	s.False(running.ResolveCommandTool("call-a", "command-a", "turn-a", llm.TextParts("duplicate"), ""))
+	s.Require().NoError(<-resolved)
+}
+
 // asked waits for the question the model was handed.
 func (s *SessionSuite) asked() string {
 	select {
