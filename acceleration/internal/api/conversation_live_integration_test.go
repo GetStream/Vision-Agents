@@ -34,9 +34,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
 // Uses a fresh authenticated handler, real Stream resources and real Muse output.
@@ -106,22 +104,22 @@ func TestLiveConversationCommandReconnect(t *testing.T) {
 	registry.Register("meta", func(spec routing.Spec) (llmrouter.Provider, error) {
 		return llmrouter.Started(meta.New(meta.Options{Model: spec.Model, BaseURL: providerEndpoint.URL + "/v1", ReasoningEffort: "minimal", Logger: logger}))
 	})
-	model, err := llmrouter.New(llmrouter.Options{Registry: registry, Logger: logger, Config: routing.ModalityConfig{
+	modelConfig := routing.ModalityConfig{
 		Providers: []routing.ProviderConfig{{Provider: "meta", Model: "muse-spark-1.3", Realtime: true, Languages: []string{"en"}, Tier: routing.HighQuality}},
 		Aliases:   map[string]routing.Alias{"llm-flow": {Only: []string{"meta/muse-spark-1.3"}}},
-	}})
+	}
+	if path := os.Getenv("ATHENA_ROUTER_CONFIG"); path != "" {
+		config, err := routing.LoadConfig(path)
+		require.NoError(t, err)
+		require.Len(t, config, 1, "this probe verifies an LLM-only deployment")
+		require.Contains(t, config, routing.LLM)
+		modelConfig = config[routing.LLM]
+	}
+	model, err := llmrouter.New(llmrouter.Options{Registry: registry, Logger: logger, Config: modelConfig})
 	require.NoError(t, err)
 	t.Cleanup(model.Close)
-	config, err := routing.DefaultConfig()
-	require.NoError(t, err)
-	stt, err := sttrouter.New(sttrouter.Options{Config: config[routing.STT], Registry: sttrouter.DefaultRegistry(), Logger: logger})
-	require.NoError(t, err)
-	t.Cleanup(stt.Close)
-	tts, err := ttsrouter.New(ttsrouter.Options{Config: config[routing.TTS], Registry: ttsrouter.DefaultRegistry(), Logger: logger})
-	require.NoError(t, err)
-	t.Cleanup(tts.Close)
 	t.Setenv("CHAT_OUTBOX_DIR", t.TempDir())
-	manager, err := session.NewManager(session.ManagerOptions{LLM: model, STT: stt, TTS: tts, Logger: logger,
+	manager, err := session.NewManager(session.ManagerOptions{LLM: model, Logger: logger,
 		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
 			return nil, errors.New("text probe must not join a call")
 		},

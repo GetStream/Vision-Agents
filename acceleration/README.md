@@ -255,6 +255,11 @@ Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.
 Adding a provider or model is a config edit.
 
+A deployment with only an `llm` section supports text sessions without STT or TTS
+providers. Voice sessions require the appropriate speech routers and are refused
+before opening a call when those routers are absent. Configure the LLM aliases used
+by your sessions and controllers in the same file.
+
 ### Per-app model policy and attribution
 
 A modality may declare `customer_policies`, keyed by the authenticated app/customer ID:

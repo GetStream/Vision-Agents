@@ -447,9 +447,8 @@ func run(logger *slog.Logger) error {
 		defer base.Close()
 	}
 
-	// Conversations need all three modalities, so a deployment configured for only one
-	// still inspects routing and reports statistics while the session paths say there
-	// are none.
+	// An LLM-only deployment serves text sessions; voice modes validate their own
+	// speech dependencies before a call is opened.
 	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, finding, logger)
 	if err != nil {
 		return err
@@ -639,8 +638,8 @@ func buildSessions(
 	finding *searchrouter.Router,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
-	if streams.STT == nil || streams.TTS == nil || streams.LLM == nil {
-		logger.Warn("not serving sessions, which need all three modalities configured")
+	if streams.LLM == nil {
+		logger.Warn("not serving sessions, which need an llm router configured")
 		return nil, nil
 	}
 

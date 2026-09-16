@@ -183,6 +183,8 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+- Acceleration supports text sessions in deployments configured with only an LLM router; unavailable voice routes are refused before opening a call.
+
 - Per-app model policies can restrict each modality to approved concrete models,
   including alias resolution, priority lists and fallback attempts. An empty app
   allowlist disables routing. Policy-owned usage labels override client labels in

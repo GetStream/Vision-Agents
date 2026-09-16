@@ -626,6 +626,34 @@ func (s *SessionSuite) TestATextSessionOpensNoEdgeBecauseThereIsNoCall() {
 	s.Empty(s.edges, "a conversation held in writing joins nothing")
 }
 
+func (s *SessionSuite) TestAnLLMOnlyManagerAnswersTextAndRefusesVoice() {
+	s.manages()
+	manager, err := NewManager(ManagerOptions{LLM: s.manager.options.LLM, Edge: s.manager.options.Edge})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { manager.Shutdown() })
+	s.manager = manager
+	created := s.writes(Spec{})
+	events, detach := created.Watch()
+	defer detach()
+	s.Require().NoError(created.Respond(s.ctx, "hello", nil))
+	s.Equal("Hello.", awaitReply(events))
+	_, err = manager.Create(s.ctx, Spec{CallID: "voice", CustomerID: "acme"})
+	s.ErrorContains(err, "stt router is required for voice")
+	_, err = manager.Create(s.ctx, Spec{CallID: "native", CustomerID: "acme", STSTarget: "unconfigured/native"})
+	s.ErrorContains(err, "no speech-to-speech model")
+	s.Empty(s.edges, "unsupported voice must not open a call")
+}
+
+func (s *SessionSuite) TestVoiceWithoutATTSRouterIsRefusedBeforeOpeningACall() {
+	s.manages()
+	manager, err := NewManager(ManagerOptions{LLM: s.manager.options.LLM, STT: s.manager.options.STT, Edge: s.manager.options.Edge})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { manager.Shutdown() })
+	_, err = manager.Create(s.ctx, Spec{CallID: "voice", CustomerID: "acme"})
+	s.ErrorContains(err, "tts router is required for voice")
+	s.Empty(s.edges)
+}
+
 func (s *SessionSuite) TestATextSessionCannotAlsoJoinACall() {
 	s.manages()
 
