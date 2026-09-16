@@ -1,0 +1,23 @@
+# Transcription for a live call, where answering quickly is the point and the four models
+# behind it are interchangeable enough to fail over between.
+name: stt-realtime-fast
+
+tags:
+  team: examples
+
+stt:
+  # List order is try order, and each entry is expanded where it stands, so this is a
+  # fallback chain rather than a set. Flux first because Deepgram's turn detector is the
+  # one the other three are measured against; Ink 2 next because Cartesia wrote a
+  # migration guide from that exact model to this one; then Inworld, then Nemotron on
+  # Together, which is the cheapest of the four by a factor of six.
+  providers:
+    - deepgram/flux-general-en
+    - cartesia/ink-2
+    - inworld/inworld-stt-1
+    - together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b
+
+  # Asking not to be told who spoke rules nothing out: only a term that is on narrows the
+  # candidates, so all four of the above stay in the chain. That is the difference between
+  # this config and the accurate one next door, and it is the whole of it.
+  diarize: false

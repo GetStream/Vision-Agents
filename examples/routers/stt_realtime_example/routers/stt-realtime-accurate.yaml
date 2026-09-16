@@ -1,0 +1,32 @@
+# Transcription for a live call that has to say who spoke, which is a much shorter list of
+# models than one that does not.
+name: stt-realtime-accurate
+
+tags:
+  team: examples
+
+stt:
+  # The same shape of chain as the fast config, ordered by accuracy rather than by
+  # latency: Muse Voice first, then Scribe v2 Realtime, then Ink 2, then Nemotron.
+  providers:
+    - muse/muse-voice-transcribe-1.0
+    - elevenlabs/scribe_v2_realtime
+    - cartesia/ink-2
+    - together-nemotron/nvidia/nemotron-3-asr-streaming-0.6b
+
+  diarize: true
+
+  overwrites:
+    muse:
+      mode: DIARIZATION
+
+    elevenlabs:
+      vad_silence_threshold_secs: 0.4
+      min_silence_duration_ms: 200
+
+    cartesia:
+      turn_end_threshold: 0.7
+      turn_end_timeout_ms: 600
+
+    together-nemotron:
+      turn_grace_ms: 400

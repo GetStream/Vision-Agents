@@ -1,0 +1,34 @@
+# stt-realtime-fast, for a call whose audio may not be kept or trained on.
+#
+# The policy at the bottom is the whole difference from that config, and it is a
+# requirement rather than a description: a model that has not said no is not asked.
+name: stt-realtime-fast-private
+
+tags:
+  team: examples
+
+stt:
+  # Two models rather than the fast config's four, because these are the two of them that
+  # can promise both halves of the policy below on a live call.
+  #
+  # Of the other three the fast config names: Cartesia and Inworld are dropped outright -
+  # Cartesia trains on data unless the account files the form, and Inworld has published
+  # nothing either way, which counts as not having said no. Nemotron on Together says it
+  # does not train, but states no retention window, and an unstated window is not none.
+  # Deepgram and our own Parakeet are the two that answer both questions. Parakeet is the
+  # fallback rather than the first hop because it scales to zero: it is the cheaper and
+  # the more private of the two, but the first call after an idle spell waits minutes for
+  # the GPU rather than the hundreds of milliseconds this config is named for.
+  providers:
+    - deepgram/flux-general-en
+    - parakeet/parakeet-tdt-0.6b-v3
+
+  diarize: false
+
+  # allow_training false needs a model that has said outright that it does not train on
+  # what it is sent; retention none needs one that keeps nothing, not one that keeps it
+  # briefly. Nothing here falls back to a model that meets neither: a request this config
+  # cannot serve honestly is refused instead, which is the point of asking.
+  data_policy:
+    allow_training: false
+    retention: none

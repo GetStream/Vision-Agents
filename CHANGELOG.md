@@ -358,6 +358,29 @@ be about routing rather than about parsing RIFF chunks.
 several models and routing picks between them per session, so which one answered is a fact
 about the run that the SDK no longer makes callers dig out of the raw frame.
 
+### A Go example for realtime transcription, in `examples/routers/stt_realtime_example`
+
+The same recorded call streamed through four stored configs:
+
+```bash
+go run . -use-case stt-realtime-fast       # or -accurate, -fast-private, -accurate-private
+```
+
+`stt-realtime-fast` asks not to be told who spoke and keeps Flux, Ink 2, Inworld and
+Nemotron as a four-deep fallback chain. `stt-realtime-accurate` asks to be told, which
+narrows the same shape of chain to Muse — the one of its four that declares `diarize` — with
+nothing behind it, and carries an `overwrites` block per vendor, since where a turn ended is
+the question all four answer in words the others would not understand.
+
+The two `-private` configs add `data_policy: {allow_training: false, retention: none}`, which
+is where that requirement gets expensive: of every live transcriber the router knows, three
+answer both questions, so none of the six models the first two configs name survives.
+`stt-realtime-accurate-private` is the one to read, because being told who spoke and keeping
+nothing cannot both be had on a live call today, and it says which it gives up and why.
+
+The example passes no options at the call site, so what answers comes from the config alone,
+and prints the provider and model that did.
+
 ### Muse and Nemotron read their `overwrites` block
 
 Both had a setting the shared vocabulary has no word for and no way to be told it, so a

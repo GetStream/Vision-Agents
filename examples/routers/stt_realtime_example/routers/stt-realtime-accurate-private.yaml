@@ -1,0 +1,53 @@
+# stt-realtime-accurate, for a call whose audio may not be kept or trained on.
+#
+# This is the variation where the requirements collide, and it is worth reading for that
+# rather than for the provider list.
+name: stt-realtime-accurate-private
+
+tags:
+  team: examples
+
+stt:
+  # None of the four models the accurate config names survives the policy below. Muse
+  # declares unknown on both questions, Scribe and Ink 2 train unless the account has
+  # opted out, and Nemotron states no retention window. Three live models in the whole
+  # router answer both: these two and the English Flux.
+  #
+  # Parakeet leads on both counts at once. On this clip it is the only one of the three
+  # that both hears every word and writes the time down as "7:30" rather than as "seven
+  # thirty", and it is the one where the audio never leaves our own deployment, which is a
+  # stronger answer to the policy than any promise a vendor could make about it.
+  #
+  # The multilingual Flux is behind it because it is the one that still hears a caller who
+  # switches language. It is not the better English model - on this clip it writes "a table
+  # for for" where the English-only Flux writes "for four" - but a fallback that covers
+  # only the language the first model already covered is not much of a fallback.
+  #
+  # What it costs is the first call. The deployment scales to zero, so a session that
+  # opens against a cold one waits minutes for the GPU and hears nothing in the meantime -
+  # a silence rather than an error, which means the fallback below does not rescue it.
+  # Run the example twice if the first run prints nothing.
+  providers:
+    - parakeet/parakeet-tdt-0.6b-v3
+    - deepgram/flux-general-multi
+
+  # Not true, and not an oversight.
+  #
+  # Nothing that will promise to keep nothing can also name the voice on a live call: of
+  # the models that declare diarize, Muse answers unknown on both questions and Grok keeps
+  # audio for 30 days. Asking for both here would resolve to nothing at all and the request
+  # would be refused - correctly, but a config that can never serve is not a useful one.
+  #
+  # So this one gives up the label rather than the policy. Both together can be had on the
+  # recording path, where deepgram/nova-3 diarizes and promises both halves of this policy;
+  # a live call is where the choice has to be made.
+  diarize: false
+
+  # A requirement rather than a description. allow_training false needs a model that has
+  # said outright that it does not train on what it is sent, and having published nothing
+  # counts as not having said no; retention none needs one that keeps nothing, not one that
+  # keeps it briefly. A request neither of these two can serve is refused rather than sent
+  # somewhere that meets neither.
+  data_policy:
+    allow_training: false
+    retention: none
