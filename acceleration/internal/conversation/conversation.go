@@ -79,6 +79,8 @@ type commandRecord struct {
 	Digest string
 }
 
+var ErrCommandNotFound = errors.New("command not found")
+
 var ErrCommandConflict = errors.New("command ID was already used with different content")
 var validCommandID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
@@ -431,6 +433,22 @@ func (c *Conversation) Release() {
 func (c *Conversation) Begin(text string) error {
 	_, err := c.beginCommand(uuid.NewString(), text, true)
 	return err
+}
+
+// Command returns the known receipt without accepting or executing a submission.
+// The caller must first authorize access to this conversation. Unknown commands
+// are indistinguishable from an unavailable ledger; no new command is created.
+func (c *Conversation) Command(id string) (CommandReceipt, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.active || !c.data.CommandLedger || !validCommandID.MatchString(id) {
+		return CommandReceipt{}, ErrCommandNotFound
+	}
+	record, ok := c.data.Commands[id]
+	if !ok {
+		return CommandReceipt{}, ErrCommandNotFound
+	}
+	return record.CommandReceipt, nil
 }
 
 // BeginCommand atomically records command ownership and both initial Chat writes.
