@@ -131,11 +131,11 @@ class TestResponse:
             names: Function names in the expected order.
 
         Raises:
-            ValueError: If *names* is empty.
+            ValueError: If *names* is empty or a single string.
         """
         __tracebackhide__ = True
-        if not names:
-            raise ValueError("names must contain at least one function name")
+        if isinstance(names, str) or not names:
+            raise ValueError("names must be a sequence of at least one function name")
 
         actual = [event.name for event in self.function_calls]
         position = 0

@@ -11,6 +11,7 @@ from tests.test_testing.fake_llms import ToolCallingLLM
 from vision_agents.core import Agent, User
 from vision_agents.core.edge import EdgeTransport
 from vision_agents.core.events import EventManager
+from vision_agents.core.llm.events import ToolEndEvent, ToolStartEvent
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem
 from vision_agents.core.mcp import MCPBaseServer
 from vision_agents.core.tts import TTS
@@ -282,6 +283,13 @@ class TestTestSession:
                 response = await session.simple_response("weather")
 
         response.assert_function_output("get_weather", output={"temp": 99})
+
+    async def test_close_unsubscribes_tool_events(self, weather_llm: ToolCallingLLM):
+        async with TestSession(llm=weather_llm):
+            assert weather_llm.events.has_subscribers(ToolStartEvent)
+
+        assert not weather_llm.events.has_subscribers(ToolStartEvent)
+        assert not weather_llm.events.has_subscribers(ToolEndEvent)
 
     async def test_default_instructions(self, weather_llm: ToolCallingLLM):
         async with TestSession(llm=weather_llm) as session:

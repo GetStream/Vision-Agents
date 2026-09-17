@@ -375,3 +375,7 @@ class TestFunctionCallOrder:
     def test_empty_names_raises(self, response: TestResponse):
         with pytest.raises(ValueError, match="at least one"):
             response.assert_function_call_order([])
+
+    def test_bare_string_raises(self, response: TestResponse):
+        with pytest.raises(ValueError, match="sequence"):
+            response.assert_function_call_order("search")
