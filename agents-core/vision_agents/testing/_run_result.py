@@ -1,6 +1,7 @@
 """TestResponse — data container and assertions for a single conversation turn."""
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -81,30 +82,92 @@ class TestResponse:
         """
         __tracebackhide__ = True
         for event in self.function_calls:
-            if name is not None and event.name != name:
-                continue
+            if self._call_matches(event, name, arguments):
+                return
 
-            if arguments is not None and not self._arguments_match(
-                event.arguments, arguments
-            ):
-                continue
+        expected = self._describe_call(name, arguments)
+        msg = f"Expected a {expected}, but no matching call was found."
+        if self.function_calls:
+            msg += f"\nFunction calls:\n{self._format_calls()}"
+        raise AssertionError(msg)
 
+    def assert_function_not_called(
+        self,
+        name: str | None = None,
+        *,
+        arguments: dict[str, Any] | None = None,
+    ) -> None:
+        """Assert the events contain no matching ``FunctionCallEvent``.
+
+        Args:
+            name: Function name that must not have been called. ``None``
+                to assert that no function was called at all.
+            arguments: Only count calls with these arguments (partial
+                match — only specified keys are checked).
+        """
+        __tracebackhide__ = True
+        matches = [
+            event
+            for event in self.function_calls
+            if self._call_matches(event, name, arguments)
+        ]
+        if not matches:
             return
 
-        if name and arguments:
-            args = ", ".join(f"{k}={v!r}" for k, v in arguments.items())
-            expected = f"a call to '{name}({args})'"
-        elif name:
-            expected = f"a call to '{name}'"
-        else:
-            expected = "a function call"
-        msg = f"Expected {expected}, but no matching call was found."
-        if self.function_calls:
-            calls = "\n".join(
-                f"   {self._format_event(fc)}" for fc in self.function_calls
-            )
-            msg += f"\nFunction calls:\n{calls}"
-        raise AssertionError(msg)
+        expected = self._describe_call(name, arguments)
+        raise AssertionError(
+            f"Expected no {expected}, but found {len(matches)}."
+            f"\nFunction calls:\n{self._format_calls()}"
+        )
+
+    def assert_function_call_order(self, names: Sequence[str]) -> None:
+        """Assert the named functions were called in the given relative order.
+
+        Other calls may appear in between. Each name is matched to the next
+        call with that name after the previous match, so repeating a name
+        requires that many calls.
+
+        Args:
+            names: Function names in the expected order.
+
+        Raises:
+            ValueError: If *names* is empty.
+        """
+        __tracebackhide__ = True
+        if not names:
+            raise ValueError("names must contain at least one function name")
+
+        actual = [event.name for event in self.function_calls]
+        position = 0
+        previous: str | None = None
+        for expected in names:
+            if expected not in actual[position:]:
+                after = f" after '{previous}'" if previous is not None else ""
+                msg = (
+                    f"Expected function calls in order {list(names)!r}, "
+                    f"but '{expected}' was not called{after}."
+                    f"\nActual order: {actual!r}"
+                )
+                if self.function_calls:
+                    msg += f"\nFunction calls:\n{self._format_calls()}"
+                raise AssertionError(msg)
+            position = actual.index(expected, position) + 1
+            previous = expected
+
+    @classmethod
+    def _call_matches(
+        cls,
+        event: FunctionCallEvent,
+        name: str | None,
+        arguments: dict[str, Any] | None,
+    ) -> bool:
+        if name is not None and event.name != name:
+            return False
+        if arguments is not None and not cls._arguments_match(
+            event.arguments, arguments
+        ):
+            return False
+        return True
 
     @staticmethod
     def _arguments_match(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
@@ -113,6 +176,18 @@ class TestResponse:
             if key not in actual or actual[key] != value:
                 return False
         return True
+
+    @staticmethod
+    def _describe_call(name: str | None, arguments: dict[str, Any] | None) -> str:
+        if name and arguments:
+            args = ", ".join(f"{k}={v!r}" for k, v in arguments.items())
+            return f"call to '{name}({args})'"
+        if name:
+            return f"call to '{name}'"
+        return "function call"
+
+    def _format_calls(self) -> str:
+        return "\n".join(f"   {self._format_event(fc)}" for fc in self.function_calls)
 
     def assert_function_output(
         self,
