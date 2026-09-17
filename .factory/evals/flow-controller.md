@@ -95,49 +95,84 @@ gets its table pasted in below.
 
 ## Results
 
-Run 2026-09-17, 120 cases. The Gemma arm stood down: neither `GEMMA_BASE_URL` nor a Cerebras
-key was set, so the incumbent column is still owed and nothing below is a comparison yet.
+Run 2026-09-17, 120 cases, Gemma three times each and Jev once.
 
-| Arm | Model | Correct | Floor free | Agent talking | Missed stop | False stop | Unreadable | p50 | p95 | $/1k |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| jev-direct | `jev-latest` | 80.8% | 76.7% | 85.0% | 0 | 7 | 0 | 134ms | 490ms | $0.032 |
-| jev-composed | `jev-latest` | 83.3% | 81.7% | 85.0% | 0 | 7 | 0 | 128ms | 527ms | $0.046 |
+| Arm | Model | Correct | Floor free | Agent talking | Missed stop | False stop | Unreadable | Flipped | p50 | p95 | $/1k |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| gemma | `gemma/gemma-4-26B-A4B-it` | **85.0%** | 83.3% | 86.7% | 0/30 | 12/330 (3.6%) | 2 | 4.2% | 179ms | 443ms | $0.149 |
+| jev-direct | `jev-latest` | 80.8% | 76.7% | 85.0% | 0/10 | 7/110 (6.4%) | 0 | n/a | 144ms | **266ms** | **$0.032** |
+| jev-composed | `jev-latest` | 83.3% | 81.7% | 85.0% | 0/10 | 7/110 (6.4%) | 0 | n/a | **131ms** | 246ms | $0.046 |
 
-| State | Wants | jev-direct | jev-composed |
-| --- | --- | --- | --- |
-| `respond` | `answer` | 100% | 100% |
-| `wait` | `wait` | 60% | 60% |
-| `wait-digits` | `wait` | 50% | 60% |
-| `wait-menu` | `wait` | 70% | 100% |
-| `clarify` | `answer-clarify` | 80% | 70% |
-| `ignore` | `ignore` | 100% | 100% |
-| `stop` | `interrupt` | 100% | 100% |
-| `shorten` | `shorten` | 20% | 20% |
-| `continue-ack` | `continue` | 100% | 100% |
-| `continue-noise` | `continue` | 100% | 100% |
-| `continue-echo` | `continue` | 90% | 90% |
-| `continue-elsewhere` | `ignore` | 100% | 100% |
+| State | Wants | gemma | jev-direct | jev-composed |
+| --- | --- | --- | --- | --- |
+| `respond` | `answer` | 100% | 100% | 100% |
+| `wait` | `wait` | **100%** | 50% | 60% |
+| `wait-digits` | `wait` | **90%** | 50% | 50% |
+| `wait-menu` | `wait` | 100% | 80% | 100% |
+| `clarify` | `answer-clarify` | 30% | **80%** | **80%** |
+| `ignore` | `ignore` | 80% | **100%** | **100%** |
+| `stop` | `interrupt` | 100% | 100% | 100% |
+| `shorten` | `shorten` | **60%** | 20% | 20% |
+| `continue-ack` | `continue` | 87% | **100%** | **100%** |
+| `continue-noise` | `continue` | 93% | **100%** | **100%** |
+| `continue-echo` | `continue` | 80% | **90%** | **90%** |
+| `continue-elsewhere` | `ignore` | 100% | 100% | 100% |
 
-Three things are worth saying before the incumbent arrives.
+### Gemma wins by 1.7 points and the two models are nothing alike
 
-**Nothing was missed that mattered.** Zero missed stops across both arms: every caller who took
-the floor got it. Both arms also read a cough, an acknowledgement, an echo and a room full of
-other people correctly every time or nearly, which are four of the six states the agent has to
-get right while it is talking.
+The headline is close enough to be noise — 85.0% against 83.3% over 120 cases — and the state
+table underneath it is not close at all. They fail in almost opposite places, so which is better
+depends entirely on which mistake a call can afford.
 
-**Shorten is where it falls down, and it falls down in the expensive direction.** Seven of ten
-`shorten` cases came back as `interrupt`, and those seven are the entire false-stop count. A
-caller who says "and put us on the patio" over the agent gets the answer abandoned rather than
-cut short. That is a real cost — the agent loses the sentence it was halfway through and starts
-again — but it is the cheaper of the two mistakes, and the distinction is genuinely fine: both
-are additions to what was asked, and only the degree separates them. Whether Gemma draws the
-line better is now the most interesting number in the benchmark.
+**Gemma knows when somebody has not finished. Jev often does not.** `wait` 100% against 60%, and
+`wait-digits` 90% against 50%. This is the largest gap in the benchmark and it is Gemma's. Half
+the time Jev hears "it's four four eight" against a request for an eight digit member number and
+answers it. In a call that is the agent talking over the middle of somebody's account number,
+which then has to be asked for again.
 
-**Composing helped exactly where it was meant to.** `wait-menu` went from 70% to 100%, because a
-Noul asking "is this a recording reading out its options" is a question with one answer, whereas
-folding it into a four-way choice makes it compete with `respond`. The composed arm is 43% dearer
-per decision for 2.5 points overall, all of them in the wait family. Both arms are an order of
-magnitude inside the 3s deadline, so latency is not what will decide this.
+**Jev knows when a request is ambiguous. Gemma barely does.** `clarify` 80% against 30%: Gemma
+answered 21 of 30 ambiguous requests as though they were clear. Asked to "cancel it" with two
+appointments live, it cancels one. That is worse than a clumsy turn, because the agent does the
+wrong thing confidently and the caller has no signal that it guessed.
 
-The confusion matrices and every judgement are in the run directory; the summary above is the
-part worth keeping in the repository.
+**Jev is steadier about everything that is not a request.** It reads an acknowledgement, a cough,
+an echo and background chatter correctly every time or all but once, where Gemma drops 1 to 2
+cases in each. None of those are expensive individually; together they are why its "agent
+talking" column is level with Gemma's despite Gemma being much better at `shorten`.
+
+**Neither missed a single stop.** Thirty judgements for Gemma and ten for Jev where the caller
+took the floor, and all forty got it. This is the failure that makes people hang up, and on this
+set neither model has it. Both do give the floor up when they should not, and there Gemma is
+better per judgement: 3.6% against 6.4%. Jev's false stops are all the same mistake — seven of
+ten `shorten` cases read as `interrupt` — so a caller adding "and put us on the patio" loses the
+sentence the agent was halfway through instead of having it trimmed.
+
+**Jev is 3.2x cheaper and tighter at the tail.** $0.032 against $0.149 per thousand decisions,
+and a p95 of 266ms against 443ms. Both are far inside the 3s deadline, so latency does not decide
+this, but the tail is the number that matters on a live path and it is Jev's. Gemma also produced
+two answers that would not parse and flipped its own verdict on 4.2% of cases across three
+samples; Jev returns a distribution, so there is nothing to flip.
+
+**Composing helped exactly where it was meant to.** `wait-menu` went 80% to 100%, because a Noul
+asking "is this a recording reading out its options" has one answer, whereas folded into a
+four-way choice it competes with `respond`. That is 2.5 points overall for 43% more per decision,
+and it closes about a third of the gap to Gemma without touching the `clarify` advantage.
+
+### What this suggests
+
+Nothing here says replace the incumbent. It says the two models are good at different halves of
+the job, and that a controller built from both would beat either: Jev is the better judge of
+whether words were meant for the agent and whether they are a clear request, and Gemma the better
+judge of whether they have finished. Jev being an order of magnitude cheaper and answering with a
+probability rather than a sample makes it the cheaper half to add.
+
+The obvious next step is not a third arm but a fourth question: give the composed arm Gemma's
+`still_growing` judgement — or Gemma's alone — and see whether 83.3% moves past 85% at a fifth of
+the cost.
+
+Two caveats. `router.yaml` currently routes `llm-flow` to `gemini/gemini-3.8-flash` rather than to
+either Gemma, so the incumbent measured here is not what a call runs through today; that arm is
+worth adding before anything is decided. And 120 cases put a point or two of this inside the
+noise, which is why the state table matters more than the headline.
+
+The confusion matrices and every judgement are in the run directory.

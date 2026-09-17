@@ -471,6 +471,11 @@ type tally struct {
 	// talking over a correction. FalseStop counts the agent giving the floor up to a cough.
 	MissedStop int `json:"missed_stop"`
 	FalseStop  int `json:"false_stop"`
+	// StopWanted and StopNotWanted are what those two are out of. Without them the counts
+	// cannot be compared between arms, because an arm asked three times per case has three
+	// times as many chances to get one wrong.
+	StopWanted    int `json:"stop_wanted"`
+	StopNotWanted int `json:"stop_not_wanted"`
 	// Unsure counts judgements whose own confidence was below jevConfident.
 	Unsure int `json:"unsure"`
 	// Flipped counts cases whose repeats did not agree with each other.
@@ -563,11 +568,16 @@ func (t *tally) add(decided judgement) {
 	if decided.Unreadable {
 		t.Unreadable++
 	}
-	if decided.Expect == outcomeInterrupt && decided.Got != outcomeInterrupt {
-		t.MissedStop++
-	}
-	if decided.Got == outcomeInterrupt && decided.Expect != outcomeInterrupt {
-		t.FalseStop++
+	if decided.Expect == outcomeInterrupt {
+		t.StopWanted++
+		if decided.Got != outcomeInterrupt {
+			t.MissedStop++
+		}
+	} else {
+		t.StopNotWanted++
+		if decided.Got == outcomeInterrupt {
+			t.FalseStop++
+		}
 	}
 	if decided.Confidence > 0 && decided.Confidence < jevConfident {
 		t.Unsure++
@@ -624,12 +634,14 @@ func (s *FlowBenchmarkSuite) report(tallies []tally) string {
 			flipped = share(counted.Flipped, len(s.set.Cases))
 		}
 		fmt.Fprintf(&out,
-			"| %s | `%s` | %s | %s | %s | %d | %d | %d | %s | %.0fms | %.0fms | $%.3f |\n",
+			"| %s | `%s` | %s | %s | %s | %s | %s | %d | %s | %.0fms | %.0fms | $%.3f |\n",
 			counted.Arm, counted.Model,
 			share(counted.Correct, counted.Judged),
 			share(counted.QuietCorrect, counted.QuietJudged),
 			share(counted.SpeakingCorrect, counted.SpeakingJudged),
-			counted.MissedStop, counted.FalseStop, counted.Unreadable,
+			share(counted.MissedStop, counted.StopWanted),
+			share(counted.FalseStop, counted.StopNotWanted),
+			counted.Unreadable,
 			flipped, counted.P50Ms, counted.P95Ms, perThousand)
 	}
 
