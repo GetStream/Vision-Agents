@@ -322,6 +322,21 @@ func (s *Service) HistoryForCaller(ctx context.Context, customer, agentID, cid, 
 	return s.history(ctx, customer, agentID, cid, before, caller)
 }
 
+// ContextForCaller returns completed user and assistant turns for a voice
+// session that must not open a persistent text conversation. Empty cid is no
+// history rather than an error.
+func (s *Service) ContextForCaller(ctx context.Context, customer, agentID, cid, caller string) ([]llm.Message, bool, error) {
+	if cid == "" {
+		return nil, false, nil
+	}
+	page, err := s.HistoryForCaller(ctx, customer, agentID, cid, "", caller)
+	if err != nil {
+		return nil, false, err
+	}
+	messages, truncated := history(page)
+	return messages, truncated, nil
+}
+
 // ownedBy reads a channel's recorded ownership. A channel with no owner is a
 // backend-owned demo channel, which no end user may claim.
 func ownedBy(custom map[string]any, customer, agentID, caller string) error {

@@ -196,6 +196,17 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 				conv.Release()
 			}
 		}()
+	} else if spec.ConversationID != "" {
+		service, err := m.Conversations()
+		if err != nil {
+			return nil, err
+		}
+		var truncated bool
+		previous, truncated, err = service.ContextForCaller(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID)
+		if err != nil {
+			return nil, err
+		}
+		spec.ContextTruncated = truncated
 	}
 	m.supersede(spec)
 	m.think(ctx, &spec)
@@ -348,8 +359,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}
 
+	if conv == nil && spec.ConversationID != "" {
+		m.logger.Info("restored conversation history into the voice session",
+			"call", spec.CallID, "conversation", spec.ConversationID,
+			"turns", len(previous), "truncated", spec.ContextTruncated)
+	}
+	created.voiceAgent.RestoreHistory(previous)
 	if conv != nil {
-		created.voiceAgent.RestoreHistory(previous)
 		conv.Attach(func(update persistent.Updated) { created.broadcast(update) })
 		created.closers = append(created.closers, conv.Release)
 	}

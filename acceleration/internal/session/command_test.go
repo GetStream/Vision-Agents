@@ -311,3 +311,64 @@ func (s *SessionSuite) TestConcurrentStopsAndSubmissionsKeepEachCommandSeparate(
 	s.Require().NoError(err)
 	s.Equal(second.AssistantMessageID, live.AssistantMessageID)
 }
+
+func (s *SessionSuite) TestPersistentConversationsStillRequireTextMode() {
+	s.manages()
+	_, err := s.manager.Create(s.ctx, Spec{
+		CallID:              "call-1",
+		CustomerID:          "acme",
+		PersistConversation: true,
+		LLMTarget:           "en-low-latency",
+		STTTarget:           "en-low-latency",
+		TTSTarget:           "en-low-latency",
+	})
+	s.ErrorContains(err, "persistent conversations require text mode")
+}
+
+func (s *SessionSuite) TestAVoiceSessionRestoresChatHistoryWithoutPersisting() {
+	s.outbox = s.T().TempDir()
+	service, err := persistent.NewForChat(s.outbox, chattest.Client(s.T()))
+	s.Require().NoError(err)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+
+	written, err := s.manager.Create(s.ctx, Spec{
+		CustomerID:          "acme",
+		Text:                true,
+		PersistConversation: true,
+		AgentID:             "athena-agent",
+		LLMTarget:           "en-low-latency",
+		Caller:              routing.Caller{UserID: "employee-1"},
+	})
+	s.Require().NoError(err)
+	_, err = written.RespondCommand(s.ctx, "seed-1", "The project name is Nimbus")
+	s.Require().NoError(err)
+	cid := written.Spec().ConversationID
+	s.eventually(func() bool {
+		page, err := s.conversations.HistoryForCaller(s.ctx, "acme", "athena-agent", cid, "", "employee-1")
+		if err != nil {
+			return false
+		}
+		completed := 0
+		for _, message := range page.Messages {
+			if message.State == "completed" && message.Text != "" {
+				completed++
+			}
+		}
+		return completed >= 2
+	}, "chat never stored the text turn")
+	s.Require().NoError(written.Close())
+
+	voice := s.joins(Spec{
+		CallID:         "athv-nimbus",
+		ConversationID: cid,
+		AgentID:        "athena-agent",
+		Caller:         routing.Caller{UserID: "employee-1"},
+	})
+	s.Nil(voice.persisted)
+	s.Equal([]llm.Message{
+		{Role: llm.User, Content: "The project name is Nimbus"},
+		{Role: llm.Assistant, Content: "Hello."},
+	}, voice.voiceAgent.History())
+}

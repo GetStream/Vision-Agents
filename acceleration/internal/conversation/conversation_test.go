@@ -191,6 +191,36 @@ func TestActivityPersistsAndRestores(t *testing.T) {
 	_, err = s.History(context.Background(), "customer", "support-agent", strings.TrimPrefix(c.CID(), "agent:"), "")
 	require.Error(t, err)
 }
+
+func TestContextForCallerSeedsCompletedTurnsWithoutOpeningTheConversation(t *testing.T) {
+	_, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("The project name is Nimbus"))
+	c.Observe(agent.ResponseDelta{Text: "Noted."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	cid := c.CID()
+	c.Release()
+
+	messages, truncated, err := service.ContextForCaller(t.Context(), "customer", "agent", cid, "employee")
+	require.NoError(t, err)
+	require.False(t, truncated)
+	require.Equal(t, []llm.Message{
+		{Role: llm.User, Content: "The project name is Nimbus"},
+		{Role: llm.Assistant, Content: "Noted."},
+	}, messages)
+
+	_, _, err = service.ContextForCaller(t.Context(), "customer", "agent", cid, "somebody-else")
+	require.ErrorContains(t, err, "another user")
+	empty, truncated, err := service.ContextForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	require.False(t, truncated)
+	require.Empty(t, empty)
+}
 func TestOutboxFailureRestartAndDeduplication(t *testing.T) {
 	db, client := newChat(t)
 	root := t.TempDir()
