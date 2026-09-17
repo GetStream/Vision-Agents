@@ -1206,12 +1206,18 @@ docker run -d --name va-redis -p 56379:6379 redis:7-alpine
 go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
 uv run ../plugins/stream/generate.py
 uv run ../sdks/swift/generate.py
+(cd ../sdks/js && npm run types)
 (cd ../dashboard && npm run types)
 ```
 
 The Swift client is generated from a filter rather than from the whole spec, and
 `generate.py --check` fails if anything in that filter is not marked `x-client-accessible`.
 Dropping that mark is therefore the whole of removing an operation from the iOS SDK.
+
+The JavaScript client generates types and no runtime, because one package has to work in a
+browser and on a server and the runtime is the part that differs between them. Its request
+code is hand-written in `sdks/js/src/client.ts` and typed against the generated `paths`, so
+a new operation is reachable there as soon as the types are regenerated.
 
 The three sockets are declared in the spec with a `101` response so a reader and a client
 generator know they exist, and excluded from generation: a strict server cannot express an

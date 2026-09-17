@@ -103,6 +103,34 @@ jobs:
         run: go test -race ./...
         working-directory: tui
 
+  js:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sdks/js/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # The generated types are committed so that installing the package needs no code
+      # generation, which only holds while they are the ones the spec describes.
+      - name: Check the generated types are in step with the spec
+        run: npm run types -- --check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
   dashboard:
     runs-on: ubuntu-latest
     defaults:
