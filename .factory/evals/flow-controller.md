@@ -14,7 +14,7 @@ stops mid-sentence for a cough.
 
 | Arm | What it is |
 | --- | ---------- |
-| `gemma` | `cerebras/gemma-4-31b` given the production `flowInstructions` and `flowQuestion`, parsed by the production `parseFlow`. The incumbent, unaltered |
+| `gemma` | `gemma/gemma-4-26B-A4B-it`, our own deployment, given the production `flowInstructions` and `flowQuestion` and parsed by the production `parseFlow`. The incumbent, unaltered. `FLOW_BENCHMARK_GEMMA=cerebras/gemma-4-31b` puts the same set to Cerebras' public one instead |
 | `jev-direct` | `jev-latest` asked two Choice questions in one request, the closest thing to what Gemma is asked |
 | `jev-composed` | The same two Choices plus four Nouls in the same request, with the policy the conversation already hard-codes applied in Go |
 
@@ -84,9 +84,10 @@ cd acceleration
 FLOW_BENCHMARK=1 go test -tags integration -run TestFlowBenchmarkSuite ./internal/harness -v
 ```
 
-Needs `CEREBRAS_API_KEY` and `TYPESAFE_API_KEY` in the repo-root `.env`. Each arm skips on its
-own missing key and says so, so one vendor's absence does not take the run with it. Requests go
-one at a time, because a benchmark reporting latency cannot also be saturating what it measures.
+Needs `GEMMA_BASE_URL` with `BASETEN_API_KEY`, and `TYPESAFE_API_KEY`, in the repo-root `.env`.
+An arm whose model cannot be reached says so and stands down, so an undeployed Gemma or a
+missing key does not take the run with it. Requests go one at a time, because a benchmark
+reporting latency cannot also be saturating what it measures.
 
 The table is printed and written, with every judgement, to
 `internal/harness/testdata/flowbench-out/<timestamp>/`, which is gitignored. A run worth keeping
@@ -94,4 +95,49 @@ gets its table pasted in below.
 
 ## Results
 
-Not yet run.
+Run 2026-09-17, 120 cases. The Gemma arm stood down: neither `GEMMA_BASE_URL` nor a Cerebras
+key was set, so the incumbent column is still owed and nothing below is a comparison yet.
+
+| Arm | Model | Correct | Floor free | Agent talking | Missed stop | False stop | Unreadable | p50 | p95 | $/1k |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| jev-direct | `jev-latest` | 80.8% | 76.7% | 85.0% | 0 | 7 | 0 | 134ms | 490ms | $0.032 |
+| jev-composed | `jev-latest` | 83.3% | 81.7% | 85.0% | 0 | 7 | 0 | 128ms | 527ms | $0.046 |
+
+| State | Wants | jev-direct | jev-composed |
+| --- | --- | --- | --- |
+| `respond` | `answer` | 100% | 100% |
+| `wait` | `wait` | 60% | 60% |
+| `wait-digits` | `wait` | 50% | 60% |
+| `wait-menu` | `wait` | 70% | 100% |
+| `clarify` | `answer-clarify` | 80% | 70% |
+| `ignore` | `ignore` | 100% | 100% |
+| `stop` | `interrupt` | 100% | 100% |
+| `shorten` | `shorten` | 20% | 20% |
+| `continue-ack` | `continue` | 100% | 100% |
+| `continue-noise` | `continue` | 100% | 100% |
+| `continue-echo` | `continue` | 90% | 90% |
+| `continue-elsewhere` | `ignore` | 100% | 100% |
+
+Three things are worth saying before the incumbent arrives.
+
+**Nothing was missed that mattered.** Zero missed stops across both arms: every caller who took
+the floor got it. Both arms also read a cough, an acknowledgement, an echo and a room full of
+other people correctly every time or nearly, which are four of the six states the agent has to
+get right while it is talking.
+
+**Shorten is where it falls down, and it falls down in the expensive direction.** Seven of ten
+`shorten` cases came back as `interrupt`, and those seven are the entire false-stop count. A
+caller who says "and put us on the patio" over the agent gets the answer abandoned rather than
+cut short. That is a real cost — the agent loses the sentence it was halfway through and starts
+again — but it is the cheaper of the two mistakes, and the distinction is genuinely fine: both
+are additions to what was asked, and only the degree separates them. Whether Gemma draws the
+line better is now the most interesting number in the benchmark.
+
+**Composing helped exactly where it was meant to.** `wait-menu` went from 70% to 100%, because a
+Noul asking "is this a recording reading out its options" is a question with one answer, whereas
+folding it into a four-way choice makes it compete with `respond`. The composed arm is 43% dearer
+per decision for 2.5 points overall, all of them in the wait family. Both arms are an order of
+magnitude inside the 3s deadline, so latency is not what will decide this.
+
+The confusion matrices and every judgement are in the run directory; the summary above is the
+part worth keeping in the repository.

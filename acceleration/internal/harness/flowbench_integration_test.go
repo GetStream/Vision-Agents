@@ -29,9 +29,12 @@ import (
 // two vendors is not something an integration suite should do by walking past it.
 const benchmarkEnvVar = "FLOW_BENCHMARK"
 
-// gemmaTarget is Gemma 4 31B on Cerebras, which needs no deployment of our own. The Baseten
-// Gemma is the same family behind GEMMA_BASE_URL and can be named here instead.
-const gemmaTarget = "cerebras/gemma-4-31b"
+// defaultGemmaTarget is the Gemma 4 deployment of our own, behind GEMMA_BASE_URL.
+const defaultGemmaTarget = "gemma/gemma-4-26B-A4B-it"
+
+// gemmaTargetEnvVar names a different incumbent, which is how the same set is put to Gemma 4
+// 31B on Cerebras' public inference API, or to whatever replaces it.
+const gemmaTargetEnvVar = "FLOW_BENCHMARK_GEMMA"
 
 // gemmaRepeats is how often each case is put to Gemma. It samples, so one answer measures a
 // draw rather than the model, and a controller that flips between two answers for the same
@@ -121,8 +124,8 @@ func (s *FlowBenchmarkSuite) TestFlowControllerBenchmark() {
 	for _, jev := range s.jevArms() {
 		arms = append(arms, jev)
 	}
-	s.Require().NotEmpty(arms,
-		"no arm has a key: set CEREBRAS_API_KEY, TYPESAFE_API_KEY, or both")
+	s.Require().NotEmpty(arms, "no arm can be reached: set GEMMA_BASE_URL with "+
+		"BASETEN_API_KEY, or TYPESAFE_API_KEY, or both")
 
 	tallies := make([]tally, 0, len(arms))
 	for _, one := range arms {
@@ -193,11 +196,14 @@ func busy(err error) bool {
 }
 
 // gemmaArm is the incumbent: the production prompt, the production parser, and the fallback the
-// controller takes when the answer will not parse. Nil when there is no key for it.
+// controller takes when the answer will not parse.
+//
+// Nil when the target cannot be reached, which is how an undeployed Gemma or a missing key
+// leaves the Jev arms to run on their own rather than taking the whole benchmark with it.
 func (s *FlowBenchmarkSuite) gemmaArm() *arm {
-	if os.Getenv("CEREBRAS_API_KEY") == "" {
-		s.T().Log("CEREBRAS_API_KEY not set, skipping the Gemma arm")
-		return nil
+	target := os.Getenv(gemmaTargetEnvVar)
+	if target == "" {
+		target = defaultGemmaTarget
 	}
 
 	config, err := routing.DefaultConfig()
@@ -211,9 +217,12 @@ func (s *FlowBenchmarkSuite) gemmaArm() *arm {
 	s.T().Cleanup(router.Close)
 
 	session, err := router.Start(s.ctx, llmrouter.Request{
-		CustomerID: "flow-benchmark", Target: gemmaTarget,
+		CustomerID: "flow-benchmark", Target: target,
 	})
-	s.Require().NoError(err)
+	if err != nil {
+		s.T().Logf("skipping the Gemma arm, %s is out of reach: %v", target, err)
+		return nil
+	}
 	s.T().Cleanup(func() { _ = session.Close() })
 
 	price := session.Price()
