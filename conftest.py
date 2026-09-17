@@ -19,6 +19,8 @@ from vision_agents.core.edge.types import Participant
 
 load_dotenv()
 
+pytest_plugins = ["vision_agents.testing.fixtures"]
+
 
 def skip_blockbuster(func_or_class):
     """Decorator to skip blockbuster checks for a test function or class.
