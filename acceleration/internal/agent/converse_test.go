@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
 	"testing"
@@ -693,16 +694,28 @@ func (s *ConverseSuite) TestAControllerThatDidNotAnswerDoesNotCostTheCallerTheir
 		Disposition: "nonsense",
 		Floor:       harness.Continue,
 	}, s.quiet())
+	s.Equal([]ActionKind{ActAnswer}, kinds(actions))
+	s.Equal("book a table", actions[0].Text)
+	s.eventually(func() bool { return len(s.heard()) == 1 }, "the caller's words were never recorded")
+	s.Equal("book a table", s.heard()[0].Text)
+}
 
-	s.Equal([]ActionKind{ActFail}, kinds(actions))
-	s.Error(actions[0].Err)
-
-	select {
-	case again := <-s.settling.Ready():
-		s.Equal("book a table", again.Text)
-	case <-time.After(testWithin):
-		s.Fail("a failed ruling swallowed the caller's turn")
+func (s *ConverseSuite) TestAnUnfinishedTurnWhoseControllerFailedIsPutAgain() {
+	ready := candidate{
+		ID:          "turn-unfinished",
+		Participant: caller,
+		Text:        "book a",
+		Unfinished:  true,
 	}
+	s.Equal(ActAsk, s.converse.Settled(ready, s.quiet()).Kind)
+
+	actions := s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID,
+		Err:         errors.New("deadline"),
+	}, s.quiet())
+	s.Equal([]ActionKind{ActFail}, kinds(actions))
+	s.Equal("book a", actions[0].Text)
+	s.Error(actions[0].Err)
 }
 
 func (s *ConverseSuite) TestATurnHeldOverTheAgentIsAnsweredOnceItStopsTalking() {
