@@ -114,11 +114,12 @@ class TestSession:
         if not self._started:
             return
 
-        self._llm.events.unsubscribe(self._on_tool_event)
-        if self._agent is not None and self._agent.mcp_manager is not None:
-            await self._agent.mcp_manager.disconnect_all()
-
-        self._started = False
+        try:
+            self._llm.events.unsubscribe(self._on_tool_event)
+            if self._agent is not None and self._agent.mcp_manager is not None:
+                await self._agent.mcp_manager.disconnect_all()
+        finally:
+            self._started = False
 
     @property
     def llm(self) -> LLM:

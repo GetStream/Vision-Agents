@@ -73,11 +73,8 @@ async def test_weather_tool_call_mocked(test_session: TestSession, judge: LLMJud
 @pytest.mark.integration
 async def test_multi_turn_in_users_language(test_session: TestSession, judge: LLMJudge):
     """Agent keeps calling the tool and answering in German across turns."""
-    with test_session.mock_functions(
-        {"get_weather": lambda **_: {"temp_f": 60, "condition": "cloudy"}}
-    ):
-        await test_session.simple_response("Wie ist das Wetter in Berlin?")
-        response = await test_session.simple_response("Und in Hamburg?")
+    await test_session.simple_response("Wie ist das Wetter in Berlin?")
+    response = await test_session.simple_response("Und in Hamburg?")
 
     response.assert_function_called("get_weather")
     assert len([e for e in test_session.transcript if e.type == "function_call"]) == 2
