@@ -318,7 +318,7 @@ func validArtifact(artifact ArtifactAttachment) bool {
 		if !boundedDisplayText(artifact.Alt, 500) {
 			return false
 		}
-	case "athena_pdf", "athena_canvas", "athena_file":
+	case "athena_pdf", "athena_canvas", "athena_file", "athena_site":
 		if artifact.Alt != "" {
 			return false
 		}
