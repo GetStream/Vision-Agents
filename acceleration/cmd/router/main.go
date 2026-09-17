@@ -678,10 +678,13 @@ func buildSessions(
 			})
 		},
 		Transcript: func(spec session.Spec, logger *slog.Logger) (session.Transcript, error) {
-			// A voice call leaves nothing behind, so what was said is stored in a chat
-			// channel named after the agent.
+			channel := strings.TrimPrefix(spec.ConversationID, "agent:")
+			if channel == spec.ConversationID {
+				channel = ""
+			}
 			return chatlog.New(chatlog.Options{
 				AgentID: spec.AgentID,
+				Channel: channel,
 				Agent:   chatlog.User{ID: spec.UserID, Name: spec.UserName},
 				Logger:  logger,
 			})

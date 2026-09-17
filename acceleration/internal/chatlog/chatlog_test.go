@@ -64,6 +64,20 @@ func (s *ChatLogSuite) TestTheTranscriptIsStoredUnderTheAgentId() {
 	s.Equal("agent-1", s.log.ChannelID())
 }
 
+func (s *ChatLogSuite) TestABoundConversationStoresTheTranscriptOnThatChannel() {
+	log, err := New(Options{
+		AgentID:   "agent-1",
+		Channel:   "support-accafc35",
+		Agent:     User{ID: "vision-agent", Name: "Vision Agent"},
+		APIKey:    "key",
+		APISecret: "secret",
+		Logger:    slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.Equal("support-accafc35", log.ChannelID())
+	s.True(log.existing)
+}
+
 func (s *ChatLogSuite) TestAParticipantIsTheAuthorOfWhatTheySaid() {
 	s.log.Record(agent.Heard{
 		Participant: stt.Participant{ID: "session-9", UserID: "alice", Name: "Alice"},

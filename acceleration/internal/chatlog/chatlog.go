@@ -81,8 +81,13 @@ const (
 // Options configures a Log. The credentials fall back to the environment, the same way
 // the Stream edge reads them.
 type Options struct {
-	// AgentID names the channel: one agent's transcript lives in agent:{agentID}.
+	// AgentID is required. It is the default channel name for demo calls that have no
+	// conversation.
 	AgentID string
+	// Channel is the Stream Chat channel id (without type) to write into. Empty means
+	// AgentID. A bound Athena conversation passes the id from its CID so voice does not
+	// open a second channel.
+	Channel string
 	// Agent is the user the agent's own replies are written as.
 	Agent User
 
@@ -103,10 +108,12 @@ type User struct {
 
 // Log writes a conversation into one Stream Chat channel.
 type Log struct {
-	client  *getstream.Stream
-	agentID string
-	agent   User
-	logger  *slog.Logger
+	client   *getstream.Stream
+	agentID  string
+	channel  string
+	existing bool
+	agent    User
+	logger   *slog.Logger
 
 	queue chan message
 	done  chan struct{}
@@ -155,13 +162,20 @@ func New(options Options) (*Log, error) {
 		return nil, err
 	}
 
+	channel := options.Channel
+	if channel == "" {
+		channel = options.AgentID
+	}
+
 	return &Log{
-		client:  client,
-		agentID: options.AgentID,
-		agent:   options.Agent,
-		logger:  options.Logger.With("agent", options.AgentID),
-		queue:   make(chan message, queueSize),
-		done:    make(chan struct{}),
+		client:   client,
+		agentID:  options.AgentID,
+		channel:  channel,
+		existing: options.Channel != "",
+		agent:    options.Agent,
+		logger:   options.Logger.With("agent", options.AgentID, "channel", channel),
+		queue:    make(chan message, queueSize),
+		done:     make(chan struct{}),
 	}, nil
 }
 
@@ -174,10 +188,14 @@ func (l *Log) Start(ctx context.Context) error {
 	if err := l.upsert(ctx, l.agent); err != nil {
 		return err
 	}
-	_, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.agentID,
-		&getstream.GetOrCreateChannelRequest{
-			Data: &getstream.ChannelInput{CreatedByID: &l.agent.ID},
-		})
+	request := &getstream.GetOrCreateChannelRequest{}
+	if l.existing {
+		state := true
+		request.State = &state
+	} else {
+		request.Data = &getstream.ChannelInput{CreatedByID: &l.agent.ID}
+	}
+	_, err := l.client.Chat().GetOrCreateChannel(ctx, ChannelType, l.channel, request)
 	if err != nil {
 		return err
 	}
@@ -242,7 +260,7 @@ func (l *Log) enqueue(queued message) {
 func (l *Log) Chat() *getstream.ChatClient { return l.client.Chat() }
 
 // ChannelID is where this conversation is stored.
-func (l *Log) ChannelID() string { return l.agentID }
+func (l *Log) ChannelID() string { return l.channel }
 
 // Close drains the queue and stops the writer.
 func (l *Log) Close() {
@@ -426,7 +444,7 @@ func (w *writer) send(ctx context.Context, author User, text string, generating 
 		w.known[author.ID] = struct{}{}
 	}
 
-	response, err := w.log.client.Chat().SendMessage(ctx, ChannelType, w.log.agentID,
+	response, err := w.log.client.Chat().SendMessage(ctx, ChannelType, w.log.channel,
 		&getstream.SendMessageRequest{
 			Message: getstream.MessageRequest{
 				Text:   &text,
