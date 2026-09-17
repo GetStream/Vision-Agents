@@ -1460,6 +1460,19 @@ llm:
       tier: high-quality
       prefer: openai/gpt-5.6-sol
 
+    # What product data is analysed on: the model that reads a week of calls, tickets and
+    # threads and writes what customers are asking for. That is a different intent from
+    # quality over speed in a conversation, which is why it is not llm-thinking with another
+    # name: nobody is waiting on the other end, and which model does the reading is a
+    # decision about product data rather than about a skill. The tier answers it, and a
+    # deployment that wants a particular model for it pins one with prefer.
+    #
+    # Jev, the model the product agent classifies signal with, is deliberately not here: it
+    # is TypeSafe's System One model, which answers typed questions with probabilities and
+    # writes no prose, so it is a tool in the agent rather than a provider in this catalogue.
+    llm-analysis:
+      tier: high-quality
+
 # What is true today, which neither a model nor a handbook can answer. These providers all
 # read the same web, so what separates them is whether a model writes the answer before it
 # comes back: the low-latency tier returns pages and lets the conversation's own model read
