@@ -206,3 +206,23 @@ func TestStreamSnapshotsCarrySchemaV1AndStableCommandTurnIdentity(t *testing.T) 
 	require.NotContains(t, string(encoded), "arguments")
 	require.NotContains(t, string(encoded), "Result")
 }
+
+func TestStoredArtifactReceiptsPublishNativeChatAttachments(t *testing.T) {
+	canvas := `{"schema_version":1,"status":"stored","attachment":{"type":"athena_canvas","artifact_id":"canvas_01","revision":1,"title":"Analysis","sha256":"abc"},"publication":"pending"}`
+	image := `{"schema_version":1,"status":"stored","attachment":{"type":"athena_image","artifact_id":"img_01","revision":2,"title":"Sketch","alt":"A sketch"},"publication":"pending"}`
+	require.Equal(t, []ArtifactAttachment{{
+		Type: "athena_canvas", ArtifactID: "canvas_01", Revision: 1, Title: "Analysis",
+	}}, artifactsOf(canvas))
+	require.Equal(t, []ArtifactAttachment{{
+		Type: "athena_image", ArtifactID: "img_01", Revision: 2, Title: "Sketch", Alt: "A sketch",
+	}}, artifactsOf(image))
+	require.Empty(t, artifactsOf(`{"status":"answered","citations":[]}`))
+	require.Empty(t, artifactsOf(`{"schema_version":1,"status":"stored","attachment":{"type":"athena_image","artifact_id":"img_01","revision":1,"title":"Sketch"},"publication":"pending"}`))
+	require.Empty(t, artifactsOf(`{"schema_version":1,"status":"stored","attachment":{"type":"athena_pdf","artifact_id":"../x","revision":1,"title":"Report"},"publication":"pending"}`))
+	require.Empty(t, artifactsOf(`{"schema_version":1,"status":"stored","attachment":{"type":"athena_canvas","artifact_id":"canvas_01","revision":1,"title":"Analysis"},"publication":"pending","secret":"no"}`))
+	wire := streamAttachments(artifactsOf(canvas))
+	encoded, err := json.Marshal(wire)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"type":"athena_canvas"`)
+	require.NotContains(t, string(encoded), "sha256")
+}

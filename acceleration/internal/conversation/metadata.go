@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,6 +21,17 @@ const (
 )
 
 var displayID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
+var artifactID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
+
+const maxArtifactAttachments = 32
+
+type ArtifactAttachment struct {
+	Type       string `json:"type"`
+	ArtifactID string `json:"artifact_id"`
+	Revision   int    `json:"revision"`
+	Title      string `json:"title"`
+	Alt        string `json:"alt,omitempty"`
+}
 
 type supportMessage struct {
 	SchemaVersion int             `json:"schema_version"`
@@ -264,6 +276,96 @@ func mergeSources(existing, additions []Source) []Source {
 		merged = append(merged, source)
 	}
 	return merged
+}
+
+func artifactsOf(result string) []ArtifactAttachment {
+	if result == "" || len(result) > maxSupportMessageBytes {
+		return nil
+	}
+	var payload struct {
+		SchemaVersion int    `json:"schema_version"`
+		Status        string `json:"status"`
+		Publication   string `json:"publication"`
+		Attachment    struct {
+			Type       string `json:"type"`
+			ArtifactID string `json:"artifact_id"`
+			Revision   int    `json:"revision"`
+			Title      string `json:"title"`
+			Alt        string `json:"alt"`
+			SHA256     string `json:"sha256"`
+		} `json:"attachment"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(result))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&payload) != nil || !errors.Is(decoder.Decode(&struct{}{}), io.EOF) ||
+		payload.SchemaVersion != 1 || payload.Status != "stored" || payload.Publication != "pending" {
+		return nil
+	}
+	artifact := ArtifactAttachment{
+		Type: payload.Attachment.Type, ArtifactID: payload.Attachment.ArtifactID,
+		Revision: payload.Attachment.Revision, Title: payload.Attachment.Title,
+		Alt: payload.Attachment.Alt,
+	}
+	if !validArtifact(artifact) {
+		return nil
+	}
+	return []ArtifactAttachment{artifact}
+}
+
+func validArtifact(artifact ArtifactAttachment) bool {
+	switch artifact.Type {
+	case "athena_image":
+		if !boundedDisplayText(artifact.Alt, 500) {
+			return false
+		}
+	case "athena_pdf", "athena_canvas", "athena_file":
+		if artifact.Alt != "" {
+			return false
+		}
+	default:
+		return false
+	}
+	return artifactID.MatchString(artifact.ArtifactID) &&
+		artifact.Revision >= 1 && artifact.Revision <= 2147483647 &&
+		boundedDisplayText(artifact.Title, 200)
+}
+
+func mergeArtifacts(existing, additions []ArtifactAttachment) []ArtifactAttachment {
+	merged := append([]ArtifactAttachment{}, existing...)
+	seen := map[string]struct{}{}
+	for _, artifact := range merged {
+		seen[artifact.ArtifactID+":"+strconv.Itoa(artifact.Revision)] = struct{}{}
+	}
+	for _, artifact := range additions {
+		if len(merged) == maxArtifactAttachments {
+			break
+		}
+		key := artifact.ArtifactID + ":" + strconv.Itoa(artifact.Revision)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, artifact)
+	}
+	return merged
+}
+
+func streamAttachments(artifacts []ArtifactAttachment) []map[string]any {
+	if len(artifacts) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		item := map[string]any{
+			"type": artifact.Type, "artifact_id": artifact.ArtifactID,
+			"revision": artifact.Revision, "title": artifact.Title,
+		}
+		if artifact.Alt != "" {
+			item["alt"] = artifact.Alt
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func runtimeOf(message Message) runtimeMessage {

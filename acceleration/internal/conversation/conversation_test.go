@@ -829,3 +829,29 @@ func TestConcurrentOldCommandStopsPreserveTheNextReply(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", old.State)
 }
+
+func TestStoredCanvasReceiptIsWrittenAsChatAttachment(t *testing.T) {
+	db, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.Open(context.Background(), "customer", "support-agent", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("Save a canvas"))
+	id := current(c).ID
+	c.Observe(agent.ToolStarted{ID: "save", Tool: "athena_save_canvas", StartedAt: time.Now().UTC()})
+	c.Observe(agent.ToolRan{ID: "save", Tool: "athena_save_canvas", Result: `{"schema_version":1,"status":"stored","attachment":{"type":"athena_canvas","artifact_id":"canvas_01","revision":1,"title":"Analysis","sha256":"not-for-chat"},"publication":"pending"}`})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	require.Equal(t, []ArtifactAttachment{{
+		Type: "athena_canvas", ArtifactID: "canvas_01", Revision: 1, Title: "Analysis",
+	}}, current(c).Artifacts)
+	db.mu.Lock()
+	raw, _ := json.Marshal(db.messages[id]["attachments"])
+	db.mu.Unlock()
+	require.Contains(t, string(raw), `"type":"athena_canvas"`)
+	require.Contains(t, string(raw), `"artifact_id":"canvas_01"`)
+	require.Contains(t, string(raw), `"title":"Analysis"`)
+	require.NotContains(t, string(raw), "sha256")
+	require.NotContains(t, string(raw), "not-for-chat")
+}

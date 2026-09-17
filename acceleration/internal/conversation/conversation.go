@@ -47,22 +47,23 @@ type Source struct {
 	Citation string `json:"citation,omitempty"`
 }
 type Message struct {
-	CommandID      string     `json:"command_id,omitempty"`
-	TurnID         string     `json:"turn_id,omitempty"`
-	ID             string     `json:"id"`
-	QuestionID     string     `json:"question_id,omitempty"`
-	Role           string     `json:"role"`
-	Text           string     `json:"text"`
-	State          string     `json:"state"`
-	StartedAt      time.Time  `json:"response_started_at"`
-	StateStartedAt time.Time  `json:"state_started_at"`
-	FinishedAt     *time.Time `json:"finished_at,omitempty"`
-	DurationMS     int64      `json:"duration_ms"`
-	Sequence       int        `json:"sequence"`
-	Tools          []Tool     `json:"attachments"`
-	Sources        []Source   `json:"sources,omitempty"`
-	Saved          bool       `json:"saved"`
-	Error          string     `json:"persistence_error,omitempty"`
+	CommandID      string               `json:"command_id,omitempty"`
+	TurnID         string               `json:"turn_id,omitempty"`
+	ID             string               `json:"id"`
+	QuestionID     string               `json:"question_id,omitempty"`
+	Role           string               `json:"role"`
+	Text           string               `json:"text"`
+	State          string               `json:"state"`
+	StartedAt      time.Time            `json:"response_started_at"`
+	StateStartedAt time.Time            `json:"state_started_at"`
+	FinishedAt     *time.Time           `json:"finished_at,omitempty"`
+	DurationMS     int64                `json:"duration_ms"`
+	Sequence       int                  `json:"sequence"`
+	Tools          []Tool               `json:"attachments"`
+	Sources        []Source             `json:"sources,omitempty"`
+	Artifacts      []ArtifactAttachment `json:"artifacts,omitempty"`
+	Saved          bool                 `json:"saved"`
+	Error          string               `json:"persistence_error,omitempty"`
 }
 type Page struct {
 	memoryScope memory.Scope
@@ -768,6 +769,7 @@ func (c *Conversation) Observe(event agent.Event) {
 			t.Phase = t.Status
 			if e.Err == nil {
 				m.Sources = mergeSources(m.Sources, sourcesOf(e.Tool, e.Result))
+				m.Artifacts = mergeArtifacts(m.Artifacts, artifactsOf(e.Result))
 			}
 			changed = true
 		}
@@ -1069,6 +1071,7 @@ func (c *Conversation) persist() error {
 func (c *Conversation) enqueue(m Message, create bool) error {
 	m.Tools = append([]Tool{}, m.Tools...)
 	m.Sources = append([]Source{}, m.Sources...)
+	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	c.data.Pending = append(c.data.Pending, operation{m, create})
 	return c.persist()
 }
@@ -1099,6 +1102,9 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool) e
 	fields := map[string]any{
 		"text": m.Text, "generating": m.FinishedAt == nil, "source": "agent",
 		"support_message": metadata, "support_runtime": runtime,
+	}
+	if attachments := streamAttachments(m.Artifacts); len(attachments) > 0 {
+		fields["attachments"] = attachments
 	}
 	if op.Create {
 		_, err := c.service.client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
