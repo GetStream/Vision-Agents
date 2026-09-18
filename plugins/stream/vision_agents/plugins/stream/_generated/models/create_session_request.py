@@ -11,8 +11,10 @@ from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.create_session_request_custom import CreateSessionRequestCustom
     from ..models.create_session_request_subagents import CreateSessionRequestSubagents
     from ..models.create_session_request_tags import CreateSessionRequestTags
+    from ..models.model_overwrites import ModelOverwrites
     from ..models.session_memory import SessionMemory
     from ..models.session_phone import SessionPhone
     from ..models.session_skill import SessionSkill
@@ -39,6 +41,29 @@ class CreateSessionRequest:
              Default: False.
         config_id (str | Unset): An agent config to start from. Everything else in this request overrides what the
             config says, so a caller can reuse a configuration and still change one thing about this call.
+        agent (str | Unset): The name of an agent config to start from, as an alternative to config_id. It is what a
+            caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is
+            refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too,
+            since there is no sensible answer when they disagree.
+        incognito (bool | Unset): Hold the conversation and record nothing about it: no session row, no turns, no
+            transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as
+            any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused,
+            because there is nothing to fork from.
+             Default: False.
+        title (str | Unset): What to call the conversation, for a list a person reads. Never shown to the model: what a
+            conversation is called is a label on it rather than part of it.
+        description (str | Unset): A longer note about the conversation, searched alongside the title.
+        project (str | Unset): What the conversation belongs to. Also recorded as the "project" cost tag, so spend
+            breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
+        custom (CreateSessionRequestCustom | Unset): Anything the caller wants to remember about the session, handed
+            back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth
+            writing.
+        model_overwrites (ModelOverwrites | Unset): What to change about the models for one session, over whatever its
+            agent config decided.
+            It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides
+            the config, and a caller reading a session back wants to see what they changed in one place rather than diffed
+            against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because
+            a caller able to rewrite those could make a session impersonate a different agent.
         call_type (str | Unset):  Default: 'default'.
         user_id (str | Unset): Who the agent joins the call as. Default: 'vision-agent'.
         user_name (str | Unset):  Default: 'Vision Agent'.
@@ -91,6 +116,13 @@ class CreateSessionRequest:
     call_id: str | Unset = UNSET
     text: bool | Unset = False
     config_id: str | Unset = UNSET
+    agent: str | Unset = UNSET
+    incognito: bool | Unset = False
+    title: str | Unset = UNSET
+    description: str | Unset = UNSET
+    project: str | Unset = UNSET
+    custom: CreateSessionRequestCustom | Unset = UNSET
+    model_overwrites: ModelOverwrites | Unset = UNSET
     call_type: str | Unset = "default"
     user_id: str | Unset = "vision-agent"
     user_name: str | Unset = "Vision Agent"
@@ -135,6 +167,24 @@ class CreateSessionRequest:
         text = self.text
 
         config_id = self.config_id
+
+        agent = self.agent
+
+        incognito = self.incognito
+
+        title = self.title
+
+        description = self.description
+
+        project = self.project
+
+        custom: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.custom, Unset):
+            custom = self.custom.to_dict()
+
+        model_overwrites: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.model_overwrites, Unset):
+            model_overwrites = self.model_overwrites.to_dict()
 
         call_type = self.call_type
 
@@ -239,6 +289,20 @@ class CreateSessionRequest:
             field_dict["text"] = text
         if config_id is not UNSET:
             field_dict["config_id"] = config_id
+        if agent is not UNSET:
+            field_dict["agent"] = agent
+        if incognito is not UNSET:
+            field_dict["incognito"] = incognito
+        if title is not UNSET:
+            field_dict["title"] = title
+        if description is not UNSET:
+            field_dict["description"] = description
+        if project is not UNSET:
+            field_dict["project"] = project
+        if custom is not UNSET:
+            field_dict["custom"] = custom
+        if model_overwrites is not UNSET:
+            field_dict["model_overwrites"] = model_overwrites
         if call_type is not UNSET:
             field_dict["call_type"] = call_type
         if user_id is not UNSET:
@@ -304,12 +368,16 @@ class CreateSessionRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.create_session_request_custom import (
+            CreateSessionRequestCustom,
+        )
         from ..models.create_session_request_subagents import (
             CreateSessionRequestSubagents,
         )
         from ..models.create_session_request_tags import (
             CreateSessionRequestTags,
         )
+        from ..models.model_overwrites import ModelOverwrites
         from ..models.session_memory import SessionMemory
         from ..models.session_phone import SessionPhone
         from ..models.session_skill import SessionSkill
@@ -328,6 +396,30 @@ class CreateSessionRequest:
         text = d.pop("text", UNSET)
 
         config_id = d.pop("config_id", UNSET)
+
+        agent = d.pop("agent", UNSET)
+
+        incognito = d.pop("incognito", UNSET)
+
+        title = d.pop("title", UNSET)
+
+        description = d.pop("description", UNSET)
+
+        project = d.pop("project", UNSET)
+
+        _custom = d.pop("custom", UNSET)
+        custom: CreateSessionRequestCustom | Unset
+        if isinstance(_custom, Unset):
+            custom = UNSET
+        else:
+            custom = CreateSessionRequestCustom.from_dict(_custom)
+
+        _model_overwrites = d.pop("model_overwrites", UNSET)
+        model_overwrites: ModelOverwrites | Unset
+        if isinstance(_model_overwrites, Unset):
+            model_overwrites = UNSET
+        else:
+            model_overwrites = ModelOverwrites.from_dict(_model_overwrites)
 
         call_type = d.pop("call_type", UNSET)
 
@@ -440,6 +532,13 @@ class CreateSessionRequest:
             call_id=call_id,
             text=text,
             config_id=config_id,
+            agent=agent,
+            incognito=incognito,
+            title=title,
+            description=description,
+            project=project,
+            custom=custom,
+            model_overwrites=model_overwrites,
             call_type=call_type,
             user_id=user_id,
             user_name=user_name,

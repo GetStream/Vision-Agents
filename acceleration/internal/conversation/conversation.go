@@ -217,6 +217,20 @@ func (s *Service) Open(ctx context.Context, customer, agentID, cid string, scope
 func (s *Service) History(ctx context.Context, customer, agentID, cid, before string) (Page, error) {
 	return s.history(ctx, customer, agentID, cid, before)
 }
+
+// Recall is a conversation's history as the model would be given it, without opening the
+// conversation. It is what a fork starts from: the words are read out of the parent's channel
+// and handed to the new session's model, while the fork writes its own transcript into its own
+// channel. Copying the messages across instead would leave two channels claiming to be the
+// same conversation, each half-right.
+func (s *Service) Recall(ctx context.Context, customer, agentID, cid string) ([]llm.Message, bool, error) {
+	page, err := s.history(ctx, customer, agentID, cid, "")
+	if err != nil {
+		return nil, false, err
+	}
+	messages, truncated := history(page)
+	return messages, truncated, nil
+}
 func (s *Service) history(ctx context.Context, customer, agentID, cid, before string) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

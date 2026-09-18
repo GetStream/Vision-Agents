@@ -1,6 +1,10 @@
 package llm
 
-import "time"
+import (
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+)
 
 // ResponseParams is one response to generate.
 //
@@ -53,6 +57,34 @@ type ResponseParams struct {
 	// Metadata is carried by the provider and returned with the response. It is for the
 	// caller's own bookkeeping and never reaches the model.
 	Metadata map[string]string
+}
+
+// Overwrite returns these params with everything the caller asked to change written over
+// them.
+//
+// Only the fields a session may overwrite are read: instructions, tools and the cache key
+// belong to the agent that built the turn, and a caller able to rewrite those could make a
+// session pretend to be a different agent. What is left is how hard to think, how long to
+// answer, how random to be and how much detail to give -- the knobs it is safe to hand to
+// whoever opened the conversation.
+//
+// A field the caller said nothing about is left alone rather than zeroed, which is why the
+// numbers travel as pointers: a temperature of zero is a real request, and a missing one is
+// not the same thing.
+func (p ResponseParams) Overwrite(over options.LLM) ResponseParams {
+	if over.ReasoningEffort != "" {
+		p.Reasoning.Effort = over.ReasoningEffort
+	}
+	if over.Temperature != nil {
+		p.Temperature = over.Temperature
+	}
+	if over.MaxOutputTokens != nil {
+		p.MaxOutputTokens = *over.MaxOutputTokens
+	}
+	if over.Verbosity != "" {
+		p.Text.Verbosity = over.Verbosity
+	}
+	return p
 }
 
 // ReasoningParams is how much thinking to do before answering.

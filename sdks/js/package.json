@@ -1,0 +1,70 @@
+{
+  "name": "@stream-io/vision-agents",
+  "version": "0.2.0",
+  "description": "JavaScript client for the Stream acceleration backend: agents that run there, and the conversations they hold.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GetStream/Vision-Agents.git",
+    "directory": "sdks/js"
+  },
+  "homepage": "https://github.com/GetStream/Vision-Agents/tree/main/sdks/js",
+  "keywords": [
+    "stream",
+    "voice",
+    "agents",
+    "ai",
+    "llm",
+    "stt",
+    "tts",
+    "webrtc"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "types": "node scripts/generate.mjs",
+    "test": "tsc -p tsconfig.json && node --test --test-timeout 20000 \"build/tests/*.test.js\"",
+    "test:local": "tsc -p tsconfig.json && node --env-file-if-exists=../../.env --test --test-timeout 180000 \"build/tests/live/local.test.js\"",
+    "test:qa": "tsc -p tsconfig.json && node --env-file-if-exists=../../.env --test --test-timeout 180000 \"build/tests/live/staging.test.js\"",
+    "example": "npm run build && tsc -p tsconfig.json && node",
+    "prepublishOnly": "rm -rf dist && tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.7.0",
+    "ws": "^8.18.0"
+  },
+  "peerDependencies": {
+    "@stream-io/video-client": ">=1.0.0",
+    "stream-chat": ">=8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@stream-io/video-client": {
+      "optional": true
+    },
+    "stream-chat": {
+      "optional": true
+    }
+  }
+}

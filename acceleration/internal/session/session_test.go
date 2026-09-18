@@ -408,6 +408,13 @@ func (s *SessionSuite) joins(spec Spec) *Session {
 	return created
 }
 
+// says hands a session a line to answer, for tests that care about what comes back on the
+// events rather than the id the turn was recorded under.
+func (s *SessionSuite) says(created *Session, text string) {
+	_, err := created.Respond(s.ctx, text, nil)
+	s.Require().NoError(err)
+}
+
 func (s *SessionSuite) eventually(condition func() bool, message string) {
 	s.Require().Eventually(condition, settleFor, 5*time.Millisecond, message)
 }
@@ -862,7 +869,7 @@ func (s *SessionSuite) TestATextSessionAnswersInWriting() {
 
 	events, detach := created.Watch()
 	defer detach()
-	s.Require().NoError(created.Respond(s.ctx, "hello", nil))
+	s.says(created, "hello")
 
 	s.Equal("Hello.", awaitReply(events))
 	s.Empty(s.voice.spoken(), "nothing is synthesised for a reader")
@@ -935,7 +942,7 @@ func (s *SessionSuite) TestACallersToolIsAskedForAndItsAnswerReachesTheModel() {
 
 	events, detach := created.Watch()
 	defer detach()
-	s.Require().NoError(created.Respond(s.ctx, "where is my order", nil))
+	s.says(created, "where is my order")
 
 	asked := awaitToolCall(events)
 	s.Require().NotNil(asked)
@@ -1076,7 +1083,7 @@ func (s *SessionSuite) TestChangingTheInstructionsAppliesToTheNextTurn() {
 	created := s.joins(Spec{Instructions: "be brief"})
 
 	created.SetInstructions("be thorough")
-	s.Require().NoError(created.Respond(s.ctx, "hello", nil))
+	s.says(created, "hello")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
 	s.Equal("be thorough", s.model.requests()[0].Instructions)
@@ -1194,7 +1201,7 @@ func (s *SessionSuite) TestWhatWasSaidIsKeptSoTheCallCanBeReviewed() {
 	s.manages()
 	created := s.joins(Spec{})
 
-	s.Require().NoError(created.Respond(s.ctx, "where is my order", nil))
+	s.says(created, "where is my order")
 
 	s.eventually(func() bool { return len(created.conversation()) > 0 },
 		"the call left nothing to review")
@@ -1227,7 +1234,7 @@ func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
 
 	events, detach := created.Watch()
 	defer detach()
-	s.Require().NoError(created.Respond(s.ctx, "what is on camera", nil))
+	s.says(created, "what is on camera")
 
 	asked := awaitToolCall(events)
 	s.Require().NotNil(asked)
@@ -1252,7 +1259,7 @@ func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
 func (s *SessionSuite) TestImagesRequireAVisionSkill() {
 	s.manages()
 	created := s.joins(Spec{})
-	err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{1, 2, 3}}})
+	_, err := created.Respond(s.ctx, "what is this", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{1, 2, 3}}})
 	s.ErrorContains(err, "vision")
 }
 

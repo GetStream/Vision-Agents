@@ -108,6 +108,8 @@ plugins/*/example/uv.lock
 /benchmark/cache/
 /benchmark/baselines/
 
+/acceleration/internal/harness/testdata/flowbench-out/
+
 # Artifacts / assets
 *.pt
 *.kef

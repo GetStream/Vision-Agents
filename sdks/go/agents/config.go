@@ -39,6 +39,7 @@ func (a *Agent) Sync(ctx context.Context) (*acceleration.AgentConfig, error) {
 
 	wanted := acceleration.AgentConfigRequest{Name: a.options.Name}
 	setString(&wanted.Instructions, a.options.Instructions)
+	setString(&wanted.Guardrail, a.options.Guardrail)
 	setString(&wanted.KnowledgeNamespace, namespace)
 	if a.options.Harness != nil && len(a.options.Harness.Subagents) > 0 {
 		wanted.Subagents = &a.options.Harness.Subagents
@@ -76,7 +77,11 @@ func DefineAgent(
 	client *acceleration.ClientWithResponses,
 	wanted acceleration.AgentConfigRequest,
 ) (*acceleration.AgentConfig, error) {
-	listed, err := client.ListAgentConfigsWithResponse(ctx)
+	// Narrowed to the name rather than read whole and filtered here: names are unique per
+	// customer, so this asks the router the question instead of downloading every config an
+	// app has to answer it locally.
+	listed, err := client.ListAgentConfigsWithResponse(ctx,
+		&acceleration.ListAgentConfigsParams{Name: &wanted.Name})
 	if err != nil {
 		return nil, fmt.Errorf("agents: listing configs: %w", err)
 	}

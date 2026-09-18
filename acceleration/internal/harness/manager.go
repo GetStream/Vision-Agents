@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/emit"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
@@ -49,8 +50,12 @@ type manager struct {
 	limit int
 	// box is where the subagent runs code, when it has anywhere to run it. Nil means the
 	// tool is not offered, and the subagent works everything out in its head.
-	box    sandbox.Sandbox
-	logger *slog.Logger
+	box sandbox.Sandbox
+	// overwrites is what the caller asked to change about how the model answers, written
+	// over delegated work as well as over the conversation itself: somebody who asked for
+	// more thinking meant the thinking, which is what runs here.
+	overwrites options.LLM
+	logger     *slog.Logger
 
 	results *emit.Emitter[Result]
 
@@ -109,18 +114,20 @@ func newManager(
 	subagent *llmrouter.Session,
 	limit int,
 	box sandbox.Sandbox,
+	overwrites options.LLM,
 	logger *slog.Logger,
 ) *manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &manager{
 		ctx: ctx, cancel: cancel, workers: map[string]*worker{},
-		subagent: subagent,
-		limit:    limit,
-		box:      box,
-		logger:   logger,
-		results:  emit.New[Result](resultBuffer),
-		running:  map[string]*task{},
-		bySkill:  map[string]string{},
+		subagent:   subagent,
+		limit:      limit,
+		box:        box,
+		overwrites: overwrites,
+		logger:     logger,
+		results:    emit.New[Result](resultBuffer),
+		running:    map[string]*task{},
+		bySkill:    map[string]string{},
 	}
 	if subagent != nil {
 		ready := make(chan struct{})
@@ -244,7 +251,7 @@ func (m *manager) ask(running *task, messages []llm.Message) (*llm.Stream, error
 	}
 	return model.Create(running.ctx, llm.ResponseParams{
 		ID: running.id, Instructions: running.instructions, Input: messages, Tools: m.tools(),
-	})
+	}.Overwrite(m.overwrites))
 }
 
 // hold records the stream a task is answering on, closing it straight away when the task

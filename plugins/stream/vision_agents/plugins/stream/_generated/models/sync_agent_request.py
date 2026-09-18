@@ -32,6 +32,8 @@ class SyncAgentRequest:
             name (str): What the config is called, which is also the directory's name.
             hash_ (str): A fingerprint of the directory. A second sync with the same hash does nothing.
             instructions (str | Unset):
+            guardrail (str | Unset): The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the
+                policy in prose. Empty means every turn is answered.
             skills (list[SkillRequest] | Unset):
             knowledge (list[KnowledgeDocument] | Unset):
             mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
@@ -60,6 +62,7 @@ class SyncAgentRequest:
     name: str
     hash_: str
     instructions: str | Unset = UNSET
+    guardrail: str | Unset = UNSET
     skills: list[SkillRequest] | Unset = UNSET
     knowledge: list[KnowledgeDocument] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
@@ -85,6 +88,8 @@ class SyncAgentRequest:
         hash_ = self.hash_
 
         instructions = self.instructions
+
+        guardrail = self.guardrail
 
         skills: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.skills, Unset):
@@ -154,6 +159,8 @@ class SyncAgentRequest:
         )
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
+        if guardrail is not UNSET:
+            field_dict["guardrail"] = guardrail
         if skills is not UNSET:
             field_dict["skills"] = skills
         if knowledge is not UNSET:
@@ -209,6 +216,8 @@ class SyncAgentRequest:
         hash_ = d.pop("hash")
 
         instructions = d.pop("instructions", UNSET)
+
+        guardrail = d.pop("guardrail", UNSET)
 
         _skills = d.pop("skills", UNSET)
         skills: list[SkillRequest] | Unset = UNSET
@@ -287,6 +296,7 @@ class SyncAgentRequest:
             name=name,
             hash_=hash_,
             instructions=instructions,
+            guardrail=guardrail,
             skills=skills,
             knowledge=knowledge,
             mode=mode,

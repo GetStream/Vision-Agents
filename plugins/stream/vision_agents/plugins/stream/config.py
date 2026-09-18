@@ -97,6 +97,8 @@ async def sync_agent(
     body = SyncAgentRequest(name=folder.name, hash_=fingerprint)
     if folder.instructions:
         body.instructions = folder.instructions
+    if folder.guardrail:
+        body.guardrail = folder.guardrail
     if skills:
         body.skills = skills
     if knowledge:

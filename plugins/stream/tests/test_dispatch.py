@@ -466,6 +466,59 @@ class TestDispatch:
         assert message.at is not None
         assert message.at.year == 2026
 
+    async def test_what_the_channel_was_created_with_reaches_the_handler(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # It is the only way a worker learns what a conversation is for. The router has no
+        # opinion about an organization or a locale and should not need one.
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(
+                {
+                    **MESSAGE,
+                    "custom": {
+                        "organization_id": "1234",
+                        "locale": "en-GB",
+                        # Stream takes arbitrary JSON here and a worker reads strings, so
+                        # anything else is dropped rather than rendered into one.
+                        "seats": 12,
+                    },
+                }
+            )
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.custom == {"organization_id": "1234", "locale": "en-GB"}
+
+    async def test_a_message_carrying_nothing_custom_still_reads_as_empty(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # A handler should be able to read the field without checking whether the router
+        # bothered to send it.
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def read(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(MESSAGE)
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.custom == {}
+
     async def test_the_channel_a_message_arrived_on_is_the_agent_to_answer_as(
         self, router: Router, dispatch: stream.Dispatch
     ):

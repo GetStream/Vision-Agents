@@ -12,6 +12,8 @@ from ..models.session_state import SessionState
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.model_overwrites import ModelOverwrites
+    from ..models.session_custom import SessionCustom
     from ..models.session_subagents import SessionSubagents
     from ..models.session_video import SessionVideo
 
@@ -43,6 +45,26 @@ class Session:
         subagents (SessionSubagents | Unset): Configured worker targets, prepared asynchronously.
         video (SessionVideo | Unset):
         instructions (str | Unset):
+        agent (str | Unset): The name the agent was addressed as. Recorded on the session as well as the config id, so
+            renaming a config does not rewrite what older sessions were opened against.
+        config_id (str | Unset): The agent config the session ran under, empty for one that spelled itself out.
+        incognito (bool | Unset): Nothing about this session was recorded. It is reported so a caller can see that what
+            they asked for is what they got, but it is never read back from storage: an incognito session has no row to read
+            it from.
+        title (str | Unset):
+        description (str | Unset):
+        project (str | Unset):
+        custom (SessionCustom | Unset):
+        model_overwrites (ModelOverwrites | Unset): What to change about the models for one session, over whatever its
+            agent config decided.
+            It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides
+            the config, and a caller reading a session back wants to see what they changed in one place rather than diffed
+            against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because
+            a caller able to rewrite those could make a session impersonate a different agent.
+        forked_from (str | Unset): The session this one continued from, empty for one opened fresh.
+        closed_at (datetime.datetime | Unset): When the session ended. Absent while it is still running.
+        last_response_at (datetime.datetime | Unset): When the agent last answered. This is what a most-recently-used
+            ordering of conversations reads, since a session renamed long after it ended has not become more recent.
     """
 
     id: str
@@ -64,6 +86,17 @@ class Session:
     subagents: SessionSubagents | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     instructions: str | Unset = UNSET
+    agent: str | Unset = UNSET
+    config_id: str | Unset = UNSET
+    incognito: bool | Unset = UNSET
+    title: str | Unset = UNSET
+    description: str | Unset = UNSET
+    project: str | Unset = UNSET
+    custom: SessionCustom | Unset = UNSET
+    model_overwrites: ModelOverwrites | Unset = UNSET
+    forked_from: str | Unset = UNSET
+    closed_at: datetime.datetime | Unset = UNSET
+    last_response_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -109,6 +142,36 @@ class Session:
 
         instructions = self.instructions
 
+        agent = self.agent
+
+        config_id = self.config_id
+
+        incognito = self.incognito
+
+        title = self.title
+
+        description = self.description
+
+        project = self.project
+
+        custom: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.custom, Unset):
+            custom = self.custom.to_dict()
+
+        model_overwrites: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.model_overwrites, Unset):
+            model_overwrites = self.model_overwrites.to_dict()
+
+        forked_from = self.forked_from
+
+        closed_at: str | Unset = UNSET
+        if not isinstance(self.closed_at, Unset):
+            closed_at = self.closed_at.isoformat()
+
+        last_response_at: str | Unset = UNSET
+        if not isinstance(self.last_response_at, Unset):
+            last_response_at = self.last_response_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -146,11 +209,35 @@ class Session:
             field_dict["video"] = video
         if instructions is not UNSET:
             field_dict["instructions"] = instructions
+        if agent is not UNSET:
+            field_dict["agent"] = agent
+        if config_id is not UNSET:
+            field_dict["config_id"] = config_id
+        if incognito is not UNSET:
+            field_dict["incognito"] = incognito
+        if title is not UNSET:
+            field_dict["title"] = title
+        if description is not UNSET:
+            field_dict["description"] = description
+        if project is not UNSET:
+            field_dict["project"] = project
+        if custom is not UNSET:
+            field_dict["custom"] = custom
+        if model_overwrites is not UNSET:
+            field_dict["model_overwrites"] = model_overwrites
+        if forked_from is not UNSET:
+            field_dict["forked_from"] = forked_from
+        if closed_at is not UNSET:
+            field_dict["closed_at"] = closed_at
+        if last_response_at is not UNSET:
+            field_dict["last_response_at"] = last_response_at
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.model_overwrites import ModelOverwrites
+        from ..models.session_custom import SessionCustom
         from ..models.session_subagents import SessionSubagents
         from ..models.session_video import SessionVideo
 
@@ -203,6 +290,48 @@ class Session:
 
         instructions = d.pop("instructions", UNSET)
 
+        agent = d.pop("agent", UNSET)
+
+        config_id = d.pop("config_id", UNSET)
+
+        incognito = d.pop("incognito", UNSET)
+
+        title = d.pop("title", UNSET)
+
+        description = d.pop("description", UNSET)
+
+        project = d.pop("project", UNSET)
+
+        _custom = d.pop("custom", UNSET)
+        custom: SessionCustom | Unset
+        if isinstance(_custom, Unset):
+            custom = UNSET
+        else:
+            custom = SessionCustom.from_dict(_custom)
+
+        _model_overwrites = d.pop("model_overwrites", UNSET)
+        model_overwrites: ModelOverwrites | Unset
+        if isinstance(_model_overwrites, Unset):
+            model_overwrites = UNSET
+        else:
+            model_overwrites = ModelOverwrites.from_dict(_model_overwrites)
+
+        forked_from = d.pop("forked_from", UNSET)
+
+        _closed_at = d.pop("closed_at", UNSET)
+        closed_at: datetime.datetime | Unset
+        if isinstance(_closed_at, Unset):
+            closed_at = UNSET
+        else:
+            closed_at = datetime.datetime.fromisoformat(_closed_at)
+
+        _last_response_at = d.pop("last_response_at", UNSET)
+        last_response_at: datetime.datetime | Unset
+        if isinstance(_last_response_at, Unset):
+            last_response_at = UNSET
+        else:
+            last_response_at = datetime.datetime.fromisoformat(_last_response_at)
+
         session = cls(
             id=id,
             call_id=call_id,
@@ -223,6 +352,17 @@ class Session:
             subagents=subagents,
             video=video,
             instructions=instructions,
+            agent=agent,
+            config_id=config_id,
+            incognito=incognito,
+            title=title,
+            description=description,
+            project=project,
+            custom=custom,
+            model_overwrites=model_overwrites,
+            forked_from=forked_from,
+            closed_at=closed_at,
+            last_response_at=last_response_at,
         )
 
         session.additional_properties = d

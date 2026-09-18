@@ -9,6 +9,7 @@ When running an agent using @acceleration/ or an example using @acceleration/ re
 | `acceleration/`   | Go model router: STT, TTS, LLM and search behind one API, plus the agent that joins a call. `cmd/router` serves it |
 | `dashboard/`      | Next.js app for watching calls and editing agent configs. Talks to the router from the browser |
 | `sdks/python/`    | The Python SDK: `Agent`, `Runner`, the plugin contracts                  |
+| `sdks/js/`        | The JavaScript SDK, one package for Node and the browser: every endpoint typed from the spec, sessions, tools, agent dispatch |
 | `plugins/`        | 44 Python packages, one per provider. `plugins/stream` is the client for `acceleration/` |
 | `sdks/swift/`     | Three iOS packages: `core` (state and API), `ui` (SwiftUI), `rtc` (voice over Stream Video) |
 | `examples/voice_agents/` | Runnable agents. `simple_voice_ai` is the smallest one                  |
@@ -62,7 +63,16 @@ uv run --no-sync mypy
 `--no-sync` avoids a uv panic in sandboxed environments.
 
 `acceleration/api/openapi.yaml` is the source of truth for the HTTP layer. After editing it,
-regenerate all three sides — see [acceleration/README.md](acceleration/README.md).
+regenerate every client — see [acceleration/README.md](acceleration/README.md).
+
+The JavaScript SDK is its own npm package, checked with node 22 and no runtime dependencies:
+
+```bash
+cd sdks/js
+npm install
+npm run types   # regenerate src/generated/api.ts from the spec; --check in CI
+npm test        # typecheck, then the suite against a real http and ws server
+```
 
 ## Testing
 

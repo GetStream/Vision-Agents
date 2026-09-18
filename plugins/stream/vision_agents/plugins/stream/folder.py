@@ -15,6 +15,7 @@ from vision_agents.core.harness import Skill
 AGENT_FILE = "agent.yaml"
 AGENT_STAMP = ".agent_sync"
 INSTRUCTIONS_FILE = "instructions.md"
+GUARDRAIL_FILE = "guardrail.md"
 SKILLS_DIR = "skills"
 KNOWLEDGE_DIR = "knowledge"
 
@@ -79,6 +80,7 @@ class Folder:
         agents/jean/
           agent.yaml
           instructions.md
+          guardrail.md
           skills/think.md
           knowledge/pricing.md
     """
@@ -88,6 +90,9 @@ class Folder:
     declaration: str = ""
     settings: Settings = field(default_factory=Settings)
     instructions: str = ""
+    """guardrail.md, whole and unparsed. The backend parses it, so a policy this SDK has
+    never heard of still reaches it. Empty means every turn is answered."""
+    guardrail: str = ""
     skills: list[Skill] = field(default_factory=list)
     knowledge: list[Document] = field(default_factory=list)
 
@@ -103,6 +108,8 @@ class Folder:
         hasher.update(self.declaration.encode())
         hasher.update(b"\n")
         hasher.update(self.instructions.encode())
+        hasher.update(b"\n")
+        hasher.update(self.guardrail.encode())
         for skill in sorted(self.skills, key=lambda item: item.name):
             hasher.update(b"\nskill:")
             hasher.update(skill.name.encode())
@@ -142,6 +149,9 @@ def load(path: str | Path) -> Folder:
     instructions = root / INSTRUCTIONS_FILE
     if instructions.is_file():
         folder.instructions = instructions.read_text().strip()
+    guardrail = root / GUARDRAIL_FILE
+    if guardrail.is_file():
+        folder.guardrail = guardrail.read_text().strip()
     folder.skills = _load_skills(root / SKILLS_DIR)
     folder.knowledge = _load_knowledge(root / KNOWLEDGE_DIR)
     return folder

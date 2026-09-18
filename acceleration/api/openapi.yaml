@@ -883,6 +883,16 @@ paths:
     get:
       operationId: listAgentConfigs
       summary: The agent configs the calling customer holds
+      description: >
+        With a name this is how a name becomes a config, which is what lets a backend say
+        "docs" instead of an id it never chose.
+
+        Server-side only, as it always was: a config carries the instructions the agent runs
+        under, and those are not a page's business. A page addressing an agent by name does
+        not need this -- it sends the name on the create-session request and the router
+        resolves it, which is the same lookup without handing the instructions over.
+      parameters:
+        - $ref: "#/components/parameters/ConfigName"
       responses:
         "200":
           description: The customer's configs, newest first
@@ -2356,15 +2366,43 @@ paths:
       operationId: listSessions
       x-client-accessible: true
       summary: The sessions the calling customer is running
+      description: >
+        Without filters this is what is happening now, which is what it has always been.
+        With any of them it is a query over what has happened as well: the sessions this
+        process is still holding and the rows recorded for the ones that ended, as one list
+        deduplicated by id, because a caller asking for their conversations does not care
+        which of them this instance happens to be holding.
+
+        A backend gets its customer's sessions; an end user gets their own, whatever they
+        ask for. That is not a filter they can widen, and it is why listing is safe to
+        expose to a page: one person's conversations are not a way to find another's. An
+        anonymous caller who named nobody gets nothing at all, since they reach their own
+        session by holding its id.
+      parameters:
+        - $ref: "#/components/parameters/SessionAgent"
+        - $ref: "#/components/parameters/SessionConfigID"
+        - $ref: "#/components/parameters/SessionUserID"
+        - $ref: "#/components/parameters/SessionProject"
+        - $ref: "#/components/parameters/SessionStateFilter"
+        - $ref: "#/components/parameters/SessionCustom"
+        - $ref: "#/components/parameters/SessionCreatedAfter"
+        - $ref: "#/components/parameters/SessionCreatedBefore"
+        - $ref: "#/components/parameters/SessionLimit"
+        - $ref: "#/components/parameters/SessionOffset"
       responses:
         "200":
-          description: The customer's sessions, newest first
+          description: >
+            The customer's sessions, newest first. A page shorter than the limit asked for
+            is the last one, which is all a caller walking the list needs: counting every
+            conversation a busy customer ever had costs more than the page itself.
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
@@ -2398,6 +2436,132 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /v1/agents/guests:
+    post:
+      operationId: createGuestUser
+      x-client-accessible: true
+      summary: Mint a guest so somebody can talk to an agent before signing up
+      description: >
+        Returns a user id and a Stream token with role guest, which is what the chat and
+        video SDKs connect with. From the router's point of view a guest is an ordinary end
+        user whose name is worth less: their sessions are their own and nobody else's, but a
+        guest id is not evidence of who anybody is, so a guest cannot be handed another
+        guest's conversations by naming their id.
+
+        Open to a page on purpose. A guest that a backend had to mint is a guest every
+        anonymous visitor costs a round trip through the customer's own servers, which is
+        exactly the integration this is meant to remove. An app that has turned guests off
+        refuses it.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuestUserRequest"
+      responses:
+        "201":
+          description: The guest and a token for them
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestUser"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: This app does not admit guests
+
+  /v1/agents/guests/claim:
+    post:
+      operationId: claimGuestUser
+      summary: Move a guest's conversations onto the account they turned out to be
+      description: >
+        For somebody who talked to an agent and then signed up. Their sessions are rewritten
+        to the real user and the guest is marked claimed, in one transaction: a guest marked
+        claimed whose sessions still say the guest owns them is a person who signed up and
+        lost their history, and sessions moved without the guest being marked is a guest that
+        can be claimed again, by somebody else.
+
+        Server-side only, and the one operation here that most needs to be. Only the
+        customer's own backend knows that a given guest is a given account -- it is the thing
+        that just authenticated them. A page allowed to ask this could claim anybody's
+        conversations by guessing a guest id, which is the whole attack.
+
+        A guest already claimed is refused rather than moved again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimGuestRequest"
+      responses:
+        "200":
+          description: The conversations were moved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimGuestResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: That guest was already claimed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/agents/sessions/search:
+    get:
+      operationId: searchSessions
+      x-client-accessible: true
+      summary: Find a conversation by what it was called
+      description: >
+        Full text over the title, description, project and agent name, best match first,
+        with titles weighted above the rest so the conversation called "billing" beats every
+        conversation in the billing project.
+
+        What was said is not searched. Doing so would mean either reading every conversation
+        out of Stream Chat on each query, which is too slow to offer, or keeping a second
+        copy of every message here, which is a transcript that can drift from the real one.
+        Titles and descriptions are what a person names a conversation with, and naming them
+        is the habit worth encouraging.
+
+        The same owner scoping as listing applies, and the same filters narrow it, so a
+        search cannot reach a conversation a list could not. An empty q is the same as no q
+        and falls through to the list, because a search box nobody has typed in yet should
+        show a person their conversations rather than nothing.
+      parameters:
+        - $ref: "#/components/parameters/SessionSearchText"
+        - $ref: "#/components/parameters/SessionAgent"
+        - $ref: "#/components/parameters/SessionConfigID"
+        - $ref: "#/components/parameters/SessionUserID"
+        - $ref: "#/components/parameters/SessionProject"
+        - $ref: "#/components/parameters/SessionStateFilter"
+        - $ref: "#/components/parameters/SessionCustom"
+        - $ref: "#/components/parameters/SessionCreatedAfter"
+        - $ref: "#/components/parameters/SessionCreatedBefore"
+        - $ref: "#/components/parameters/SessionLimit"
+        - $ref: "#/components/parameters/SessionOffset"
+      responses:
+        "200":
+          description: The matching sessions, best match first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /v1/agents/sessions/{id}:
     get:
@@ -2435,6 +2599,146 @@ paths:
           description: The agent has left
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}/fork:
+    post:
+      operationId: forkSession
+      x-client-accessible: true
+      summary: Continue a conversation as a new one
+      description: >
+        Opens a session from another's spec, carrying its history across by default, and
+        records where it came from. The usual reason is to ask the same question of a
+        different model without losing the original answer, which is why anything in the
+        request is written over what the parent was opened with.
+
+        The parent is untouched and keeps running if it was running. Forking an incognito
+        session is refused rather than answered with an empty conversation: there is nothing
+        recorded to fork from, and pretending otherwise would hand back a session that
+        quietly lost everything the caller thought they were continuing.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForkSessionRequest"
+      responses:
+        "201":
+          description: The fork is running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}/responses:
+    get:
+      operationId: listResponses
+      x-client-accessible: true
+      summary: The turns the agent took in a session
+      description: >
+        Oldest first, which read in order are the conversation. This is the shape of it
+        rather than the text: what was asked, whether the turn finished, and how long it
+        took. The items endpoint is what carries what happened inside each one.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+        - $ref: "#/components/parameters/SessionLimit"
+        - $ref: "#/components/parameters/SessionOffset"
+      responses:
+        "200":
+          description: The session's turns, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createResponse
+      x-client-accessible: true
+      summary: Ask the agent something and get a handle on the answer
+      description: >
+        The same thing respond does, with an id back. That is the whole difference and the
+        reason this exists: respond returns nothing, so a caller that wants to follow one
+        particular turn has to watch the socket and guess which events belong to it. With an
+        id it can ask for that turn's items instead.
+
+        It returns as soon as the turn has started, not when it has finished. A model takes
+        seconds and a request that waited them out would time out on anything long enough to
+        be worth asking.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateResponseRequest"
+      responses:
+        "202":
+          description: The agent is answering
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}/responses/items:
+    get:
+      operationId: listResponseItems
+      x-client-accessible: true
+      summary: What the agent did, turn by turn, in the order it happened
+      description: >
+        One flat stream across every turn rather than a list per turn, because that is how a
+        conversation reads and how it is rendered: the question, what the agent did about it,
+        what it said, then the next question. Naming a response narrows it to that turn.
+
+        Deltas are not here. A hundred fragments of one sentence are the sentence, and
+        keeping them would make this mostly punctuation; a caller watching a turn happen
+        reads the deltas off the events socket, and a caller reading one back wants the shape
+        of it.
+
+        Nothing is returned for an incognito session, which has no items to return.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+        - $ref: "#/components/parameters/ResponseIDFilter"
+        - $ref: "#/components/parameters/ItemLimit"
+        - $ref: "#/components/parameters/SessionOffset"
+      responses:
+        "200":
+          description: The items, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentResponseItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -2952,6 +3256,121 @@ components:
       description: A built-in catalog id such as slack or calendly.
       schema:
         type: string
+    ConfigName:
+      name: name
+      in: query
+      required: false
+      description: >
+        Narrow the list to the config with this name, which is how a name is resolved to a
+        config. Names are unique per customer, so this answers with at most one.
+      schema:
+        type: string
+    SessionSearchText:
+      name: q
+      in: query
+      required: false
+      description: >
+        What to search for. Quoted phrases and bare words both work, and punctuation is
+        taken rather than refused: this comes from a search box, so an apostrophe must not
+        become a syntax error.
+      schema:
+        type: string
+    SessionAgent:
+      name: agent
+      in: query
+      required: false
+      description: The agent name the session was opened against.
+      schema:
+        type: string
+    SessionConfigID:
+      name: config_id
+      in: query
+      required: false
+      schema:
+        type: string
+    SessionUserID:
+      name: user_id
+      in: query
+      required: false
+      description: >
+        Whose sessions to list. Only a server-side caller may set it: an end user is
+        narrowed to their own whatever they ask for, because a filter a caller could widen
+        is not a boundary.
+      schema:
+        type: string
+    SessionProject:
+      name: project
+      in: query
+      required: false
+      schema:
+        type: string
+    SessionStateFilter:
+      name: state
+      in: query
+      required: false
+      description: Omitted is both.
+      schema:
+        type: string
+        enum: [running, closed]
+    SessionCustom:
+      name: custom
+      in: query
+      required: false
+      description: >
+        Match sessions whose custom object contains every one of these pairs, as a JSON
+        object. Containment rather than equality, so a session carrying three labels is
+        found by any two of them. A value that will not parse matches nothing rather than
+        failing the request: it arrives off a query string, and one bad label should not
+        break a conversation list.
+      schema:
+        type: string
+      example: '{"tenant":"acme"}'
+    SessionCreatedAfter:
+      name: created_after
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+    SessionCreatedBefore:
+      name: created_before
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+    SessionLimit:
+      name: limit
+      in: query
+      required: false
+      description: Up to 200. Omitted is 25.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+    SessionOffset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+    ItemLimit:
+      name: limit
+      in: query
+      required: false
+      description: Up to 1000. Omitted is 200.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+    ResponseIDFilter:
+      name: response_id
+      in: query
+      required: false
+      description: Narrow to one turn's items. Omitted is every turn in the session.
+      schema:
+        type: string
 
   responses:
     BadRequest:
@@ -3172,6 +3591,13 @@ components:
           type: string
         greeting:
           type: string
+        guardrail:
+          type: string
+          description: >
+            A guardrail.md: frontmatter saying how a turn is screened - llm_classifier,
+            webhook or llm - then the policy in prose. A turn the policy refuses is
+            answered with the refusal and never reaches the model. Empty means every turn
+            is answered.
         skills:
           type: array
           items:
@@ -3244,6 +3670,8 @@ components:
         instructions:
           type: string
         greeting:
+          type: string
+        guardrail:
           type: string
         skills:
           type: array
@@ -4123,6 +4551,11 @@ components:
             nothing.
         instructions:
           type: string
+        guardrail:
+          type: string
+          description: >
+            The directory's guardrail.md, whole: frontmatter saying how to screen a turn,
+            then the policy in prose. Empty means every turn is answered.
         skills:
           type: array
           items:
@@ -5096,6 +5529,46 @@ components:
             An agent config to start from. Everything else in this request overrides what
             the config says, so a caller can reuse a configuration and still change one
             thing about this call.
+        agent:
+          type: string
+          description: >
+            The name of an agent config to start from, as an alternative to config_id. It
+            is what a caller actually knows the agent as: "docs" rather than an id they
+            never chose. A name matching nothing is refused rather than silently starting
+            an unconfigured agent, and naming both this and config_id is refused too,
+            since there is no sensible answer when they disagree.
+        incognito:
+          type: boolean
+          default: false
+          description: >
+            Hold the conversation and record nothing about it: no session row, no turns,
+            no transcript, and no Stream Chat channel whatever persist_conversation says.
+            The session still works exactly as any other while it is running; it simply
+            cannot be found afterwards, which is the point. Forking one is refused,
+            because there is nothing to fork from.
+        title:
+          type: string
+          description: >
+            What to call the conversation, for a list a person reads. Never shown to the
+            model: what a conversation is called is a label on it rather than part of it.
+        description:
+          type: string
+          description: A longer note about the conversation, searched alongside the title.
+        project:
+          type: string
+          description: >
+            What the conversation belongs to. Also recorded as the "project" cost tag, so
+            spend breaks down by project without the caller labelling it twice. A tag
+            spelled out in tags wins.
+        custom:
+          type: object
+          additionalProperties: true
+          description: >
+            Anything the caller wants to remember about the session, handed back untouched
+            and never read by the router. Sessions can be queried by these, which is what
+            makes them worth writing.
+        model_overwrites:
+          $ref: "#/components/schemas/ModelOverwrites"
         call_type:
           type: string
           default: default
@@ -5219,6 +5692,59 @@ components:
           $ref: "#/components/schemas/SessionPhone"
         video:
           $ref: "#/components/schemas/SessionVideo"
+
+    ModelOverwrites:
+      type: object
+      description: >
+        What to change about the models for one session, over whatever its agent config
+        decided.
+
+        It is one object rather than a dozen fields at the top level because it is one
+        idea: everything here overrides the config, and a caller reading a session back
+        wants to see what they changed in one place rather than diffed against a config
+        they would have to fetch. Only the safe knobs are here. Instructions and tools are
+        not, because a caller able to rewrite those could make a session impersonate a
+        different agent.
+      properties:
+        llm:
+          type: string
+          description: A provider/model or a capability shortcut, in place of the config's.
+        stt:
+          type: string
+        tts:
+          type: string
+        sts:
+          type: string
+          description: >
+            A speech-to-speech target. Naming one here makes the session native even if the
+            config did not, which means no transcriber, model or voice is opened.
+        subagent:
+          type: string
+          description: >
+            The model delegated work runs on. Naming one replaces a config's default
+            worker, so the config cannot keep answering for the target just overwritten.
+        search:
+          type: string
+        thinking:
+          type: string
+          enum: [none, minimal, low, medium, high]
+          description: >
+            How hard to reason before answering. It becomes the reasoning effort on the
+            request, which is the vocabulary the providers that support one already speak,
+            and means nothing to a model that does not reason.
+        temperature:
+          type: number
+          format: double
+          description: >
+            How random the answer is. Omitted leaves the provider's own default, which is
+            not the same as zero: zero is a real request for a deterministic model.
+        max_output_tokens:
+          type: integer
+          description: Caps the reply, reasoning included. Omitted leaves the provider's default.
+        verbosity:
+          type: string
+          enum: [low, medium, high]
+          description: How much detail to give. Dropped for models that do not take it.
 
     SessionVideo:
       type: object
@@ -5353,6 +5879,218 @@ components:
           $ref: "#/components/schemas/SessionVideo"
         instructions:
           type: string
+        agent:
+          type: string
+          description: >
+            The name the agent was addressed as. Recorded on the session as well as the
+            config id, so renaming a config does not rewrite what older sessions were
+            opened against.
+        config_id:
+          type: string
+          description: The agent config the session ran under, empty for one that spelled itself out.
+        incognito:
+          type: boolean
+          description: >
+            Nothing about this session was recorded. It is reported so a caller can see that
+            what they asked for is what they got, but it is never read back from storage:
+            an incognito session has no row to read it from.
+        title:
+          type: string
+        description:
+          type: string
+        project:
+          type: string
+        custom:
+          type: object
+          additionalProperties: true
+        model_overwrites:
+          $ref: "#/components/schemas/ModelOverwrites"
+        forked_from:
+          type: string
+          description: The session this one continued from, empty for one opened fresh.
+        closed_at:
+          type: string
+          format: date-time
+          description: When the session ended. Absent while it is still running.
+        last_response_at:
+          type: string
+          format: date-time
+          description: >
+            When the agent last answered. This is what a most-recently-used ordering of
+            conversations reads, since a session renamed long after it ended has not become
+            more recent.
+
+    ForkSessionRequest:
+      type: object
+      description: >
+        Continue a conversation as a new one. Everything the parent was opened with is
+        inherited; anything named here is written over it, which is what makes a fork useful
+        rather than a copy -- the usual reason to fork is to ask the same question of a
+        different model.
+      properties:
+        agent:
+          type: string
+        config_id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        project:
+          type: string
+        custom:
+          type: object
+          additionalProperties: true
+        model_overwrites:
+          $ref: "#/components/schemas/ModelOverwrites"
+        instructions:
+          type: string
+        incognito:
+          type: boolean
+          description: >
+            Hold the fork off the record. The parent still exists; this conversation onwards
+            is simply not kept.
+        messages:
+          type: boolean
+          default: true
+          description: >
+            Carry the parent's history into the fork, so the new conversation continues from
+            what was already said. False starts the same configuration over from nothing,
+            which is what comparing two answers to the same opening question wants.
+        call_id:
+          type: string
+          description: >
+            The call the fork joins. A voice session cannot be forked into a text one or the
+            other way about, so this is required when the parent held a call and refused
+            when it did not.
+
+    CreateResponseRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: What to answer, as though it had been said.
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImageSource"
+
+    AgentResponse:
+      type: object
+      required: [id, session_id, status, created_at]
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        said:
+          type: string
+          description: What the person asked, which is the first item of every response.
+        status:
+          type: string
+          enum: [running, completed, failed, cancelled]
+          description: >
+            cancelled is a turn the caller interrupted, which is a different thing from one
+            that failed: nothing went wrong, and what had already been said still counts.
+        error:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+
+    AgentResponseItem:
+      type: object
+      required: [response_id, ordinal, kind, at]
+      properties:
+        response_id:
+          type: string
+        ordinal:
+          type: integer
+          description: >
+            The position within the response, assigned by the writer rather than by the
+            database, so items keep the order they happened in.
+        session_id:
+          type: string
+        kind:
+          type: string
+          enum: [said, thought, tool_call, tool_result, answer, blocked, error]
+        text:
+          type: string
+        tool_name:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+          description: >
+            Whatever the kind carries that text cannot: a tool's arguments, a guardrail's
+            reason, the id that ties a call to its result.
+        at:
+          type: string
+          format: date-time
+
+    GuestUserRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          description: >
+            A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking
+            for an id that is already a guest of this customer returns that guest with a
+            fresh token rather than failing, because coming back is the same person.
+        name:
+          type: string
+          description: What to call them, for a transcript a person reads later.
+        custom:
+          type: object
+          additionalProperties: true
+
+    GuestUser:
+      type: object
+      required: [id, token]
+      properties:
+        id:
+          type: string
+        token:
+          type: string
+          description: >
+            A Stream user token for this guest, which is what the chat and video SDKs
+            connect with. It carries role guest, so an app that has turned guests off
+            refuses it.
+        name:
+          type: string
+        custom:
+          type: object
+          additionalProperties: true
+        expires_at:
+          type: string
+          format: date-time
+          description: When the token stops working. A guest coming back after it asks for another.
+
+    ClaimGuestRequest:
+      type: object
+      required: [guest_id, user_id]
+      properties:
+        guest_id:
+          type: string
+        user_id:
+          type: string
+          description: The account the guest turned out to be.
+
+    ClaimGuestResult:
+      type: object
+      required: [guest_id, user_id, sessions_moved]
+      properties:
+        guest_id:
+          type: string
+        user_id:
+          type: string
+        sessions_moved:
+          type: integer
+          description: How many conversations moved onto the account.
 
     SayRequest:
       type: object
@@ -5384,13 +6122,15 @@ components:
 
     Modality:
       type: string
-      enum: [stt, tts, llm, sts, search, memory, knowledge, phone]
+      enum: [stt, tts, llm, sts, search, llm_classifier, memory, knowledge, phone]
       description: >
-        What kind of work was done. The first five are routed across providers; sts is
+        What kind of work was done. The first six are routed across providers; sts is
         speech to speech, one native audio model in place of a transcriber, a text model
-        and a voice. Memory, knowledge and phone are recorded but not routed, since there
-        is one memory store, one knowledge base and one vendor per number, so the provider
-        paths do not serve them while the statistics paths do.
+        and a voice. llm_classifier answers a question about a piece of text with a typed
+        value and the probability behind it rather than with prose, which is what a
+        guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded
+        but not routed, since there is one memory store, one knowledge base and one vendor
+        per number, so the provider paths do not serve them while the statistics paths do.
       example: tts
 
     Granularity:

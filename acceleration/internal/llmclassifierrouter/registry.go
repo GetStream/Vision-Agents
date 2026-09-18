@@ -1,0 +1,21 @@
+package llmclassifierrouter
+
+import (
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifier"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifier/typesafe"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+)
+
+// NewRegistry returns an empty registry.
+func NewRegistry() *Registry { return routing.NewRegistry[llmclassifier.Provider]() }
+
+// DefaultRegistry returns a registry with every classifier this build supports.
+func DefaultRegistry() *Registry {
+	registry := NewRegistry()
+
+	registry.Register(typesafe.ProviderName, func(spec routing.Spec) (llmclassifier.Provider, error) {
+		return typesafe.New(typesafe.Options{Model: spec.Model, Logger: spec.Logger})
+	})
+
+	return registry
+}

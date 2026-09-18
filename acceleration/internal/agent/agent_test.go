@@ -489,6 +489,8 @@ type AgentSuite struct {
 	// finds is what the agent may find out about now, when a test gives it a search
 	// provider.
 	finds *stubSearch
+	// guards screens what the agent may be asked, when a test gives it a policy.
+	guards *stubGuardrail
 	// performing is what a voice that acts stage directions asks to have said about it.
 	// It is set before joining, because the stub voice is built there.
 	performing string
@@ -511,6 +513,7 @@ func (s *AgentSuite) SetupTest() {
 	s.knows = nil
 	s.namespace = ""
 	s.finds = nil
+	s.guards = nil
 	s.subagent = nil
 	s.skills = harness.Skills{}
 	s.line = nil
@@ -591,6 +594,7 @@ func (s *AgentSuite) joinText() {
 		LLMTarget:          "en-low-latency",
 		Knowledge:          reading,
 		KnowledgeNamespace: s.namespace,
+		Guardrail:          s.screening(),
 		Logger:             logger,
 	})
 	s.Require().NoError(err)
@@ -696,6 +700,7 @@ func (s *AgentSuite) join(streamingVoice bool) {
 		KnowledgeNamespace: s.namespace,
 		Search:             finding,
 		SearchTarget:       searchTarget,
+		Guardrail:          s.screening(),
 		Logger:             logger,
 	})
 	s.Require().NoError(err)

@@ -31,6 +31,10 @@ type Options struct {
 	Dir string
 	// Instructions is the system prompt.
 	Instructions string
+	// Guardrail is a guardrail.md: frontmatter saying how a turn is screened, then the
+	// policy in prose. Empty means every turn is answered. It is enforced in the backend,
+	// not here, so a turn the policy refuses never reaches the model.
+	Guardrail string
 	// LLM is the pipeline running in the backend.
 	LLM *stream.Pipeline
 	// Harness is what stands between what a caller said and the model that answers them.
@@ -131,6 +135,30 @@ func (a *Agent) Join(ctx context.Context, call edge.Call) (*Session, error) {
 type ChatOptions struct {
 	Persist        bool
 	ConversationID string
+	// AgentID is the conversation being answered, which names the channel replies are
+	// written into and is what the backend finds a running session by when somebody
+	// writes to it again. Empty answers in one of the agent's own.
+	//
+	// A worker answering several conversations has to set it. Left empty they all join
+	// under the agent's user id, and a message arriving for one of them reaches whichever
+	// started last.
+	AgentID string
+
+	// Title and Description are what a person finds this conversation by afterwards. Both
+	// are searched, so the opening question makes a reasonable title.
+	Title       string
+	Description string
+	// Project groups conversations, and is carried as a cost label too.
+	Project string
+	// Custom is anything of the caller's own worth remembering about the conversation, which
+	// a later query can match on.
+	Custom map[string]any
+	// Incognito holds the conversation and keeps nothing: no session row, no turns and no
+	// transcript whatever Persist says. It cannot be found afterwards, which is the point.
+	Incognito bool
+	// ModelOverwrites changes the models for this conversation alone, over whatever the
+	// agent's own configuration decided.
+	ModelOverwrites *acceleration.ModelOverwrites
 }
 
 func (a *Agent) Chat(ctx context.Context, options ...ChatOptions) (*Session, error) {
@@ -154,6 +182,15 @@ func (a *Agent) join(ctx context.Context, call edge.Call, phone *acceleration.Se
 	if len(options) > 0 {
 		remote.PersistConversation = options[0].Persist
 		remote.ConversationID = options[0].ConversationID
+		remote.Title = options[0].Title
+		remote.Description = options[0].Description
+		remote.Project = options[0].Project
+		remote.Custom = options[0].Custom
+		remote.Incognito = options[0].Incognito
+		remote.ModelOverwrites = options[0].ModelOverwrites
+		if options[0].AgentID != "" {
+			remote.AgentID = options[0].AgentID
+		}
 	}
 	a.options.Harness.apply(&remote)
 

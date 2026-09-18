@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "sourceMap": true,
+    "outDir": "build",
+    "rootDir": ".",
+    // The examples import the package by name, the way somebody reading them would, and
+    // are checked against the source rather than against a build that may not be there.
+    "paths": {
+      "@stream-io/vision-agents": ["./src/index.ts"],
+      "@stream-io/vision-agents/node": ["./src/node.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "examples/**/*.ts"]
+}

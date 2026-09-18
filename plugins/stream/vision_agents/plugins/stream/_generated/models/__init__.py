@@ -12,6 +12,11 @@ from .agent_log_page import AgentLogPage
 from .agent_log_severity import AgentLogSeverity
 from .agent_log_source import AgentLogSource
 from .agent_mode import AgentMode
+from .agent_response import AgentResponse
+from .agent_response_item import AgentResponseItem
+from .agent_response_item_kind import AgentResponseItemKind
+from .agent_response_item_payload import AgentResponseItemPayload
+from .agent_response_status import AgentResponseStatus
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
 from .authorize_plugin_request import AuthorizePluginRequest
@@ -32,19 +37,29 @@ from .campaign_tags import CampaignTags
 from .candidate import Candidate
 from .chat_token import ChatToken
 from .chat_token_request import ChatTokenRequest
+from .claim_guest_request import ClaimGuestRequest
+from .claim_guest_result import ClaimGuestResult
 from .contact import Contact
 from .contact_state import ContactState
 from .contacts_request import ContactsRequest
 from .contacts_request_contacts_item import ContactsRequestContactsItem
+from .create_response_request import CreateResponseRequest
 from .create_session_request import CreateSessionRequest
+from .create_session_request_custom import CreateSessionRequestCustom
 from .create_session_request_subagents import CreateSessionRequestSubagents
 from .create_session_request_tags import CreateSessionRequestTags
 from .data_policy import DataPolicy
 from .decision_kind import DecisionKind
 from .endpointing import Endpointing
 from .error import Error
+from .fork_session_request import ForkSessionRequest
+from .fork_session_request_custom import ForkSessionRequestCustom
 from .get_conversation_messages_response_200 import GetConversationMessagesResponse200
 from .granularity import Granularity
+from .guest_user import GuestUser
+from .guest_user_custom import GuestUserCustom
+from .guest_user_request import GuestUserRequest
+from .guest_user_request_custom import GuestUserRequestCustom
 from .health_status import HealthStatus
 from .health_status_dependencies import HealthStatusDependencies
 from .health_status_status import HealthStatusStatus
@@ -60,6 +75,7 @@ from .knowledge_url import KnowledgeUrl
 from .knowledge_url_request import KnowledgeUrlRequest
 from .knowledge_url_state import KnowledgeUrlState
 from .list_agent_logs_severity import ListAgentLogsSeverity
+from .list_sessions_state import ListSessionsState
 from .list_simulation_runs_state import ListSimulationRunsState
 from .llm_options import LlmOptions
 from .llm_options_format import LlmOptionsFormat
@@ -67,6 +83,9 @@ from .llm_options_metadata import LlmOptionsMetadata
 from .llm_options_reasoning_effort import LlmOptionsReasoningEffort
 from .llm_options_verbosity import LlmOptionsVerbosity
 from .modality import Modality
+from .model_overwrites import ModelOverwrites
+from .model_overwrites_thinking import ModelOverwritesThinking
+from .model_overwrites_verbosity import ModelOverwritesVerbosity
 from .number_search_result import NumberSearchResult
 from .phone_capability import PhoneCapability
 from .phone_number import PhoneNumber
@@ -105,7 +124,9 @@ from .search_options_output_schema import SearchOptionsOutputSchema
 from .search_request import SearchRequest
 from .search_request_tags import SearchRequestTags
 from .search_result import SearchResult
+from .search_sessions_state import SearchSessionsState
 from .session import Session
+from .session_custom import SessionCustom
 from .session_memory import SessionMemory
 from .session_memory_filter import SessionMemoryFilter
 from .session_phone import SessionPhone
@@ -187,6 +208,11 @@ __all__ = (
     "AgentLogSeverity",
     "AgentLogSource",
     "AgentMode",
+    "AgentResponse",
+    "AgentResponseItem",
+    "AgentResponseItemKind",
+    "AgentResponseItemPayload",
+    "AgentResponseStatus",
     "AttachNumberRequest",
     "AttachedNumber",
     "AuthorizePluginRequest",
@@ -207,19 +233,29 @@ __all__ = (
     "Candidate",
     "ChatToken",
     "ChatTokenRequest",
+    "ClaimGuestRequest",
+    "ClaimGuestResult",
     "Contact",
     "ContactState",
     "ContactsRequest",
     "ContactsRequestContactsItem",
+    "CreateResponseRequest",
     "CreateSessionRequest",
+    "CreateSessionRequestCustom",
     "CreateSessionRequestSubagents",
     "CreateSessionRequestTags",
     "DataPolicy",
     "DecisionKind",
     "Endpointing",
     "Error",
+    "ForkSessionRequest",
+    "ForkSessionRequestCustom",
     "GetConversationMessagesResponse200",
     "Granularity",
+    "GuestUser",
+    "GuestUserCustom",
+    "GuestUserRequest",
+    "GuestUserRequestCustom",
     "HealthStatus",
     "HealthStatusDependencies",
     "HealthStatusStatus",
@@ -235,6 +271,7 @@ __all__ = (
     "KnowledgeUrlRequest",
     "KnowledgeUrlState",
     "ListAgentLogsSeverity",
+    "ListSessionsState",
     "ListSimulationRunsState",
     "LlmOptions",
     "LlmOptionsFormat",
@@ -242,6 +279,9 @@ __all__ = (
     "LlmOptionsReasoningEffort",
     "LlmOptionsVerbosity",
     "Modality",
+    "ModelOverwrites",
+    "ModelOverwritesThinking",
+    "ModelOverwritesVerbosity",
     "NumberSearchResult",
     "PhoneCapability",
     "PhoneNumber",
@@ -280,7 +320,9 @@ __all__ = (
     "SearchRequest",
     "SearchRequestTags",
     "SearchResult",
+    "SearchSessionsState",
     "Session",
+    "SessionCustom",
     "SessionMemory",
     "SessionMemoryFilter",
     "SessionPhone",

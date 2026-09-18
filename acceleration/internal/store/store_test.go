@@ -59,6 +59,7 @@ func (s *StoreSuite) SetupTest() {
 		s.ctx,
 		"TRUNCATE requests, stats_hourly, stats_daily, stats_tags_hourly, stats_tags_daily,"+
 			" turns, turn_stats_hourly, turn_stats_daily, call_events, phone_numbers, voices,"+
+			" agent_sessions, agent_responses, agent_response_items, guest_users,"+
 			" organizations CASCADE",
 	)
 	s.Require().NoError(err)

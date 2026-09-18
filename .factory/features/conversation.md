@@ -182,4 +182,5 @@ Patience is one duration for the whole call rather than something learned from h
 speaks, and the grace after an overlap is a constant rather than a measurement of the line.
 
 Which model should be making these twelve judgements is an open question rather than a settled
-one, and nothing here is measured against a labelled set.
+one. [The flow controller benchmark](../evals/flow-controller.md) is the labelled set for
+answering it.

@@ -374,18 +374,29 @@ class Dispatch:
         await asyncio.gather(*running, return_exceptions=True)
 
 
+def _custom_of(frame: dict[str, object]) -> dict[str, str]:
+    """Narrow a frame's custom data to the strings a handler can read.
+
+    The router sends strings, and a value that is not one is dropped rather than rendered,
+    because a number that arrived as JSON should not reach a handler as "17.0".
+    """
+    custom = frame.get("custom")
+    if not isinstance(custom, dict):
+        return {}
+    return {
+        str(key): value for key, value in custom.items() if isinstance(value, str)
+    }
+
+
 def _call_of(frame: dict[str, object]) -> InboundCall:
     """Read a call frame off the wire."""
-    custom = frame.get("custom")
     at = frame.get("at")
     return InboundCall(
         call_id=str(frame.get("call_id", "")),
         call_type=str(frame.get("call_type") or "default"),
         called_number=str(frame.get("called_number", "")),
         caller_number=str(frame.get("caller_number", "")),
-        custom={str(key): str(value) for key, value in custom.items()}
-        if isinstance(custom, dict)
-        else {},
+        custom=_custom_of(frame),
         at=_time_of(at) if isinstance(at, str) else None,
     )
 
@@ -397,6 +408,7 @@ def _message_of(frame: dict[str, object]) -> InboundMessage:
         channel_id=str(frame.get("channel_id", "")),
         channel_type=str(frame.get("channel_type") or "agent"),
         config_id=str(frame.get("config_id", "")),
+        custom=_custom_of(frame),
         text=str(frame.get("text", "")),
         message_id=str(frame.get("message_id", "")),
         user_id=str(frame.get("user_id", "")),

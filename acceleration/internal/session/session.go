@@ -23,6 +23,7 @@ import (
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // watcherBuffer is how many events may queue for one watcher before it starts losing them.
@@ -116,10 +117,34 @@ type Session struct {
 	saidMu sync.Mutex
 	said   []spoken
 
+	// records keeps the turns and what each one did, so a conversation can be read back
+	// without the socket that heard it. Nil for an incognito session and for a deployment
+	// with no store, which is what makes the flag safe: there is nowhere to write rather
+	// than a check to remember.
+	records recorder
+	// turnsMu guards the bookkeeping that turns a stream of events into rows.
+	turnsMu sync.Mutex
+	// turns maps a turn id to the response row it is being recorded as, so the events of
+	// one turn -- which arrive interleaved with another's -- land on the right one.
+	turns map[string]*recordedTurn
+
 	// closers undo what Create wired up, in reverse.
 	closers   []func()
 	closeOnce sync.Once
 	running   sync.WaitGroup
+}
+
+// recordedTurn is one turn being written down as it happens.
+type recordedTurn struct {
+	// id is the response row, which is not the turn id: a turn id is the agent's own and
+	// repeats across sessions, while a response is a row of its own.
+	id string
+	// ordinal is the next item's position, assigned here rather than by the database so
+	// items keep the order they happened in rather than the order they were inserted in.
+	ordinal int
+	// blocked marks a turn the guardrail refused, so the answer that follows is recorded as
+	// the refusal it is rather than as what the model wanted to say.
+	blocked bool
 }
 
 // ID is the handle a caller holds the session by.
@@ -243,17 +268,29 @@ func (s *Session) Say(ctx context.Context, text string) error {
 
 // Respond answers a piece of text through the model, as though a participant had said it.
 // Images attach to that turn as content parts.
-func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart) error {
+// It returns the id the turn was recorded as, which is the handle a caller follows one
+// particular answer by: its items are asked for under it. Empty when nothing is being
+// recorded -- an incognito session, or a deployment with no store -- and empty for a native
+// session, where the model decides for itself what counts as a turn.
+func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart) (string, error) {
 	if s.persisted != nil {
 		if err := s.persisted.Begin(text); err != nil {
-			return err
+			return "", err
 		}
 	}
-	err := s.voiceAgent.RespondTo(ctx, text, images)
-	if err != nil && s.persisted != nil {
-		s.persisted.Cancel()
+	turnID, err := s.voiceAgent.RespondTo(ctx, text, images)
+	if err != nil {
+		if s.persisted != nil {
+			s.persisted.Cancel()
+		}
+		return "", err
 	}
-	return err
+	if turnID == "" {
+		return "", nil
+	}
+	// Opening the turn here as well as on the event is what makes the id available to whoever
+	// asked for the answer. It happens once whichever way round the two arrive.
+	return s.openTurn(turnID, text), nil
 }
 
 // Report publishes a failure the watcher should see, without ending the session.
@@ -338,6 +375,11 @@ func (s *Session) close() error {
 	// the way out, reach the watchers before they are disconnected.
 	s.running.Wait()
 
+	// A turn still open when the session ends was abandoned rather than answered. It is
+	// closed here, after the fan-out has drained, so a conversation read back later has no
+	// turn that appears to still be thinking.
+	s.abandonTurns()
+
 	for i := len(s.closers) - 1; i >= 0; i-- {
 		s.closers[i]()
 	}
@@ -366,8 +408,201 @@ func (s *Session) consume() {
 			s.transcript.Record(event)
 		}
 		s.remember(event)
+		s.record(event)
 		s.broadcast(event)
 	}
+}
+
+// record writes down what the turn did, which is what items.unwind() reads back.
+//
+// Deltas are deliberately not recorded. A hundred fragments of one sentence are the
+// sentence, and keeping them would make the table mostly punctuation; a caller watching a
+// turn happen reads the deltas off the socket, and a caller reading one back wants the
+// shape of it -- the question, the tools, the answer.
+//
+// Nothing here checks whether the session is incognito, because an incognito session has no
+// recorder to check: the manager never hands it one.
+func (s *Session) record(event Event) {
+	if s.records == nil {
+		return
+	}
+
+	switch typed := event.(type) {
+	case agent.Responding:
+		s.openTurn(typed.TurnID, typed.Prompt)
+	case agent.ToolStarted:
+		s.item(typed.TurnID, store.ItemToolCall, "", typed.Tool, map[string]any{
+			"call_id": typed.ID, "product": typed.Product, "sdk": typed.SDK,
+		})
+	case agent.ToolRan:
+		payload := map[string]any{"call_id": typed.ID, "arguments": typed.Arguments}
+		if typed.Err != nil {
+			payload["error"] = typed.Err.Error()
+		}
+		s.item(typed.TurnID, store.ItemToolResult, typed.Result, typed.Tool, payload)
+	case agent.LookedUp:
+		s.item(typed.TurnID, store.ItemToolCall, typed.Query, "search", nil)
+	case agent.Delegated:
+		s.item(typed.TurnID, store.ItemThought, typed.Prompt, typed.Skill, map[string]any{
+			"task_id": typed.TaskID,
+		})
+	case agent.Blocked:
+		s.blockTurn(typed.TurnID)
+		s.item(typed.TurnID, store.ItemBlocked, "", "", map[string]any{
+			"reason": typed.Reason, "probability": typed.Probability,
+		})
+	case agent.Responded:
+		// A reply followed by tools or delegated work is not the end of the turn, so the
+		// row stays open: the agent will speak again once the work comes back, and both
+		// halves belong to the same response.
+		kind := store.ItemAnswer
+		if s.turnBlocked(typed.TurnID) {
+			kind = store.ItemBlocked
+		}
+		s.item(typed.TurnID, kind, typed.Text, "", nil)
+		if !typed.PendingWork {
+			s.endTurn(typed.TurnID, store.ResponseCompleted, "")
+		}
+	case agent.Interrupted:
+		// What the agent had already said still counts, which is why an interrupted turn is
+		// cancelled rather than failed: the caller stopped it, nothing went wrong.
+		s.endTurn(typed.TurnID, store.ResponseCancelled, "")
+	case agent.Error:
+		// An error names which part failed rather than which turn, because a transcriber or
+		// a voice falling over is not a property of one turn. So it fails whatever was in
+		// flight: a turn left open would be read back forever as a question nobody answered.
+		s.failTurns(typed.Context, typed.Err)
+	}
+}
+
+// openTurn opens the row a turn is recorded as and returns its id, opening it only once.
+//
+// Idempotent on purpose, because two things race to open the same turn. Respond knows the
+// turn id as soon as it has asked for the answer and wants the response id back to hand to
+// its caller; the Responding event arrives on the fan-out goroutine and is what opens a turn
+// nobody prompted. Whichever gets there first writes the row, and the other finds it open.
+//
+// A turn can also start responding more than once without being new: work handed to a
+// subagent comes back and the agent speaks again under the same turn id. That is one response
+// with more items in it, not two.
+func (s *Session) openTurn(turnID, said string) string {
+	if s.records == nil {
+		return ""
+	}
+
+	s.turnsMu.Lock()
+	if s.turns == nil {
+		s.turns = map[string]*recordedTurn{}
+	}
+	if held, open := s.turns[turnID]; open {
+		s.turnsMu.Unlock()
+		return held.id
+	}
+	turn := &recordedTurn{id: newID()}
+	s.turns[turnID] = turn
+	s.turnsMu.Unlock()
+
+	s.records.Responding(store.AgentResponse{
+		ID: turn.id, SessionID: s.id, CustomerID: s.spec.CustomerID,
+		Said: said, CreatedAt: time.Now().UTC(),
+	})
+	if said != "" {
+		s.item(turnID, store.ItemSaid, said, "", nil)
+	}
+	return turn.id
+}
+
+// item queues one thing that happened, against whichever response the turn is being
+// recorded as. An item for a turn that never announced itself is dropped rather than
+// inventing a response for it: the row would have no question on it and read as a turn
+// nobody asked for.
+func (s *Session) item(turnID, kind, text, tool string, payload map[string]any) {
+	s.turnsMu.Lock()
+	turn, open := s.turns[turnID]
+	if !open {
+		s.turnsMu.Unlock()
+		return
+	}
+	ordinal := turn.ordinal
+	turn.ordinal++
+	responseID := turn.id
+	s.turnsMu.Unlock()
+
+	s.records.Item(store.AgentResponseItem{
+		ResponseID: responseID, Ordinal: ordinal, SessionID: s.id,
+		Kind: kind, Text: text, ToolName: tool, Payload: payload, At: time.Now().UTC(),
+	})
+}
+
+// blockTurn marks a turn the guardrail refused.
+func (s *Session) blockTurn(turnID string) {
+	s.turnsMu.Lock()
+	defer s.turnsMu.Unlock()
+	if turn, open := s.turns[turnID]; open {
+		turn.blocked = true
+	}
+}
+
+func (s *Session) turnBlocked(turnID string) bool {
+	s.turnsMu.Lock()
+	defer s.turnsMu.Unlock()
+	turn, open := s.turns[turnID]
+	return open && turn.blocked
+}
+
+// abandonTurns closes whatever was still in flight when the session ended. Cancelled rather
+// than failed: nothing went wrong, the conversation just stopped.
+func (s *Session) abandonTurns() {
+	if s.records == nil {
+		return
+	}
+
+	s.turnsMu.Lock()
+	open := make([]string, 0, len(s.turns))
+	for turnID := range s.turns {
+		open = append(open, turnID)
+	}
+	s.turnsMu.Unlock()
+
+	for _, turnID := range open {
+		s.endTurn(turnID, store.ResponseCancelled, "")
+	}
+}
+
+// failTurns records a failure against every turn still in flight and closes them.
+func (s *Session) failTurns(where string, cause error) {
+	reason := cause.Error()
+	if where != "" {
+		reason = where + ": " + reason
+	}
+
+	s.turnsMu.Lock()
+	failing := make([]string, 0, len(s.turns))
+	for turnID := range s.turns {
+		failing = append(failing, turnID)
+	}
+	s.turnsMu.Unlock()
+
+	for _, turnID := range failing {
+		s.item(turnID, store.ItemError, reason, "", nil)
+		s.endTurn(turnID, store.ResponseFailed, reason)
+	}
+}
+
+// endTurn closes the row and forgets the turn, so a session that runs for hours does not
+// accumulate a map entry per turn it took.
+func (s *Session) endTurn(turnID, status, failure string) {
+	s.turnsMu.Lock()
+	turn, open := s.turns[turnID]
+	if open {
+		delete(s.turns, turnID)
+	}
+	s.turnsMu.Unlock()
+
+	if !open {
+		return
+	}
+	s.records.Responded(turn.id, status, failure, time.Now().UTC())
 }
 
 // remember keeps what was said, which is all a review needs of a call.

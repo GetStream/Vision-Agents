@@ -72,6 +72,10 @@ def sync_detailed(
 ) -> Response[Error | Session]:
     """One session
 
+     Reading a session is open to the device holding it, for the same reason listing and closing are: it
+    is the conversation the caller is having. A session belonging to somebody else is reported as not
+    found rather than refused, so this is not a way to find out whose an id is.
+
     Args:
         id (str):
 
@@ -101,6 +105,10 @@ def sync(
 ) -> Error | Session | None:
     """One session
 
+     Reading a session is open to the device holding it, for the same reason listing and closing are: it
+    is the conversation the caller is having. A session belonging to somebody else is reported as not
+    found rather than refused, so this is not a way to find out whose an id is.
+
     Args:
         id (str):
 
@@ -124,6 +132,10 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
 ) -> Response[Error | Session]:
     """One session
+
+     Reading a session is open to the device holding it, for the same reason listing and closing are: it
+    is the conversation the caller is having. A session belonging to somebody else is reported as not
+    found rather than refused, so this is not a way to find out whose an id is.
 
     Args:
         id (str):
@@ -151,6 +163,10 @@ async def asyncio(
     client: AuthenticatedClient | Client,
 ) -> Error | Session | None:
     """One session
+
+     Reading a session is open to the device holding it, for the same reason listing and closing are: it
+    is the conversation the caller is having. A session belonging to somebody else is reported as not
+    found rather than refused, so this is not a way to find out whose an id is.
 
     Args:
         id (str):

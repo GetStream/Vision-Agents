@@ -87,6 +87,13 @@ type Backend struct {
 	// for the app itself, which is what a backend does, and is what keeps the per-user
 	// daily limits out of it.
 	UserID string
+	// Token is a credential somebody else minted for UserID to hold, used instead of
+	// signing one here.
+	//
+	// It is what a process without the secret has: a worker handed a user's token, or a test
+	// standing in for a device. With it, APISecret is not needed at all, which is the point
+	// -- a token is the whole credential and the secret behind it could mint any other.
+	Token string
 	// HTTPClient is used for both the REST calls and the socket handshake. Nil uses the
 	// default client.
 	HTTPClient *http.Client
@@ -122,7 +129,9 @@ func (b Backend) Resolve() (Backend, error) {
 		if b.APISecret == "" {
 			b.APISecret = os.Getenv(APISecretEnv)
 		}
-		if b.APIKey == "" || b.APISecret == "" {
+		// A token handed in stands in for the secret, since it is already the thing the
+		// secret would have been used to make.
+		if b.APIKey == "" || (b.APISecret == "" && b.Token == "") {
 			return b, ErrNoCredential
 		}
 		// The credential names the app it belongs to and the proxy strips whatever this end
@@ -141,6 +150,9 @@ func (b Backend) Resolve() (Backend, error) {
 // A token that names nobody speaks for the app itself, which is Stream's `server: true`, and
 // is what a backend holds. That is also what leaves the per-user daily limits out of it.
 func (b Backend) token() (string, error) {
+	if b.Token != "" {
+		return b.Token, nil
+	}
 	now := time.Now()
 	claims := jwt.MapClaims{
 		"iat": jwt.NewNumericDate(now),

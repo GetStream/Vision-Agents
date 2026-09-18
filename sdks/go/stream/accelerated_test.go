@@ -24,8 +24,11 @@ type router struct {
 	mu       sync.Mutex
 	requests []acceleration.CreateSessionRequest
 
-	// configs are the stored agent configs a name is resolved against.
+	// configs are the stored agent configs, for the caller that reads one back. A session
+	// is created by name now, so nothing here is asked for on the way into a call.
 	configs []acceleration.AgentConfig
+	// asked counts how many times the configs were listed, which a session must not need.
+	asked int
 
 	// serve is what the socket does once a client is on it.
 	serve func(t *testing.T, connection *websocket.Conn)
@@ -59,6 +62,7 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 
 	mux.HandleFunc("GET /v1/agents/configs", func(w http.ResponseWriter, _ *http.Request) {
 		backend.mu.Lock()
+		backend.asked++
 		stored := backend.configs
 		backend.mu.Unlock()
 
@@ -84,6 +88,13 @@ func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
 	backend.Server = httptest.NewServer(mux)
 	t.Cleanup(backend.Close)
 	return backend
+}
+
+// lookups is how many times the stored configs were listed.
+func (r *router) lookups() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.asked
 }
 
 // created is the session request the router was sent.
@@ -121,7 +132,7 @@ func TestJoiningRendersTheAgentAsASessionToCreate(t *testing.T) {
 	}
 
 	request := backend.created(t)
-	if *request.CallId != "call-1" || *request.Llm != "gemma4" || *request.ConfigId != "jean" {
+	if *request.CallId != "call-1" || *request.Llm != "gemma4" || *request.Agent != "jean" {
 		t.Errorf("the router was asked for %+v", request)
 	}
 	if (*request.Tags)["customer_id"] != "123" {
@@ -129,7 +140,7 @@ func TestJoiningRendersTheAgentAsASessionToCreate(t *testing.T) {
 	}
 }
 
-func TestAStoredConfigCanBeNamedRatherThanIdentified(t *testing.T) {
+func TestAStoredConfigIsNamedRatherThanLookedUpFirst(t *testing.T) {
 	backend := newRouter(t, hold)
 	backend.configs = []acceleration.AgentConfig{{Id: "config-7", Name: "jean"}}
 
@@ -142,26 +153,34 @@ func TestAStoredConfigCanBeNamedRatherThanIdentified(t *testing.T) {
 	}
 	defer pipeline.Leave(context.Background())
 
-	// The backend looks a config up by id, so the name has to have become one on the way.
-	if request := backend.created(t); *request.ConfigId != "config-7" {
-		t.Errorf("the session was created against %q", *request.ConfigId)
+	// The name travels as the name. Resolving it here used to cost a round trip per
+	// pipeline to turn "jean" into "config-7", which the router does for itself.
+	request := backend.created(t)
+	if *request.Agent != "jean" || request.ConfigId != nil {
+		t.Errorf("the session was created against %+v", request)
+	}
+	if backend.lookups() != 0 {
+		t.Errorf("the name was looked up %d times before the session was created", backend.lookups())
 	}
 }
 
-func TestAConfigNameNothingMatchesIsPassedThroughAsAnID(t *testing.T) {
+func TestAConfigHandedOverAsAnIDIsNamedAsOne(t *testing.T) {
 	backend := newRouter(t, hold)
 
 	pipeline := Accelerated(Config{
-		Agent:   "config-7",
-		Backend: Backend{URL: backend.URL, CustomerID: "acme"},
+		ConfigID: "config-7",
+		Backend:  Backend{URL: backend.URL, CustomerID: "acme"},
 	})
 	if _, err := pipeline.Join(t.Context(), Call{ID: "call-1"}); err != nil {
 		t.Fatal(err)
 	}
 	defer pipeline.Leave(context.Background())
 
-	if request := backend.created(t); *request.ConfigId != "config-7" {
-		t.Errorf("the session was created against %q", *request.ConfigId)
+	// A dispatched message carries the id of the config it was routed to, which is not a
+	// name and must not be sent as one: the router refuses a name it does not hold.
+	request := backend.created(t)
+	if *request.ConfigId != "config-7" || request.Agent != nil {
+		t.Errorf("the session was created against %+v", request)
 	}
 }
 
@@ -180,6 +199,81 @@ func TestACallWithNoIDIsHeldInWriting(t *testing.T) {
 	}
 	if request.CallId != nil {
 		t.Errorf("there is no call, but the router was sent %q", *request.CallId)
+	}
+}
+
+func TestAConversationCarriesTheLabelsAPersonFindsItBy(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	if _, err := pipeline.Join(t.Context(), Call{
+		Title:           "Is Stream better?",
+		Description:     "The comparison question, again",
+		Project:         "docs",
+		Custom:          map[string]any{"ticket": "4721"},
+		ModelOverwrites: &acceleration.ModelOverwrites{Llm: pointerTo("openai/gpt-5")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	request := backend.created(t)
+	if request.Title == nil || *request.Title != "Is Stream better?" {
+		t.Errorf("the title went over as %v", request.Title)
+	}
+	if request.Project == nil || *request.Project != "docs" {
+		t.Errorf("the project went over as %v", request.Project)
+	}
+	if request.Custom == nil || (*request.Custom)["ticket"] != "4721" {
+		t.Errorf("the labels went over as %v", request.Custom)
+	}
+	if request.ModelOverwrites == nil || *request.ModelOverwrites.Llm != "openai/gpt-5" {
+		t.Errorf("the model overwrites went over as %v", request.ModelOverwrites)
+	}
+}
+
+func TestAnIncognitoConversationNeverAsksForATranscript(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	// Asking for both is a contradiction, and the conversation the caller wanted is the
+	// incognito one: an off-the-record conversation writes nothing down by definition.
+	if _, err := pipeline.Join(t.Context(), Call{
+		Incognito: true, PersistConversation: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	request := backend.created(t)
+	if request.Incognito == nil || !*request.Incognito {
+		t.Error("incognito was not asked for")
+	}
+	if request.PersistConversation != nil {
+		t.Errorf("an incognito conversation asked for a transcript: %v", *request.PersistConversation)
+	}
+}
+
+func TestWatchingAttachesToASessionSomethingElseCreated(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	// What a fork does: the session is created by a different request and watched here.
+	if err := pipeline.Watch(t.Context(), &acceleration.Session{
+		Id: "session-9", State: "running", CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	if len(backend.requests) != 0 {
+		t.Errorf("watching created %d sessions of its own", len(backend.requests))
+	}
+	if held := pipeline.Session(); held == nil || held.Id != "session-9" {
+		t.Errorf("the pipeline is holding %v", held)
+	}
+	if err := pipeline.Say("hello", false); err != nil {
+		t.Errorf("a watched session is not on its socket: %v", err)
 	}
 }
 
@@ -414,3 +508,6 @@ func next(t *testing.T, events <-chan Event) Event {
 		return Event{}
 	}
 }
+
+// pointerTo is an optional field a test wants set, for the generated types that take one.
+func pointerTo[T any](value T) *T { return &value }

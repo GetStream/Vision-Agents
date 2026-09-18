@@ -227,7 +227,7 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 				found.Report(err, "llm")
 				continue
 			}
-			if err := found.Respond(context.Background(), command.Text, images); err != nil {
+			if _, err := found.Respond(context.Background(), command.Text, images); err != nil {
 				found.Report(err, "llm")
 			}
 
@@ -330,6 +330,15 @@ func frameOf(event session.Event) (frame, bool) {
 			"turn_id":                typed.TurnID,
 			"text":                   typed.Text,
 			"time_to_first_token_ms": typed.TimeToFirstTokenMs,
+		}, true
+
+	case agent.Blocked:
+		return frame{
+			"type":        "blocked",
+			"turn_id":     typed.TurnID,
+			"reason":      typed.Reason,
+			"probability": typed.Probability,
+			"held_ms":     typed.HeldMs,
 		}, true
 
 	case agent.Spoke:

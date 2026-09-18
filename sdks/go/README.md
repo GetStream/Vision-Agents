@@ -46,13 +46,155 @@ for event := range session.Events() {
 }
 ```
 
-`Config{Agent: "jean"}` starts from a stored agent config, so the things worth deciding once
-are decided once. Everything else in `Config` overrides what it says.
+`Config{Agent: "jean"}` starts from a stored agent config, named the way a person knows it
+rather than by an id nobody chose, so the things worth deciding once are decided once.
+Everything else in `Config` overrides what it says. A caller that was handed an id instead —
+a dispatched message carries the id of the config it was routed to — names it as
+`Config{ConfigID: id}`; a name that matches nothing stored is refused rather than quietly
+starting an unconfigured agent.
 
 Functions are declared by their argument struct: the `json` tags name the arguments and the
 `schema` tags say what they mean, and the JSON Schema the model is offered is derived from
 them. The model asks over the session's socket and the function runs here, in your process,
 with whatever it can reach.
+
+## Conversations somebody comes back to
+
+`agents.New` spells an agent out here and holds one conversation at a time. The other way
+round is an agent configured once in the backend and addressed by the name a person knows it
+as, with its conversations kept so they can be found again:
+
+```go
+api, _ := client.New(stream.Backend{})
+docs := api.Agent("docs")
+
+session, _ := docs.Sessions.Create(ctx, client.SessionOptions{
+    Title:   "Is Stream better than Sendbird?",
+    Project: "docs",
+    Custom:  map[string]any{"ticket": "4721"},
+    Persist: true,
+})
+defer session.Close(ctx)
+
+answer, _ := session.Responses.Create(ctx, "Is Stream better than Sendbird?")
+
+items := answer.Items.Unwind(ctx, 0)
+for item := range items.Items() {
+    fmt.Println(item.Kind, item.Text)
+}
+if err := items.Err(); err != nil {
+    return err
+}
+```
+
+`Responses.Create` returns once the agent has started answering rather than when it has
+finished, because a model takes seconds. `Items` is what the backend wrote down, so it reads
+the same during the conversation and a week after it ended; `session.Events()` is still the
+live view, and the two answer different questions.
+
+Old conversations are found by filter or by phrase:
+
+```go
+recent, _ := docs.Sessions.Query(ctx, client.Query{Project: "docs", Limit: 20})
+found, _ := docs.Sessions.Search(ctx, "sendbird comparison", client.Query{})
+```
+
+`Incognito: true` holds the conversation and keeps nothing: no row, no turns, no transcript,
+whatever `Persist` says. It cannot be listed, searched or forked afterwards, which is the
+point of it.
+
+`Fork` continues a conversation as a new one — the same question asked of a harder model, or
+of a different agent, with the parent left untouched and each writing its own transcript:
+
+```go
+harder, _ := session.Fork(ctx, client.ForkOptions{
+    Title:           "Again, with reasoning",
+    ModelOverwrites: &acceleration.ModelOverwrites{Llm: pointer("openai/gpt-5")},
+})
+```
+
+`ModelOverwrites` is also a `SessionOptions` field, so one conversation can overrule the
+config's models without a config of its own.
+
+Somebody who has not signed up yet is a guest. `api.GuestUser` mints one with a token to
+hold, `api.AsGuest` is a client acting for them, and `api.ClaimGuestUser` moves their
+conversations onto the account they turn out to be — server side only, because only the
+backend that just authenticated the account knows which guest it was.
+
+`session.Chat()` is the Stream Chat channel the transcript is written into and
+`session.Video()` is the call, both through `getstream-go`, which is already a dependency.
+They need `STREAM_API_KEY` and `STREAM_API_SECRET`: the channel is Stream rather than this
+router.
+
+## Waiting to be written to
+
+`agent.Chat` is a conversation this process started. A conversation somebody else starts —
+a person writing in an agent channel — arrives the other way round: they wrote, the router
+found out by webhook, and it has to reach an agent that runs here. So a worker connects out
+and waits, and nothing has to be publicly reachable.
+
+```go
+dispatch, _ := agents.NewDispatch(agents.DispatchOptions{Capacity: 8})
+
+dispatch.OnMessage(func(ctx context.Context, message agents.InboundMessage) error {
+    conversation, err := dispatch.Conversation(ctx, message, build)
+    if err != nil {
+        return err
+    }
+    return conversation.Respond(message.Text)
+})
+
+dispatch.Run(ctx)
+```
+
+`Conversation` is the agent answering that channel, started if none is. A channel is one
+conversation, so the second message on it goes to the agent that answered the first, which
+is still open and knows what has been said; only a channel nothing is answering calls
+`build`. Agents are kept until the worker stops waiting.
+
+Nothing is waited for after `Respond`, because the answer is written into the channel by the
+backend as it is generated: the person who wrote is already reading it. Questions on one
+channel are answered one at a time, since `Session.Respond` interrupts, and two messages
+written in quick succession would otherwise throw the first answer away half-written.
+
+Several workers can wait at once, in which case the router shares the work between them.
+`Capacity` is a promise about what this process can hold: a full worker is passed over
+rather than queued behind. `OnCall` is the same thing for calls that arrive over SIP.
+
+A message only arrives here when no session is running on its channel. One written to an
+agent that *is* running is answered by the router from that session, because that agent is
+the one that knows what has been said. That is what `ChatOptions.AgentID` is for: a session
+opened without it joins under the agent's own user id, and the router cannot find it.
+
+The router needs to know whose channel it is. A channel a conversation has already been held
+in is claimed by that conversation. A channel created for somebody opening a support chat has
+no such history, and names the agent config answering in it under its own
+`agent_config_id` custom field.
+
+Whatever else that channel was created with arrives in `message.Custom`, carried through
+unread. It is where `build` finds what the conversation is for and the router has no
+opinion about — the organization to scope memory to, the locale to answer in. Whoever
+created the channel decided what is in it, so read it as a claim rather than a fact.
+
+Two options are worth setting on a worker whose agent does more than answer from the model.
+`TurnTimeout` is how long one answer is given before the conversation abandons it and takes
+the next question, five minutes by default, which is short for an agent whose tools read a
+source tree. `OnEvent` is told everything the backend says about every conversation the
+worker holds, which is the only way to see any of it — the conversation reads its own
+session, and a second reader would take events from it:
+
+```go
+agents.NewDispatch(agents.DispatchOptions{
+    Capacity:    8,
+    TurnTimeout: 15 * time.Minute,
+    OnEvent: func(channelID string, event stream.Event) {
+        metrics.Record(channelID, event)
+    },
+})
+```
+
+`sdks/go/examples/dispatch` is the whole of it, and
+`examples/voice_agents/chat_support` is the Python one.
 
 ## In a call
 
@@ -173,6 +315,7 @@ so a directory is a starting point rather than an override.
 | Path            | What is in it                                                     |
 | --------------- | ----------------------------------------------------------------- |
 | `agents/`       | `Agent`, its lifecycle, the harness, the directory loader and function registration |
+| `client/`       | Agents by name, their sessions, responses and items, forking and guest users |
 | `stream/`       | The remote pipeline, the backend it talks to, the socket and the phone endpoints |
 | `edge/`         | Creating the Stream call and minting a link to listen in on it     |
 | `tools/`        | The function registry and the JSON Schema derived from an argument struct |

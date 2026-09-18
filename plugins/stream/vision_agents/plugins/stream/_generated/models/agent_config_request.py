@@ -44,6 +44,9 @@ class AgentConfigRequest:
             shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
         instructions (str | Unset):
         greeting (str | Unset):
+        guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - llm_classifier, webhook or
+            llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
+            model. Empty means every turn is answered.
         skills (list[str] | Unset): Skill names, either the customer's own or one of the built-in think, recall and
             explain. Omit for the built-in set.
         plugins (list[str] | Unset): Hosted MCP servers this agent may reach, named from the built-in catalog.
@@ -70,6 +73,7 @@ class AgentConfigRequest:
     search: str | Unset = UNSET
     instructions: str | Unset = UNSET
     greeting: str | Unset = UNSET
+    guardrail: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
     plugins: list[str] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
@@ -110,6 +114,8 @@ class AgentConfigRequest:
         instructions = self.instructions
 
         greeting = self.greeting
+
+        guardrail = self.guardrail
 
         skills: list[str] | Unset = UNSET
         if not isinstance(self.skills, Unset):
@@ -164,6 +170,8 @@ class AgentConfigRequest:
             field_dict["instructions"] = instructions
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
+        if guardrail is not UNSET:
+            field_dict["guardrail"] = guardrail
         if skills is not UNSET:
             field_dict["skills"] = skills
         if plugins is not UNSET:
@@ -231,6 +239,8 @@ class AgentConfigRequest:
 
         greeting = d.pop("greeting", UNSET)
 
+        guardrail = d.pop("guardrail", UNSET)
+
         skills = cast(list[str], d.pop("skills", UNSET))
 
         plugins = cast(list[str], d.pop("plugins", UNSET))
@@ -267,6 +277,7 @@ class AgentConfigRequest:
             search=search,
             instructions=instructions,
             greeting=greeting,
+            guardrail=guardrail,
             skills=skills,
             plugins=plugins,
             keyterms=keyterms,

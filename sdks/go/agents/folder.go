@@ -16,6 +16,9 @@ import (
 // InstructionsFile is what an agent directory calls its system prompt.
 const InstructionsFile = "instructions.md"
 
+// GuardrailFile is what it calls the policy screening what may be asked of it.
+const GuardrailFile = "guardrail.md"
+
 // SkillsDir and KnowledgeDir are what it calls the rest.
 const (
 	SkillsDir    = "skills"
@@ -89,6 +92,7 @@ func (k *KnowledgeURL) UnmarshalYAML(node *yaml.Node) error {
 //
 //	agents/jean/
 //	  instructions.md
+//	  guardrail.md
 //	  skills/think.md
 //	  knowledge/pricing.md
 //	  knowledge/urls.yaml
@@ -102,6 +106,9 @@ type Folder struct {
 	Name string
 	// Instructions is instructions.md, or empty if there is none.
 	Instructions string
+	// Guardrail is guardrail.md, whole and unparsed, or empty if there is none. The
+	// backend parses it, so a policy this SDK has never heard of still reaches it.
+	Guardrail string
 	// Skills are the files in skills/, in name order.
 	Skills []Skill
 	// Knowledge are the readable files under knowledge/, in path order.
@@ -133,6 +140,14 @@ func Load(path string) (*Folder, error) {
 		return nil, fmt.Errorf("agents: reading %s: %w", InstructionsFile, err)
 	}
 
+	policy, err := os.ReadFile(filepath.Join(path, GuardrailFile))
+	switch {
+	case err == nil:
+		folder.Guardrail = strings.TrimSpace(string(policy))
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("agents: reading %s: %w", GuardrailFile, err)
+	}
+
 	if folder.Skills, err = loadSkills(filepath.Join(path, SkillsDir)); err != nil {
 		return nil, err
 	}
@@ -153,6 +168,9 @@ func (f *Folder) fill(options *Options) {
 	}
 	if options.Instructions == "" {
 		options.Instructions = f.Instructions
+	}
+	if options.Guardrail == "" {
+		options.Guardrail = f.Guardrail
 	}
 
 	if len(f.Skills) == 0 {

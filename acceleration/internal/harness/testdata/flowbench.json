@@ -1,0 +1,1849 @@
+{
+  "version": 1,
+  "contracts": {
+    "restaurant": "You take reservations for Bellweather, a restaurant in Denver. You can book, move and cancel tables, and you record an allergen for every booking. Never overbook a full slot.",
+    "healthcare": "You are the front desk line for Front Range Health. You can book, move and cancel appointments and say whether a prescription was sent. Check a caller's eight digit member number and date of birth before you discuss a record. Never give clinical advice.",
+    "telecom": "You are support for Summit Wireless. You can read a balance, change a plan, add or remove packages and raise a fault. Confirm the account holder's name and the last four digits of their card before you change anything.",
+    "outbound": "You are calling Front Range Health on behalf of a patient to find out whether their referral was received. Work through whatever menu answers you and ask for a person if the menu cannot help."
+  },
+  "cases": [
+    {
+      "id": "respond-book-a-table",
+      "state": "respond",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Bellweather, how can I help?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "I'd like a table for four on Saturday at seven thirty.",
+      "expect": "answer"
+    },
+    {
+      "id": "respond-allergen-answered",
+      "state": "respond",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "A table for four on Saturday at seven thirty."
+        },
+        {
+          "speaker": "agent",
+          "text": "I can do seven thirty. Is there an allergy I should record for the table?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "No allergies, but leave the coriander off if you can.",
+      "expect": "answer"
+    },
+    {
+      "id": "respond-move-the-booking",
+      "state": "respond",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "I have you down for Friday at eight, under Okafor."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Can you move it from Friday to Saturday, same time?",
+      "expect": "answer"
+    },
+    {
+      "id": "respond-reschedule-appointment",
+      "state": "respond",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Thanks, you're verified. What can I do for you?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "I need to move my appointment with Doctor Reyes to some time next week.",
+      "expect": "answer"
+    },
+    {
+      "id": "respond-member-number-complete",
+      "state": "respond",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "I'm calling about a prescription."
+        },
+        {
+          "speaker": "agent",
+          "text": "Before I look, can I take your eight digit member number?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Four four eight two one nine zero three.",
+      "expect": "answer"
+    },
+    {
+      "id": "respond-fault-described",
+      "state": "respond",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Summit Wireless, what's going on?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "My internet has been dropping out every evening since Tuesday, around eight.",
+      "expect": "answer"
+    },
+    {
+      "id": "respond-confirms-cancellation",
+      "state": "respond",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "How much is the sports package?"
+        },
+        {
+          "speaker": "agent",
+          "text": "It's fourteen a month. Would you like me to take it off?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Yes, go ahead and cancel it.",
+      "expect": "answer"
+    },
+    {
+      "id": "respond-opening-hours",
+      "state": "respond",
+      "contract": "restaurant",
+      "history": [],
+      "participant": "The caller",
+      "heard": "What time do you close on Sundays?",
+      "expect": "answer"
+    },
+    {
+      "id": "respond-prescription-question",
+      "state": "respond",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "You're verified, thanks. Go ahead."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Can you tell me whether my prescription went to the pharmacy on Pearl Street?",
+      "expect": "answer"
+    },
+    {
+      "id": "respond-closing-the-call",
+      "state": "respond",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "That's the sports package off from the first of next month."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Great, that's everything, thanks very much.",
+      "expect": "answer"
+    },
+    {
+      "id": "wait-trailing-preposition",
+      "state": "wait",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Bellweather, how can I help?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "I wanted to ask about the",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-hoping-to",
+      "state": "wait",
+      "contract": "restaurant",
+      "history": [],
+      "participant": "The caller",
+      "heard": "So the thing is, my wife and I were hoping to",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-could-you-check-whether",
+      "state": "wait",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "You're verified. What can I do?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Could you check whether",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-counting-the-party",
+      "state": "wait",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "How many will you be?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "It's for a party of, hang on, let me count",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-arriving-around-actually",
+      "state": "wait",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "And what time were you thinking?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "We'll be arriving around, actually",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-problem-started-when-i",
+      "state": "wait",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Tell me what you're seeing."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "The problem started when I",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-appointment-is-with-doctor",
+      "state": "wait",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Which appointment is this about?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "My appointment is with Doctor",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-need-to-change-the",
+      "state": "wait",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "You're through to Summit Wireless."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "I need to change the",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-and-the-other-thing",
+      "state": "wait",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "That's moved to the twenty second at nine."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "And the other thing was",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-what-id-like-is-to",
+      "state": "wait",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Go ahead."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Right, so what I'd like is to",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-digits-member-number-half-said",
+      "state": "wait-digits",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Can I take your eight digit member number?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "It's four four eight",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-digits-pin-two-of-four",
+      "state": "wait-digits",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "And the four digit PIN on the account?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "The PIN is two seven",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-digits-phone-number-partial",
+      "state": "wait-digits",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "What number should I put on the booking?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Three oh three, five five five",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-digits-clock-time-growing",
+      "state": "wait-digits",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "What time suits you?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Let's say around seven",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-digits-account-reference-partial",
+      "state": "wait-digits",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Do you have the account reference to hand?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "It's A B one two",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-digits-corrected-mid-number",
+      "state": "wait-digits",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "And the referral reference?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Nine nine four, sorry, nine nine four two",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-digits-card-ending",
+      "state": "wait-digits",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "And the last four digits of the card on the account?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Card ending four one",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-digits-half-past",
+      "state": "wait-digits",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "What time will you get here?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "I'll be there at half past",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-digits-order-number-restated",
+      "state": "wait-digits",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Which order was it?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "The order number is one hundred and four, no, one hundred and four dash",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-digits-date-of-birth-partial",
+      "state": "wait-digits",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "And your date of birth?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "It's the twelfth of",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-menu-appointments-press-one",
+      "state": "wait-menu",
+      "contract": "outbound",
+      "history": [],
+      "participant": "The line",
+      "heard": "Thank you for calling Front Range Health. For appointments, press one.",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-menu-spanish-then-billing",
+      "state": "wait-menu",
+      "contract": "outbound",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Thank you for calling Front Range Health."
+        }
+      ],
+      "participant": "The line",
+      "heard": "Para espanol, marque dos. For billing, press three.",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-menu-options-have-changed",
+      "state": "wait-menu",
+      "contract": "outbound",
+      "history": [],
+      "participant": "The line",
+      "heard": "Your call may be recorded for quality purposes. Please listen carefully, as our options have changed.",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-menu-three-options-listed",
+      "state": "wait-menu",
+      "contract": "outbound",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Please listen carefully, as our options have changed."
+        }
+      ],
+      "participant": "The line",
+      "heard": "For claims, press one. For eligibility, press two. For provider services, press three.",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-menu-dial-an-extension",
+      "state": "wait-menu",
+      "contract": "outbound",
+      "history": [],
+      "participant": "The line",
+      "heard": "If you know your party's extension, you may dial it at any time.",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-menu-estimated-wait",
+      "state": "wait-menu",
+      "contract": "outbound",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "For provider services, press three."
+        }
+      ],
+      "participant": "The line",
+      "heard": "All of our agents are currently busy. Your estimated wait time is eight minutes.",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-menu-balance-and-payments",
+      "state": "wait-menu",
+      "contract": "outbound",
+      "history": [],
+      "participant": "The line",
+      "heard": "Welcome to Summit Wireless. For account balance and payments, press one.",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-menu-repeat-then-trails-off",
+      "state": "wait-menu",
+      "contract": "outbound",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "For eligibility, press two."
+        }
+      ],
+      "participant": "The line",
+      "heard": "To repeat these options, press nine. For anything else,",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-menu-have-your-policy-ready",
+      "state": "wait-menu",
+      "contract": "outbound",
+      "history": [],
+      "participant": "The line",
+      "heard": "Please have your policy number ready. For new claims, press one.",
+      "expect": "wait"
+    },
+    {
+      "id": "wait-menu-monitored-then-sales",
+      "state": "wait-menu",
+      "contract": "outbound",
+      "history": [],
+      "participant": "The line",
+      "heard": "This call is being monitored. For technical support, press two. For sales,",
+      "expect": "wait"
+    },
+    {
+      "id": "clarify-change-it-nothing-named",
+      "state": "clarify",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "I have two bookings with you, one Friday and one Sunday."
+        },
+        {
+          "speaker": "agent",
+          "text": "Yes, Friday at eight and Sunday at one, both under Okafor."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Can you change it?",
+      "expect": "answer-clarify"
+    },
+    {
+      "id": "clarify-the-usual",
+      "state": "clarify",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Bellweather, how can I help?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "I'd like the usual, please.",
+      "expect": "answer-clarify"
+    },
+    {
+      "id": "clarify-put-it-back",
+      "state": "clarify",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "I've moved you to the twenty gigabyte plan and taken the sports package off."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Actually, put it back the way it was.",
+      "expect": "answer-clarify"
+    },
+    {
+      "id": "clarify-book-the-other-one",
+      "state": "clarify",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "I have seven fifteen inside, seven thirty on the patio, or eight forty five inside."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Book the other one instead.",
+      "expect": "answer-clarify"
+    },
+    {
+      "id": "clarify-the-one-with-the-discount",
+      "state": "clarify",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "There's the ten gigabyte at twenty five and the twenty gigabyte at thirty five, and both have an introductory rate."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Is that the one with the discount?",
+      "expect": "answer-clarify"
+    },
+    {
+      "id": "clarify-cancel-it-two-live",
+      "state": "clarify",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "You have the physio on the fourteenth and the follow up with Doctor Reyes on the twenty second."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Cancel it, please.",
+      "expect": "answer-clarify"
+    },
+    {
+      "id": "clarify-the-thing-with-my-bill",
+      "state": "clarify",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "You're verified, thanks. Go ahead."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Can you sort out the thing with my bill?",
+      "expect": "answer-clarify"
+    },
+    {
+      "id": "clarify-same-as-last-time",
+      "state": "clarify",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Bellweather, what can I do for you?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Same as last time, please.",
+      "expect": "answer-clarify"
+    },
+    {
+      "id": "clarify-move-it-earlier",
+      "state": "clarify",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "You have the physio on the fourteenth and the follow up on the twenty second."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Move it earlier.",
+      "expect": "answer-clarify"
+    },
+    {
+      "id": "clarify-the-one-i-mentioned",
+      "state": "clarify",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "I called last week about a couple of things."
+        },
+        {
+          "speaker": "agent",
+          "text": "I can see two notes on the account from last week."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Do the one I mentioned before.",
+      "expect": "answer-clarify"
+    },
+    {
+      "id": "ignore-asking-about-car-keys",
+      "state": "ignore",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "I have you down for four at seven thirty. Anything else?"
+        }
+      ],
+      "participant": "Someone at the caller's microphone",
+      "heard": "Mum, where did you put the car keys?",
+      "another_voice": true,
+      "expect": "ignore"
+    },
+    {
+      "id": "ignore-not-you-im-on-the-phone",
+      "state": "ignore",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "That's the fault raised, reference nine one four."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "No, not you, I'm on the phone.",
+      "expect": "ignore"
+    },
+    {
+      "id": "ignore-ordering-coffee",
+      "state": "ignore",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Let me check whether that referral came through."
+        }
+      ],
+      "participant": "Someone at the caller's microphone",
+      "heard": "Two coffees and a croissant, please.",
+      "another_voice": true,
+      "expect": "ignore"
+    },
+    {
+      "id": "ignore-telling-jamie-to-turn-it-down",
+      "state": "ignore",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Is there an allergy I should record?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Hang on — Jamie, turn that down.",
+      "expect": "ignore"
+    },
+    {
+      "id": "ignore-second-voice-prompting-the-caller",
+      "state": "ignore",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "You're verified. What can I do for you?"
+        }
+      ],
+      "participant": "Someone at the caller's microphone",
+      "heard": "Is that the doctor's office? Ask them about the referral.",
+      "another_voice": true,
+      "expect": "ignore"
+    },
+    {
+      "id": "ignore-television-commentary",
+      "state": "ignore",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "I can see the outage on your street, it's due to clear by six."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "And the Nuggets take it by four in overtime.",
+      "expect": "ignore"
+    },
+    {
+      "id": "ignore-promising-to-call-someone-back",
+      "state": "ignore",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "Seven thirty on the patio, under Okafor."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "I'll call you back in a minute, I'm on with them now.",
+      "expect": "ignore"
+    },
+    {
+      "id": "ignore-offering-someone-tea",
+      "state": "ignore",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "That's the sports package removed."
+        }
+      ],
+      "participant": "Someone at the caller's microphone",
+      "heard": "Do you want tea?",
+      "another_voice": true,
+      "expect": "ignore"
+    },
+    {
+      "id": "ignore-shouting-to-the-next-room",
+      "state": "ignore",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "And your date of birth?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "One second — yes, I'm coming!",
+      "expect": "ignore"
+    },
+    {
+      "id": "ignore-station-announcement",
+      "state": "ignore",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "agent",
+          "text": "I'll hold the patio table for you."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "The train to Union Station is now boarding at platform two.",
+      "expect": "ignore"
+    },
+    {
+      "id": "stop-make-it-six",
+      "state": "stop",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "A table for four on Saturday at seven thirty."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "no, make it six",
+      "agent_speaking": true,
+      "agent_said": "I have you down for four at seven thirty on the patio, and I've noted the peanut allergy, so",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "stop-wait-wait",
+      "state": "stop",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Can you tell me about the plans?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "wait, wait",
+      "agent_speaking": true,
+      "agent_said": "The ten gigabyte plan is twenty five a month and includes unlimited calls, and the twenty",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "stop-thats-the-wrong-date",
+      "state": "stop",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "I need to move the follow up."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "that's the wrong date",
+      "agent_speaking": true,
+      "agent_said": "I've moved your follow up with Doctor Reyes to the twelfth of March at ten fifteen, and I'll",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "stop-thats-not-my-address",
+      "state": "stop",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Send the router out, please."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "hang on, that's not my address",
+      "agent_speaking": true,
+      "agent_said": "I'll send the router to fourteen Pearl Street, apartment two, and it should arrive",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "stop-can-we-do-sunday-instead",
+      "state": "stop",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Saturday at seven thirty for four."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "actually can we do Sunday instead",
+      "agent_speaking": true,
+      "agent_said": "That's booked for Saturday the eighteenth at seven thirty, and I've put you on the patio",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "stop-the-other-doctor",
+      "state": "stop",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Book me in with the doctor."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "no no, the other doctor",
+      "agent_speaking": true,
+      "agent_said": "The earliest I have with Doctor Reyes is the twenty second at nine fifteen, or there's",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "stop-cancel-not-reschedule",
+      "state": "stop",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "I want to cancel the physio."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Stop, I said cancel it, not reschedule it.",
+      "agent_speaking": true,
+      "agent_said": "I've moved the physio from the fourteenth to the twenty first at two, and",
+      "expect": "interrupt"
+    },
+    {
+      "id": "stop-can-i-ask-something-first",
+      "state": "stop",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Put me on the bigger plan."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "sorry, can I ask something first",
+      "agent_speaking": true,
+      "agent_said": "I'm moving you to the twenty gigabyte plan from the first of next month, which will be",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "stop-thats-not-what-i-asked",
+      "state": "stop",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What are your Sunday hours?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "that's not what I asked",
+      "agent_speaking": true,
+      "agent_said": "We take bookings from five in the afternoon and the kitchen closes at ten thirty, though on",
+      "unfinished": true,
+      "expect": "interrupt"
+    },
+    {
+      "id": "stop-how-much-will-that-cost",
+      "state": "stop",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Add the international add-on."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Hold on — how much is that going to cost me?",
+      "agent_speaking": true,
+      "agent_said": "I've added the international add-on to the account and it takes effect immediately, so",
+      "expect": "interrupt"
+    },
+    {
+      "id": "shorten-and-saturday-as-well",
+      "state": "shorten",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What are your Friday hours?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "and Saturday as well",
+      "agent_speaking": true,
+      "agent_said": "On Friday we're open from five and the kitchen closes at ten thirty, the bar runs on until",
+      "unfinished": true,
+      "expect": "shorten"
+    },
+    {
+      "id": "shorten-and-put-us-on-the-patio",
+      "state": "shorten",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "A table for four on Saturday at seven thirty."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "and put us on the patio",
+      "agent_speaking": true,
+      "agent_said": "That's four at seven thirty on Saturday the eighteenth, and I've noted there's no allergy, and",
+      "unfinished": true,
+      "expect": "shorten"
+    },
+    {
+      "id": "shorten-and-a-gluten-free-option",
+      "state": "shorten",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Is there anything for someone who can't eat wheat?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "and my wife needs a gluten free option too",
+      "agent_speaking": true,
+      "agent_said": "The kitchen can do the sea bass, the risotto and the lamb without wheat, and the chef will",
+      "unfinished": true,
+      "expect": "shorten"
+    },
+    {
+      "id": "shorten-also-add-a-high-chair",
+      "state": "shorten",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Book us in for Sunday lunch."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "also can you add a high chair",
+      "agent_speaking": true,
+      "agent_said": "Sunday lunch runs from noon until three and I've got you a table at one, which is",
+      "unfinished": true,
+      "expect": "shorten"
+    },
+    {
+      "id": "shorten-and-does-it-cover-my-son",
+      "state": "shorten",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Does my plan cover physio?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "and does it cover my son as well",
+      "agent_speaking": true,
+      "agent_said": "Your plan covers six physio sessions a year with a twenty dollar copay each, and after that",
+      "unfinished": true,
+      "expect": "shorten"
+    },
+    {
+      "id": "shorten-and-paperless-billing-too",
+      "state": "shorten",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Change my billing date to the fifteenth."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "and I'd like paperless billing too",
+      "agent_speaking": true,
+      "agent_said": "Your billing date is now the fifteenth, and the next statement will be prorated, which means",
+      "unfinished": true,
+      "expect": "shorten"
+    },
+    {
+      "id": "shorten-and-the-sports-package-too",
+      "state": "shorten",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Add the international add-on."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "and add the sports package too",
+      "agent_speaking": true,
+      "agent_said": "The international add-on is on the account now, it's eight a month and covers calls to",
+      "unfinished": true,
+      "expect": "shorten"
+    },
+    {
+      "id": "shorten-and-the-router-as-well",
+      "state": "shorten",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What comes with the fibre package?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "and the router as well",
+      "agent_speaking": true,
+      "agent_said": "Fibre gives you five hundred megabits down, a static address if you want one, and the",
+      "unfinished": true,
+      "expect": "shorten"
+    },
+    {
+      "id": "shorten-apartment-four-b-as-well",
+      "state": "shorten",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "The address is fourteen Pearl Street."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "apartment four B as well",
+      "agent_speaking": true,
+      "agent_said": "I have fourteen Pearl Street, Denver, eight oh two oh two on the account, and delivery",
+      "unfinished": true,
+      "expect": "shorten"
+    },
+    {
+      "id": "shorten-yes-and-a-high-chair",
+      "state": "shorten",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Four for Saturday, please."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Yes, and add a high chair.",
+      "agent_speaking": true,
+      "agent_said": "That's four at seven thirty on the patio for Saturday the eighteenth, and I've made a note",
+      "expect": "shorten"
+    },
+    {
+      "id": "continue-ack-okay",
+      "state": "continue-ack",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What are your Sunday hours?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "okay",
+      "agent_speaking": true,
+      "agent_said": "Sunday lunch runs from noon until three, and in the evening we're open from five until",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-ack-right",
+      "state": "continue-ack",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Why is my bill higher this month?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "right",
+      "agent_speaking": true,
+      "agent_said": "The introductory rate ended in February, so this month is the first at the standard",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-ack-mhm",
+      "state": "continue-ack",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "How does the copay work?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "mhm",
+      "agent_speaking": true,
+      "agent_said": "You pay twenty dollars at each visit and the plan covers the rest, up to six visits, after",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-ack-yeah-yeah",
+      "state": "continue-ack",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Talk me through the fibre install."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "yeah yeah",
+      "agent_speaking": true,
+      "agent_said": "An engineer comes out between eight and twelve, and they'll need someone in the property to",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-ack-sure",
+      "state": "continue-ack",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Is there parking?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "sure",
+      "agent_speaking": true,
+      "agent_said": "There's a lot behind the building that's free after six, and street parking on Larimer which",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-ack-got-it",
+      "state": "continue-ack",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Where do I go for the physio?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "got it",
+      "agent_speaking": true,
+      "agent_said": "Physio is on the second floor of the Pearl Street building, and you'll want to check in at",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-ack-okay-okay",
+      "state": "continue-ack",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What do I do about the dropouts?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "okay okay",
+      "agent_speaking": true,
+      "agent_said": "First unplug the router for thirty seconds, then plug it back in and give it two minutes to",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-ack-i-see",
+      "state": "continue-ack",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Can you hold a table without a card?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "I see",
+      "agent_speaking": true,
+      "agent_said": "For a party under six we don't take a card, we just hold it for fifteen minutes past the",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-ack-yep",
+      "state": "continue-ack",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What do I need to bring?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "yep",
+      "agent_speaking": true,
+      "agent_said": "Bring your member card, a photo ID and the referral letter, and if you've had imaging done",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-ack-alright",
+      "state": "continue-ack",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "When will the outage clear?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "alright",
+      "agent_speaking": true,
+      "agent_said": "The engineers expect it clear by six this evening, and I'll text you the moment the",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-noise-clears-throat",
+      "state": "continue-noise",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What's on the tasting menu?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "[clears throat]",
+      "agent_speaking": true,
+      "agent_said": "Tonight it opens with a beetroot tartare, then the sea bass, and the main course is a",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-noise-achoo",
+      "state": "continue-noise",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What does the plan cover?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "achoo",
+      "agent_speaking": true,
+      "agent_said": "The plan covers six physio sessions a year at a twenty dollar copay, and imaging is",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-noise-erm",
+      "state": "continue-noise",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Which plan should I be on?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "erm",
+      "agent_speaking": true,
+      "agent_said": "Given you used about eight gigabytes last month the ten gigabyte plan is plenty, and it's",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-noise-sneezes",
+      "state": "continue-noise",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Do you have a corkage fee?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "[sneezes]",
+      "agent_speaking": true,
+      "agent_said": "Corkage is twenty five a bottle and we waive it on Tuesdays, though for a party over six",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-noise-dog-barking",
+      "state": "continue-noise",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Talk me through the install."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "[dog barking in the background]",
+      "agent_speaking": true,
+      "agent_said": "The engineer arrives between eight and twelve, and someone will need to be in to let them",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-noise-tsk",
+      "state": "continue-noise",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Why has the price gone up?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "tsk",
+      "agent_speaking": true,
+      "agent_said": "The introductory rate ran for twelve months and ended in February, so this bill is the",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-noise-sniffles",
+      "state": "continue-noise",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "When is the earliest appointment?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "[sniffles]",
+      "agent_speaking": true,
+      "agent_said": "The earliest with Doctor Reyes is the twenty second at nine fifteen, and there's a",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-noise-short-laugh",
+      "state": "continue-noise",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "How busy are you on a Saturday?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "ha",
+      "agent_speaking": true,
+      "agent_said": "Saturdays fill up about three weeks out, so seven thirty is the last patio slot left and",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-noise-static-burst",
+      "state": "continue-noise",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Is there an outage on my street?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "[static burst]",
+      "agent_speaking": true,
+      "agent_said": "There's a fault on the cabinet serving Pearl Street and the engineers expect it clear by",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-noise-door-slams",
+      "state": "continue-noise",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What do I need to bring with me?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "[door slams]",
+      "agent_speaking": true,
+      "agent_said": "Bring your member card, a photo ID and the referral letter, and if you've had imaging",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-echo-seven-thirty-patio",
+      "state": "continue-echo",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Four for Saturday at seven thirty."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "seven thirty on the patio",
+      "agent_speaking": true,
+      "agent_said": "That's four at seven thirty on the patio for Saturday the eighteenth, and I've noted",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-echo-appointment-confirmed",
+      "state": "continue-echo",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Book the follow up."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "confirmed for the twenty second at nine",
+      "agent_speaking": true,
+      "agent_said": "Your follow up is confirmed for the twenty second at nine fifteen with Doctor Reyes, and",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-echo-twenty-gigabyte-plan",
+      "state": "continue-echo",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Put me on the bigger plan."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "the twenty gigabyte plan from the first",
+      "agent_speaking": true,
+      "agent_said": "You're on the twenty gigabyte plan from the first of next month, and the difference will",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-echo-fourteen-pearl-street",
+      "state": "continue-echo",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Send the router out."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "fourteen Pearl Street",
+      "agent_speaking": true,
+      "agent_said": "The router goes to fourteen Pearl Street, apartment four B, and it should be with you by",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-echo-reference-nine-one-four",
+      "state": "continue-echo",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Raise a fault for the dropouts."
+        }
+      ],
+      "participant": "The caller",
+      "heard": "nine one four",
+      "agent_speaking": true,
+      "agent_said": "The fault reference is nine one four, and an engineer will call you before they come out to",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-echo-twenty-dollar-copay",
+      "state": "continue-echo",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "How much is each visit?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "twenty dollar copay",
+      "agent_speaking": true,
+      "agent_said": "There's a twenty dollar copay at each visit and the plan covers the rest for six visits, so",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-echo-second-floor-pearl-street",
+      "state": "continue-echo",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Where is physio?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "second floor of the Pearl Street building",
+      "agent_speaking": true,
+      "agent_said": "Physio is on the second floor of the Pearl Street building, and you check in at the desk by",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-echo-kitchen-closes-ten-thirty",
+      "state": "continue-echo",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "How late is the kitchen open?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "the kitchen closes at ten thirty",
+      "agent_speaking": true,
+      "agent_said": "We're open from five and the kitchen closes at ten thirty, though the bar runs until",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-echo-corkage-twenty-five",
+      "state": "continue-echo",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What's the corkage?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "twenty five a bottle",
+      "agent_speaking": true,
+      "agent_said": "Corkage is twenty five a bottle and we waive it on Tuesdays, though for a large party we",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-echo-eight-until-twelve",
+      "state": "continue-echo",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "When does the engineer come?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "between eight and twelve",
+      "agent_speaking": true,
+      "agent_said": "The engineer arrives between eight and twelve, and someone needs to be in to let them in,",
+      "unfinished": true,
+      "expect": "continue"
+    },
+    {
+      "id": "continue-elsewhere-get-the-door",
+      "state": "continue-elsewhere",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What's on the tasting menu?"
+        }
+      ],
+      "participant": "Someone at the caller's microphone",
+      "heard": "Can somebody get the door?",
+      "agent_speaking": true,
+      "agent_said": "It opens with a beetroot tartare, then the sea bass, and the main course tonight is a",
+      "another_voice": true,
+      "expect": "ignore"
+    },
+    {
+      "id": "continue-elsewhere-table-six-wants-the-bill",
+      "state": "continue-elsewhere",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Why is the card machine offline?"
+        }
+      ],
+      "participant": "Someone at the caller's microphone",
+      "heard": "Table six is asking for the bill.",
+      "agent_speaking": true,
+      "agent_said": "The fault on your line is with the cabinet on Larimer, and the engineers expect it clear",
+      "another_voice": true,
+      "expect": "ignore"
+    },
+    {
+      "id": "continue-elsewhere-there-in-ten-minutes",
+      "state": "continue-elsewhere",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "What should I bring?"
+        }
+      ],
+      "participant": "Someone at the caller's microphone",
+      "heard": "I'll be there in ten minutes.",
+      "agent_speaking": true,
+      "agent_said": "Bring your member card, a photo ID and the referral letter, and if you've had imaging done",
+      "another_voice": true,
+      "expect": "ignore"
+    },
+    {
+      "id": "continue-elsewhere-weather-for-the-front-range",
+      "state": "continue-elsewhere",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Is there an outage?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "And now the weather for the Front Range.",
+      "agent_speaking": true,
+      "agent_said": "There's a fault on the cabinet serving Pearl Street and it should be clear by six, and I'll",
+      "expect": "ignore"
+    },
+    {
+      "id": "continue-elsewhere-seen-my-charger",
+      "state": "continue-elsewhere",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Which plan am I on?"
+        }
+      ],
+      "participant": "Someone at the caller's microphone",
+      "heard": "Have you seen my charger?",
+      "agent_speaking": true,
+      "agent_said": "You're on the ten gigabyte plan at twenty five a month, which renews on the fifteenth, and",
+      "another_voice": true,
+      "expect": "ignore"
+    },
+    {
+      "id": "continue-elsewhere-cleanup-on-aisle-nine",
+      "state": "continue-elsewhere",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Did the referral come through?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Cleanup on aisle nine, please.",
+      "agent_speaking": true,
+      "agent_said": "The referral came in on the ninth and it's with the physio team now, so they should call",
+      "expect": "ignore"
+    },
+    {
+      "id": "continue-elsewhere-can-i-have-the-ipad",
+      "state": "continue-elsewhere",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Is there parking?"
+        }
+      ],
+      "participant": "Someone at the caller's microphone",
+      "heard": "Dad, can I have the iPad?",
+      "agent_speaking": true,
+      "agent_said": "There's a lot behind the building that's free after six, and street parking on Larimer",
+      "another_voice": true,
+      "expect": "ignore"
+    },
+    {
+      "id": "continue-elsewhere-put-it-in-the-fridge",
+      "state": "continue-elsewhere",
+      "contract": "restaurant",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "How late is the kitchen open?"
+        }
+      ],
+      "participant": "Someone at the caller's microphone",
+      "heard": "Put that in the fridge, would you?",
+      "agent_speaking": true,
+      "agent_said": "We open at five and the kitchen closes at ten thirty, though the bar runs on until",
+      "another_voice": true,
+      "expect": "ignore"
+    },
+    {
+      "id": "continue-elsewhere-bus-to-boulder",
+      "state": "continue-elsewhere",
+      "contract": "healthcare",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "When is the earliest appointment?"
+        }
+      ],
+      "participant": "The caller",
+      "heard": "Bus one twenty six to Boulder, now departing.",
+      "agent_speaking": true,
+      "agent_said": "The earliest with Doctor Reyes is the twenty second at nine fifteen, and there's a",
+      "expect": "ignore"
+    },
+    {
+      "id": "continue-elsewhere-the-other-box",
+      "state": "continue-elsewhere",
+      "contract": "telecom",
+      "history": [
+        {
+          "speaker": "caller",
+          "text": "Where do I return the old router?"
+        }
+      ],
+      "participant": "Someone at the caller's microphone",
+      "heard": "No, the other box.",
+      "agent_speaking": true,
+      "agent_said": "We'll post you a prepaid bag for the old router and you can drop it at any post office, and",
+      "another_voice": true,
+      "expect": "ignore"
+    }
+  ]
+}
