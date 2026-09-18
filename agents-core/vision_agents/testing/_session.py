@@ -116,7 +116,7 @@ class TestSession:
 
         self._captured_events.clear()
 
-        with self._observe_tool_calls():
+        with observe_tool_calls(self._llm, self._captured_events):
             if self._conversation is not None:
                 await self._conversation.send_message(
                     role="user",
@@ -145,65 +145,65 @@ class TestSession:
             start_time=start_time,
         )
 
-    @contextmanager
-    def _observe_tool_calls(self) -> Generator[None, None, None]:
-        """Wrap registered tools so invocations are recorded into ``_captured_events``.
 
-        Sits on top of any active ``mock_functions`` wrapper so mocks are
-        observed too. Originals are restored on exit.
-        """
-        # TODO: not safe under overlapping simple_response() calls on the same
-        # LLM — the second wrapper wraps the first and restoration depends on
-        # exit order. Acceptable for now since tests run sessions sequentially.
-        registry = self._llm.function_registry
-        originals: dict[str, Callable[..., Any]] = {}
-        for tool_name, fd in registry.functions.items():
-            originals[tool_name] = fd.function
-            fd.function = self._make_observer(tool_name, fd.function)
+@contextmanager
+def observe_tool_calls(llm: LLM, sink: list[RunEvent]) -> Generator[None, None, None]:
+    """Wrap ``llm``'s registered tools so invocations are recorded into ``sink``.
+
+    Sits on top of any active ``mock_functions`` wrapper so mocks are
+    observed too. Originals are restored on exit.
+    """
+    # TODO: not safe under overlapping simple_response() calls on the same
+    # LLM — the second wrapper wraps the first and restoration depends on
+    # exit order. Acceptable for now since tests run sessions sequentially.
+    registry = llm.function_registry
+    originals: dict[str, Callable[..., Any]] = {}
+    for tool_name, fd in registry.functions.items():
+        originals[tool_name] = fd.function
+        fd.function = _make_observer(tool_name, fd.function, sink)
+    try:
+        yield
+    finally:
+        for tool_name, original in originals.items():
+            registry.functions[tool_name].function = original
+
+
+def _make_observer(
+    name: str, original: Callable[..., Any], sink: list[RunEvent]
+) -> Callable[..., Any]:
+    """Build an async wrapper that records each call into ``sink``."""
+
+    # TODO: tool_call_id is not available at the registry call site, so
+    # parallel invocations of the same tool within one response cannot be
+    # paired in the captured trace. Sequential tool calls pair by adjacency.
+    async def _observed(**kwargs: Any) -> Any:
+        start = time.perf_counter()
+        sink.append(FunctionCallEvent(name=name, arguments=kwargs, tool_call_id=None))
         try:
-            yield
-        finally:
-            for tool_name, original in originals.items():
-                registry.functions[tool_name].function = original
-
-    def _make_observer(
-        self, name: str, original: Callable[..., Any]
-    ) -> Callable[..., Any]:
-        """Build an async wrapper that records each call into ``_captured_events``."""
-
-        # TODO: tool_call_id is not available at the registry call site, so
-        # parallel invocations of the same tool within one response cannot be
-        # paired in the captured trace. Sequential tool calls pair by adjacency.
-        async def _observed(**kwargs: Any) -> Any:
-            start = time.perf_counter()
-            self._captured_events.append(
-                FunctionCallEvent(name=name, arguments=kwargs, tool_call_id=None)
-            )
-            try:
-                result = await original(**kwargs)
-            except Exception as exc:
-                elapsed = (time.perf_counter() - start) * 1000
-                self._captured_events.append(
-                    FunctionCallOutputEvent(
-                        name=name,
-                        output={"error": str(exc)},
-                        is_error=True,
-                        tool_call_id=None,
-                        execution_time_ms=elapsed,
-                    )
-                )
-                raise
-
+            result = await original(**kwargs)
+        except Exception as exc:
             elapsed = (time.perf_counter() - start) * 1000
-            self._captured_events.append(
+            sink.append(
                 FunctionCallOutputEvent(
                     name=name,
-                    output=result,
-                    is_error=False,
+                    output={"error": str(exc)},
+                    is_error=True,
                     tool_call_id=None,
                     execution_time_ms=elapsed,
                 )
             )
-            return result
+            raise
 
-        return _observed
+        elapsed = (time.perf_counter() - start) * 1000
+        sink.append(
+            FunctionCallOutputEvent(
+                name=name,
+                output=result,
+                is_error=False,
+                tool_call_id=None,
+                execution_time_ms=elapsed,
+            )
+        )
+        return result
+
+    return _observed

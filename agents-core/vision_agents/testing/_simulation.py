@@ -1,8 +1,11 @@
 """Multi-turn simulation runner: simulated user vs. agent, judged per criterion."""
 
 import asyncio
+import dataclasses
+import importlib
 import json
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from math import comb
@@ -10,6 +13,8 @@ from typing import TypeVar
 
 from vision_agents.core.agents.agents import Agent
 from vision_agents.core.llm.llm import LLM
+from vision_agents.core.stt.stt import STT
+from vision_agents.core.tts.tts import TTS
 
 from ._events import (
     ChatMessageEvent,
@@ -22,6 +27,7 @@ from ._run_result import TestResponse
 from ._scenario import Scenario
 from ._session import TestSession
 from ._simulated_user import SimulatedUser, SimulatedUserError
+from ._spoken import AgentSilentError, CallerError, SpokenConversation
 from ._variations import generate_variations
 
 logger = logging.getLogger(__name__)
@@ -30,6 +36,7 @@ T = TypeVar("T")
 
 Target = Agent | LLM
 TargetFactory = Callable[[], Target]
+Caller = TypeVar("Caller", TTS, STT)
 
 
 def pass_at_k(n: int, c: int, k: int) -> float:
@@ -82,10 +89,25 @@ def render_transcript(events: list[RunEvent]) -> str:
 
 @dataclass
 class Turn:
-    """One user message and the agent's response to it."""
+    """One user message and the agent's response to it.
+
+    Attributes:
+        user_message: What the simulated user said.
+        response: What came back. In audio mode its output is what the
+            caller's STT heard, which is what the judge reads.
+        intended_reply: What the agent's LLM meant to say, in audio mode.
+        voice_to_voice_ms: Time from the caller falling silent to the first
+            agent audio with energy in it, in audio mode.
+
+    ``latency_ms`` is the LLM's wall time in text mode and, in audio mode,
+    the time from the caller falling silent to the end of the agent's reply
+    as heard, STT lag included.
+    """
 
     user_message: str
     response: TestResponse
+    intended_reply: str | None = None
+    voice_to_voice_ms: float | None = None
 
     @property
     def agent_reply(self) -> str | None:
@@ -140,6 +162,11 @@ class Trial:
         return [turn.latency_ms for turn in self.turns]
 
     @property
+    def voice_to_voice_ms(self) -> list[float | None]:
+        """Per-turn voice-to-voice latency; ``None`` per turn in a text conversation."""
+        return [turn.voice_to_voice_ms for turn in self.turns]
+
+    @property
     def passed(self) -> bool:
         return (
             self.valid
@@ -164,6 +191,17 @@ class Trial:
         lines.extend(
             f"    {line}" for line in render_transcript(self.transcript).splitlines()
         )
+        spoken = [t for t in self.turns if t.intended_reply is not None]
+        if spoken:
+            lines.append("  intended (what the agent meant to say):")
+            lines.extend(f"    [assistant] {t.intended_reply}" for t in spoken)
+            lines.append(
+                "  voice-to-voice ms: "
+                + ", ".join(
+                    "n/a" if ms is None else f"{ms:.0f}"
+                    for ms in self.voice_to_voice_ms
+                )
+            )
         return "\n".join(lines)
 
 
@@ -265,10 +303,20 @@ class Simulation:
     than one conversation (``variations`` or ``repeat`` above 1) both the
     simulated-user LLM and the target must be given as factories.
 
+    An ``audio`` scenario needs an ``Agent`` built with a ``LoopbackEdge``
+    and a voice and ears for the caller: either factories passed here or
+    plugin names in the scenario's ``caller_tts`` / ``caller_stt`` fields.
+
     Args:
         user_llm: LLM that plays the user, or a factory that builds one.
         max_turns: Maximum user messages per conversation.
         turn_timeout: Seconds allowed for each user or agent turn.
+        caller_tts: TTS that speaks the user's lines in audio mode, or a
+            factory that builds one. Overrides the scenario's ``caller_tts``.
+        caller_stt: STT that transcribes the agent in audio mode, or a
+            factory that builds one. Overrides the scenario's ``caller_stt``.
+        audio_settle: Seconds of quiet after the agent's last sound before
+            its reply counts as finished in audio mode.
     """
 
     def __init__(
@@ -276,14 +324,22 @@ class Simulation:
         user_llm: LLM | Callable[[], LLM],
         max_turns: int = 10,
         turn_timeout: float = 60.0,
+        caller_tts: TTS | Callable[[], TTS] | None = None,
+        caller_stt: STT | Callable[[], STT] | None = None,
+        audio_settle: float = 1.5,
     ) -> None:
         if max_turns < 1:
             raise ValueError("max_turns must be at least 1")
         if turn_timeout <= 0:
             raise ValueError("turn_timeout must be positive")
+        if audio_settle <= 0:
+            raise ValueError("audio_settle must be positive")
         self._user_llm = user_llm
         self._max_turns = max_turns
         self._turn_timeout = turn_timeout
+        self._caller_tts = caller_tts
+        self._caller_stt = caller_stt
+        self._audio_settle = audio_settle
 
     async def run(
         self,
@@ -304,9 +360,27 @@ class Simulation:
 
         Raises:
             ValueError: If more than one conversation is needed but an
-                instance rather than a factory was given.
+                instance rather than a factory was given, or if an audio
+                scenario has no caller TTS or STT configured.
         """
         conversations = scenario.variations * scenario.repeat
+        voice_factory: Callable[[], TTS] | None = None
+        ears_factory: Callable[[], STT] | None = None
+        if scenario.mode == "audio":
+            voice_factory = _caller_factory(
+                self._caller_tts,
+                scenario.caller_tts,
+                "TTS",
+                conversations,
+                scenario.name,
+            )
+            ears_factory = _caller_factory(
+                self._caller_stt,
+                scenario.caller_stt,
+                "STT",
+                conversations,
+                scenario.name,
+            )
         target_factory: TargetFactory
         if isinstance(agent_or_llm, (Agent, LLM)):
             _require_factory_for_many(conversations, "agent_or_llm")
@@ -330,9 +404,21 @@ class Simulation:
         for variation, variant in enumerate(variants):
             for repeat in range(scenario.repeat):
                 trial = Trial(scenario=variant, variation=variation, repeat=repeat)
-                await self._run_trial(
-                    trial, target_factory(), user_factory(), judge, instructions
+                user = SimulatedUser(
+                    user_factory(),
+                    variant,
+                    max_turns=self._max_turns,
+                    turn_timeout=self._turn_timeout,
                 )
+                if voice_factory is not None and ears_factory is not None:
+                    await self._converse_aloud(
+                        trial, target_factory(), user, voice_factory(), ears_factory()
+                    )
+                else:
+                    await self._converse_in_text(
+                        trial, target_factory(), user, instructions
+                    )
+                await self._judge_trial(trial, judge)
                 trials.append(trial)
                 logger.info(
                     "Scenario %s variation=%d repeat=%d: %s",
@@ -345,12 +431,11 @@ class Simulation:
                 )
         return SimulationResult(scenario=scenario, trials=trials)
 
-    async def _run_trial(
+    async def _converse_in_text(
         self,
         trial: Trial,
         target: Target,
-        user_llm: LLM,
-        judge: Judge,
+        user: SimulatedUser,
         instructions: str | None,
     ) -> None:
         session_instructions: str | None
@@ -361,12 +446,6 @@ class Simulation:
             llm = target
             session_instructions = instructions
 
-        user = SimulatedUser(
-            user_llm,
-            trial.scenario,
-            max_turns=self._max_turns,
-            turn_timeout=self._turn_timeout,
-        )
         session = (
             TestSession(llm=llm, instructions=session_instructions)
             if session_instructions is not None
@@ -389,6 +468,60 @@ class Simulation:
                 trial.valid = False
                 return
 
+    async def _converse_aloud(
+        self,
+        trial: Trial,
+        target: Target,
+        user: SimulatedUser,
+        voice: TTS,
+        ears: STT,
+    ) -> None:
+        if not isinstance(target, Agent):
+            raise ValueError(
+                "Audio mode needs an Agent built with a LoopbackEdge "
+                f"(vision_agents.testing.LoopbackEdge), got {type(target).__name__}"
+            )
+        conversation = SpokenConversation(
+            target,
+            voice,
+            ears,
+            turn_timeout=self._turn_timeout,
+            settle=self._audio_settle,
+        )
+        try:
+            async with conversation:
+                message = await user.next_message(None)
+                while message is not None:
+                    started = time.monotonic()
+                    line = await conversation.say(message)
+                    events: list[RunEvent] = list(line.events)
+                    events.append(
+                        ChatMessageEvent(role="assistant", content=line.heard)
+                    )
+                    response = dataclasses.replace(
+                        TestResponse.build(
+                            events=events, user_input=message, start_time=started
+                        ),
+                        duration_ms=line.duration_ms,
+                    )
+                    trial.turns.append(
+                        Turn(
+                            user_message=message,
+                            response=response,
+                            intended_reply=line.intended,
+                            voice_to_voice_ms=line.voice_to_voice_ms,
+                        )
+                    )
+                    message = await user.next_message(line.heard)
+        except AgentSilentError as exc:
+            trial.error = str(exc)
+        except (SimulatedUserError, CallerError) as exc:
+            trial.error = str(exc)
+            trial.valid = False
+
+    async def _judge_trial(self, trial: Trial, judge: Judge) -> None:
+        if trial.error is not None:
+            return
         if not trial.turns:
             trial.error = (
                 "Simulated user ended the conversation before sending a message"
@@ -423,6 +556,49 @@ class Simulation:
 
 def _constant(value: T) -> Callable[[], T]:
     return lambda: value
+
+
+def _caller_factory(
+    given: Caller | Callable[[], Caller] | None,
+    plugin: str | None,
+    kind: str,
+    conversations: int,
+    scenario_name: str,
+) -> Callable[[], Caller]:
+    """Pick the caller's voice or ears: what was passed in, else the scenario's plugin.
+
+    ``kind`` is ``"TTS"`` or ``"STT"``; a plugin name resolves to
+    ``vision_agents.plugins.<plugin>.<kind>`` built with its defaults.
+    """
+    field_name = f"caller_{kind.lower()}"
+    if isinstance(given, (TTS, STT)):
+        _require_factory_for_many(conversations, field_name)
+        return _constant(given)
+    if given is not None:
+        return given
+    if plugin is None:
+        raise ValueError(
+            f"Scenario {scenario_name!r} has mode 'audio' but no caller {kind} is "
+            f"configured: pass {field_name} to Simulation or set {field_name} in "
+            "the scenario"
+        )
+    try:
+        module = importlib.import_module(f"vision_agents.plugins.{plugin}")
+    except ImportError as exc:
+        raise ValueError(
+            f"Caller {kind} plugin {plugin!r} is not installed: "
+            f"add vision-agents-plugins-{plugin} to your dependencies"
+        ) from exc
+    try:
+        cls = module.TTS if kind == "TTS" else module.STT
+    except AttributeError as exc:
+        raise ValueError(f"Plugin {plugin!r} does not provide a {kind}") from exc
+
+    def build() -> Caller:
+        instance: Caller = cls()
+        return instance
+
+    return build
 
 
 def _require_factory_for_many(conversations: int, name: str) -> None:

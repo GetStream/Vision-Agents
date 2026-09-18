@@ -1,7 +1,7 @@
 """Testing framework for Vision-Agents.
 
-Provides text-only testing of agents without requiring audio/video
-infrastructure or edge connections.
+Provides text testing of agents without audio/video infrastructure or edge
+connections, and audio-path simulation over an in-process loopback edge.
 
 Usage:
 
@@ -61,6 +61,18 @@ and reports ``pass@k`` and ``pass^k``. A judge failure marks a trial invalid
 rather than failed. LLMs keep chat history, so pass factories (``lambda:
 gemini.LLM(...)``) whenever a scenario runs more than one conversation.
 
+``mode: audio`` runs the same scenario out loud: the simulated user's lines
+are synthesised by ``caller_tts`` and paced into the agent's audio input
+over a ``LoopbackEdge``, and the agent's TTS is transcribed back by
+``caller_stt``. The judge reads what was heard; each turn also keeps what
+the agent meant to say and its voice-to-voice latency::
+
+    def create_agent() -> Agent:
+        return Agent(edge=LoopbackEdge(), llm=..., stt=..., tts=..., ...)
+
+    simulation = Simulation(user_llm=lambda: gemini.LLM(MODEL))
+    result = await simulation.run(create_agent, load_scenario("spoken.yaml"), judge)
+
 For pytest, register ``vision_agents.testing.pytest_plugin`` and use the
 ``simulate`` fixture; see that module's docstring.
 
@@ -77,7 +89,10 @@ Key exports:
     Simulation: runs scenarios against an agent or LLM and judges the outcome.
     SimulationResult: trials plus ``passed``, ``pass_rate``, ``pass_at_k``, ``pass_pow_k``.
     Trial: one conversation — transcript, tool calls, turns, latencies, verdicts.
-    Turn: one user message and the agent's ``TestResponse``.
+    Turn: one user message and the agent's ``TestResponse``; in audio mode also
+        ``intended_reply`` and ``voice_to_voice_ms``.
+    LoopbackEdge: in-process ``EdgeTransport`` with no network, for audio mode
+        and for exercising an ``Agent``'s lifecycle in tests.
     generate_variations: reword a scenario N times keeping every fact.
     pass_at_k, pass_pow_k: estimators used for repeat reporting.
 """
@@ -89,6 +104,7 @@ from vision_agents.testing._events import (
     RunEvent,
 )
 from vision_agents.testing._judge import Judge, JudgeError, JudgeVerdict, LLMJudge
+from vision_agents.testing._loopback import LoopbackEdge, LoopbackMicrophone
 from vision_agents.testing._run_result import TestResponse
 from vision_agents.testing._scenario import Scenario, load_scenario
 from vision_agents.testing._session import TestSession
@@ -112,6 +128,8 @@ __all__ = [
     "LLMJudge",
     "TestSession",
     "TestResponse",
+    "LoopbackEdge",
+    "LoopbackMicrophone",
     "ChatMessageEvent",
     "FunctionCallEvent",
     "FunctionCallOutputEvent",

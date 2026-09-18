@@ -6,14 +6,22 @@ Run:
 """
 
 import os
+from pathlib import Path
 
 import pytest
 from dotenv import load_dotenv
 
 from simple_agent_example import INSTRUCTIONS, setup_llm
 
-from vision_agents.plugins import gemini
-from vision_agents.testing import LLMJudge, TestSession
+from vision_agents.core import Agent, User
+from vision_agents.plugins import deepgram, elevenlabs, gemini
+from vision_agents.testing import (
+    LLMJudge,
+    LoopbackEdge,
+    Simulation,
+    TestSession,
+    load_scenario,
+)
 
 load_dotenv()
 
@@ -108,3 +116,41 @@ async def test_scenario_small_talk_then_weather(simulate):
     )
     assert result.passed, result.summary()
     assert result.trials[0].turn_count >= 2
+
+
+@pytest.mark.integration
+async def test_scenario_spoken_weather():
+    """Simulated caller asks for Berlin's weather out loud over a loopback edge.
+
+    The caller's line is spoken through ElevenLabs into the agent's Deepgram
+    STT, and the agent's ElevenLabs reply is transcribed back by Deepgram;
+    the judge reads that transcript, not the LLM's text.
+    """
+    _skip_if_no_key()
+    for key in ("DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY"):
+        if not os.getenv(key):
+            pytest.skip(f"{key} not set")
+
+    def create_loopback_agent() -> Agent:
+        return Agent(
+            edge=LoopbackEdge(),
+            agent_user=User(name="My happy AI friend", id="agent"),
+            instructions=INSTRUCTIONS,
+            llm=setup_llm(MODEL),
+            tts=elevenlabs.TTS(model_id="eleven_flash_v2_5"),
+            stt=deepgram.STT(eager_turn_detection=True),
+        )
+
+    scenario = load_scenario(
+        Path(__file__).parent / "scenarios" / "spoken-weather.yaml"
+    )
+    simulation = Simulation(user_llm=lambda: gemini.LLM(MODEL), max_turns=4)
+    result = await simulation.run(
+        create_loopback_agent, scenario, LLMJudge(gemini.LLM(MODEL))
+    )
+
+    assert result.passed, result.summary()
+    trial = result.trials[0]
+    assert any(call.name == "get_weather" for call in trial.tool_calls)
+    assert all(ms is not None for ms in trial.voice_to_voice_ms), trial.summary()
+    assert all(turn.intended_reply for turn in trial.turns), trial.summary()

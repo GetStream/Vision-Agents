@@ -1,0 +1,18 @@
+name: spoken-weather
+mode: audio
+caller_tts: elevenlabs
+caller_stt: deepgram
+persona:
+  friendly: true
+  brief: true
+context:
+  name: Jonas
+  city: Berlin
+goal: Find out what the weather is like in Berlin right now.
+constraints:
+  - Ask about the weather in your first message and name the city.
+  - Speak in short plain sentences, as you would on a phone call.
+success:
+  - weather_reported_for_berlin
+variations: 1
+judge_target: gemini-3-flash-preview
