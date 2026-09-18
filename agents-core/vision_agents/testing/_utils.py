@@ -23,3 +23,11 @@ async def collect_simple_response(
             "simple_response() ended without yielding an LLMResponseFinal chunk"
         )
     return deltas, final_response
+
+
+def strip_code_fences(text: str) -> str:
+    """Return ``text`` without a surrounding markdown code fence, if any."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    return cleaned

@@ -31,6 +31,8 @@ Key exports:
     JudgeVerdict: dataclass returned by ``Judge.evaluate()``.
     LLMJudge: default judge backed by an LLM instance.
     RunEvent: union of ChatMessageEvent, FunctionCallEvent, FunctionCallOutputEvent.
+    Scenario / load_scenario / find_scenarios: scenario files for ``agent simulate``.
+    Simulator: runs scenarios against an agent in text mode and builds a SimulationReport.
 """
 
 from vision_agents.testing._events import (
@@ -39,20 +41,49 @@ from vision_agents.testing._events import (
     FunctionCallOutputEvent,
     RunEvent,
 )
-from vision_agents.testing._judge import Judge, JudgeVerdict, LLMJudge
+from vision_agents.testing._judge import Judge, JudgeVerdict, LLMJudge, parse_verdict
 from vision_agents.testing._run_result import TestResponse
+from vision_agents.testing._scenario import (
+    Scenario,
+    ScenarioError,
+    find_scenarios,
+    load_scenario,
+)
 from vision_agents.testing._session import TestSession
+from vision_agents.testing._simulation import (
+    CriterionVerdict,
+    SimulationCase,
+    SimulationError,
+    SimulationReport,
+    SimulationRun,
+    Simulator,
+    ToolCall,
+    TranscriptLine,
+)
 from vision_agents.testing._utils import collect_simple_response
 
 __all__ = [
     "Judge",
     "JudgeVerdict",
     "LLMJudge",
+    "parse_verdict",
     "TestSession",
     "TestResponse",
     "ChatMessageEvent",
     "FunctionCallEvent",
     "FunctionCallOutputEvent",
     "RunEvent",
+    "Scenario",
+    "ScenarioError",
+    "find_scenarios",
+    "load_scenario",
+    "Simulator",
+    "SimulationError",
+    "SimulationReport",
+    "SimulationRun",
+    "SimulationCase",
+    "CriterionVerdict",
+    "TranscriptLine",
+    "ToolCall",
     "collect_simple_response",
 ]
