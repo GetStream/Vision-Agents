@@ -1,12 +1,16 @@
-"""Scripted LLM and judge doubles for simulation unit tests (no real model)."""
+"""Scripted LLM, judge, TTS and STT doubles for simulation unit tests (no real model)."""
 
 import asyncio
 import json
 from collections.abc import Callable
 from typing import AsyncIterator
 
+import numpy as np
+from getstream.video.rtc.track_util import AudioFormat, PcmData
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.stt.stt import STT, TranscriptResponse
+from vision_agents.core.tts.tts import TTS
 from vision_agents.testing import ChatMessageEvent, JudgeVerdict
 
 
@@ -89,3 +93,79 @@ class ScriptedJudge:
         if callable(outcome):
             outcome = outcome(event, intent)
         return JudgeVerdict(success=outcome, reason="scripted")
+
+
+BLOCK = 320  # samples per character: 20 ms at 16 kHz
+LEVEL = 100  # int16 amplitude per code point
+
+
+def encode_speech(text: str) -> PcmData:
+    """Encode text as 16 kHz PCM: one 20 ms block of constant level per character."""
+    codes = np.array([min(ord(c), 255) for c in text], dtype=np.int16) * LEVEL
+    return PcmData(
+        samples=np.repeat(codes, BLOCK),
+        sample_rate=16000,
+        format=AudioFormat.S16,
+        channels=1,
+    )
+
+
+def decode_speech(samples: np.ndarray) -> str:
+    """Inverse of ``encode_speech``: runs of a constant non-zero level become characters."""
+    if samples.size == 0:
+        return ""
+    codes = np.rint(samples.astype(np.float64) / LEVEL).astype(int)
+    changes = np.flatnonzero(np.diff(codes)) + 1
+    starts = np.concatenate(([0], changes))
+    ends = np.concatenate((changes, [len(codes)]))
+    text = []
+    for start, end in zip(starts, ends):
+        code = int(codes[start])
+        count = round((end - start) / BLOCK)
+        if code > 0 and count:
+            text.append(chr(code) * count)
+    return "".join(text)
+
+
+class CodecTTS(TTS):
+    """TTS whose audio a ``CodecSTT`` can read back verbatim."""
+
+    model = "codec"
+
+    def __init__(self) -> None:
+        super().__init__(provider_name="codec")
+
+    async def stream_audio(self, text: str, *args: object, **kwargs: object) -> PcmData:
+        return encode_speech(text)
+
+    async def stop_audio(self) -> None:
+        return None
+
+
+class CodecSTT(STT):
+    """STT that decodes ``CodecTTS`` audio; a final transcript follows 40 ms of silence."""
+
+    turn_detection = False
+    model = "codec"
+
+    def __init__(self) -> None:
+        super().__init__(provider_name="codec")
+        self._buffer: list[np.ndarray] = []
+        self._silence = 0
+
+    async def process_audio(self, pcm_data: PcmData, participant: Participant) -> None:
+        samples = pcm_data.resample(16000, 1).to_int16().samples.reshape(-1)
+        if np.any(samples):
+            self._buffer.append(samples)
+            self._silence = 0
+            return
+        if not self._buffer:
+            return
+        self._silence += len(samples)
+        if self._silence < 2 * BLOCK:
+            return
+        text = decode_speech(np.concatenate(self._buffer))
+        self._buffer.clear()
+        self._silence = 0
+        if text:
+            self._emit_transcript_event(text, participant, TranscriptResponse())

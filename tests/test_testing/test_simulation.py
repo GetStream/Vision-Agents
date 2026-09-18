@@ -1,14 +1,21 @@
 """Unit tests for the multi-turn simulation: turn bounding, pass@k math,
 variations and result aggregation. No real LLM is involved."""
 
+import dataclasses
 import json
+from typing import AsyncIterator
 
 import pytest
+from getstream.video.rtc.track_util import PcmData
 
+from vision_agents.core import Agent, User
+from vision_agents.core.edge.types import Participant
+from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.testing import (
     ChatMessageEvent,
     JudgeError,
     LLMJudge,
+    LoopbackEdge,
     Scenario,
     SimulatedUser,
     SimulatedUserError,
@@ -18,7 +25,15 @@ from vision_agents.testing import (
     pass_pow_k,
 )
 
-from .fakes import BookingLLM, ScriptedJudge, ScriptedLLM, user_done, user_says
+from .fakes import (
+    BookingLLM,
+    CodecSTT,
+    CodecTTS,
+    ScriptedJudge,
+    ScriptedLLM,
+    user_done,
+    user_says,
+)
 
 
 @pytest.fixture
@@ -30,6 +45,63 @@ def scenario() -> Scenario:
         context={"name": "Alice"},
         constraints=["Reject anything after 11am."],
     )
+
+
+@pytest.fixture
+def spoken_scenario(scenario) -> Scenario:
+    return dataclasses.replace(scenario, mode="audio")
+
+
+def spoken_agent(replies: list[str]) -> Agent:
+    return Agent(
+        edge=LoopbackEdge(),
+        llm=BookingLLM(replies),
+        stt=CodecSTT(),
+        tts=CodecTTS(),
+        agent_user=User(id="agent", name="Agent"),
+        instructions="You book appointments.",
+    )
+
+
+def spoken_simulation(user_llm, **kwargs) -> Simulation:
+    kwargs.setdefault("turn_timeout", 10.0)
+    kwargs.setdefault("caller_tts", CodecTTS())
+    kwargs.setdefault("caller_stt", CodecSTT())
+    return Simulation(user_llm=user_llm, audio_settle=0.2, **kwargs)
+
+
+class MuteTTS(CodecTTS):
+    """Caller voice that fails to synthesise."""
+
+    async def stream_audio(self, text: str, *args: object, **kwargs: object) -> PcmData:
+        raise ConnectionError("voice offline")
+
+
+class DeafSTT(CodecSTT):
+    """Caller ears that fail on the first frame they are given."""
+
+    async def process_audio(self, pcm_data: PcmData, participant: Participant) -> None:
+        raise ConnectionError("ears offline")
+
+
+class HangingUpUser(ScriptedLLM):
+    """Simulated user whose second line is preceded by the agent leaving the call."""
+
+    def __init__(self, replies: list[str], agent: Agent) -> None:
+        super().__init__(replies)
+        self._agent = agent
+        self._calls = 0
+
+    async def simple_response(
+        self,
+        text: str,
+        participant: Participant | None = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        self._calls += 1
+        if self._calls == 2:
+            await self._agent.close()
+        async for item in super().simple_response(text, participant):
+            yield item
 
 
 class TestSimulatedUser:
@@ -548,6 +620,152 @@ class TestSimulation:
         assert "0/1 valid trials passed" in summary
         assert "correct_time_confirmed: fail" in summary
         assert "[user] Hi" in summary
+
+
+class TestSpokenSimulation:
+    async def test_judge_reads_what_the_caller_heard(self, spoken_scenario):
+        user_llm = ScriptedLLM([user_says("Move me to Friday"), user_done()])
+
+        def heard_transcript(event: ChatMessageEvent, intent: str) -> bool:
+            return (
+                "[user] Move me to Friday" in event.content
+                and "[agent called tool book_slot]" in event.content
+                and "[assistant] Booked Friday 10am." in event.content
+            )
+
+        judge = ScriptedJudge([heard_transcript, heard_transcript])
+        result = await spoken_simulation(user_llm).run(
+            spoken_agent(["Booked Friday 10am."]), spoken_scenario, judge
+        )
+
+        assert result.passed, result.summary()
+        trial = result.trials[0]
+        assert trial.turn_count == 1
+        turn = trial.turns[0]
+        assert turn.user_message == "Move me to Friday"
+        assert turn.agent_reply == "Booked Friday 10am."
+        assert turn.intended_reply == "Booked Friday 10am."
+        assert turn.voice_to_voice_ms is not None
+        assert 0 < turn.voice_to_voice_ms < 5000
+        assert turn.latency_ms >= turn.voice_to_voice_ms
+        assert trial.voice_to_voice_ms == [turn.voice_to_voice_ms]
+        assert [c.name for c in trial.tool_calls] == ["book_slot"]
+        assert "Booked Friday 10am." in user_llm.history[2][1]
+
+    async def test_summary_shows_intended_text_and_latency(self, spoken_scenario):
+        user_llm = ScriptedLLM([user_says("Hi"), user_done()])
+        result = await spoken_simulation(user_llm).run(
+            spoken_agent(["Done."]), spoken_scenario, ScriptedJudge()
+        )
+        summary = result.summary()
+        assert "[assistant] Done." in summary
+        assert "intended (what the agent meant to say):" in summary
+        assert "voice-to-voice ms:" in summary
+
+    async def test_silent_agent_fails_trial(self, spoken_scenario):
+        user_llm = ScriptedLLM([user_says("Hi"), user_done()])
+        judge = ScriptedJudge([RuntimeError("judge must not be called")])
+
+        result = await spoken_simulation(user_llm, turn_timeout=0.5).run(
+            spoken_agent([""]), spoken_scenario, judge
+        )
+
+        trial = result.trials[0]
+        assert trial.valid is True
+        assert trial.passed is False
+        assert "did not reply within 0.5s" in trial.error
+        assert trial.verdicts == {}
+
+    async def test_caller_voice_failure_marks_trial_invalid(self, spoken_scenario):
+        user_llm = ScriptedLLM([user_says("Hi"), user_done()])
+        judge = ScriptedJudge([RuntimeError("judge must not be called")])
+
+        result = await spoken_simulation(user_llm, caller_tts=MuteTTS()).run(
+            spoken_agent(["Done."]), spoken_scenario, judge
+        )
+
+        trial = result.trials[0]
+        assert trial.valid is False
+        assert trial.turn_count == 0
+        assert "voice failed: voice offline" in trial.error
+        assert result.pass_rate is None
+
+    async def test_caller_ears_failure_marks_trial_invalid(self, spoken_scenario):
+        user_llm = ScriptedLLM([user_says("Hi"), user_done()])
+        judge = ScriptedJudge([RuntimeError("judge must not be called")])
+
+        result = await spoken_simulation(user_llm, caller_stt=DeafSTT()).run(
+            spoken_agent(["Done."]), spoken_scenario, judge
+        )
+
+        trial = result.trials[0]
+        assert trial.valid is False
+        assert "ears failed: ears offline" in trial.error
+        assert result.pass_rate is None
+
+    async def test_agent_leaving_between_turns_fails_trial(self, spoken_scenario):
+        agent = spoken_agent(["Bye."])
+        user_llm = HangingUpUser(
+            [user_says("Hi"), user_says("Still there?"), user_done()], agent
+        )
+
+        result = await spoken_simulation(user_llm).run(
+            agent, spoken_scenario, ScriptedJudge()
+        )
+
+        trial = result.trials[0]
+        assert trial.valid is True
+        assert trial.passed is False
+        assert trial.turn_count == 1
+        assert trial.turns[0].agent_reply == "Bye."
+        assert "call ended" in trial.error
+
+    async def test_fails_fast_without_caller_voice(self, spoken_scenario):
+        built: list[Agent] = []
+
+        def build_agent() -> Agent:
+            built.append(spoken_agent(["Done."]))
+            return built[-1]
+
+        simulation = Simulation(
+            user_llm=ScriptedLLM([user_done()]), caller_stt=CodecSTT()
+        )
+        with pytest.raises(ValueError, match="no caller TTS.*caller_tts"):
+            await simulation.run(build_agent, spoken_scenario, ScriptedJudge())
+
+        simulation = Simulation(
+            user_llm=ScriptedLLM([user_done()]), caller_tts=CodecTTS()
+        )
+        with pytest.raises(ValueError, match="no caller STT.*caller_stt"):
+            await simulation.run(build_agent, spoken_scenario, ScriptedJudge())
+        assert built == []
+
+    async def test_fails_fast_when_scenario_names_unknown_plugin(self, spoken_scenario):
+        scenario = dataclasses.replace(
+            spoken_scenario, caller_tts="no_such_plugin", caller_stt="codec"
+        )
+        simulation = Simulation(user_llm=ScriptedLLM([user_done()]))
+        with pytest.raises(ValueError, match="'no_such_plugin' is not installed"):
+            await simulation.run(
+                lambda: spoken_agent(["Done."]), scenario, ScriptedJudge()
+            )
+
+    async def test_requires_agent_with_loopback_edge(self, spoken_scenario):
+        simulation = spoken_simulation(ScriptedLLM([user_says("Hi"), user_done()]))
+        with pytest.raises(ValueError, match="LoopbackEdge"):
+            await simulation.run(
+                ScriptedLLM(["Reply"]), spoken_scenario, ScriptedJudge()
+            )
+
+    async def test_caller_instances_rejected_for_multiple_conversations(
+        self, spoken_scenario
+    ):
+        repeated = dataclasses.replace(spoken_scenario, repeat=2)
+        simulation = spoken_simulation(lambda: ScriptedLLM([user_done()]))
+        with pytest.raises(ValueError, match="caller_tts must be a factory"):
+            await simulation.run(
+                lambda: spoken_agent(["Done."]), repeated, ScriptedJudge()
+            )
 
 
 class TestSimulateFixture:

@@ -84,9 +84,29 @@ class TestScenario:
         ):
             Scenario.from_dict(scenario_data)
 
-    def test_non_text_mode_rejected(self, scenario_data):
+    def test_unknown_mode_rejected(self, scenario_data):
         scenario_data["mode"] = "voice"
-        with pytest.raises(ValueError, match="'mode'"):
+        with pytest.raises(ValueError, match="'mode'.*'audio'.*'text'"):
+            Scenario.from_dict(scenario_data)
+
+    def test_audio_mode_picks_caller_providers(self, scenario_data):
+        scenario_data["mode"] = "audio"
+        scenario_data["caller_tts"] = "elevenlabs"
+        scenario_data["caller_stt"] = "deepgram"
+        scenario = Scenario.from_dict(scenario_data)
+        assert scenario.mode == "audio"
+        assert scenario.caller_tts == "elevenlabs"
+        assert scenario.caller_stt == "deepgram"
+
+    def test_caller_providers_default_to_none(self, scenario_data):
+        scenario = Scenario.from_dict(scenario_data)
+        assert scenario.caller_tts is None
+        assert scenario.caller_stt is None
+
+    @pytest.mark.parametrize("field_name", ["caller_tts", "caller_stt"])
+    def test_caller_providers_must_be_strings(self, scenario_data, field_name):
+        scenario_data[field_name] = ["elevenlabs"]
+        with pytest.raises(ValueError, match=f"'{field_name}'"):
             Scenario.from_dict(scenario_data)
 
     def test_empty_success_rejected(self, scenario_data):

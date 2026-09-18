@@ -9,6 +9,7 @@ import yaml
 ScenarioValue = str | bool | int | float
 
 _REQUIRED_FIELDS = ("name", "goal", "success")
+_MODES = frozenset({"text", "audio"})
 
 
 @dataclass(frozen=True)
@@ -19,7 +20,8 @@ class Scenario:
         name: Identifier used in reports.
         goal: What the simulated user is trying to achieve.
         success: Criteria the judge evaluates over the full transcript.
-        mode: Conversation mode. Only ``"text"`` is supported.
+        mode: ``"text"`` talks to the LLM in writing; ``"audio"`` speaks to the
+            agent through TTS over a loopback edge and transcribes its replies.
         persona: Behavioural traits of the simulated user.
         context: Facts the simulated user knows and must not alter.
         constraints: Rules the simulated user follows while conversing.
@@ -27,6 +29,10 @@ class Scenario:
             The first always uses the scenario as written.
         repeat: Number of times each variation is run for pass@k / pass^k.
         judge_target: Model name the scenario was written to be judged by.
+        caller_tts: Plugin name (``"elevenlabs"``) giving the simulated user a
+            voice in audio mode.
+        caller_stt: Plugin name (``"deepgram"``) giving the simulated user
+            ears in audio mode.
     """
 
     name: str
@@ -39,12 +45,16 @@ class Scenario:
     variations: int = 1
     repeat: int = 1
     judge_target: str | None = None
+    caller_tts: str | None = None
+    caller_stt: str | None = None
 
     def __post_init__(self) -> None:
         _require_str(self.name, "name")
         _require_str(self.goal, "goal")
-        if self.mode != "text":
-            raise ValueError(f"Scenario field 'mode' must be 'text', got {self.mode!r}")
+        if self.mode not in _MODES:
+            raise ValueError(
+                f"Scenario field 'mode' must be one of {sorted(_MODES)}, got {self.mode!r}"
+            )
         _require_str_list(self.success, "success")
         if not self.success:
             raise ValueError(
@@ -57,6 +67,10 @@ class Scenario:
         _require_positive_int(self.repeat, "repeat")
         if self.judge_target is not None:
             _require_str(self.judge_target, "judge_target")
+        if self.caller_tts is not None:
+            _require_str(self.caller_tts, "caller_tts")
+        if self.caller_stt is not None:
+            _require_str(self.caller_stt, "caller_stt")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Scenario":

@@ -6,13 +6,11 @@ from uuid import uuid4
 import aiortc
 import numpy as np
 import pytest
-from getstream.video.rtc import AudioStreamTrack
 from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import Agent, User
 from vision_agents.core.agents.inference import AudioOutputChunk, AudioOutputStream
 from vision_agents.core.avatars import Avatar
-from vision_agents.core.edge import Call, EdgeTransport
-from vision_agents.core.events import EventManager
+from vision_agents.core.edge import Call
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.processors.base_processor import AudioPublisher
 from vision_agents.core.stt import STT as BaseSTT
@@ -20,6 +18,7 @@ from vision_agents.core.tts import TTS
 from vision_agents.core.turn_detection import TurnDetector
 from vision_agents.core.utils.video_track import QueuedVideoTrack
 from vision_agents.core.warmup import Warmable
+from vision_agents.testing import LoopbackEdge
 
 
 class DummySTT(BaseSTT):
@@ -67,57 +66,37 @@ class DummyLLM(LLM, Warmable[bool]):
         self.warmed_up = True
 
 
-class DummyEdge(EdgeTransport):
+class DummyEdge(LoopbackEdge):
+    """Loopback edge with fault injection and call counters for lifecycle tests."""
+
     def __init__(
         self,
         exc_on_join: Optional[Exception] = None,
         exc_on_publish_tracks: Optional[Exception] = None,
     ):
-        super(DummyEdge, self).__init__()
-        self.events = EventManager()
+        super().__init__()
         self.exc_on_join = exc_on_join
         self.exc_on_publish_tracks = exc_on_publish_tracks
         self.authenticate_call_count = 0
 
     async def authenticate(self, user: User) -> None:
         self.authenticate_call_count += 1
-        self._authenticated = True
+        await super().authenticate(user)
 
-    async def create_call(
-        self, call_id: str, agent_user_id: Optional[str] = None, **kwargs
-    ) -> Call:
-        return DummyCall(call_id=call_id)
-
-    def create_audio_track(self, *args, **kwargs) -> AudioStreamTrack:
-        return AudioStreamTrack(
-            audio_buffer_size_ms=300_000,
-            sample_rate=48000,
-            channels=2,
-        )
-
-    async def close(self):
-        pass
-
-    def open_demo(self, *args, **kwargs):
-        pass
-
-    async def join(self, *args, **kwargs):
+    async def join(self, agent, call, **kwargs):
         await asyncio.sleep(1)
         if self.exc_on_join:
             raise self.exc_on_join
+        return await super().join(agent, call, **kwargs)
 
     async def publish_tracks(self, audio_track, video_track):
         await asyncio.sleep(1)
         if self.exc_on_publish_tracks:
             raise self.exc_on_publish_tracks
-
-    async def create_conversation(self, call: Any, user: User, instructions):
-        pass
-
-    def add_track_subscriber(self, track_id: str):
-        pass
+        await super().publish_tracks(audio_track, video_track)
 
     async def send_custom_event(self, data: dict) -> None:
+        await super().send_custom_event(data)
         self.last_custom_event = data
 
 
