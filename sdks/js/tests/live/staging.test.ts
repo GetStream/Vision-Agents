@@ -11,7 +11,14 @@ import {
   type AgentHandle,
   type WebSocketConstructor,
 } from "../../src/index.js";
-import { close, conversationModel, exhausted, uniqueId, unreachable } from "./target.js";
+import {
+  close,
+  conversationModel,
+  eventually,
+  exhausted,
+  uniqueId,
+  unreachable,
+} from "./target.js";
 
 /**
  * A WebSocket that carries credentials in headers, which the standard one cannot.
@@ -217,7 +224,11 @@ describe(
       const answering = await session.responses.create("Reply with the single word: pong.");
       assert.ok(answering.id, "a turn with no id cannot be read back");
 
-      const items = await agentOf(page).sessions.responses(session.id).items.all();
+      const reading = agentOf(page).sessions.responses(session.id);
+      const items = await eventually(
+        () => reading.items.all(),
+        (each) => each.length > 0,
+      );
       assert.ok(items.length > 0, "the turn was created and nothing was written down");
       assert.equal(items[0]?.kind, "said", "every turn opens with what was asked");
 
@@ -321,7 +332,10 @@ describe(
       assert.ok(answered.length > 0, `nothing was answered; saw ${seen.join(", ")}`);
 
       if (answering.id) {
-        const items = await answering.items.all();
+        const items = await eventually(
+          () => answering.items.all(),
+          (each) => each.length > 0,
+        );
         assert.ok(items.length > 0, "the turn was answered and nothing was written down");
         assert.equal(items[0]?.kind, "said", "every turn opens with what was asked");
       }

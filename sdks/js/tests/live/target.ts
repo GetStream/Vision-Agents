@@ -72,3 +72,25 @@ export async function close(api: Client, id: string): Promise<void> {
 export function uniqueId(what: string): string {
   return `test-${what}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
+
+/**
+ * Waits for something a deployment does after it has answered.
+ *
+ * The turns and their items are written behind the request rather than inside it, so a read
+ * taken the instant a response is created legitimately finds nothing there yet. Waiting for
+ * it is not papering over a race: what is being checked is that the deployment gets there,
+ * and a fixed sleep would either be flaky or be the slowest one in the suite.
+ */
+export async function eventually<T>(
+  read: () => Promise<T>,
+  holds: (what: T) => boolean,
+  within = 20_000,
+): Promise<T> {
+  const deadline = Date.now() + within;
+  let last = await read();
+  while (!holds(last) && Date.now() < deadline) {
+    await new Promise((wake) => setTimeout(wake, 250));
+    last = await read();
+  }
+  return last;
+}
