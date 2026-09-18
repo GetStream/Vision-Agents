@@ -196,6 +196,26 @@ class TestAgentCommand:
         assert result.exit_code == 0, result.output
         assert log_file.read_text() == "run --debug"
 
+    def test_forwards_options_after_the_subcommand(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        log_file = tmp_path / "called.txt"
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.vision-agents.agent]\nentrypoint = "stub_help:runner"\n'
+        )
+        (tmp_path / "stub_help.py").write_text(
+            "from vision_agents.core import Runner\n"
+            "class _Runner(Runner):\n"
+            "    def __init__(self): pass\n"
+            "    def cli(self, args=None):\n"
+            f"        open({str(log_file)!r}, 'w').write(' '.join(args or []))\n"
+            "runner = _Runner()\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(agent_cmd, ["run", "--help", "--entrypoint=x"])
+        assert result.exit_code == 0, result.output
+        assert log_file.read_text() == "run --help --entrypoint=x"
+
     def test_errors_when_target_is_not_a_runner_instance(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):

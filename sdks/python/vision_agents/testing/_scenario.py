@@ -109,7 +109,7 @@ def load_scenario(path: Path) -> Scenario:
 def find_scenarios(target: Path) -> list[Path]:
     """Return the scenario files at ``target``.
 
-    A file is returned as-is; a directory yields every ``*.toml`` below it, sorted.
+    A file is returned as-is; a directory yields every ``*.toml`` directly in it, sorted.
 
     Raises:
         ScenarioError: if ``target`` does not exist.
@@ -117,5 +117,5 @@ def find_scenarios(target: Path) -> list[Path]:
     if target.is_file():
         return [target]
     if target.is_dir():
-        return sorted(p for p in target.rglob(f"*{SCENARIO_SUFFIX}") if p.is_file())
+        return sorted(p for p in target.glob(f"*{SCENARIO_SUFFIX}") if p.is_file())
     raise ScenarioError(f"{target} does not exist")

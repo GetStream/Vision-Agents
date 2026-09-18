@@ -78,7 +78,11 @@ def run_simulation(
         variations=variations,
     )
 
-    report = asyncio.run(simulator.run(scenarios, on_case=_echo_case))
+    async def _run() -> "SimulationReport":
+        await probe_llm_factory(llm_factory, judge)
+        return await simulator.run(scenarios, on_case=_echo_case)
+
+    report = asyncio.run(_run())
 
     click.echo()
     click.echo(render_table(report))
@@ -110,12 +114,14 @@ def resolve_llm_factory(spec: str) -> Callable[[], LLM]:
 
     ``provider/model`` instantiates ``vision_agents.plugins.<provider>.LLM(model=...)``.
     ``module:attribute`` imports a zero-argument callable that returns an LLM.
-    The factory is called once up front so a bad spec fails before any scenario runs.
     """
     if ":" in spec:
-        factory = _import_factory(spec)
-    else:
-        factory = _plugin_factory(spec)
+        return _import_factory(spec)
+    return _plugin_factory(spec)
+
+
+async def probe_llm_factory(factory: Callable[[], LLM], spec: str) -> None:
+    """Create and close one LLM so a bad ``--judge`` fails before any scenario runs."""
     try:
         llm = factory()
     except Exception as err:
@@ -126,7 +132,7 @@ def resolve_llm_factory(spec: str) -> Callable[[], LLM]:
         raise SimulateError(
             f"--judge {spec!r}: expected an LLM instance, got {type(llm).__name__}"
         )
-    return factory
+    await llm.close()
 
 
 def _import_factory(spec: str) -> Callable[[], LLM]:
@@ -164,9 +170,12 @@ def _plugin_factory(spec: str) -> Callable[[], LLM]:
             f"--judge {spec!r}: plugin '{provider}' is not installed "
             f"(try: uv add 'vision-agents[{provider}]'): {err}"
         ) from err
-    llm_cls = getattr(plugin, "LLM", None)
-    if llm_cls is None:
-        raise SimulateError(f"--judge {spec!r}: plugin '{provider}' has no text LLM")
+    try:
+        llm_cls = plugin.LLM
+    except AttributeError as err:
+        raise SimulateError(
+            f"--judge {spec!r}: plugin '{provider}' has no text LLM"
+        ) from err
     return lambda: llm_cls(model=model)
 
 
@@ -184,7 +193,7 @@ def render_table(report: "SimulationReport") -> str:
         for run in report.runs
     ]
     widths = [
-        max(len(header), *(len(row[i]) for row in rows))
+        max([len(header), *(len(row[i]) for row in rows)])
         for i, header in enumerate(_TABLE_HEADERS)
     ]
 
@@ -247,13 +256,19 @@ def render_markdown(report: "SimulationReport") -> str:
 
 def write_reports(report: "SimulationReport", report_dir: Path) -> tuple[Path, Path]:
     """Write ``report.json`` and ``report.md`` into ``report_dir``."""
-    report_dir.mkdir(parents=True, exist_ok=True)
     json_path = report_dir / REPORT_JSON
     md_path = report_dir / REPORT_MD
-    json_path.write_text(
-        json.dumps(report.to_dict(), indent=2, default=str) + "\n", encoding="utf-8"
-    )
-    md_path.write_text(render_markdown(report) + "\n", encoding="utf-8")
+    try:
+        report_dir.mkdir(parents=True, exist_ok=True)
+        json_path.write_text(
+            json.dumps(report.to_dict(), indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
+        md_path.write_text(render_markdown(report) + "\n", encoding="utf-8")
+    except OSError as err:
+        raise SimulateError(
+            f"failed to write the report to {report_dir}: {err}"
+        ) from err
     return json_path, md_path
 
 
