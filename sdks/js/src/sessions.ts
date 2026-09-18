@@ -1,4 +1,5 @@
 import type { Client, Schemas } from "./client.js";
+import { Responses } from "./responses.js";
 import { Session, type SessionOptions } from "./session.js";
 
 /**
@@ -63,7 +64,7 @@ export class Sessions {
    * what the resource surface is mostly for: a conversation somebody comes back to.
    */
   create(options: CreateSessionOptions = {}): Promise<Session> {
-    const { tools, interim, decisions, modelOverwrites, ...rest } = options;
+    const { tools, interim, decisions, watch, modelOverwrites, ...rest } = options;
     const request: Schemas["CreateSessionRequest"] = {
       agent: this.agent,
       // Held in writing unless a call was named. A session resource is a conversation, and
@@ -76,6 +77,7 @@ export class Sessions {
       ...(tools ? { tools } : {}),
       ...(interim === undefined ? {} : { interim }),
       ...(decisions === undefined ? {} : { decisions }),
+      ...(watch === undefined ? {} : { watch }),
     });
   }
 
@@ -83,8 +85,8 @@ export class Sessions {
    * The agent's conversations, newest first, the ones that ended included.
    *
    * What comes back are the rows rather than live handles: reading a conversation back is
-   * not the same as holding one, and most of these are over. `resume` turns one into a
-   * session again.
+   * not the same as holding one, and most of these are over. `responses` reads the turns of
+   * one, and `create({ conversation_id })` opens a new conversation on its transcript.
    */
   query(query: SessionQuery = {}): Promise<readonly Schemas["Session"][]> {
     return this.client.get("/v1/agents/sessions", { query: this.filter(query) });
@@ -101,6 +103,17 @@ export class Sessions {
     return this.client.get("/v1/agents/sessions/search", {
       query: { ...this.filter(query), q: text },
     });
+  }
+
+  /**
+   * The turns of a conversation this process is not holding, and what each was made of.
+   *
+   * Which is most of them: a page rendering a conversation from last week has its id and no
+   * session. The same thing a held session offers as `session.responses`, so what renders a
+   * live conversation renders an old one.
+   */
+  responses(id: string): Responses {
+    return new Responses(this.client, id);
   }
 
   /** One conversation, whether or not it is still being held. */
