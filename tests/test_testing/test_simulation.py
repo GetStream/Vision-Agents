@@ -5,6 +5,9 @@ receives, so conversations, verdicts and reports are deterministic.
 """
 
 import json
+import subprocess
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
@@ -189,18 +192,14 @@ class TestLoadScenario:
             load_scenario(path)
         assert "bad.toml" in str(exc_info.value)
 
-    def test_find_scenarios_returns_file_or_sorted_tree(self, tmp_path: Path):
+    def test_find_scenarios_returns_file_or_sorted_directory(self, tmp_path: Path):
         (tmp_path / "b.toml").write_text("")
         (tmp_path / "a.toml").write_text("")
         (tmp_path / "notes.md").write_text("")
         nested = tmp_path / "nested"
         nested.mkdir()
         (nested / "c.toml").write_text("")
-        assert find_scenarios(tmp_path) == [
-            tmp_path / "a.toml",
-            tmp_path / "b.toml",
-            nested / "c.toml",
-        ]
+        assert find_scenarios(tmp_path) == [tmp_path / "a.toml", tmp_path / "b.toml"]
         assert find_scenarios(tmp_path / "b.toml") == [tmp_path / "b.toml"]
 
     def test_find_scenarios_missing_path_raises(self, tmp_path: Path):
@@ -263,6 +262,42 @@ class TestSimulator:
         assert case.turns == 3
         assert case.ended == "turns"
         assert len(case.transcript) == 6
+
+    @pytest.mark.parametrize(
+        ("caller_lines", "message"),
+        [
+            ([""], "empty message"),
+            (["[END]"], "before saying anything"),
+        ],
+    )
+    async def test_silent_caller_marks_case_errored(
+        self, caller_lines: list[str], message: str
+    ):
+        def caller():
+            return ScriptedLLM(caller_lines=caller_lines)
+
+        simulator = Simulator(_agent_factory(ScriptedLLM), caller, judge_target=JUDGE)
+        report = await simulator.run([_scenario()])
+
+        case = report.runs[0].conversations[0]
+        assert case.state == "errored"
+        assert case.error is not None
+        assert message in case.error
+        assert case.transcript == []
+        assert report.exit_code == 2
+
+    async def test_caller_ending_with_bare_end_token_completes(self):
+        def caller():
+            return ScriptedLLM(caller_lines=["Hello?", "[END]"])
+
+        simulator = Simulator(_agent_factory(ScriptedLLM), caller, judge_target=JUDGE)
+        report = await simulator.run([_scenario()])
+
+        case = report.runs[0].conversations[0]
+        assert case.state == "passed"
+        assert case.ended == "complete"
+        assert case.turns == 1
+        assert len(case.transcript) == 2
 
     async def test_repeat_and_variations(self):
         simulator = Simulator(
@@ -440,15 +475,53 @@ class TestSimulator:
 
 
 class TestSimulationReport:
-    def test_state_prefers_errored_over_failed(self):
-        from datetime import datetime, timezone
+    async def test_errored_takes_precedence_over_failed(self):
+        simulator = Simulator(
+            _agent_factory(ScriptedLLM), ScriptedLLM, judge_target=JUDGE
+        )
+        report = await simulator.run(
+            [
+                _scenario(name="failing", criteria=["The agent does the impossible"]),
+                _scenario(name="erroring", variations=5),
+            ]
+        )
 
+        assert [run.state for run in report.runs] == ["failed", "errored"]
+        assert report.state == "errored"
+        assert report.exit_code == 2
+        assert (report.cases, report.passed, report.failed, report.errored) == (
+            1,
+            0,
+            1,
+            0,
+        )
+
+    def test_empty_report_passes(self):
         now = datetime.now(timezone.utc)
         report = SimulationReport(
             runs=[], judge_target=JUDGE, repeat=1, started_at=now, finished_at=now
         )
         assert report.state == "passed"
         assert report.exit_code == 0
+        assert report.to_dict()["cases"] == 0
+
+
+class TestImportOrder:
+    """``vision_agents.core`` and ``vision_agents.testing`` import each other; both orders must work."""
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "import vision_agents.testing",
+            "import vision_agents.core; import vision_agents.testing",
+            "from vision_agents.core import Runner",
+        ],
+    )
+    def test_fresh_interpreter_imports(self, statement: str):
+        result = subprocess.run(
+            [sys.executable, "-c", statement], capture_output=True, text=True
+        )
+        assert result.returncode == 0, result.stderr
 
 
 class TestParseVerdict:

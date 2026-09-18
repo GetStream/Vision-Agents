@@ -550,7 +550,15 @@ class Simulator:
         try:
             text, done = _split_end_token(await caller.say(_OPENING_PROMPT))
             turns = 0
-            while text:
+            while True:
+                if not text:
+                    if done and turns > 0:
+                        return "complete"
+                    raise SimulationError(
+                        "the caller model ended before saying anything"
+                        if done
+                        else "the caller model returned an empty message"
+                    )
                 turns += 1
                 transcript.append(TranscriptLine(caller=True, text=text, at=_now()))
                 response = await session.simple_response(text)
@@ -565,11 +573,10 @@ class Simulator:
                     )
                 )
                 if done:
-                    break
+                    return "complete"
                 if turns >= max_turns:
                     return "turns"
                 text, done = _split_end_token(await caller.say(reply or _NO_REPLY))
-            return "complete"
         finally:
             await caller.close()
 
