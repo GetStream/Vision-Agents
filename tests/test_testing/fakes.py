@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import Callable
 from typing import AsyncIterator
 
 from vision_agents.core.edge.types import Participant
@@ -30,7 +31,6 @@ class ScriptedLLM(LLM):
         self.replies = list(replies)
         self.delay = delay
         self.error = error
-        self.prompts: list[str] = []
 
     @property
     def history(self) -> list[tuple[str, str]]:
@@ -44,7 +44,6 @@ class ScriptedLLM(LLM):
         text: str,
         participant: Participant | None = None,
     ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
-        self.prompts.append(text)
         if self.error is not None:
             raise self.error
         if self.delay:
@@ -73,16 +72,20 @@ class BookingLLM(ScriptedLLM):
             yield item
 
 
-class ScriptedJudge:
-    """Judge that replays verdicts; an exception in the script is raised."""
+JudgeOutcome = bool | Exception | Callable[[ChatMessageEvent, str], bool]
 
-    def __init__(self, outcomes: list[bool | Exception] | None = None) -> None:
+
+class ScriptedJudge:
+    """Judge that replays outcomes: a verdict, an exception to raise, or a
+    predicate over (event, intent). Passes once the script is exhausted."""
+
+    def __init__(self, outcomes: list[JudgeOutcome] | None = None) -> None:
         self.outcomes = list(outcomes or [])
-        self.calls: list[tuple[ChatMessageEvent, str]] = []
 
     async def evaluate(self, event: ChatMessageEvent, intent: str) -> JudgeVerdict:
-        self.calls.append((event, intent))
-        outcome: bool | Exception = self.outcomes.pop(0) if self.outcomes else True
+        outcome: JudgeOutcome = self.outcomes.pop(0) if self.outcomes else True
         if isinstance(outcome, Exception):
             raise outcome
+        if callable(outcome):
+            outcome = outcome(event, intent)
         return JudgeVerdict(success=outcome, reason="scripted")

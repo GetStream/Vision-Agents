@@ -1,7 +1,10 @@
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+
+from vision_agents.core.llm import LLM
 from dotenv import load_dotenv
 
 from vision_agents.core.instructions import Instructions
@@ -26,7 +29,7 @@ def simulation() -> Simulation:
 
 
 @pytest.fixture
-def simulation_agent():
+def simulation_agent() -> Callable[[], LLM]:
     return lambda: gemini.LLM(MODEL)
 
 

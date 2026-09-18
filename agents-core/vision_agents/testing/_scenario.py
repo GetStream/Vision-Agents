@@ -69,7 +69,7 @@ class Scenario:
         """
         data = {key: value for key, value in data.items() if value is not None}
         known = {f.name for f in fields(cls)}
-        unknown = sorted(set(data) - known)
+        unknown = sorted(set(data) - known, key=repr)
         if unknown:
             raise ValueError(
                 f"Unknown scenario field(s): {', '.join(repr(k) for k in unknown)}"

@@ -1,6 +1,7 @@
 """Unit tests for Scenario validation and the YAML loader."""
 
 import os
+from typing import Any
 
 import pytest
 
@@ -10,7 +11,7 @@ ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "test_asse
 
 
 @pytest.fixture
-def scenario_data() -> dict:
+def scenario_data() -> dict[str, Any]:
     return {
         "name": "reschedule-appointment",
         "mode": "text",
@@ -73,6 +74,14 @@ class TestScenario:
     def test_unknown_field_names_it(self, scenario_data):
         scenario_data["personna"] = {"impatient": True}
         with pytest.raises(ValueError, match="Unknown scenario field.*'personna'"):
+            Scenario.from_dict(scenario_data)
+
+    def test_unknown_non_string_key_reported(self, scenario_data):
+        scenario_data[3] = "x"
+        scenario_data["extra"] = "y"
+        with pytest.raises(
+            ValueError, match=r"Unknown scenario field\(s\): 'extra', 3"
+        ):
             Scenario.from_dict(scenario_data)
 
     def test_non_text_mode_rejected(self, scenario_data):

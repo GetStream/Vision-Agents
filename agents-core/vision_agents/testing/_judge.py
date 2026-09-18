@@ -113,8 +113,13 @@ class LLMJudge:
                 f"Could not parse JSON from LLM response: {text[:_RESPONSE_PREVIEW_MAX_LEN]}"
             ) from exc
 
-        verdict = str(data.get("verdict", "")).lower()
-        reason = str(data.get("reason", ""))
+        verdict = data.get("verdict")
+        reason = data.get("reason", "")
+        if not isinstance(verdict, str) or not isinstance(reason, str):
+            raise JudgeError(
+                f"Malformed verdict in LLM response: {text[:_RESPONSE_PREVIEW_MAX_LEN]}"
+            )
+        verdict = verdict.lower()
 
         if verdict == "pass":
             return JudgeVerdict(success=True, reason=reason or "Passed.")

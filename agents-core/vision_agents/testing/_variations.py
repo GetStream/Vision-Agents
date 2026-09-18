@@ -65,6 +65,7 @@ async def generate_variations(
         )
 
     variants = [scenario]
+    seen = {(scenario.goal, tuple(scenario.constraints))}
     for item in raw[: count - 1]:
         if not isinstance(item, dict):
             raise ValueError(f"Variation must be an object, got: {item!r}")
@@ -80,6 +81,10 @@ async def generate_variations(
             raise ValueError(
                 f"Variation must keep {len(scenario.constraints)} constraint(s), got {len(constraints)}"
             )
+        key = (goal, tuple(constraints))
+        if key in seen:
+            raise ValueError(f"Variation duplicates an earlier wording: {item!r}")
+        seen.add(key)
         variants.append(
             dataclasses.replace(scenario, goal=goal, constraints=list(constraints))
         )

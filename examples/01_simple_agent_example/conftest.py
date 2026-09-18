@@ -1,9 +1,13 @@
 import os
 
+from collections.abc import Callable
+
 import pytest
 from dotenv import load_dotenv
 
 from simple_agent_example import setup_llm
+
+from vision_agents.core.llm import LLM
 
 from vision_agents.plugins import gemini
 from vision_agents.testing import LLMJudge, Simulation
@@ -20,7 +24,7 @@ def simulation() -> Simulation:
 
 
 @pytest.fixture
-def simulation_agent():
+def simulation_agent() -> Callable[[], LLM]:
     return lambda: setup_llm(MODEL)
 
 

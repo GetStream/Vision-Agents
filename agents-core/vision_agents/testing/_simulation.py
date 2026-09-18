@@ -207,25 +207,39 @@ class SimulationResult:
 
     @property
     def pass_at_k(self) -> float | None:
-        """Estimated chance at least one of ``k`` attempts passes.
+        """Estimated chance at least one of ``k`` attempts at a variation passes.
 
-        ``None`` when fewer than ``k`` trials are valid.
+        Computed per variation and averaged. ``None`` when any variation has
+        fewer than ``k`` valid trials.
         """
-        valid = self.valid_trials
-        if len(valid) < self.k:
-            return None
-        return pass_at_k(len(valid), sum(t.passed for t in valid), self.k)
+        return self._mean_over_variations(pass_at_k)
 
     @property
     def pass_pow_k(self) -> float | None:
-        """Estimated chance all of ``k`` attempts pass.
+        """Estimated chance all ``k`` attempts at a variation pass.
 
-        ``None`` when fewer than ``k`` trials are valid.
+        Computed per variation and averaged. ``None`` when any variation has
+        fewer than ``k`` valid trials.
         """
-        valid = self.valid_trials
-        if len(valid) < self.k:
+        return self._mean_over_variations(pass_pow_k)
+
+    def _mean_over_variations(
+        self, estimator: Callable[[int, int, int], float]
+    ) -> float | None:
+        by_variation: dict[int, list[Trial]] = {}
+        for trial in self.trials:
+            by_variation.setdefault(trial.variation, []).append(trial)
+        estimates: list[float] = []
+        for group in by_variation.values():
+            valid = [t for t in group if t.valid]
+            if len(valid) < self.k:
+                return None
+            estimates.append(
+                estimator(len(valid), sum(t.passed for t in valid), self.k)
+            )
+        if not estimates:
             return None
-        return pass_pow_k(len(valid), sum(t.passed for t in valid), self.k)
+        return sum(estimates) / len(estimates)
 
     def summary(self) -> str:
         """Multi-line report suitable for an assertion message."""
@@ -366,7 +380,7 @@ class Simulation:
                         session.simple_response(message), timeout=self._turn_timeout
                     )
                     trial.turns.append(Turn(user_message=message, response=response))
-                    message = await user.next_message(response.output)
+                    message = await user.next_message(response.output or "")
             except asyncio.TimeoutError:
                 trial.error = f"Agent did not reply within {self._turn_timeout}s"
                 return

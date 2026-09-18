@@ -18,7 +18,7 @@ from vision_agents.testing import (
     pass_pow_k,
 )
 
-from ._fakes import BookingLLM, ScriptedJudge, ScriptedLLM, user_done, user_says
+from .fakes import BookingLLM, ScriptedJudge, ScriptedLLM, user_done, user_says
 
 
 @pytest.fixture
@@ -55,7 +55,6 @@ class TestSimulatedUser:
         assert messages == ["still going"] * 3 + [None] * 3
         assert user.turns_taken == 3
         assert user.done is False
-        assert len(llm.prompts) == 3
 
     async def test_brief_is_in_instructions_and_reply_in_prompt(self, scenario):
         llm = ScriptedLLM([user_says("Hi"), user_done()])
@@ -65,7 +64,16 @@ class TestSimulatedUser:
 
         assert "Move appointment to Friday morning." in llm._instructions
         assert "- name: Alice" in llm._instructions
-        assert "Sure, when?" in llm.prompts[1]
+        assert "Sure, when?" in llm.history[2][1]
+
+    async def test_empty_agent_reply_does_not_restart_conversation(self, scenario):
+        llm = ScriptedLLM([user_says("Hi"), user_says("Hello?"), user_done()])
+        user = SimulatedUser(llm, scenario)
+        await user.next_message(None)
+        await user.next_message("")
+
+        assert "(the agent did not reply)" in llm.history[2][1]
+        assert "opening message" not in llm.history[2][1]
 
     async def test_records_conversation_history(self, scenario):
         llm = ScriptedLLM([user_says("Hi"), user_says("Friday?"), user_done()])
@@ -165,12 +173,41 @@ class TestGenerateVariations:
         assert variants[2].goal == "Reschedule to a Friday morning slot."
         assert all(v.context == scenario.context for v in variants)
         assert all(v.success == scenario.success for v in variants)
-        assert "2 variation(s)" in llm.prompts[0]
 
     async def test_single_variation_skips_llm(self, scenario):
-        llm = ScriptedLLM(["should not be called"])
+        llm = ScriptedLLM(["x"], error=RuntimeError("must not be called"))
         assert await generate_variations(llm, scenario, 1) == [scenario]
-        assert llm.prompts == []
+
+    async def test_duplicate_variation_rejected(self, scenario):
+        llm = ScriptedLLM(
+            [
+                json.dumps(
+                    {
+                        "variations": [
+                            {"goal": "Same", "constraints": ["Same rule."]},
+                            {"goal": "Same", "constraints": ["Same rule."]},
+                        ]
+                    }
+                )
+            ]
+        )
+        with pytest.raises(ValueError, match="duplicates"):
+            await generate_variations(llm, scenario, 3)
+
+    async def test_variation_equal_to_original_rejected(self, scenario):
+        llm = ScriptedLLM(
+            [
+                json.dumps(
+                    {
+                        "variations": [
+                            {"goal": scenario.goal, "constraints": scenario.constraints}
+                        ]
+                    }
+                )
+            ]
+        )
+        with pytest.raises(ValueError, match="duplicates"):
+            await generate_variations(llm, scenario, 2)
 
     async def test_too_few_variations_raises(self, scenario):
         llm = ScriptedLLM(
@@ -215,13 +252,20 @@ class TestLLMJudge:
         with pytest.raises(JudgeError, match="Unknown verdict"):
             await judge.evaluate(event, intent="Greets")
 
+    async def test_non_string_fields_raise_judge_error(self):
+        judge = LLMJudge(
+            ScriptedLLM([json.dumps({"verdict": "pass", "reason": {"code": 1}})])
+        )
+        event = ChatMessageEvent(role="assistant", content="Hi")
+        with pytest.raises(JudgeError, match="Malformed verdict"):
+            await judge.evaluate(event, intent="Greets")
+
     async def test_empty_message_fails_without_calling_llm(self):
-        llm = ScriptedLLM([json.dumps({"verdict": "pass"})])
+        llm = ScriptedLLM(["x"], error=RuntimeError("must not be called"))
         verdict = await LLMJudge(llm).evaluate(
             ChatMessageEvent(role="assistant", content=""), intent="Greets"
         )
         assert verdict.success is False
-        assert llm.prompts == []
 
 
 class TestSimulation:
@@ -272,17 +316,41 @@ class TestSimulation:
     async def test_judge_sees_transcript_and_criterion(self, scenario):
         user_llm = ScriptedLLM([user_says("Move me to Friday"), user_done()])
         agent_llm = BookingLLM(["Done."])
-        judge = ScriptedJudge()
 
-        await Simulation(user_llm=user_llm).run(agent_llm, scenario, judge)
+        def transcript_complete(event: ChatMessageEvent, intent: str) -> bool:
+            return (
+                "[user] Move me to Friday" in event.content
+                and "[agent called tool book_slot]" in event.content
+                and "[assistant] Done." in event.content
+                and scenario.goal in intent
+            )
 
-        assert len(judge.calls) == 2
-        event, intent = judge.calls[0]
-        assert "[user] Move me to Friday" in event.content
-        assert "[agent called tool book_slot]" in event.content
-        assert "[assistant] Done." in event.content
-        assert "appointment_rescheduled" in intent
-        assert scenario.goal in intent
+        def names_criterion(event: ChatMessageEvent, intent: str) -> bool:
+            return "correct_time_confirmed" in intent
+
+        judge = ScriptedJudge([transcript_complete, names_criterion])
+        result = await Simulation(user_llm=user_llm).run(agent_llm, scenario, judge)
+
+        assert result.passed is True, result.summary()
+
+    async def test_tool_only_turn_continues_conversation(self, scenario):
+        user_llm = ScriptedLLM(
+            [user_says("Book Friday"), user_says("Did it work?"), user_done()]
+        )
+        agent_llm = BookingLLM(["", "Yes, booked Friday 10am."])
+
+        result = await Simulation(user_llm=user_llm).run(
+            agent_llm, scenario, ScriptedJudge()
+        )
+
+        trial = result.trials[0]
+        assert trial.turn_count == 2
+        assert [t.agent_reply for t in trial.turns] == [
+            None,
+            "Yes, booked Friday 10am.",
+        ]
+        assert "(the agent did not reply)" in user_llm.history[2][1]
+        assert result.passed is True
 
     async def test_failed_criterion_fails_trial(self, scenario):
         user_llm = ScriptedLLM([user_says("Hi"), user_done()])
@@ -354,7 +422,7 @@ class TestSimulation:
     async def test_agent_timeout_fails_trial(self, scenario):
         user_llm = ScriptedLLM([user_says("Hi"), user_done()])
         agent_llm = ScriptedLLM(["slow"], delay=0.2)
-        judge = ScriptedJudge()
+        judge = ScriptedJudge([RuntimeError("judge must not run")])
 
         result = await Simulation(user_llm=user_llm, turn_timeout=0.05).run(
             agent_llm, scenario, judge
@@ -364,7 +432,7 @@ class TestSimulation:
         assert trial.valid is True
         assert trial.passed is False
         assert "did not reply" in trial.error
-        assert judge.calls == []
+        assert trial.verdicts == {}
 
     async def test_max_turns_bounds_conversation(self, scenario):
         user_llm = ScriptedLLM([user_says("again")])
@@ -407,6 +475,57 @@ class TestSimulation:
         assert result.trials[1].scenario.constraints == ["Reworded rule."]
         assert result.passed is True
 
+    async def test_pass_metrics_are_averaged_per_variation(self, scenario):
+        varied = Scenario(
+            name="v", goal=scenario.goal, success=["ok"], variations=2, repeat=2
+        )
+        variations_json = json.dumps(
+            {"variations": [{"goal": "Reworded goal.", "constraints": []}]}
+        )
+        user_llms = iter(
+            [ScriptedLLM([variations_json])]
+            + [ScriptedLLM([user_says("Hi"), user_done()]) for _ in range(4)]
+        )
+        judge = ScriptedJudge([True, True, True, False])
+
+        result = await Simulation(user_llm=lambda: next(user_llms)).run(
+            lambda: ScriptedLLM(["Reply"]), varied, judge
+        )
+
+        assert [(t.variation, t.passed) for t in result.trials] == [
+            (0, True),
+            (0, True),
+            (1, True),
+            (1, False),
+        ]
+        assert result.pass_rate == pytest.approx(0.75)
+        assert result.pass_at_k == pytest.approx(1.0)
+        assert result.pass_pow_k == pytest.approx(0.5)
+
+    async def test_pass_metrics_none_when_a_variation_lacks_valid_trials(
+        self, scenario
+    ):
+        varied = Scenario(
+            name="v", goal=scenario.goal, success=["ok"], variations=2, repeat=2
+        )
+        variations_json = json.dumps(
+            {"variations": [{"goal": "Reworded goal.", "constraints": []}]}
+        )
+        user_llms = iter(
+            [ScriptedLLM([variations_json])]
+            + [ScriptedLLM([user_says("Hi"), user_done()]) for _ in range(4)]
+        )
+        judge = ScriptedJudge([True, True, JudgeError("down"), True])
+
+        result = await Simulation(user_llm=lambda: next(user_llms)).run(
+            lambda: ScriptedLLM(["Reply"]), varied, judge
+        )
+
+        assert len(result.invalid_trials) == 1
+        assert result.pass_rate == pytest.approx(1.0)
+        assert result.pass_at_k is None
+        assert result.pass_pow_k is None
+
     async def test_instance_rejected_for_multiple_conversations(self, scenario):
         repeated = Scenario(name="r", goal=scenario.goal, success=["ok"], repeat=2)
         simulation = Simulation(user_llm=lambda: ScriptedLLM([user_done()]))
@@ -432,9 +551,7 @@ class TestSimulation:
 
 
 class TestSimulateFixture:
-    async def test_runs_scenario_relative_to_test_file(
-        self, simulate, simulation_judge
-    ):
+    async def test_runs_scenario_relative_to_test_file(self, simulate):
         result = await simulate(
             "../test_assets/scenarios/reschedule-appointment.yaml",
             instructions="You book appointments.",
@@ -442,7 +559,11 @@ class TestSimulateFixture:
         assert result.scenario.name == "reschedule-appointment"
         assert result.passed is True
         assert result.trials[0].turn_count == 1
-        assert len(simulation_judge.calls) == 3
+        assert set(result.trials[0].verdicts) == {
+            "appointment_rescheduled",
+            "correct_time_confirmed",
+            "identity_verified",
+        }
 
     async def test_accepts_scenario_object(self, simulate, scenario):
         result = await simulate(scenario)
