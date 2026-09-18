@@ -554,9 +554,9 @@ class Simulator:
         async def on_llm_error(event: LLMErrorEvent) -> None:
             provider_errors.append(event.error_message)
 
-        agent.events.subscribe(on_llm_error)
         caller = _Caller(self._llm_factory(), brief)
         try:
+            agent.events.subscribe(on_llm_error)
             session = TestSession(
                 llm=agent.llm, instructions=agent.instructions.full_reference
             )
