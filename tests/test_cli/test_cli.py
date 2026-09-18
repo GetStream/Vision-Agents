@@ -337,12 +337,17 @@ class StubTTS(TTS):
 class ScriptedLLM(LLM):
     """Plays the agent, the caller, the judge or the rewriter, based on the prompt."""
 
-    def __init__(self, error: Optional[str] = None):
+    def __init__(self, error: Optional[str] = None, swallow_error: bool = False):
         super().__init__()
         self._error = error
+        self._swallow_error = swallow_error
         self._caller_turns = 0
 
     async def simple_response(self, text, participant=None):
+        if self._error and self._swallow_error:
+            self.on_llm_error(error=RuntimeError(self._error))
+            yield LLMResponseFinal(text="")
+            return
         if self._error:
             raise RuntimeError(self._error)
         yield LLMResponseFinal(text=self._reply(text))
@@ -388,7 +393,7 @@ async def create_agent(**kwargs):
 
 
 async def create_broken_agent(**kwargs):
-    return _agent(ScriptedLLM(error="provider exploded"))
+    return _agent(ScriptedLLM(error="provider exploded", swallow_error=True))
 
 
 async def join_call(agent, call_type, call_id, **kwargs):

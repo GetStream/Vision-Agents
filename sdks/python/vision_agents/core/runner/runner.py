@@ -330,7 +330,12 @@ class Runner:
             log_level: Logging level while the simulation runs.
 
         Returns:
-            The exit code: 0 when every scenario passed, 1 when any failed, 2 on error.
+            The exit code: 0 when every scenario passed, 1 when any failed, 2 when
+            a case never reached a verdict.
+
+        Raises:
+            click.ClickException: if the scenarios, ``judge`` or ``report_dir``
+                cannot be used; its exit code is 2.
         """
         return run_simulation(
             self._launcher.launch,

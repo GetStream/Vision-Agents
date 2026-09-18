@@ -25,7 +25,7 @@ from vision_agents.cli.agent.dispatch import dispatch_target
     default=None,
     metavar="MODULE:ATTR",
     help="Override the agent entrypoint without editing pyproject.toml "
-    "(e.g. --entrypoint=agent:runner).",
+    "(e.g. --entrypoint=agent:runner). Must come before the subcommand.",
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def agent_cmd(entrypoint_override: str | None, args: tuple[str, ...]) -> None:

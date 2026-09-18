@@ -24,8 +24,8 @@ from vision_agents.testing import (
     Simulator,
     find_scenarios,
     load_scenario,
+    parse_verdict,
 )
-from vision_agents.testing._judge import parse_verdict
 
 AGENT_INSTRUCTIONS = "You are the stub weather agent."
 BRIEF = "You want to know today's weather in Amsterdam."
@@ -89,16 +89,22 @@ class ScriptedLLM(LLM):
         caller_lines: Optional[list[str]] = None,
         judge_reply: Optional[str] = None,
         error: Optional[str] = None,
+        swallow_error: bool = False,
     ):
         super().__init__()
         self._caller_lines = caller_lines or ["What's the weather?", "Thanks [END]"]
         self._judge_reply = judge_reply
         self._error = error
+        self._swallow_error = swallow_error
         self._caller_turns = 0
 
     async def simple_response(
         self, text: str, participant=None
     ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        if self._error and self._swallow_error:
+            self.on_llm_error(error=RuntimeError(self._error))
+            yield LLMResponseFinal(text="")
+            return
         if self._error:
             raise RuntimeError(self._error)
         yield LLMResponseFinal(text=await self._reply(text))
@@ -342,9 +348,10 @@ class TestSimulator:
         assert "asked for 4 variations" in run.error
         assert report.exit_code == 2
 
-    async def test_agent_error_marks_case_errored(self):
+    @pytest.mark.parametrize("swallow_error", [False, True])
+    async def test_agent_error_marks_case_errored(self, swallow_error: bool):
         def broken_agent_llm():
-            return ScriptedLLM(error="provider exploded")
+            return ScriptedLLM(error="provider exploded", swallow_error=swallow_error)
 
         simulator = Simulator(
             _agent_factory(broken_agent_llm), ScriptedLLM, judge_target=JUDGE
@@ -355,7 +362,8 @@ class TestSimulator:
         assert case.state == "errored"
         assert case.passed is None
         assert case.verdict is None
-        assert case.error == "provider exploded"
+        assert case.error is not None
+        assert "provider exploded" in case.error
         assert case.criteria == []
         assert report.state == "errored"
         assert report.exit_code == 2

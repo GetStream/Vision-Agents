@@ -316,7 +316,7 @@ def _format_issues(run: "SimulationRun", limit: Optional[int] = _ISSUES_MAX_LEN)
     if run.error:
         parts.append(f"error: {run.error}")
     parts += [f"error: {case.error}" for case in run.conversations if case.error]
-    text = "; ".join(parts) if parts else "-"
+    text = "; ".join(dict.fromkeys(parts)) if parts else "-"
     if limit is not None and len(text) > limit:
         text = text[: limit - 3] + "..."
     return text
