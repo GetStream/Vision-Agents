@@ -1,0 +1,20 @@
+name: pricing-objection
+mode: text
+persona:
+  nervous: true
+  concise: true
+context:
+  role: account executive on a sales call
+  product: team video conferencing plan
+  price: 40 dollars per seat per month
+  prospect_objection: the price is higher than the competitor's 25 dollars per seat
+goal: Get a short coaching suggestion on exactly what to say to handle the prospect's pricing objection.
+constraints:
+  - Relay what the prospect just said as a transcript line, like a live meeting.
+  - Ask for coaching, never for a summary of the meeting.
+success:
+  - coaching_suggests_words_to_say
+  - suggestion_addresses_pricing_objection
+  - suggestion_is_one_to_three_sentences
+variations: 1
+judge_target: gemini-3-flash-preview
