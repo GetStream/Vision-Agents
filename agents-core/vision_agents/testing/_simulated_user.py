@@ -70,6 +70,7 @@ class SimulatedUser:
         self._scenario = scenario
         self._max_turns = max_turns
         self._turn_timeout = turn_timeout
+        self._conversation: InMemoryConversation | None = None
         self._turns_taken = 0
         self._done = False
         self._started = False
@@ -80,9 +81,10 @@ class SimulatedUser:
             return
         instructions = _SYSTEM_PROMPT.format(brief=self._scenario.brief)
         self._llm.set_instructions(instructions)
-        self._llm.set_conversation(
-            InMemoryConversation(instructions=instructions, messages=[])
+        self._conversation = InMemoryConversation(
+            instructions=instructions, messages=[]
         )
+        self._llm.set_conversation(self._conversation)
         self._started = True
 
     @property
@@ -105,7 +107,7 @@ class SimulatedUser:
             agent_reply: The agent's last reply, or ``None`` for the opening turn.
 
         Raises:
-            SimulatedUserError: If the LLM times out or returns malformed output.
+            SimulatedUserError: If the LLM fails, times out or returns malformed output.
         """
         if not self._started:
             await self.start()
@@ -117,6 +119,10 @@ class SimulatedUser:
         else:
             prompt = _REPLY_PROMPT.format(reply=agent_reply or _EMPTY_REPLY)
 
+        if self._conversation is not None:
+            await self._conversation.send_message(
+                role="user", user_id="simulation", content=prompt
+            )
         try:
             _, response = await asyncio.wait_for(
                 collect_simple_response(self._llm.simple_response(text=prompt)),
@@ -126,6 +132,13 @@ class SimulatedUser:
             raise SimulatedUserError(
                 f"Simulated user did not respond within {self._turn_timeout}s"
             ) from exc
+        except Exception as exc:
+            logger.exception("Simulated user LLM failed")
+            raise SimulatedUserError(f"Simulated user LLM failed: {exc}") from exc
+        if self._conversation is not None and response.text:
+            await self._conversation.send_message(
+                role="assistant", user_id="simulated-user", content=response.text
+            )
 
         try:
             data = parse_json_object(response.text)

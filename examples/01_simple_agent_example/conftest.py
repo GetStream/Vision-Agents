@@ -7,8 +7,7 @@ from simple_agent_example import setup_llm
 
 from vision_agents.plugins import gemini
 from vision_agents.testing import LLMJudge, Simulation
-
-pytest_plugins = ["vision_agents.testing.pytest_plugin"]
+from vision_agents.testing.pytest_plugin import simulate  # noqa: F401
 
 load_dotenv()
 

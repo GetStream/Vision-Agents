@@ -62,9 +62,12 @@ class Scenario:
     def from_dict(cls, data: dict[str, Any]) -> "Scenario":
         """Build a scenario from a parsed YAML mapping.
 
+        Keys with an empty value (YAML ``null``) count as not provided.
+
         Raises:
             ValueError: If a required field is missing or an unknown field is present.
         """
+        data = {key: value for key, value in data.items() if value is not None}
         known = {f.name for f in fields(cls)}
         unknown = sorted(set(data) - known)
         if unknown:

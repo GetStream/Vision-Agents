@@ -400,6 +400,11 @@ class Simulation:
                 trial.error = f"Judge failed on '{criterion}': {exc}"
                 trial.valid = False
                 return
+            except Exception as exc:
+                logger.exception("Judge raised on criterion %r", criterion)
+                trial.error = f"Judge failed on '{criterion}': {exc}"
+                trial.valid = False
+                return
 
 
 def _constant(value: T) -> Callable[[], T]:

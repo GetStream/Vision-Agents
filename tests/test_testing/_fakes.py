@@ -18,13 +18,26 @@ def user_done() -> str:
 
 
 class ScriptedLLM(LLM):
-    """LLM that replays scripted replies, repeating the last one when exhausted."""
+    """LLM that replays scripted replies, repeating the last one when exhausted.
 
-    def __init__(self, replies: list[str], delay: float = 0.0) -> None:
+    Raises ``error`` on the first call instead when it is given.
+    """
+
+    def __init__(
+        self, replies: list[str], delay: float = 0.0, error: Exception | None = None
+    ) -> None:
         super().__init__()
         self.replies = list(replies)
         self.delay = delay
+        self.error = error
         self.prompts: list[str] = []
+
+    @property
+    def history(self) -> list[tuple[str, str]]:
+        """(role, content) pairs recorded in the conversation given to this LLM."""
+        if self._conversation is None:
+            return []
+        return [(m.role, m.content) for m in self._conversation.messages]
 
     async def simple_response(
         self,
@@ -32,6 +45,8 @@ class ScriptedLLM(LLM):
         participant: Participant | None = None,
     ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
         self.prompts.append(text)
+        if self.error is not None:
+            raise self.error
         if self.delay:
             await asyncio.sleep(self.delay)
         reply = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]

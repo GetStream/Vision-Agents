@@ -102,6 +102,20 @@ class TestScenario:
         with pytest.raises(ValueError, match="'context'.*'tags'"):
             Scenario.from_dict(scenario_data)
 
+    def test_empty_values_count_as_not_provided(self, tmp_path):
+        path = tmp_path / "sparse.yaml"
+        path.write_text(
+            "name: s\ngoal: g\nsuccess:\n  - done\nconstraints:\npersona:\n"
+        )
+        scenario = load_scenario(path)
+        assert scenario.constraints == []
+        assert scenario.persona == {}
+
+    def test_empty_required_value_reported_as_missing(self, scenario_data):
+        scenario_data["goal"] = None
+        with pytest.raises(ValueError, match="missing required field.*'goal'"):
+            Scenario.from_dict(scenario_data)
+
     def test_non_mapping_file_rejected(self, tmp_path):
         path = tmp_path / "bad.yaml"
         path.write_text("- just\n- a list\n")

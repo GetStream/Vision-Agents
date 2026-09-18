@@ -1,9 +1,11 @@
 """Pytest fixtures for scenario simulations.
 
-Register the plugin in your top-level ``conftest.py`` and override the
-three configuration fixtures for your agent::
+Register the plugin in your top-level ``conftest.py`` (or import the
+``simulate`` fixture into any ``conftest.py``) and override the three
+configuration fixtures for your agent::
 
     pytest_plugins = ["vision_agents.testing.pytest_plugin"]
+    # or: from vision_agents.testing.pytest_plugin import simulate  # noqa: F401
 
     @pytest.fixture
     def simulation():

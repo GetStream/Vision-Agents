@@ -67,6 +67,23 @@ class TestSimulatedUser:
         assert "- name: Alice" in llm._instructions
         assert "Sure, when?" in llm.prompts[1]
 
+    async def test_records_conversation_history(self, scenario):
+        llm = ScriptedLLM([user_says("Hi"), user_says("Friday?"), user_done()])
+        user = SimulatedUser(llm, scenario)
+        await user.next_message(None)
+        await user.next_message("When suits you?")
+
+        roles = [role for role, _ in llm.history]
+        assert roles == ["user", "assistant", "user", "assistant"]
+        assert "When suits you?" in llm.history[2][1]
+        assert llm.history[1][1] == user_says("Hi")
+
+    async def test_llm_failure_raises(self, scenario):
+        llm = ScriptedLLM(["x"], error=ConnectionError("boom"))
+        user = SimulatedUser(llm, scenario)
+        with pytest.raises(SimulatedUserError, match="LLM failed: boom"):
+            await user.next_message(None)
+
     async def test_invalid_output_raises(self, scenario):
         user = SimulatedUser(ScriptedLLM(["not json"]), scenario)
         with pytest.raises(SimulatedUserError, match="invalid output"):
@@ -314,6 +331,15 @@ class TestSimulation:
         assert result.pass_rate == 1.0
         assert result.pass_at_k is None
         assert result.pass_pow_k is None
+
+    async def test_unexpected_judge_exception_marks_trial_invalid(self, scenario):
+        result = await Simulation(
+            user_llm=ScriptedLLM([user_says("Hi"), user_done()])
+        ).run(ScriptedLLM(["Reply"]), scenario, ScriptedJudge([RuntimeError("down")]))
+        trial = result.trials[0]
+        assert trial.valid is False
+        assert "down" in trial.error
+        assert result.pass_rate is None
 
     async def test_simulated_user_failure_marks_trial_invalid(self, scenario):
         result = await Simulation(user_llm=ScriptedLLM(["garbage"])).run(
