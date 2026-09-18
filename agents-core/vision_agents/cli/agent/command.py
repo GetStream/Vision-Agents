@@ -11,7 +11,13 @@ from vision_agents.cli.agent.dispatch import dispatch_target
 @click.command(
     "agent",
     help="Dispatch to the project's Runner CLI (forwards remaining args).",
-    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        # Everything after the first positional (e.g. `run --help`) belongs to
+        # the Runner CLI, so stop parsing our own options there.
+        "allow_interspersed_args": False,
+    },
 )
 @click.option(
     "--entrypoint",
