@@ -34,6 +34,16 @@ const (
 	// question, they differ in what they cost and how long they take, and which one is
 	// worth asking changes with their health.
 	Search Modality = "search"
+	// LLMClassifier answers a question about a piece of text with a typed value and the
+	// probability behind it, rather than with prose. It is routed rather than called
+	// directly for the same reasons the others are: it is on the live path, so which
+	// provider is worth asking changes with their health, and what each judgement cost is
+	// worth reporting beside what the conversation cost.
+	//
+	// It is its own modality rather than a mode of LLM because nothing about it is a
+	// language model's shape: there is no stream, no generated text and no token budget,
+	// and a caller asks for named questions instead of a prompt.
+	LLMClassifier Modality = "llm_classifier"
 	// STS is speech-to-speech: one native audio model that hears the caller and speaks
 	// back, in place of the three above. It is its own modality rather than a flag on a
 	// language model because it is served over a different protocol, billed in different

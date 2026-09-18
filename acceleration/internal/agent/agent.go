@@ -20,12 +20,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
@@ -149,6 +151,11 @@ type Options struct {
 	Keyterms []string
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
 	MaxTokens int
+	// Overwrites is what whoever opened the session asked to change about how the model
+	// answers, written over every turn. Only the safe knobs are here -- effort, length,
+	// randomness, verbosity -- because instructions and tools belong to the agent and a
+	// caller able to rewrite those could make a session impersonate a different agent.
+	Overwrites options.LLM
 	// Memory carries what earlier conversations established into this one. Without it
 	// the agent starts every call knowing nothing but its instructions.
 	Memory memory.Store
@@ -181,6 +188,9 @@ type Options struct {
 	// SearchTarget routes the search, and is a target on that router the way LLMTarget is
 	// on its own.
 	SearchTarget string
+	// Guardrail screens what a caller asks before the agent answers it. Nil is an agent
+	// that answers everything, which is every agent that declared no policy.
+	Guardrail guardrail.Guardrail
 	// Store records what each turn cost the participant in waiting. Without it the
 	// timings are still emitted as Turn events, they are just not persisted.
 	Store  *store.Store
@@ -554,6 +564,7 @@ func (a *Agent) Join(ctx context.Context) error {
 		Sandbox:    a.options.Sandbox,
 		Tasks:      a.options.Tasks,
 		MaxTokens:  a.options.MaxTokens,
+		Overwrites: a.options.Overwrites,
 		CacheKey:   a.options.ConfigID,
 		Logger:     a.logger,
 	})
@@ -635,37 +646,44 @@ func (a *Agent) Join(ctx context.Context) error {
 // said it. It returns once the request is on its way: the reply arrives on Events and is
 // spoken as it streams.
 func (a *Agent) SimpleResponse(ctx context.Context, text string) error {
-	return a.RespondTo(ctx, text, nil)
+	_, err := a.RespondTo(ctx, text, nil)
+	return err
 }
 
 // RespondTo answers a piece of text through the model, attaching images to that turn.
-func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePart) error {
+//
+// It returns the turn the answer is being given as, which is what lets a caller follow one
+// particular reply: every event of it carries the id, and it is what a session records the
+// turn under. A native agent returns an empty one, because a speech-to-speech model decides
+// for itself what counts as a turn and there is nothing here to name.
+func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePart) (string, error) {
 	if a.native() {
-		return a.respondNative(text, images)
+		return "", a.respondNative(text, images)
 	}
 	if len(images) > 0 {
 		a.mu.Lock()
 		current := a.harness
 		a.mu.Unlock()
 		if current == nil {
-			return errors.New("agent: not joined")
+			return "", errors.New("agent: not joined")
 		}
 		id := replyPrefix + turnStamp()
 		parts := llm.TextParts(text)
 		for index, image := range images {
 			if err := image.Validate(); err != nil {
-				return err
+				return "", err
 			}
 			image.Data = append([]byte(nil), image.Data...)
 			metadata, _ := json.Marshal(map[string]any{"source": "attachment", "frame_id": fmt.Sprintf("%s-image-%d", id, index+1), "received_at_ms": time.Now().UnixMilli()})
 			parts = append(parts, llm.ContentPart{Text: string(metadata)}, llm.ContentPart{Image: &image})
 		}
 		if _, err := current.Delegate("vision", text, id, parts, nil); err != nil {
-			return err
+			return "", err
 		}
-		return a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
+		return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil)
 	}
-	return a.respond(stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, nil)
+	id := replyPrefix + turnStamp()
+	return id, a.respondTurn(id, stt.Participant{ID: "caller"}, text, heard{at: time.Now()}, "", nil)
 }
 
 func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest) ([]llm.ContentPart, error) {
@@ -724,13 +742,22 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 	model := a.llm
 	a.mu.Unlock()
 
+	turnID := writtenPrefix + turnStamp()
+	screening := a.screening(ctx, turnID, text)
+	if screening != nil && screening.blocking {
+		if verdict := screening.verdict(); !verdict.Allowed {
+			return a.refuseWritten(turnID, verdict), nil
+		}
+		screening = nil
+	}
+
 	stream, err := model.Create(ctx, llm.ResponseParams{
-		ID:              writtenPrefix + turnStamp(),
+		ID:              turnID,
 		Instructions:    instructions,
 		Input:           history,
 		MaxOutputTokens: a.options.MaxTokens,
 		PromptCacheKey:  a.options.ConfigID,
-	})
+	}.Overwrite(a.options.Overwrites))
 	if err != nil {
 		return "", err
 	}
@@ -739,10 +766,44 @@ func (a *Agent) Ask(ctx context.Context, text string) (string, error) {
 		return "", err
 	}
 
+	// The reply is complete and has gone nowhere: this is a function that returns a
+	// string, so holding it until the verdict is in costs the reader nothing but the wait,
+	// and what was written is discarded unread if the policy refuses it.
+	if screening != nil {
+		waited := time.Now()
+		if verdict := screening.verdict(); !verdict.Allowed {
+			return a.refuseWritten(turnID, verdict), nil
+		}
+		a.logger.Debug("a written answer waited on the guardrail",
+			"turn", turnID, "held_ms", routing.MsSince(waited))
+	}
+
 	a.mu.Lock()
 	a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: response.OutputText})
 	a.mu.Unlock()
 	return response.OutputText, nil
+}
+
+// refuseWritten is refuse for an aside in writing, which has no turn on the call to put a
+// reply through and hands the refusal back to whoever asked instead.
+func (a *Agent) refuseWritten(turnID string, verdict guardrail.Verdict) string {
+	refusal := verdict.Refusal
+	if refusal == "" {
+		refusal = a.options.Guardrail.Policy().Refusal
+	}
+
+	a.mu.Lock()
+	a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: refusal})
+	a.mu.Unlock()
+
+	a.logger.Info("a written turn was refused by the guardrail",
+		"turn", turnID, "reason", verdict.Reason, "probability", verdict.Probability)
+	a.emitter.Send(Blocked{
+		TurnID:      turnID,
+		Reason:      verdict.Reason,
+		Probability: verdict.Probability,
+	})
+	return refusal
 }
 
 // Say speaks a piece of text without asking the model. A greeting is exactly this: the
@@ -1415,7 +1476,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
-	})
+	}, "")
 }
 
 func (a *Agent) respondTurn(
@@ -1448,7 +1509,7 @@ func (a *Agent) respondTurn(
 		Instructions: instructions,
 		History:      history,
 		Note:         joinNotes(note, a.duplex.Note(listened.confidence)),
-	})
+	}, text)
 }
 
 func (a *Agent) userTurnLocked(text string, images []llm.ImagePart) llm.Message {
@@ -1545,7 +1606,11 @@ func (a *Agent) instructions() string {
 // writing to the voice at once is two voices. Create itself is on that goroutine too:
 // waiting here for headers used to stall STT and flow rulings until Cerebras answered,
 // which is how a follow-up sat unanswered behind the turn it interrupted.
-func (a *Agent) generate(turn harness.Turn) error {
+// screen is what the guardrail should be asked about, which is only ever something a
+// participant just said. A turn that continues one - a tool's result coming back, a
+// delegated finding arriving - carries nothing new, and re-screening the words that
+// started it would charge for a judgement already made.
+func (a *Agent) generate(turn harness.Turn, screen string) error {
 	a.mu.Lock()
 	if a.closed || a.harness == nil {
 		a.mu.Unlock()
@@ -1557,16 +1622,38 @@ func (a *Agent) generate(turn harness.Turn) error {
 	a.pumps.Add(1)
 	a.mu.Unlock()
 
-	go a.startReply(current, turn, ctx)
+	go a.startReply(current, turn, ctx, screen)
 	return nil
 }
 
 // startReply opens the model stream and drains it. It is a goroutine of its own because
 // Respond waits for response headers, and the event loop that called generate cannot sit
 // in that: an overlap ruling that arrives while it does is the one that should cancel it.
-func (a *Agent) startReply(current *harness.Harness, turn harness.Turn, ctx context.Context) {
+//
+// It is also where a guardrail is enforced, and it is enforced here rather than before the
+// turn was started because of what a voice conversation costs in waiting. The check runs
+// beside the model and the reply is held at the last moment before it would be spoken, so
+// screening a turn the policy permits - which is nearly all of them - adds only whatever
+// the check had still not finished by the time the model began answering. A turn the
+// policy refuses has cost some tokens nobody will read, which is the trade.
+func (a *Agent) startReply(
+	current *harness.Harness, turn harness.Turn, ctx context.Context, screen string,
+) {
 	defer a.pumps.Done()
 	defer a.finishGenerate(turn.ID)
+
+	screening := a.screening(ctx, turn.ID, screen)
+
+	// In blocking mode the model is not asked at all until the verdict is in, so a refused
+	// turn spends nothing on a reply nobody hears - and every caller waits for the check,
+	// including all the ones who asked something perfectly ordinary.
+	if screening != nil && screening.blocking {
+		if verdict := screening.verdict(); !verdict.Allowed {
+			a.refuse(turn.ID, verdict, 0)
+			return
+		}
+		screening = nil
+	}
 
 	stream, err := current.Respond(ctx, turn)
 	if err != nil {
@@ -1587,7 +1674,91 @@ func (a *Agent) startReply(current *harness.Harness, turn harness.Turn, ctx cont
 		stream.Close()
 	}
 
+	// The gate, and the reason it is exactly here: pump is what puts a reply on its way to
+	// the voice, so a reply held on this side of it has not been heard, written down or
+	// spoken. Nothing the model wrote escapes a refusal.
+	if screening != nil {
+		waited := time.Now()
+		verdict := screening.verdict()
+		if !verdict.Allowed {
+			stream.Close()
+			a.mu.Lock()
+			delete(a.streams, turn.ID)
+			a.mu.Unlock()
+			a.refuse(turn.ID, verdict, routing.MsSince(waited))
+			return
+		}
+	}
+
 	a.pump(turn.ID, stream)
+}
+
+// screening is a guardrail check running beside the model.
+type screening struct {
+	// blocking says the model must not be asked until this has answered.
+	blocking bool
+	decided  chan guardrail.Verdict
+}
+
+// verdict waits for the check to answer.
+func (s *screening) verdict() guardrail.Verdict { return <-s.decided }
+
+// screening starts the check for a turn, or returns nil where there is nothing to screen:
+// no policy, or a turn that carries no new words of the caller's.
+func (a *Agent) screening(ctx context.Context, turnID, text string) *screening {
+	if a.options.Guardrail == nil || strings.TrimSpace(text) == "" {
+		return nil
+	}
+
+	policy := a.options.Guardrail.Policy()
+	started := &screening{
+		blocking: policy.Mode == guardrail.ModeBlocking,
+		decided:  make(chan guardrail.Verdict, 1),
+	}
+
+	go func() {
+		decided, err := a.options.Guardrail.Check(ctx, turnID, text)
+		if err != nil {
+			// A check that could not be made allows the turn. This is the one place that
+			// decision is taken, so it is worth stating plainly: a classifier having an
+			// outage, or a customer's own webhook being down, should not leave an agent
+			// mute on every turn. Making it fail closed instead is this branch.
+			a.logger.Error("the guardrail could not screen a turn, so it was answered",
+				"turn", turnID, "error", err)
+			decided = guardrail.Verdict{Allowed: true}
+		}
+		started.decided <- decided
+	}()
+
+	return started
+}
+
+// refuse answers a turn with the policy's refusal instead of the model's reply.
+//
+// The refusal is put through the same channel a model's reply travels, as a delta and a
+// completion, rather than spoken from here. That is not indirection for its own sake: one
+// goroutine owns the chunker, the voice and the turn timings, and a refusal written from
+// this one would race it. Going the long way round also means a refused turn is recorded,
+// reported and measured by exactly the code that does it for every other turn, so what a
+// transcript, a stat row and a client see is a turn the agent answered briefly.
+func (a *Agent) refuse(turnID string, verdict guardrail.Verdict, heldMs float64) {
+	refusal := verdict.Refusal
+	if refusal == "" {
+		refusal = a.options.Guardrail.Policy().Refusal
+	}
+
+	a.logger.Info("a turn was refused by the guardrail",
+		"turn", turnID, "reason", verdict.Reason, "probability", verdict.Probability,
+		"held_ms", heldMs)
+	a.emitter.Send(Blocked{
+		TurnID:      turnID,
+		Reason:      verdict.Reason,
+		Probability: verdict.Probability,
+		HeldMs:      heldMs,
+	})
+
+	a.replies <- llm.OutputTextDelta{ResponseID: turnID, Delta: refusal}
+	a.replies <- llm.ResponseCompleted{Response: llm.Response{ID: turnID, OutputText: refusal}}
 }
 
 // finishGenerate drops the cancel for a turn whose Create has settled or been abandoned.
@@ -2046,7 +2217,7 @@ func (a *Agent) follow() error {
 		ID:           turnID,
 		Instructions: instructions,
 		History:      history,
-	})
+	}, "")
 }
 
 // waitingForPlayout reports whether already-published speech should still be left to drain

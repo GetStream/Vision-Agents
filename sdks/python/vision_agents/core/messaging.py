@@ -6,7 +6,7 @@ the core rather than in a plugin so an agent can be started by one without impor
 anything optional.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -24,6 +24,11 @@ class InboundMessage:
         channel_type: The type of that channel.
         config_id: The agent config the last conversation on this channel ran under. Empty
             when that conversation spelled its whole spec out instead of naming one.
+        custom: Whatever the channel was created with, carried through unread. It is where
+            a worker finds what the conversation is for and the router has no opinion
+            about: the organization to scope memory to, the locale to answer in. Whoever
+            created the channel decided what is in here, so read it as a claim rather than
+            a fact; which agent answers is `config_id`, not anything in here.
         text: What was written.
         message_id: The message itself, for replying in its thread rather than after it.
         user_id: Who wrote it.
@@ -34,6 +39,7 @@ class InboundMessage:
     channel_id: str
     channel_type: str = "agent"
     config_id: str = ""
+    custom: dict[str, str] = field(default_factory=dict)
     text: str = ""
     message_id: str = ""
     user_id: str = ""

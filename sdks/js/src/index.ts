@@ -20,6 +20,8 @@ export {
   URL_ENV,
   signToken,
   type BackendOptions,
+  type StreamCredentials,
+  type StreamUser,
   type TokenSource,
   type WebSocketConstructor,
   type WebSocketLike,
@@ -34,11 +36,34 @@ export {
   type Schemas,
 } from "./client.js";
 
+export { AgentHandle } from "./handle.js";
+
 export {
-  conversation,
-  type ConversationOptions,
-  type ConversationRequest,
-} from "./conversation.js";
+  Sessions,
+  timestamp,
+  type CreateSessionOptions,
+  type SessionQuery,
+  type SessionSpec,
+} from "./sessions.js";
+
+export {
+  AgentResponse,
+  Items,
+  Responses,
+  type CreateResponseOptions,
+  type ImageSource,
+} from "./responses.js";
+
+export {
+  GUEST_STORAGE_KEY,
+  browserStore,
+  claimGuestUser,
+  forgetGuest,
+  guestUser,
+  type Guest,
+  type GuestStore,
+  type GuestUserOptions,
+} from "./guests.js";
 
 export { ConfigurationError, RouterError, SocketClosedError } from "./errors.js";
 
@@ -59,9 +84,12 @@ export { Tools, render, type ParameterSchema, type Tool } from "./tools.js";
 export {
   Session,
   eventOf,
+  type ForkOptions,
   type Participant,
+  type SessionChat,
   type SessionEvent,
   type SessionOptions,
+  type SessionVideo,
 } from "./session.js";
 
 export {

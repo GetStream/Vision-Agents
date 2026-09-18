@@ -1,6 +1,6 @@
 {
   "name": "@stream-io/vision-agents",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "JavaScript client for the Stream acceleration backend: agents that run there, and the conversations they hold.",
   "license": "MIT",
   "repository": {
@@ -54,5 +54,17 @@
     "openapi-typescript": "^7.13.0",
     "typescript": "^5.7.0",
     "ws": "^8.18.0"
+  },
+  "peerDependencies": {
+    "@stream-io/video-client": ">=1.0.0",
+    "stream-chat": ">=8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@stream-io/video-client": {
+      "optional": true
+    },
+    "stream-chat": {
+      "optional": true
+    }
   }
 }

@@ -1,4 +1,6 @@
 import type { Client, Schemas } from "./client.js";
+import { ConfigurationError } from "./errors.js";
+import { Responses } from "./responses.js";
 import { Socket, type Frame, flag, nested, text } from "./socket.js";
 import type { Tools } from "./tools.js";
 
@@ -47,6 +49,82 @@ export interface SessionOptions {
   decisions?: boolean;
 }
 
+/** What to change about a conversation while continuing it. */
+export interface ForkOptions
+  extends Omit<Schemas["ForkSessionRequest"], "model_overwrites">,
+    SessionOptions {
+  /** What to change about the models, over whatever the parent was running. */
+  modelOverwrites?: Schemas["ModelOverwrites"];
+}
+
+/**
+ * Stream Chat, as this session's transcript.
+ *
+ * Typed loosely on purpose. `stream-chat` is an optional peer dependency, so its types are
+ * not here to import, and declaring them would mean keeping a copy in step with a package
+ * this one does not depend on. A caller who has installed it gets the real types by naming
+ * them: `(await session.chat()).channel as Channel`.
+ */
+export interface SessionChat {
+  /** The connected `StreamChat` client. */
+  client: ChatClient;
+  /** The channel replies are written into. */
+  channel: unknown;
+}
+
+/** Stream video, as the call this session is on. */
+export interface SessionVideo {
+  /** The connected `StreamVideoClient`. */
+  client: VideoClient;
+  /** The call the agent is in, ready to be joined. */
+  call: unknown;
+}
+
+interface ChatClient {
+  channel(type: string, id: string): unknown;
+  connectUser(user: { id: string }, token: string): Promise<unknown>;
+  disconnectUser(): Promise<unknown>;
+}
+
+interface VideoClient {
+  call(type: string, id: string): unknown;
+  disconnectUser(): Promise<unknown>;
+}
+
+interface ChatModule {
+  StreamChat: new (apiKey: string) => ChatClient;
+}
+
+interface VideoModule {
+  StreamVideoClient: new (options: {
+    apiKey: string;
+    user: { id: string };
+    token: string;
+  }) => VideoClient;
+}
+
+/**
+ * Imports an optional peer dependency, or says which one is missing.
+ *
+ * Dynamic rather than a top-level import so a caller who never touches chat or video
+ * installs neither and bundles neither: this package has no dependencies, and adding two
+ * large ones to make two getters work would be paid for by everybody.
+ *
+ * The specifier goes through a variable because a bundler that can see a literal will try to
+ * resolve it at build time and fail the build over a package the caller deliberately did not
+ * install.
+ */
+async function peer<T>(name: string, what: string): Promise<T> {
+  try {
+    return (await import(/* @vite-ignore */ /* webpackIgnore: true */ name)) as T;
+  } catch (cause) {
+    throw new ConfigurationError(
+      `${what} needs ${name}, which is an optional peer dependency: install it with ` +
+        `npm install ${name} (${String(cause)})`,
+    );
+  }
+}
+
 /**
  * One conversation, held in the acceleration backend.
  *
@@ -57,8 +135,13 @@ export interface SessionOptions {
 export class Session {
   /** What the router said when it created this. */
   readonly created: Schemas["Session"];
+  /** This conversation's turns, and what each of them was made of. */
+  readonly responses: Responses;
 
   private readonly socket: Socket;
+  /** The Stream Chat channel and the video call, each opened on first use. */
+  private chatPeer: Promise<SessionChat> | undefined;
+  private videoPeer: Promise<SessionVideo> | undefined;
   private readonly client: Client;
   private readonly tools: Tools | undefined;
   private readonly buffered: SessionEvent[] = [];
@@ -77,6 +160,7 @@ export class Session {
     this.created = created;
     this.socket = socket;
     this.tools = tools;
+    this.responses = new Responses(client, created.id);
     this.finished = this.watch();
   }
 
@@ -96,7 +180,20 @@ export class Session {
     const created = await client.post("/v1/agents/sessions", {
       body: declared.length > 0 ? { ...request, tools: declared } : request,
     });
+    return Session.watching(client, created, options);
+  }
 
+  /**
+   * Starts watching a session the router has already created.
+   *
+   * Separate from `open` because a fork is created by a different request and is otherwise
+   * the same thing afterwards: one socket, one tool runner, one way of being closed.
+   */
+  static async watching(
+    client: Client,
+    created: Schemas["Session"],
+    options: SessionOptions = {},
+  ): Promise<Session> {
     const query: Record<string, string> = {};
     if (options.interim) {
       query["interim"] = "true";
@@ -189,6 +286,63 @@ export class Session {
     this.socket.send({ type: "instructions", instructions });
   }
 
+  /**
+   * Continues this conversation as a new one.
+   *
+   * What a fork is for is asking the same question differently: from here on with a harder
+   * model, or of a different agent, or down a branch you want to keep separately from the one
+   * you already have. The parent is untouched and keeps its own transcript.
+   *
+   * The history comes across by default. The fork writes into a channel of its own, so the
+   * two do not end up interleaved in one transcript with no way to tell which turn belonged
+   * to which. An incognito parent cannot be forked, because there is nothing to fork from.
+   */
+  async fork(options: ForkOptions = {}): Promise<Session> {
+    const { tools, interim, decisions, modelOverwrites, ...rest } = options;
+    const forked = await this.client.post("/v1/agents/sessions/{id}/fork", {
+      path: { id: this.id },
+      body: {
+        ...rest,
+        ...(modelOverwrites ? { model_overwrites: modelOverwrites } : {}),
+      },
+    });
+    // The fork inherits the parent's tools unless it was given its own: the functions are
+    // here in this process, and a conversation continued without them would offer the model
+    // tools it cannot run.
+    const inherited = tools ?? this.tools;
+    return Session.watching(this.client, forked, {
+      ...(inherited ? { tools: inherited } : {}),
+      ...(interim === undefined ? {} : { interim }),
+      ...(decisions === undefined ? {} : { decisions }),
+    });
+  }
+
+  /**
+   * The Stream Chat channel this conversation is written into.
+   *
+   * `stream-chat` is an optional peer dependency and is imported on first use, so a caller
+   * who never touches chat installs nothing and ships nothing. A caller who does and has not
+   * installed it gets told that rather than a module-not-found from inside this package.
+   *
+   * It needs a credential of its own: the channel is Stream Chat, not this router, so a
+   * client reached by customer id has nothing to connect with.
+   */
+  chat(): Promise<SessionChat> {
+    this.chatPeer ??= this.openChat();
+    return this.chatPeer;
+  }
+
+  /**
+   * The Stream video call the agent is on.
+   *
+   * The same arrangement as chat: `@stream-io/video-client` is an optional peer dependency,
+   * imported on first use. A session held in writing has no call, and asking for one says so.
+   */
+  video(): Promise<SessionVideo> {
+    this.videoPeer ??= this.openVideo();
+    return this.videoPeer;
+  }
+
   /** Resolves when the conversation ends. */
   async wait(): Promise<void> {
     await this.finished;
@@ -270,6 +424,60 @@ export class Session {
     if (this.socket.open) {
       this.socket.send(result);
     }
+  }
+
+  private async openChat(): Promise<SessionChat> {
+    const channel = this.created.conversation_id ?? "";
+    if (!channel) {
+      throw new ConfigurationError(
+        "this session keeps no transcript, so there is no channel to read; open it with " +
+          "persist_conversation, and note that an incognito session never has one",
+      );
+    }
+
+    const credentials = await this.client.backend.streamCredentials();
+    if (!credentials) {
+      throw new ConfigurationError(
+        "chat connects to Stream rather than to this router, so it needs an apiKey and a " +
+          "user: call setUser, or pass apiKey with apiSecret and userId",
+      );
+    }
+
+    const chat = await peer<ChatModule>("stream-chat", "chat");
+    const connected = new chat.StreamChat(credentials.apiKey);
+    await connected.connectUser(credentials.user, credentials.token);
+    // The wire writes the channel as type:id, which is what the backend calls a
+    // conversation. Splitting it here keeps that spelling out of the caller's way.
+    const [type, ...rest] = channel.split(":");
+    return { client: connected, channel: connected.channel(type ?? "agent", rest.join(":")) };
+  }
+
+  private async openVideo(): Promise<SessionVideo> {
+    const callId = this.created.call_id ?? "";
+    if (!callId) {
+      throw new ConfigurationError(
+        "this conversation is held in writing, so there is no call to join",
+      );
+    }
+
+    const credentials = await this.client.backend.streamCredentials();
+    if (!credentials) {
+      throw new ConfigurationError(
+        "video connects to Stream rather than to this router, so it needs an apiKey and a " +
+          "user: call setUser, or pass apiKey with apiSecret and userId",
+      );
+    }
+
+    const video = await peer<VideoModule>("@stream-io/video-client", "video");
+    const connected = new video.StreamVideoClient({
+      apiKey: credentials.apiKey,
+      user: credentials.user,
+      token: credentials.token,
+    });
+    return {
+      client: connected,
+      call: connected.call(this.created.call_type ?? "agent", callId),
+    };
   }
 
   private deliver(event: SessionEvent): void {

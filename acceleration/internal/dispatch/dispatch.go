@@ -55,6 +55,14 @@ type Message struct {
 	// ConfigID names the agent config the last conversation here ran under, so a worker
 	// knows which agent is being written to rather than having to guess from the channel.
 	ConfigID string
+	// Custom is whatever the channel was created with, carried through unread the way a
+	// call's is. It is how a worker learns what the conversation is for — which customer's
+	// organization it belongs to, which locale to answer in — without this service having
+	// to know what any of those mean.
+	//
+	// Whoever created the channel decided what is in here, so it is a claim rather than a
+	// fact. ConfigID is deliberately not among the things read from it; see ConfigField.
+	Custom map[string]string
 	// Text is what was written.
 	Text string
 	// MessageID is the message in the channel, so a worker can reply in its thread or

@@ -25,10 +25,20 @@ var ErrNotOnCall = errors.New("stream: the agent is not on a call")
 // Every target is a provider/model name or a capability shortcut such as "llm-fast";
 // leaving one empty takes the backend's default for that modality.
 type Config struct {
-	// Agent is a stored agent config to start from, named either by its id or by the name
-	// it was stored under. Everything else here overrides what it says, so a configuration
-	// can be reused and one call still changed.
+	// Agent is the name a stored agent config was stored under, which is what a person
+	// actually knows the agent as: "docs" rather than an id they never chose. Everything
+	// else here overrides what that config says, so a configuration can be reused and one
+	// call still changed.
+	//
+	// The name goes to the router as it is, which resolves it and refuses one that matches
+	// nothing. That refusal is the point: a typo would otherwise start a working session
+	// with default instructions, which is far harder to notice than an error.
 	Agent string
+	// ConfigID names a stored config by id instead, for a caller that was handed one rather
+	// than choosing a name -- a dispatched message, say, which carries the id of the config
+	// it was routed to. Naming both this and Agent is refused, since there is no sensible
+	// answer when they disagree.
+	ConfigID string
 	// LLM is the model that answers.
 	LLM string
 	// STT is the model that transcribes.
@@ -57,6 +67,12 @@ type Config struct {
 	// Backend is where the router is and who is billed. Its zero value reads the
 	// environment.
 	Backend Backend
+	// Functions are the caller's own, which the model is offered and this process runs.
+	//
+	// For a caller that keeps a registry of its own and hands the same one to several
+	// conversations. Nil makes an empty registry, which Pipeline.Functions hands back to
+	// register into, and which is how a single pipeline is usually set up.
+	Functions *tools.Registry
 	// Logger is where the pipeline reports what it could not do. Nil uses the default.
 	Logger *slog.Logger
 }
@@ -81,6 +97,22 @@ type Call struct {
 	AgentID string
 	// Instructions is the system prompt.
 	Instructions string
+
+	// Title and Description are what a person finds this conversation by afterwards. Both
+	// are searched.
+	Title       string
+	Description string
+	// Project groups conversations, and is carried as a cost label too.
+	Project string
+	// Custom is the caller's own labels, handed back untouched and queryable.
+	Custom map[string]any
+	// Incognito holds the conversation and keeps nothing: no session row, no turns, no
+	// transcript whatever PersistConversation says. It cannot be found afterwards, which is
+	// the point of it.
+	Incognito bool
+	// ModelOverwrites changes the models for this conversation alone, over whatever the
+	// agent config decided.
+	ModelOverwrites *acceleration.ModelOverwrites
 
 	// Tags are cost labels, carried onto every request the session makes.
 	Tags map[string]string
@@ -149,9 +181,6 @@ type Pipeline struct {
 	stop    context.CancelFunc
 	running sync.WaitGroup
 	watcher sync.WaitGroup
-
-	// configured is Config.Agent resolved to the id the backend wants, looked up once.
-	configured string
 }
 
 // Accelerated configures a pipeline to run remotely.
@@ -162,11 +191,15 @@ func Accelerated(config Config) *Pipeline {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	functions := config.Functions
+	if functions == nil {
+		functions = tools.NewRegistry()
+	}
 	return &Pipeline{
 		config:    config,
 		backend:   config.Backend,
 		logger:    logger,
-		functions: tools.NewRegistry(),
+		functions: functions,
 	}
 }
 
@@ -192,28 +225,34 @@ func (p *Pipeline) Session() *acceleration.Session {
 // It returns once the backend is in the call, so an agent that has joined is one that is
 // already listening.
 func (p *Pipeline) Join(ctx context.Context, call Call) (*acceleration.Session, error) {
-	p.mu.Lock()
-	if p.session != nil {
-		p.mu.Unlock()
-		return nil, errors.New("stream: the agent is already on a call")
+	if _, err := p.ready(); err != nil {
+		return nil, err
 	}
-	p.mu.Unlock()
+	return p.JoinWith(ctx, p.request(call))
+}
 
-	backend, err := p.backend.Resolve()
+// JoinWith creates a session from a request spelled out in full and starts watching it.
+//
+// Where Join renders an agent's configuration into a request, this takes one already
+// written. The resource surface in sdks/go/client builds its own, and building it there
+// while joining through here means both end up on one socket, one tool runner and one way of
+// being closed, rather than two that drift apart.
+func (p *Pipeline) JoinWith(
+	ctx context.Context,
+	request acceleration.CreateSessionRequest,
+) (*acceleration.Session, error) {
+	client, err := p.ready()
 	if err != nil {
 		return nil, err
 	}
-	client, err := backend.Client()
-	if err != nil {
-		return nil, err
+
+	// The functions registered here are declared unless the caller already declared their
+	// own, since the model can only be offered what this process can run.
+	if declared := p.tools(); len(declared) > 0 && request.Tools == nil {
+		request.Tools = &declared
 	}
 
-	config, err := p.configID(ctx, client)
-	if err != nil {
-		return nil, err
-	}
-
-	created, err := client.CreateSessionWithResponse(ctx, p.request(call, config))
+	created, err := client.CreateSessionWithResponse(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("stream: creating the session: %w", err)
 	}
@@ -221,12 +260,33 @@ func (p *Pipeline) Join(ctx context.Context, call Call) (*acceleration.Session, 
 	if err != nil {
 		return nil, err
 	}
-
-	credentials, err := backend.Credentials()
-	if err != nil {
-		_, _ = client.CloseSessionWithResponse(ctx, session.Id)
+	if err := p.Watch(ctx, session); err != nil {
 		return nil, err
 	}
+
+	if request.CallId == nil || *request.CallId == "" {
+		p.logger.Info("opened a text session", "session", session.Id)
+	} else {
+		p.logger.Info("joined a call remotely", "call", *request.CallId, "session", session.Id)
+	}
+	return session, nil
+}
+
+// Watch starts watching a session the router has already created.
+//
+// Separate from JoinWith because a fork is created by a different request and is otherwise
+// the same thing afterwards: the same socket, the same functions, the same Leave.
+func (p *Pipeline) Watch(ctx context.Context, session *acceleration.Session) error {
+	backend, err := p.backend.Resolve()
+	if err != nil {
+		return err
+	}
+	credentials, err := backend.Credentials()
+	if err != nil {
+		p.abandon(ctx, session.Id)
+		return err
+	}
+
 	socket := NewSocket(
 		backend.SocketURL("/v1/agents/sessions/"+session.Id+"/events"),
 		credentials,
@@ -236,14 +296,20 @@ func (p *Pipeline) Join(ctx context.Context, call Call) (*acceleration.Session, 
 	if err := socket.Open(ctx); err != nil {
 		// The session is live in the backend even though nothing here can watch it, so it
 		// is closed rather than left holding a call nobody is listening to.
-		_, _ = client.CloseSessionWithResponse(ctx, session.Id)
-		return nil, err
+		p.abandon(ctx, session.Id)
+		return err
 	}
 
 	watching, stop := context.WithCancel(context.WithoutCancel(ctx))
 	watched := make(chan Event, events)
 
 	p.mu.Lock()
+	if p.session != nil {
+		p.mu.Unlock()
+		stop()
+		_ = socket.Close()
+		return errors.New("stream: the agent is already on a call")
+	}
 	p.session = session
 	p.socket = socket
 	p.events = watched
@@ -252,13 +318,38 @@ func (p *Pipeline) Join(ctx context.Context, call Call) (*acceleration.Session, 
 
 	p.watcher.Add(1)
 	go p.watch(watching, socket, watched)
+	return nil
+}
 
-	if call.ID == "" {
-		p.logger.Info("opened a text session", "session", session.Id)
-	} else {
-		p.logger.Info("joined a call remotely", "call", call.ID, "session", session.Id)
+// ready refuses a pipeline that is already holding a conversation, and returns the client
+// for the one it is about to join.
+func (p *Pipeline) ready() (*acceleration.ClientWithResponses, error) {
+	p.mu.Lock()
+	held := p.session
+	p.mu.Unlock()
+	if held != nil {
+		return nil, errors.New("stream: the agent is already on a call")
 	}
-	return session, nil
+
+	backend, err := p.backend.Resolve()
+	if err != nil {
+		return nil, err
+	}
+	return backend.Client()
+}
+
+// abandon closes a session nothing here can watch. Whatever went wrong on the way to
+// watching it has already been reported, so a second failure here is nothing to add.
+func (p *Pipeline) abandon(ctx context.Context, id string) {
+	backend, err := p.backend.Resolve()
+	if err != nil {
+		return
+	}
+	client, err := backend.Client()
+	if err != nil {
+		return
+	}
+	_, _ = client.CloseSessionWithResponse(ctx, id)
 }
 
 // Events yields what the backend did until the call ends, when the channel closes.
@@ -325,50 +416,11 @@ func (p *Pipeline) Leave(ctx context.Context) error {
 	return failure
 }
 
-// configID turns Config.Agent into the id the backend looks a config up by.
-//
-// The backend takes an id, but an agent is worth naming, so a name is resolved to one here
-// and remembered. A name that matches nothing stored is passed through untouched: it is
-// then either an id, or a mistake the backend is better placed to report than a guess here
-// would be.
-func (p *Pipeline) configID(ctx context.Context, client *acceleration.ClientWithResponses) (string, error) {
-	if p.config.Agent == "" {
-		return "", nil
-	}
-
-	p.mu.Lock()
-	resolved := p.configured
-	p.mu.Unlock()
-	if resolved != "" {
-		return resolved, nil
-	}
-
-	listed, err := client.ListAgentConfigsWithResponse(ctx)
-	if err != nil {
-		return "", fmt.Errorf("stream: looking up the agent config: %w", err)
-	}
-
-	resolved = p.config.Agent
-	if listed.JSON200 != nil {
-		for _, stored := range *listed.JSON200 {
-			if stored.Name == p.config.Agent {
-				resolved = stored.Id
-				break
-			}
-		}
-	}
-
-	p.mu.Lock()
-	p.configured = resolved
-	p.mu.Unlock()
-	return resolved, nil
-}
-
 // request renders the agent's configuration as a session to create.
-func (p *Pipeline) request(call Call, config string) acceleration.CreateSessionRequest {
+func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 	request := acceleration.CreateSessionRequest{
-		PersistConversation: &call.PersistConversation, ConversationId: &call.ConversationID,
-		Backchannel: &p.config.Backchannel,
+		ConversationId: &call.ConversationID,
+		Backchannel:    &p.config.Backchannel,
 	}
 	if call.ID == "" {
 		text := true
@@ -377,12 +429,30 @@ func (p *Pipeline) request(call Call, config string) acceleration.CreateSessionR
 		request.CallId = &call.ID
 	}
 
+	// An incognito conversation writes no transcript by definition, so asking for one is a
+	// contradiction the router refuses rather than quietly honours. Dropped here so a caller
+	// that set both gets the conversation they asked for rather than a 400.
+	if call.Incognito {
+		request.Incognito = &call.Incognito
+	} else {
+		request.PersistConversation = &call.PersistConversation
+	}
+	if len(call.Custom) > 0 {
+		custom := call.Custom
+		request.Custom = &custom
+	}
+	request.ModelOverwrites = call.ModelOverwrites
+
 	setString(&request.CallType, call.Type)
 	setString(&request.UserId, call.UserID)
 	setString(&request.UserName, call.UserName)
 	setString(&request.AgentId, call.AgentID)
 	setString(&request.Instructions, call.Instructions)
-	setString(&request.ConfigId, config)
+	setString(&request.Title, call.Title)
+	setString(&request.Description, call.Description)
+	setString(&request.Project, call.Project)
+	setString(&request.Agent, p.config.Agent)
+	setString(&request.ConfigId, p.config.ConfigID)
 	setString(&request.Llm, p.config.LLM)
 	setString(&request.Stt, p.config.STT)
 	setString(&request.Tts, p.config.TTS)

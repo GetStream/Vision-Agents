@@ -75,6 +75,31 @@ type APIKeyOwner struct {
 	Settings       AppSettings `bun:"settings,type:jsonb"`
 }
 
+// AppSettingsFor returns what an app has turned on or off.
+//
+// An app with no row gets the zero settings, which admit everybody, rather than an error.
+// That is the same reading the authenticator takes: a deployment naming a customer without
+// having written an app row for it must not have every end user turned away because of it.
+func (s *Store) AppSettingsFor(ctx context.Context, appID string) (AppSettings, error) {
+	if appID == "" {
+		return AppSettings{}, errors.New("store: an app id is required")
+	}
+
+	var app App
+	err := s.db.NewSelect().Model(&app).
+		Column("settings").
+		Where("id = ?", appID).
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AppSettings{}, nil
+	}
+	if err != nil {
+		return AppSettings{}, fmt.Errorf("store: app settings: %w", err)
+	}
+	return app.Settings, nil
+}
+
 // LiveAPIKey returns the owner of the key with that id, provided it has not been revoked
 // and has not expired. Every other outcome is ErrNoAPIKey.
 func (s *Store) LiveAPIKey(ctx context.Context, id string) (APIKeyOwner, error) {

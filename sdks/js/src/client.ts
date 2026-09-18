@@ -1,6 +1,15 @@
-import { Backend, type BackendOptions } from "./backend.js";
+import { Backend, type BackendOptions, type StreamUser, type TokenSource } from "./backend.js";
 import { RouterError } from "./errors.js";
 import type { components, paths } from "./generated/api.js";
+import {
+  claimGuestUser,
+  forgetGuest,
+  guestUser,
+  type Guest,
+  type GuestStore,
+  type GuestUserOptions,
+} from "./guests.js";
+import { AgentHandle } from "./handle.js";
 
 /** The schemas from the spec, so callers can name a request or a response they build. */
 export type Schemas = components["schemas"];
@@ -103,6 +112,69 @@ export class Client {
 
   constructor(backend: Backend | BackendOptions = {}) {
     this.backend = backend instanceof Backend ? backend : new Backend(backend);
+  }
+
+  /**
+   * Says who this client is acting for, and hands over the token that proves it.
+   *
+   * ```ts
+   * const api = new Client({ url: accelerate, apiKey });
+   * await api.setUser({ id: "jlahey", name: "Jim Lahey" }, userToken);
+   * ```
+   *
+   * From here on the conversations this client opens belong to that user, and the ones it
+   * lists are that user's own. A browser gets the token from the app's own backend, which is
+   * the thing that authenticated them; nothing here mints it, because minting it needs the
+   * secret and a secret in a page is a secret published.
+   */
+  setUser(user: StreamUser | string, token: TokenSource): Promise<void> {
+    return this.backend.setUser(user, token);
+  }
+
+  /**
+   * An agent, by the name it is configured under.
+   *
+   * ```ts
+   * const agent = api.agent("docs");
+   * ```
+   *
+   * No request is made: this is the name in a wrapper, and a name that matches nothing is
+   * refused when a session is opened rather than here. Which means addressing an agent costs
+   * nothing, and is the same line whether the config was written this morning or last year.
+   */
+  agent(name: string): AgentHandle {
+    return new AgentHandle(this, name);
+  }
+
+  /**
+   * Gets or creates a guest, so somebody can talk to an agent before they sign up.
+   *
+   * Remembered in a cookie or in localStorage where there is one, so reloading the page is
+   * the same guest with the same history rather than a stranger. Nothing is remembered on a
+   * server, where there is no "this person" to remember.
+   */
+  guestUser(options: GuestUserOptions = {}, store?: GuestStore): Promise<Guest> {
+    return store === undefined
+      ? guestUser(this, options)
+      : guestUser(this, options, store);
+  }
+
+  /** Forgets the remembered guest, which is what signing in has to do. */
+  forgetGuest(store?: GuestStore): void {
+    return store === undefined ? forgetGuest() : forgetGuest(store);
+  }
+
+  /**
+   * Moves a guest's conversations onto the account they turned out to be.
+   *
+   * Server side only: only the backend that just authenticated the account knows which guest
+   * it was, and a page able to ask could claim anybody's conversations by guessing an id.
+   */
+  claimGuestUser(
+    guest: Guest | string,
+    real: StreamUser | string,
+  ): Promise<Schemas["ClaimGuestResult"]> {
+    return claimGuestUser(this, guest, real);
   }
 
   get<P extends PathsWith<"get">>(

@@ -8,16 +8,19 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifierrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -77,8 +80,16 @@ type ManagerOptions struct {
 	Knowledge knowledge.Store
 	// Search is optional, and is what every session finds out what is true now with.
 	Search *searchrouter.Router
+	// Classifier is optional, and is what a session with a guardrail asks whether a turn
+	// may be answered. Without it a session declaring a guardrail that needs one is
+	// refused rather than held unguarded.
+	Classifier *llmclassifierrouter.Router
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
+	// WebhookSecret signs a guardrail's outbound webhook. It is the app secret that
+	// already verifies Stream's inbound hooks, so a customer asking to decide for
+	// themselves has the key to check it with and there is no second secret to store.
+	WebhookSecret string
 
 	Store  *store.Store
 	Live   *live.Client
@@ -94,6 +105,10 @@ type Manager struct {
 	// calls records conversations so they can be found after this process is gone. Nil
 	// without a store, in which case a call is only ever what is happening now.
 	calls *callRecorder
+	// records keeps sessions, turns and what each turn did, which is what an old
+	// conversation is read back from. Nil without a store, and never handed an incognito
+	// session.
+	records *sessionRecorder
 	// reviews says what a finished call went like, onto the row calls wrote.
 	reviews *reviewer
 
@@ -128,6 +143,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	if options.Store != nil {
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
+		manager.records = newSessionRecorder(options.Store, options.Logger)
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)
 	}
 	if os.Getenv("CHAT_OUTBOX_DIR") != "" {
@@ -181,6 +197,19 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		spec.ConversationID = conv.CID()
 		spec.ContextTruncated = truncated
+		// A fork opens an empty channel of its own and then reads the parent's, so the model
+		// carries on from what was said while the transcripts stay separate. The parent's
+		// half goes first because it happened first.
+		if spec.Recall != nil {
+			recalled, cut, err := service.Recall(ctx, spec.CustomerID,
+				spec.Recall.AgentID, spec.Recall.ConversationID)
+			if err != nil {
+				conv.Release()
+				return nil, fmt.Errorf("session: reading the conversation being forked: %w", err)
+			}
+			previous = append(recalled, previous...)
+			spec.ContextTruncated = spec.ContextTruncated || cut
+		}
 		defer func() {
 			if !opened {
 				conv.Release()
@@ -266,6 +295,19 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 		conversing = m.options.STS
 	}
+
+	screening, err := m.guardrail(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	if screening != nil {
+		created.closers = append(created.closers, func() {
+			if err := screening.Close(); err != nil {
+				m.logger.Error("could not close the guardrail",
+					"session", created.id, "error", err)
+			}
+		})
+	}
 	created.voiceAgent, err = agent.New(agent.Options{
 		OnToolStarted:      toolStarted,
 		Edge:               edge,
@@ -301,11 +343,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		LanguageHints:      spec.LanguageHints,
 		Keyterms:           spec.Keyterms,
 		MaxTokens:          spec.MaxTokens,
+		Overwrites:         spec.LLMOverwrites(),
 		Memory:             remembering,
 		Knowledge:          m.options.Knowledge,
 		KnowledgeNamespace: spec.KnowledgeNamespace,
 		Search:             m.options.Search,
 		SearchTarget:       spec.SearchTarget,
+		Guardrail:          screening,
 		AppID:              spec.Memory.AppID,
 		MemoryUserID:       spec.Memory.UserID,
 		MemoryFilter:       spec.Memory.Filter,
@@ -390,6 +434,16 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		m.calls.Started(row(created))
 	}
 
+	// An incognito session is never handed the recorder, so nothing downstream has to
+	// remember to check the flag: there is simply nowhere for it to write.
+	if m.records != nil && !spec.Incognito {
+		created.records = m.records
+		created.closers = append(created.closers, func() {
+			m.records.Closed(created.id, time.Now().UTC())
+		})
+		m.records.Opened(sessionRow(created))
+	}
+
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -457,7 +511,11 @@ func OwnerOf(spec Spec) Owner {
 	return Owner{CustomerID: spec.CustomerID, UserID: spec.Caller.UserID, Kind: spec.CallerKind}
 }
 
-// reaches reports whether a caller may have a session owned by other.
+// Reaches reports whether a caller may have a session owned by other.
+//
+// Exported because the same question has to be asked of a session that has ended, which
+// this package no longer holds: the row is read by the API and checked against this, so a
+// stored conversation is reached on exactly the terms a live one is.
 //
 // A backend reaches every session its customer has: it runs the application, so closing a
 // session a device left behind is its job. An end user reaches only their own, and both
@@ -475,7 +533,7 @@ func OwnerOf(spec Spec) Owner {
 // requiring equality would refuse them the session that was made for them. Anonymous is
 // left out of that, because an anonymous name is a claim nobody checked and allowing it
 // would make guessing whose a session was enough to read it.
-func (o Owner) reaches(other Owner) bool {
+func (o Owner) Reaches(other Owner) bool {
 	if o.CustomerID != other.CustomerID {
 		return false
 	}
@@ -497,7 +555,7 @@ func (m *Manager) Get(id string, owner Owner) (*Session, bool) {
 	defer m.mu.Unlock()
 
 	found, ok := m.sessions[id]
-	if !ok || !owner.reaches(OwnerOf(found.spec)) {
+	if !ok || !owner.Reaches(OwnerOf(found.spec)) {
 		return nil, false
 	}
 	return found, true
@@ -540,7 +598,7 @@ func (m *Manager) List(owner Owner) []*Session {
 
 	var theirs []*Session
 	for _, found := range m.sessions {
-		if !owner.reaches(OwnerOf(found.spec)) {
+		if !owner.Reaches(OwnerOf(found.spec)) {
 			continue
 		}
 		// An anonymous caller that named nobody is told about nothing. It reaches its
@@ -555,6 +613,164 @@ func (m *Manager) List(owner Owner) []*Session {
 		return theirs[i].created.After(theirs[j].created)
 	})
 	return theirs
+}
+
+// Found is a session a query turned up, whether or not this process still holds it.
+//
+// Live is the session if it is still running here, nil for one that ended or one another
+// instance is holding. Stored is the row, nil for a session running without a store to
+// record it. At least one of the two is set, and a caller rendering these reads the live
+// one first: a session in flight knows what it resolved its models to, which the row does
+// not carry.
+type Found struct {
+	Live   *Session
+	Stored *store.AgentSession
+}
+
+// ID is the session's id whichever half is holding it.
+func (f Found) ID() string {
+	switch {
+	case f.Live != nil:
+		return f.Live.ID()
+	case f.Stored != nil:
+		return f.Stored.ID
+	}
+	return ""
+}
+
+// Query returns the sessions an owner may have, newest first, including ones that have
+// already ended.
+//
+// The live sessions and the stored rows are one list rather than two, deduplicated by id,
+// because a caller asking for their conversations does not care which of them this process
+// happens to be holding. A live session wins where both exist: it is the same conversation
+// and the live one knows more about it.
+//
+// Without a store this is List with filters, which is the honest answer for a deployment
+// that keeps nothing: there is no history to offer.
+func (m *Manager) Query(ctx context.Context, owner Owner, filter store.SessionFilter) ([]Found, error) {
+	return m.find(ctx, owner, "", filter)
+}
+
+// Search is Query with words instead of a filter, and needs a store: what it searches is
+// what the caller named their conversations, which only the rows carry.
+func (m *Manager) Search(ctx context.Context, owner Owner, text string, filter store.SessionFilter) ([]Found, error) {
+	return m.find(ctx, owner, text, filter)
+}
+
+func (m *Manager) find(ctx context.Context, owner Owner, text string, filter store.SessionFilter) ([]Found, error) {
+	// An end user only ever reaches their own, so the filter is narrowed here rather than
+	// trusted from the request. A user id a caller could widen is not a boundary at all.
+	if owner.Kind != auth.KindServer {
+		if owner.UserID == "" {
+			// An anonymous caller that named nobody is told about nothing, the same as in
+			// List: they reach their own session by holding its id, and listing them would
+			// hand one stranger another's.
+			return nil, nil
+		}
+		filter.UserID = owner.UserID
+	}
+
+	found := make([]Found, 0, filter.Limit)
+	seen := map[string]int{}
+	// Live sessions come first so a running conversation beats the row describing it, and
+	// so a deployment with no store still answers with what is happening now.
+	for _, live := range m.List(owner) {
+		if !matchesLive(live, filter) {
+			continue
+		}
+		// A live session has no title to search, so a search skips them unless the row
+		// behind them matches. Whatever the store turns up is merged in below.
+		if text != "" {
+			continue
+		}
+		seen[live.ID()] = len(found)
+		found = append(found, Found{Live: live})
+	}
+
+	if m.options.Store != nil {
+		var rows []store.AgentSession
+		var err error
+		if text != "" {
+			rows, err = m.options.Store.SearchSessions(ctx, owner.CustomerID, text, filter)
+		} else {
+			rows, err = m.options.Store.QuerySessions(ctx, owner.CustomerID, filter)
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			stored := row
+			if at, already := seen[row.ID]; already {
+				found[at].Stored = &stored
+				continue
+			}
+			entry := Found{Stored: &stored}
+			// A row this process is still holding is handed back with both halves even when
+			// the live pass skipped it, which is what a search does.
+			if live, ok := m.Get(row.ID, owner); ok {
+				entry.Live = live
+			}
+			seen[row.ID] = len(found)
+			found = append(found, entry)
+		}
+	}
+
+	// A search is already ranked by the store, so only a plain query is sorted here.
+	if text == "" {
+		sort.SliceStable(found, func(i, j int) bool {
+			return found[i].startedAt().After(found[j].startedAt())
+		})
+	}
+	if limit := filter.Limit; limit > 0 && len(found) > limit {
+		found = found[:limit]
+	}
+	return found, nil
+}
+
+// startedAt is when the conversation began, from whichever half knows.
+func (f Found) startedAt() time.Time {
+	if f.Live != nil {
+		return f.Live.CreatedAt()
+	}
+	if f.Stored != nil {
+		return f.Stored.CreatedAt
+	}
+	return time.Time{}
+}
+
+// matchesLive applies the filter to a session that has not been written down, so a query
+// answers the same way with a store and without one.
+//
+// Only the fields a live session actually has are checked. Title, description and custom
+// labels are the caller's own and are on the row; a live session carries them on its spec,
+// so they are checked from there.
+func matchesLive(live *Session, filter store.SessionFilter) bool {
+	spec := live.Spec()
+	switch {
+	case filter.UserID != "" && spec.Caller.UserID != filter.UserID:
+		return false
+	case filter.ConfigID != "" && spec.ConfigID != filter.ConfigID:
+		return false
+	case filter.AgentName != "" && spec.AgentName != filter.AgentName:
+		return false
+	case filter.Project != "" && spec.Project != filter.Project:
+		return false
+	// Every session this process holds is running, so asking for the closed ones excludes
+	// all of them rather than none.
+	case filter.State == store.SessionClosed:
+		return false
+	case !filter.After.IsZero() && live.CreatedAt().Before(filter.After):
+		return false
+	case !filter.Before.IsZero() && !live.CreatedAt().Before(filter.Before):
+		return false
+	}
+	for key, want := range filter.Custom {
+		if held, ok := spec.Custom[key]; !ok || fmt.Sprint(held) != want {
+			return false
+		}
+	}
+	return true
 }
 
 // Close ends a session its owner may have, reporting whether they had one by that id.
@@ -590,12 +806,13 @@ func (m *Manager) Shutdown() error {
 		}
 	}
 
-	// The recorder goes last so the endings those closes queued are written rather than
+	// The recorders go last so the endings those closes queued are written rather than
 	// lost on the way out. The reviews go with it: a summary is worth having, but not
 	// worth holding a shutdown open for a model to finish writing.
 	if m.calls != nil {
 		m.reviews.Close()
 		m.calls.Close()
+		m.records.Close()
 		m.logs.close()
 	}
 	if m.conversations != nil {
@@ -627,6 +844,46 @@ func (m *Manager) reading(spec Spec) bool {
 // today is not scoped to a customer, so all this asks is that something routes the search.
 func (m *Manager) searching(spec Spec) bool {
 	return m.options.Search != nil && spec.SearchTarget != ""
+}
+
+// guardrail builds what screens this session's turns, or nil where the agent declared no
+// policy.
+//
+// A policy that cannot be honoured refuses the session rather than starting one that
+// screens nothing. That is the one decision in this feature worth being strict about:
+// every other failure here loses a reply, and this one would answer a question the
+// customer wrote a file to prevent being answered.
+func (m *Manager) guardrail(ctx context.Context, spec Spec) (guardrail.Guardrail, error) {
+	if strings.TrimSpace(spec.Guardrail) == "" {
+		return nil, nil
+	}
+
+	// A native model hears the caller and speaks back on its own: nothing here sees the
+	// words before they are answered, and there is no reply to hold while a verdict
+	// arrives. Refusing is the honest answer - the alternative is a guardrail that is
+	// configured, reported, and enforcing nothing.
+	if spec.Native() {
+		return nil, errors.New(
+			"session: a speech-to-speech agent answers the caller directly, so a guardrail cannot screen its turns")
+	}
+
+	policy, err := guardrail.Parse(spec.Guardrail)
+	if err != nil {
+		return nil, err
+	}
+
+	return guardrail.New(ctx, policy, guardrail.Deps{
+		Owner: routing.Owner{
+			CustomerID: spec.CustomerID,
+			AgentID:    spec.AgentID,
+			CallID:     spec.CallID,
+			Tags:       spec.Tags,
+		},
+		Classifier: m.options.Classifier,
+		LLM:        m.options.LLM,
+		Secret:     m.options.WebhookSecret,
+		Logger:     m.logger,
+	})
 }
 
 // line is what the session may do to the call it is on, which is nothing unless it was

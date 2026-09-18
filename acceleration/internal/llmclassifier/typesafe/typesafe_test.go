@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifier"
 )
 
 // web stands in for the System One endpoint, so the wire contract can be tested without a key.
@@ -61,6 +63,13 @@ func (s *TypeSafeSuite) question(id string) map[string]any {
 	return asked
 }
 
+// ask puts a state and its questions to the client, which every test here does.
+func (s *TypeSafeSuite) ask(
+	state any, questions map[string]llmclassifier.Question,
+) (llmclassifier.Result, error) {
+	return s.client.Classify(s.ctx, llmclassifier.Request{State: state, Questions: questions})
+}
+
 type TypeSafeSuite struct {
 	suite.Suite
 	ctx    context.Context
@@ -97,8 +106,8 @@ func (s *TypeSafeSuite) TestAKeyIsRequired() {
 func (s *TypeSafeSuite) TestTheNewestStableModelIsAskedWhenNoneIsNamed() {
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"heard":{"type":"noul","noul":0.8}}}`
 
-	_, err := s.client.Ask(s.ctx, "anything", map[string]Question{
-		"heard": Noul("Did anyone speak?", "", ""),
+	_, err := s.ask("anything", map[string]llmclassifier.Question{
+		"heard": llmclassifier.Noul("Did anyone speak?", "", ""),
 	})
 	s.Require().NoError(err)
 
@@ -106,6 +115,11 @@ func (s *TypeSafeSuite) TestTheNewestStableModelIsAskedWhenNoneIsNamed() {
 	s.Equal(DefaultModel, s.web.body["model"])
 	s.Equal("Bearer test-key", s.web.auth)
 	s.Equal("/v1/systemone", s.web.path)
+}
+
+func (s *TypeSafeSuite) TestTheVendorIsWhatThisIsNamedByRatherThanTheModel() {
+	// Stats and health are keyed by the provider name, and "jev" is a model TypeSafe serve.
+	s.Equal("typesafe", s.client.Provider())
 }
 
 func (s *TypeSafeSuite) TestEveryQuestionGoesInOneRequest() {
@@ -117,17 +131,17 @@ func (s *TypeSafeSuite) TestEveryQuestionGoesInOneRequest() {
 		"addressed":{"type":"noul","noul":0.95}
 	}}`
 
-	answers, err := s.client.Ask(s.ctx, map[string]any{"heard": "book a table for four"},
-		map[string]Question{
-			"disposition": Choice("What should happen to these words?", map[string]string{
+	answers, err := s.ask(map[string]any{"heard": "book a table for four"},
+		map[string]llmclassifier.Question{
+			"disposition": llmclassifier.Choice("What should happen to these words?", map[string]string{
 				"respond": "A complete thought addressed to the agent.",
 				"wait":    "Probably unfinished.",
 			}),
-			"floor": Choice("Who should hold the floor?", map[string]string{
+			"floor": llmclassifier.Choice("Who should hold the floor?", map[string]string{
 				"continue": "",
 				"stop":     "",
 			}),
-			"addressed": Noul("Were these words meant for the agent?", "", ""),
+			"addressed": llmclassifier.Noul("Were these words meant for the agent?", "", ""),
 		})
 	s.Require().NoError(err)
 
@@ -145,8 +159,8 @@ func (s *TypeSafeSuite) TestAChoiceSendsItsOptionsAndTheirDescriptions() {
 	// the whole of what it may say.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"floor":{"type":"choice","choice":"stop"}}}`
 
-	_, err := s.client.Ask(s.ctx, "wait, make it six", map[string]Question{
-		"floor": Choice("Who should hold the floor?", map[string]string{
+	_, err := s.ask("wait, make it six", map[string]llmclassifier.Question{
+		"floor": llmclassifier.Choice("Who should hold the floor?", map[string]string{
 			"stop":     "A correction or a direct interruption.",
 			"shorten":  "A related addition.",
 			"continue": "",
@@ -170,8 +184,9 @@ func (s *TypeSafeSuite) TestAScoreSendsItsLevelsInOrder() {
 		"legend":{"0":"Mid-word","1":"Mid-sentence","2":"Finished"},
 		"probabilities":{"0":0.1,"1":0.4,"2":0.5},"confidence":0.55}}}`
 
-	answers, err := s.client.Ask(s.ctx, "my member id is four four", map[string]Question{
-		"finished": Score("How finished is this?", []string{"Mid-word", "Mid-sentence", "Finished"}),
+	answers, err := s.ask("my member id is four four", map[string]llmclassifier.Question{
+		"finished": llmclassifier.Score("How finished is this?",
+			[]string{"Mid-word", "Mid-sentence", "Finished"}),
 	})
 	s.Require().NoError(err)
 
@@ -186,9 +201,10 @@ func (s *TypeSafeSuite) TestANoulSaysWhatYesAndNoMeanOnlyWhenTold() {
 	s.web.respond = `{"model":"jev-1.13.0","answers":{
 		"menu":{"type":"noul","noul":0.7},"plain":{"type":"noul","noul":0.2}}}`
 
-	_, err := s.client.Ask(s.ctx, "press one for billing", map[string]Question{
-		"menu":  Noul("Is this a recorded menu?", "A recording listing options.", "A person talking."),
-		"plain": Noul("Is anyone shouting?", "", ""),
+	_, err := s.ask("press one for billing", map[string]llmclassifier.Question{
+		"menu": llmclassifier.Noul("Is this a recorded menu?",
+			"A recording listing options.", "A person talking."),
+		"plain": llmclassifier.Noul("Is anyone shouting?", "", ""),
 	})
 	s.Require().NoError(err)
 
@@ -204,10 +220,12 @@ func (s *TypeSafeSuite) TestTheStateReachesTheWireWithItsPartsNamed() {
 	// parts rather than being flattened into one string on the way out.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"heard":{"type":"noul","noul":0.5}}}`
 
-	_, err := s.client.Ask(s.ctx, map[string]any{
+	_, err := s.ask(map[string]any{
 		"agent_speaking": true,
 		"heard":          "hang on",
-	}, map[string]Question{"heard": Noul("Is `heard` an interruption?", "", "")})
+	}, map[string]llmclassifier.Question{
+		"heard": llmclassifier.Noul("Is `heard` an interruption?", "", ""),
+	})
 	s.Require().NoError(err)
 
 	state, ok := s.web.body["state"].(map[string]any)
@@ -217,18 +235,29 @@ func (s *TypeSafeSuite) TestTheStateReachesTheWireWithItsPartsNamed() {
 }
 
 func (s *TypeSafeSuite) TestARequestWithNoQuestionsIsNotSent() {
-	_, err := s.client.Ask(s.ctx, "anything", map[string]Question{})
+	_, err := s.ask("anything", map[string]llmclassifier.Question{})
 
 	s.ErrorContains(err, "at least one question")
 	s.Zero(s.web.calls)
 }
 
 func (s *TypeSafeSuite) TestAQuestionWithNothingAskedIsNotSent() {
-	_, err := s.client.Ask(s.ctx, "anything", map[string]Question{
-		"floor": {Type: TypeChoice, Instructions: "  "},
+	_, err := s.ask("anything", map[string]llmclassifier.Question{
+		"floor": {Type: llmclassifier.TypeChoice, Instructions: "  "},
 	})
 
 	s.ErrorContains(err, "floor")
+	s.Zero(s.web.calls)
+}
+
+func (s *TypeSafeSuite) TestAQuestionOfNoKnownTypeIsNotSent() {
+	// A type the API does not know comes back as a 422, which is a round trip spent finding
+	// out something the question itself says.
+	_, err := s.ask("anything", map[string]llmclassifier.Question{
+		"floor": {Type: "vibes", Instructions: "Who has the floor?"},
+	})
+
+	s.ErrorContains(err, "vibes")
 	s.Zero(s.web.calls)
 }
 
@@ -237,9 +266,9 @@ func (s *TypeSafeSuite) TestAnUnansweredQuestionIsAFailureRatherThanAZero() {
 	// nothing about a caller talking over it, which is worse than the error.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"disposition":{"type":"choice","choice":"respond"}}}`
 
-	_, err := s.client.Ask(s.ctx, "make it six", map[string]Question{
-		"disposition": Choice("What now?", map[string]string{"respond": "", "wait": ""}),
-		"floor":       Choice("Who has the floor?", map[string]string{"stop": "", "continue": ""}),
+	_, err := s.ask("make it six", map[string]llmclassifier.Question{
+		"disposition": llmclassifier.Choice("What now?", map[string]string{"respond": "", "wait": ""}),
+		"floor":       llmclassifier.Choice("Who has the floor?", map[string]string{"stop": "", "continue": ""}),
 	})
 
 	s.ErrorContains(err, "floor")
@@ -249,8 +278,8 @@ func (s *TypeSafeSuite) TestARateLimitIsWorthAskingAgainAndABadQuestionIsNot() {
 	s.web.status = http.StatusTooManyRequests
 	s.web.respond = `{"detail":"slow down"}`
 
-	_, err := s.client.Ask(s.ctx, "anything", map[string]Question{
-		"heard": Noul("Did anyone speak?", "", ""),
+	_, err := s.ask("anything", map[string]llmclassifier.Question{
+		"heard": llmclassifier.Noul("Did anyone speak?", "", ""),
 	})
 
 	var refused *StatusError
@@ -259,9 +288,20 @@ func (s *TypeSafeSuite) TestARateLimitIsWorthAskingAgainAndABadQuestionIsNot() {
 	s.True(refused.Retryable())
 	s.ErrorContains(err, "slow down")
 
+	// The outage seen in practice: the model is being moved and comes back on its own.
+	s.web.status = http.StatusServiceUnavailable
+	s.web.respond = `{"detail":{"error_type":"model_unavailable","message":"The model is unavailable."}}`
+
+	_, err = s.ask("anything", map[string]llmclassifier.Question{
+		"heard": llmclassifier.Noul("Did anyone speak?", "", ""),
+	})
+
+	s.Require().ErrorAs(err, &refused)
+	s.True(refused.Retryable())
+
 	s.web.status = http.StatusUnprocessableEntity
-	_, err = s.client.Ask(s.ctx, "anything", map[string]Question{
-		"heard": Noul("Did anyone speak?", "", ""),
+	_, err = s.ask("anything", map[string]llmclassifier.Question{
+		"heard": llmclassifier.Noul("Did anyone speak?", "", ""),
 	})
 
 	s.Require().ErrorAs(err, &refused)
@@ -273,8 +313,8 @@ func (s *TypeSafeSuite) TestTheModelThatAnsweredIsReportedRatherThanTheAliasThat
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"heard":{"type":"noul","noul":0.5}},
 		"usage":{"input_tokens":312,"output_tokens":48}}`
 
-	answers, err := s.client.Ask(s.ctx, "anything", map[string]Question{
-		"heard": Noul("Did anyone speak?", "", ""),
+	answers, err := s.ask("anything", map[string]llmclassifier.Question{
+		"heard": llmclassifier.Noul("Did anyone speak?", "", ""),
 	})
 	s.Require().NoError(err)
 

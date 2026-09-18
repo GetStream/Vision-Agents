@@ -95,6 +95,14 @@ func (s *Session) recordLog(event Event) {
 		row.EventType = "agent_message"
 		row.Message = e.Text
 		row.Details["turn_id"] = e.TurnID
+	case agent.Blocked:
+		// The agent_message row beside this one holds the refusal the caller was given,
+		// which says nothing about why. This is the half an operator needs.
+		row.EventType = "blocked"
+		row.Message = e.Reason
+		row.Details["turn_id"] = e.TurnID
+		row.Details["probability"] = e.Probability
+		row.Details["held_ms"] = e.HeldMs
 	case agent.Decided:
 		row.EventType = "decision"
 		row.Message = e.Reason

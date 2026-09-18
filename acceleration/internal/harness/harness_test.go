@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	llmoptions "github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -1037,7 +1038,7 @@ func (s *HarnessSuite) TestSlowProviderHeadersDoNotBlockTaskAcceptance() {
 	provider := newStubLLM()
 	hold := make(chan struct{})
 	provider.holdCreate = hold
-	m := newManager(s.session(provider), 2, nil, slog.New(slog.DiscardHandler))
+	m := newManager(s.session(provider), 2, nil, llmoptions.LLM{}, slog.New(slog.DiscardHandler))
 	defer m.Close()
 	accepted := make(chan string, 1)
 	go func() { id, _ := m.Create(testSkills().Skills[0], "question", nil, "turn", false); accepted <- id }()

@@ -231,12 +231,17 @@ func callFrame(call dispatch.Call) frame {
 // messageFrame renders one arriving message for the wire, spelled out for the same reason
 // callFrame is.
 func messageFrame(message dispatch.Message) frame {
+	custom := message.Custom
+	if custom == nil {
+		custom = map[string]string{}
+	}
 	return frame{
 		"type":         "message",
 		"channel_type": message.ChannelType,
 		"channel_id":   message.ChannelID,
 		"agent_id":     message.AgentID,
 		"config_id":    message.ConfigID,
+		"custom":       custom,
 		"text":         message.Text,
 		"message_id":   message.MessageID,
 		"user_id":      message.UserID,

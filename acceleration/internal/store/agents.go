@@ -32,6 +32,19 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 	return nil
 }
 
+// configColumns are the columns an update writes: everything about a config except who
+// owns it and when it was created, which an update cannot change.
+//
+// It is named rather than written into the call so a test can hold it against the model.
+// A field added to AgentConfig and forgotten here is stored on create and silently
+// dropped on every update after, which reads as a setting that will not save.
+var configColumns = []string{
+	"name", "mode", "stt", "tts", "sts", "voice", "llm", "subagent", "subagents",
+	"video_source", "video_max_frames", "search", "instructions", "greeting", "guardrail",
+	"skills", "plugins", "keyterms", "knowledge_namespace", "sandbox", "tags",
+	"sync_hash", "updated_at",
+}
+
 // UpdateAgentConfig replaces a config a customer holds. Every field is written, so an
 // update is what the config now is rather than what changed about it.
 func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) error {
@@ -46,9 +59,7 @@ func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) erro
 	normalizeConfig(config)
 
 	result, err := s.db.NewUpdate().Model(config).
-		Column("name", "mode", "stt", "tts", "sts", "voice", "llm", "subagent", "subagents", "video_source", "video_max_frames", "search", "instructions",
-			"greeting", "skills", "plugins", "keyterms", "knowledge_namespace", "sandbox", "tags",
-			"sync_hash", "updated_at").
+		Column(configColumns...).
 		Where("id = ?", config.ID).
 		Where("customer_id = ?", config.CustomerID).
 		Where("deleted_at IS NULL").
@@ -110,6 +121,33 @@ func (s *Store) AgentConfig(ctx context.Context, customerID, id string) (AgentCo
 	}
 	if err != nil {
 		return AgentConfig{}, fmt.Errorf("store: agent config: %w", err)
+	}
+	return config, nil
+}
+
+// AgentConfigOwner returns a config by id alone, without being told whose it is.
+//
+// Every other read here is scoped to a customer, because every other caller already knows
+// which customer it is acting for. This one is for the case where the id is all there is:
+// an agent channel that names the config answering in it, whose owner has to be worked out
+// rather than taken from a header. Finding out who owns a config is the whole point of it,
+// so a caller that knows the customer should use AgentConfig instead.
+func (s *Store) AgentConfigOwner(ctx context.Context, id string) (AgentConfig, error) {
+	if id == "" {
+		return AgentConfig{}, errors.New("store: a config id is required")
+	}
+
+	var config AgentConfig
+	err := s.db.NewSelect().Model(&config).
+		Where("id = ?", id).
+		Where("deleted_at IS NULL").
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentConfig{}, unknownAgentConfig(id)
+	}
+	if err != nil {
+		return AgentConfig{}, fmt.Errorf("store: agent config owner: %w", err)
 	}
 	return config, nil
 }

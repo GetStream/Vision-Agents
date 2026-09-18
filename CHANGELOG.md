@@ -277,6 +277,175 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+### An agent can be given a guardrail: `guardrail.md`
+
+A `guardrail.md` beside `instructions.md` says what the agent may be asked about. Every
+turn is screened against it, and a turn it refuses is answered with the policy's own
+refusal line instead of the model's reply.
+
+```markdown
+---
+type: llm_classifier      # llm_classifier | webhook | llm
+mode: parallel            # parallel | blocking
+threshold: 0.6            # llm_classifier and llm: refuse at or above
+refusal: I can only help with questions about Stream.
+---
+Only answer questions about Stream's SDKs, products and development. Refuse anything
+with nothing to do with Stream or with building software that uses it.
+```
+
+Frontmatter says how to check; the body is the policy in prose, so the policy stays
+something a human reads and edits. There are three ways to check:
+
+| `type` | Who decides |
+| --- | --- |
+| `llm_classifier` | The new `llm_classifier` router, which returns a calibrated probability. The default |
+| `webhook` | Your own server, at `url`, over a signed POST |
+| `llm` | A model from the `llm` router, asked to read the policy and put a number on the turn |
+
+`mode` is the trade between latency and tokens. In `parallel`, the default, the check runs
+beside the model and the finished reply is held until the verdict arrives, which on a call
+costs a caller nothing they can hear: a classifier answers in about 200ms while the model
+is still writing. In `blocking` the model is not asked until the check passes, so a refused
+turn spends no LLM tokens but every caller waits for the verdict first.
+
+A check that errors or times out **allows** the turn. A classifier outage should not
+silence the agent.
+
+A refused turn emits the ordinary `responding` and `responded` events, so a client that has
+never heard of a guardrail shows it as a normal exchange, plus a new `blocked` event
+carrying the reason, the probability, and how long the reply was held. It is recorded in
+the agent log the same way.
+
+A webhook guardrail is posted `X-Timestamp` and `X-Signature`, an HMAC-SHA256 over
+`<timestamp>.<body>` keyed with your app secret — the same secret that already verifies
+Stream's inbound hooks, so there is no second secret to store. `agents.VerifyGuardrailWebhook`
+in the Go SDK is the counterpart:
+
+```go
+if !agents.VerifyGuardrailWebhook(secret, r.Header.Get("X-Timestamp"), r.Header.Get("X-Signature"), body) {
+    http.Error(w, "bad signature", http.StatusUnauthorized)
+    return
+}
+```
+
+The timestamp is inside the signed string, so a captured request cannot be replayed;
+anything more than five minutes out is rejected.
+
+A speech-to-speech agent cannot be given a guardrail. A native model hears the caller and
+answers directly, so nothing sees the words before they are spoken and there is no reply to
+hold. Declaring one refuses the session rather than leaving it unguarded.
+
+### A new routed modality: `llm_classifier`
+
+Typed judgements about a piece of text — the probability that a condition holds, one option
+out of a named set, a position on a described scale — routed and costed like every other
+modality, and visible at `/v1/llm_classifier/providers` and in stats.
+
+It is not a mode of `llm`. There is no stream, no generated text and no token budget: a
+caller asks named questions and gets values with the probabilities behind them. TypeSafe's
+Jev is the first provider; `classify-fast` is the shortcut a guardrail takes when nobody
+said which model should judge.
+
+### The Go SDK can wait to be written to: `agents.Dispatch`
+
+The Go counterpart of `plugins/stream`'s `Dispatch`. A worker connects out to the router
+and waits, and a message somebody wrote in an agent channel is pushed down that connection,
+so the agent and the functions the model calls run in your process without anything being
+publicly reachable.
+
+```go
+dispatch, _ := agents.NewDispatch(agents.DispatchOptions{Capacity: 8})
+
+dispatch.OnMessage(func(ctx context.Context, message agents.InboundMessage) error {
+    conversation, err := dispatch.Conversation(ctx, message, build)
+    if err != nil {
+        return err
+    }
+    return conversation.Respond(message.Text)
+})
+
+dispatch.Run(ctx)
+```
+
+`Conversation` is the agent answering that channel, started if none is and kept for the
+next message. Questions on one channel are answered one at a time, because `Respond`
+interrupts and two messages written in quick succession would otherwise throw the first
+answer away half-written. `OnCall` is the same for calls arriving over SIP.
+
+Two options suit a worker whose agent does more than answer from the model. `TurnTimeout`
+is how long one answer is given before the conversation abandons it and takes the next
+question; it defaults to the five minutes it was fixed at, which is short for an agent
+whose tools read a source tree or wait on a sandbox. `OnEvent` is told everything the
+backend says about every conversation the worker holds, which is the only way to see any
+of it: the conversation reads its own session, and a second reader would take events from
+it, so a worker had no way to record tool timings or model failures.
+
+```go
+agents.NewDispatch(agents.DispatchOptions{
+    Capacity:    8,
+    TurnTimeout: 15 * time.Minute,
+    OnEvent:     func(channelID string, event stream.Event) { metrics.Record(channelID, event) },
+})
+```
+
+`stream.Dispatch` is the socket on its own, for a worker holding something other than an
+agent. `sdks/go/examples/dispatch` is a whole one.
+
+### A dispatched message carries what its channel was created with
+
+`message.new` on an agent channel is handed to a worker with the channel's custom data on
+it, in `InboundMessage.Custom` in Go and `InboundMessage.custom` in Python, alongside the
+`agent_config_id` the router already read. It is carried through unread.
+
+It is how a worker learns what a conversation is for when the router has no opinion about
+it. An agent scoping memory to an organization, or answering in a locale, had nowhere to
+read either from: a dispatched message named the channel, the config and who wrote it, and
+nothing about what the conversation was.
+
+```go
+agent, err := agents.New(agents.Options{
+    MemoryFilter: organizationMemory(message.Custom["organization_id"]),
+    CostTracking: map[string]string{"organization_id": message.Custom["organization_id"]},
+})
+```
+
+Whoever creates a channel decides what is on it, so this is a claim rather than a fact, the
+way a call's custom data is. Which agent answers is still not taken from it. Values that
+are not strings are dropped rather than rendered into one, so a number does not reach a
+worker as `"1.2e+01"`; Python narrowed the same field on a call by stringifying it, and now
+drops it too.
+
+### `ChatOptions.AgentID` names the conversation a Go chat session answers
+
+A session opened with `agent.Chat` joined under the agent's own user id, which is what the
+router matches a message against when somebody writes to a channel. A process holding more
+than one written conversation therefore had them all under one name: the router could not
+find the session for a channel, and every message on it started another agent.
+
+```go
+session, err := agent.Chat(ctx, agents.ChatOptions{Persist: true, AgentID: message.AgentID})
+```
+
+Leaving it empty is unchanged.
+
+### An agent channel can say which agent answers in it
+
+A message written in an agent channel is handed to a worker, and the router works out whose
+channel it is from the conversation last held there. A channel that has never held one had
+nothing to say who should answer, so a conversation that starts in writing — somebody
+opening a support chat rather than ringing a number — could not be dispatched at all.
+
+Such a channel now names the agent config answering in it, in its own custom data:
+
+```json
+{"agent_config_id": "config-1f3a…"}
+```
+
+The customer is not read from the channel. Whoever creates one decides what is on it, so a
+customer id there would be a claim rather than a fact; the store says who owns that config,
+and a channel naming one nobody holds is answered by nobody.
+
 ### A session belongs to whoever opened it, anonymous, guest or signed in
 
 Sessions now record their owner — the customer, the user id and which sort of caller

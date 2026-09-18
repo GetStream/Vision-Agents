@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -14,13 +15,27 @@ import (
 const noConfigs = "agent configs are not available: no database configured"
 
 // ListAgentConfigs returns the calling customer's configs, newest first.
-func (s *Server) ListAgentConfigs(ctx context.Context, _ ListAgentConfigsRequestObject) (ListAgentConfigsResponseObject, error) {
+func (s *Server) ListAgentConfigs(ctx context.Context, request ListAgentConfigsRequestObject) (ListAgentConfigsResponseObject, error) {
 	customerID, ok := CustomerFrom(ctx)
 	if !ok {
 		return ListAgentConfigs401JSONResponse{missingCustomer()}, nil
 	}
 	if s.store == nil {
 		return ListAgentConfigs400JSONResponse{badRequest(noConfigs)}, nil
+	}
+
+	// A name is resolved through the index rather than by reading every config and filtering
+	// here, and an empty answer is an empty list rather than a 404: this is a list endpoint,
+	// and a caller looking a name up is asking whether it is there.
+	if named := value(request.Params.Name); named != "" {
+		found, exists, err := s.store.AgentConfigByName(ctx, customerID, named)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return ListAgentConfigs200JSONResponse{}, nil
+		}
+		return ListAgentConfigs200JSONResponse{agentConfigOf(found)}, nil
 	}
 
 	stored, err := s.store.CustomerAgentConfigs(ctx, customerID)
@@ -262,6 +277,24 @@ func configComplaint(request AgentConfigRequest) (string, bool) {
 	if _, ok := sandboxOf(request.Sandbox); !ok {
 		return fmt.Sprintf("there is no sandbox provider called %q", *request.Sandbox), false
 	}
+	if complaint, ok := guardrailComplaint(request.Guardrail); !ok {
+		return complaint, false
+	}
+	return "", true
+}
+
+// guardrailComplaint reports what is wrong with a guardrail policy, if anything.
+//
+// It is read here, as it is written, rather than when a call starts: a policy that will
+// not parse is a config that screens nothing, and finding that out at the first turn means
+// finding it out from an agent that answered a question it was meant to refuse.
+func guardrailComplaint(policy *string) (string, bool) {
+	if policy == nil || strings.TrimSpace(*policy) == "" {
+		return "", true
+	}
+	if _, err := guardrail.Parse(*policy); err != nil {
+		return err.Error(), false
+	}
 	return "", true
 }
 
@@ -336,6 +369,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		Search:             value(request.Search),
 		Instructions:       value(request.Instructions),
 		Greeting:           value(request.Greeting),
+		Guardrail:          value(request.Guardrail),
 		KnowledgeNamespace: value(request.KnowledgeNamespace),
 		Sandbox:            box,
 	}
@@ -397,6 +431,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.Search = optional(config.Search)
 	rendered.Instructions = optional(config.Instructions)
 	rendered.Greeting = optional(config.Greeting)
+	rendered.Guardrail = optional(config.Guardrail)
 	rendered.KnowledgeNamespace = optional(config.KnowledgeNamespace)
 	if config.Sandbox != "" {
 		box := Sandbox(config.Sandbox)

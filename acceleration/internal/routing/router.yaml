@@ -1569,3 +1569,58 @@ search:
     search-fast:
       require_realtime: true
       tier: low-latency
+
+# Typed judgements about a piece of text: a probability that a condition holds, one option
+# out of a named set, a position on a described scale. What a guardrail asks before a reply
+# is spoken, and what a flow controller asks about who holds the floor.
+llm_classifier:
+  providers:
+    # TypeSafe bill input tokens only and publish the rate per million, which is what this
+    # is. Output tokens are free because there is no generated text to charge for: the
+    # answer is a distribution.
+    #
+    # The language list is the model's rather than a locale setting: a question and the
+    # text it is asked about are both natural language, and Jev is not configured per
+    # language. It is declared broadly rather than left at English so a policy written in
+    # German is not refused by routing for a reason that has nothing to do with the model.
+    #
+    # Zero retention and no training are what TypeSafe's terms say for API traffic. Like
+    # every other data_policy here this is config rather than fact: it is worth re-reading
+    # their terms rather than trusting this line.
+    - provider: typesafe
+      model: jev-latest
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      data_policy:
+        trains_on_data: "no"
+        retention: none
+      price:
+        per_million_input_tokens: 0.042
+
+  aliases:
+    en-low-latency:
+      languages: [en]
+      require_realtime: true
+      tier: low-latency
+
+    multilingual-low-latency:
+      multilingual: true
+      require_realtime: true
+      tier: low-latency
+
+    # The accuracy shortcuts name no tier, which is not the oversight it looks like.
+    # There is one classifier, and asking for the most accurate judgement available has
+    # to resolve to it or the name means nothing here while meaning something everywhere
+    # else. A slower, better judge earns the tier when one exists.
+    en-high-accuracy:
+      languages: [en]
+
+    multilingual-high-accuracy:
+      multilingual: true
+
+    # The shorthand a guardrail gets when nobody said which model should judge. A
+    # judgement on the live path is wanted quickly above all else.
+    classify-fast:
+      require_realtime: true
+      tier: low-latency

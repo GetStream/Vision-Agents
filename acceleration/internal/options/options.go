@@ -576,6 +576,36 @@ func (o Search) Route() string {
 	}
 }
 
+// Classifier is how a caller wants a judgement made.
+//
+// There is very little to it, and that is the shape of the thing rather than an omission:
+// what to judge and what the possible answers are travel in the questions themselves, so
+// there is nothing left for an option block to say beyond where to send them.
+type Classifier struct {
+	Target string `json:"target,omitempty"`
+}
+
+// Merge returns these options with everything the other one names written over them.
+func (o Classifier) Merge(over Classifier) Classifier {
+	merged := o
+	overwrite(&merged.Target, over.Target)
+	return merged
+}
+
+// Terms is what these options ask of a classifier. Nothing: a question is expressed in
+// the request body rather than in parameters only some vendors accept.
+func (o Classifier) Terms() []Term { return nil }
+
+// Route is where a judgement should go. A judgement sits on the live path of a
+// conversation, so the default is the fast tier rather than the accurate one: one that
+// arrives after the reply it was meant to gate is worth nothing.
+func (o Classifier) Route() string {
+	if o.Target != "" {
+		return o.Target
+	}
+	return "classify-fast"
+}
+
 // STS is how a caller wants a speech-to-speech model to hold a conversation: one native
 // audio model that hears the caller and speaks back, in place of a transcriber, a text
 // model and a voice.

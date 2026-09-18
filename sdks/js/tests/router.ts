@@ -17,6 +17,15 @@ export interface Reply {
   body?: unknown;
 }
 
+/**
+ * What a route answers with: one reply every time, or a different one per call.
+ *
+ * The per-call form is what paging needs. A caller that pages until it sees a short page
+ * cannot be tested against a route that answers the same thing forever: the test would
+ * either never end or never page.
+ */
+export type Answer = Reply | ((request: Received, calls: number) => Reply);
+
 /** One socket a test is holding the other end of. */
 export interface Connection {
   socket: WebSocket;
@@ -39,9 +48,12 @@ export class TestRouter {
 
   private readonly server: Server;
   private readonly sockets = new WebSocketServer({ noServer: true });
-  private readonly routes = new Map<string, Reply>();
+  private readonly routes = new Map<string, Answer>();
+  private readonly calls = new Map<string, number>();
   private readonly waiting: ((connection: Connection) => void)[] = [];
   private readonly connected: Connection[] = [];
+  /** The ones a test has taken, kept so teardown can close them too. */
+  private readonly handed: Connection[] = [];
   private address = "";
 
   private constructor() {
@@ -51,20 +63,25 @@ export class TestRouter {
       request.on("data", (chunk: Buffer) => chunks.push(chunk));
       request.on("end", () => {
         const raw = Buffer.concat(chunks).toString();
-        this.received.push({
+        const received: Received = {
           method: request.method ?? "",
           path: url.pathname,
           query: url.searchParams,
           headers: headersOf(request),
           body: raw ? JSON.parse(raw) : undefined,
-        });
+        };
+        this.received.push(received);
 
-        const reply = this.routes.get(`${request.method} ${url.pathname}`);
-        if (!reply) {
+        const route = `${request.method} ${url.pathname}`;
+        const answer = this.routes.get(route);
+        if (!answer) {
           response.writeHead(404, { "Content-Type": "application/json" });
           response.end(JSON.stringify({ error: `nothing serves ${url.pathname}` }));
           return;
         }
+        const seen = this.calls.get(route) ?? 0;
+        this.calls.set(route, seen + 1);
+        const reply = typeof answer === "function" ? answer(received, seen) : answer;
         const status = reply.status ?? 200;
         if (status === 204 || reply.body === undefined) {
           response.writeHead(status);
@@ -82,6 +99,7 @@ export class TestRouter {
         const connection = connectionOf(raw, url);
         const waiting = this.waiting.shift();
         if (waiting) {
+          this.handed.push(connection);
           waiting(connection);
         } else {
           this.connected.push(connection);
@@ -103,16 +121,23 @@ export class TestRouter {
     return this.address;
   }
 
-  /** Answers one method and path with this. */
-  serve(method: string, path: string, reply: Reply): this {
-    this.routes.set(`${method} ${path}`, reply);
+  /** Answers one method and path with this, or with whatever the function decides. */
+  serve(method: string, path: string, answer: Answer): this {
+    this.routes.set(`${method} ${path}`, answer);
+    this.calls.delete(`${method} ${path}`);
     return this;
+  }
+
+  /** Every request the SDK made to one path, for asserting on how a caller paged. */
+  requestsTo(method: string, path: string): Received[] {
+    return this.received.filter((one) => one.method === method && one.path === path);
   }
 
   /** Resolves with the next socket the SDK opens. */
   socket(): Promise<Connection> {
     const open = this.connected.shift();
     if (open) {
+      this.handed.push(open);
       return Promise.resolve(open);
     }
     return new Promise((resolve) => this.waiting.push(resolve));
@@ -127,8 +152,16 @@ export class TestRouter {
     return request;
   }
 
+  /**
+   * Closes everything, sockets a test took included.
+   *
+   * Every socket rather than only the ones still queued here: `server.close` waits for the
+   * connections it has, so one left open by a test that did not close its session would hang
+   * the teardown, and node:test counts that against the test's own timeout. A suite that
+   * forgot to close a session should read as a forgotten session, not as a timeout.
+   */
   async stop(): Promise<void> {
-    for (const connection of this.connected) {
+    for (const connection of [...this.connected, ...this.handed]) {
       connection.socket.close();
     }
     this.sockets.close();

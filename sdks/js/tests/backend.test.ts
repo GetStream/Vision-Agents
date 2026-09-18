@@ -15,12 +15,70 @@ describe("Backend", () => {
     await router.stop();
   });
 
-  it("refuses a backend nobody is billed for", () => {
-    assert.throws(() => new Backend({ url: "http://localhost:8080" }), ConfigurationError);
+  // Refused at first use rather than on construction, because the credential legitimately
+  // arrives afterwards: a page builds a client against a URL and a key and calls setUser once
+  // its own backend has said who is looking. Throwing on the constructor line would make that
+  // shape impossible to write.
+
+  it("refuses a request from a backend nobody is billed for", async () => {
+    const backend = new Backend({ url: "http://localhost:8080" });
+
+    await assert.rejects(() => backend.headers(), ConfigurationError);
   });
 
-  it("refuses a key with neither the secret it belongs to nor a token", () => {
-    assert.throws(() => new Backend({ apiKey: "vak_live_x" }), ConfigurationError);
+  it("refuses a request from a key with neither the secret it belongs to nor a token", async () => {
+    const backend = new Backend({ apiKey: "vak_live_x" });
+
+    await assert.rejects(() => backend.headers(), ConfigurationError);
+    await assert.rejects(() => backend.socketURL("/v1/agents/sessions/x/events"), ConfigurationError);
+  });
+
+  it("takes the user and the token a caller says it is acting for", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x" });
+
+    await backend.setUser({ id: "jlahey", name: "Jim Lahey" }, "token-for-jim");
+
+    assert.equal(backend.userId, "jlahey");
+    assert.equal(backend.identity?.name, "Jim Lahey");
+    assert.deepEqual(await backend.headers(), {
+      "X-Api-Key": "vak_live_x",
+      Authorization: "Bearer token-for-jim",
+      "Stream-Auth-Type": "jwt",
+    });
+    assert.equal(backend.serverSide, false, "a token is not a secret");
+  });
+
+  it("refuses a user with no id, and a user with no token", async () => {
+    const backend = new Backend({ url: router.url, apiKey: "vak_live_x" });
+
+    await assert.rejects(() => backend.setUser({ id: "" }, "token"), ConfigurationError);
+    await assert.rejects(() => backend.setUser("jlahey", ""), ConfigurationError);
+  });
+
+  it("hands chat and video a credential of their own, or none", async () => {
+    // Stream's own clients connect to Stream rather than to this router, so a customer id
+    // buys them nothing: it is this router's way of trusting a caller and means nothing there.
+    const trusted = new Backend({ url: router.url, customerId: "local" });
+    assert.equal(await trusted.streamCredentials(), undefined);
+
+    const page = new Backend({ url: router.url, apiKey: "vak_live_x" });
+    await page.setUser({ id: "jlahey" }, "token-for-jim");
+    assert.deepEqual(await page.streamCredentials(), {
+      apiKey: "vak_live_x",
+      user: { id: "jlahey" },
+      token: "token-for-jim",
+    });
+
+    // A backend gets a token for the user it is acting for rather than its own server
+    // token, because a chat client connects as somebody.
+    const serving = new Backend({
+      url: router.url,
+      apiKey: "vak_live_x",
+      apiSecret: "shh",
+      userId: "jlahey",
+    });
+    const minted = await serving.streamCredentials();
+    assert.equal(claimsOf(minted?.token ?? "")["user_id"], "jlahey");
   });
 
   it("names the customer when that is all there is to go on", async () => {

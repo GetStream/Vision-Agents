@@ -26,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifierrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
@@ -455,6 +456,25 @@ func run(logger *slog.Logger) error {
 		streams.Search = finding
 	}
 
+	// The classifier is routed for the same reason search is, and is absent for the same
+	// reason: a deployment that declares no section for it runs agents that cannot be
+	// given a guardrail, and says so when one is asked for rather than ignoring it.
+	var judging *llmclassifierrouter.Router
+	if section, ok := config[routing.LLMClassifier]; ok {
+		judging, err = llmclassifierrouter.New(llmclassifierrouter.Options{
+			Config:   section,
+			Registry: llmclassifierrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer judging.Close()
+		routers[routing.LLMClassifier] = judging
+	}
+
 	telephony, err := buildPhone(pgStore, liveClient, logger)
 	if err != nil {
 		return err
@@ -473,7 +493,7 @@ func run(logger *slog.Logger) error {
 	// Conversations need all three modalities, so a deployment configured for only one
 	// still inspects routing and reports statistics while the session paths say there
 	// are none.
-	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, finding, logger)
+	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, finding, judging, logger)
 	if err != nil {
 		return err
 	}
@@ -660,6 +680,7 @@ func buildSessions(
 	telephony *phone.Service,
 	base *turbopuffer.Store,
 	finding *searchrouter.Router,
+	judging *llmclassifierrouter.Router,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.STT == nil || streams.TTS == nil || streams.LLM == nil {
@@ -682,17 +703,22 @@ func buildSessions(
 	}
 
 	return session.NewManager(session.ManagerOptions{
-		LLM:       streams.LLM,
-		STT:       streams.STT,
-		TTS:       streams.TTS,
-		STS:       streams.STS,
-		Memory:    remembering,
-		Knowledge: reading,
-		Search:    finding,
-		Phone:     telephony,
-		Store:     pgStore,
-		Live:      liveClient,
-		Logger:    logger,
+		LLM:        streams.LLM,
+		STT:        streams.STT,
+		TTS:        streams.TTS,
+		STS:        streams.STS,
+		Memory:     remembering,
+		Knowledge:  reading,
+		Search:     finding,
+		Classifier: judging,
+		Phone:      telephony,
+		// The same app secret that verifies Stream's inbound hooks, now signing one going
+		// the other way. A customer who wants to decide for themselves whether a turn may
+		// be answered already holds it, so there is no second secret to hand out.
+		WebhookSecret: os.Getenv(streamSecretEnvVar),
+		Store:         pgStore,
+		Live:          liveClient,
+		Logger:        logger,
 		Edge: func(spec session.Spec, logger *slog.Logger) (agent.Edge, error) {
 			return streamedge.New(streamedge.Options{
 				CallID:   spec.CallID,

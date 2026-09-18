@@ -7,8 +7,8 @@ import {
   Client,
   RouterError,
   Session,
-  conversation,
   signToken,
+  type AgentHandle,
   type WebSocketConstructor,
 } from "../../src/index.js";
 import { close, conversationModel, exhausted, uniqueId, unreachable } from "./target.js";
@@ -62,19 +62,31 @@ describe(
     const backend = new Client({ url: acceleration, apiKey, apiSecret, authenticate: true });
     const opened: { api: Client; id: string }[] = [];
     let model = "";
+    /** An agent this deployment has configured, which is what a name resolves against. */
+    let agentName = "";
 
-    /** What a browser holds: the key, and a token naming one person. */
+    /**
+     * What a browser holds: the key, and a token naming one person.
+     *
+     * Built the way the requested shape builds it — a client against a URL and a key, with
+     * the identity arriving afterwards — because that is the shape a page can actually
+     * write: the token comes from the app's own backend, after the page has loaded.
+     */
     async function asUser(userId: string): Promise<Client> {
-      return new Client({
-        url: acceleration,
-        apiKey,
-        authenticate: true,
-        token: await signToken({ user_id: userId }, apiSecret),
-      });
+      const page = new Client({ url: acceleration, apiKey, authenticate: true });
+      await page.setUser({ id: userId }, await signToken({ user_id: userId }, apiSecret));
+      return page;
+    }
+
+    /** The agent handle a client addresses this deployment's agent through. */
+    function agentOf(api: Client): AgentHandle {
+      return api.agent(agentName);
     }
 
     before(async () => {
       model = await conversationModel(backend);
+      const configs = await backend.get("/v1/agents/configs").catch(() => []);
+      agentName = configs.find((config) => config.name)?.name ?? "";
     });
 
     after(async () => {
@@ -123,40 +135,78 @@ describe(
       },
     );
 
-    it("opens a conversation for an end user and names the channel itself", async () => {
-      const userId = uniqueId("opens");
-      const page = await asUser(userId);
+    it("mints a guest, so a visitor can ask before they have an account", async (t) => {
+      // No store to remember them in on a server, which is the point: a process handling
+      // two visitors would otherwise hand them each other's conversations.
+      const guest = await backend.guestUser({ name: "QA Guest" }).catch((raised: RouterError) => {
+        if (raised.status === 403) {
+          t.skip("this app does not admit guests");
+          return undefined;
+        }
+        throw raised;
+      });
+      if (!guest) {
+        return;
+      }
 
-      const session = await conversation(page, { id: uniqueId("conv"), llm: model });
-      opened.push({ api: page, id: session.id });
-
-      assert.equal(session.text, true);
-      assert.equal(session.state, "live");
-      assert.match(session.conversation_id ?? "", /^agent:support-[0-9a-f-]{36}$/);
+      assert.ok(guest.id, "a guest with no id cannot hold a conversation");
+      assert.ok(guest.token, "a guest with no token cannot make a request");
     });
 
-    it("gives an end user back the conversation they are already holding", async () => {
-      const page = await asUser(uniqueId("reuse"));
-      const id = uniqueId("conv");
+    it("refuses a page the claim that moves a guest's conversations", async () => {
+      // The one operation that most has to be server side: only the backend that just
+      // authenticated an account knows which guest it was.
+      const page = await asUser(uniqueId("claimer"));
 
-      const first = await conversation(page, { id, llm: model });
-      opened.push({ api: page, id: first.id });
-      const again = await conversation(page, { id, llm: model });
+      assert.throws(
+        () => page.claimGuestUser("guest-whoever", "jlahey"),
+        /server side only/,
+      );
+    });
 
-      assert.equal(again.id, first.id, "a second session was opened for one conversation");
+    it("opens a labelled conversation for an end user and names the channel itself", async (t) => {
+      if (!agentName) {
+        t.skip("this deployment has no agent configured to address by name");
+        return;
+      }
+      const page = await asUser(uniqueId("opens"));
+      const title = uniqueId("titled");
+
+      const session = await agentOf(page).sessions.create({
+        title,
+        project: "qa",
+        persist_conversation: true,
+        llm: model,
+      });
+      opened.push({ api: page, id: session.id });
+
+      assert.equal(session.created.text, true);
+      assert.equal(session.created.state, "live");
+      assert.equal(session.created.title, title);
+      assert.match(session.conversationId, /^agent:support-[0-9a-f-]{36}$/);
+
+      const found = await agentOf(page).sessions.search(title, { limit: 50 });
+      assert.ok(
+        found.some((each) => each.id === session.id),
+        "a conversation cannot be found by the title it was given",
+      );
     });
 
     it("does not show one person's conversation to another", {
       todo:
         "same cause: read as a backend, a proxied caller reaches every session its app " +
         "has, so neither the list nor the id is scoped to whose token was presented",
-    }, async () => {
+    }, async (t) => {
+      if (!agentName) {
+        t.skip("this deployment has no agent configured to address by name");
+        return;
+      }
       // A token names who is calling, and it is what stops a list being a way to read
       // somebody else's conversation. Nothing but the token differs between these two.
       const mine = await asUser(uniqueId("mine"));
       const theirs = await asUser(uniqueId("theirs"));
 
-      const session = await conversation(mine, { id: uniqueId("conv"), llm: model });
+      const session = await agentOf(mine).sessions.create({ llm: model });
       opened.push({ api: mine, id: session.id });
 
       const listed = await theirs.get("/v1/agents/sessions");
@@ -213,7 +263,7 @@ describe(
       });
       opened.push({ api: page, id: session.id });
 
-      session.respond("Reply with the single word: pong.");
+      const answering = await session.responses.create("Reply with the single word: pong.");
 
       const seen: string[] = [];
       let answered = "";
@@ -233,7 +283,49 @@ describe(
       }
 
       assert.ok(answered.length > 0, `nothing was answered; saw ${seen.join(", ")}`);
+
+      if (answering.id) {
+        const items = await answering.items.all();
+        assert.ok(items.length > 0, "the turn was answered and nothing was written down");
+        assert.equal(items[0]?.kind, "said", "every turn opens with what was asked");
+      }
+
       await session.close();
+    });
+
+    it("forks a conversation into one of its own", async (t) => {
+      if (!agentName) {
+        t.skip("this deployment has no agent configured to address by name");
+        return;
+      }
+      const page = new Client({
+        url: acceleration,
+        apiKey,
+        apiSecret,
+        authenticate: true,
+        webSocket: authenticated(await backend.backend.headers()),
+      });
+
+      const parent = await agentOf(page).sessions.create({
+        title: "the first ask",
+        persist_conversation: true,
+        llm: model,
+      });
+      opened.push({ api: page, id: parent.id });
+
+      const forked = await parent.fork({ title: "asked again" });
+      opened.push({ api: page, id: forked.id });
+
+      assert.equal(forked.created.forked_from, parent.id);
+      assert.equal(forked.created.title, "asked again");
+      assert.notEqual(
+        forked.conversationId,
+        parent.conversationId,
+        "a fork writes its own transcript",
+      );
+
+      await forked.close();
+      await parent.close();
     });
   },
 );

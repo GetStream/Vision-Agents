@@ -26,6 +26,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	llmoptions "github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 )
 
@@ -65,6 +66,14 @@ type Options struct {
 	Tasks int
 	// MaxTokens caps each reply. Zero leaves the model's own default in place.
 	MaxTokens int
+	// Overwrites is what the caller asked to change about how the model answers: how hard
+	// to think, how long to answer, how random to be. It is written over every turn this
+	// harness takes, and over the delegated work as well, because a caller asking for more
+	// thinking means the thinking too.
+	//
+	// The options package is imported under another name here because every constructor in
+	// this file takes a parameter called options, which would otherwise shadow it.
+	Overwrites llmoptions.LLM
 	// CacheKey buckets this agent's requests in the provider's prompt cache, so the
 	// instructions every one of them opens with are written once and read back after.
 	// It is shared by every call the agent takes and means nothing to a provider whose
@@ -165,7 +174,7 @@ func New(options Options) (*Harness, error) {
 	}
 
 	if options.Subagent != nil || len(options.Workers) > 0 {
-		h.tasks = newManager(options.Subagent, options.Tasks, options.Sandbox, h.logger)
+		h.tasks = newManager(options.Subagent, options.Tasks, options.Sandbox, options.Overwrites, h.logger)
 		h.tasks.capture = options.Capture
 		h.tasks.prepare(options.Workers)
 		h.running.Add(1)
@@ -284,7 +293,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 		// they are written to the provider's cache once under a key the agent owns and
 		// read back from there on every turn after.
 		PromptCacheKey: h.options.CacheKey,
-	})
+	}.Overwrite(h.options.Overwrites))
 }
 
 // resumption is what a turn nobody prompted is asked, when the conversation so far ends

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { Client, RouterError, Session, conversation } from "../../src/index.js";
+import { Client, RouterError, type AgentHandle } from "../../src/index.js";
 import { close, conversationModel, exhausted, uniqueId, unreachable } from "./target.js";
 
 /**
@@ -20,9 +20,14 @@ describe("the local router", { skip: await unreachable(url) }, () => {
   const api = new Client({ url, customerId });
   const opened: string[] = [];
   let model = "";
+  /** An agent this router actually has configured, which is what a name resolves against. */
+  let agent: AgentHandle | undefined;
 
   before(async () => {
     model = await conversationModel(api);
+    const configs = await api.get("/v1/agents/configs").catch(() => []);
+    const named = configs.find((config) => config.name);
+    agent = named?.name ? api.agent(named.name) : undefined;
   });
 
   after(async () => {
@@ -31,13 +36,8 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     }
   });
 
-  /** Opens a conversation the suite will close, and remembers it in case one fails. */
-  async function open(id: string, conversationId?: string) {
-    const session = await conversation(api, {
-      id,
-      llm: model,
-      ...(conversationId ? { conversationId } : {}),
-    });
+  /** Remembers a session so a failing test does not leave one running. */
+  function remember<T extends { id: string }>(session: T): T {
     if (!opened.includes(session.id)) {
       opened.push(session.id);
     }
@@ -51,94 +51,104 @@ describe("the local router", { skip: await unreachable(url) }, () => {
     assert.equal(health.dependencies?.["llm"], "ok", "no conversation could be held");
   });
 
-  it("holds agent configs this SDK can read", async () => {
-    const configs = await api.get("/v1/agents/configs");
-
-    for (const config of configs) {
-      assert.ok(config.id, "a stored config with no id could not be named in a session");
-      assert.ok(config.name);
+  it("resolves an agent config by the name it is stored under", async (t) => {
+    if (!agent) {
+      t.skip("this router has no agent configured to address by name");
+      return;
     }
+
+    const config = await agent.config();
+
+    assert.ok(config, `there is no config called ${agent.name}`);
+    assert.equal(config.name, agent.name);
   });
 
-  it("opens a persistent conversation and names the channel itself", async () => {
-    const id = uniqueId("opens");
+  it("opens a conversation with labels, and reads them back", async (t) => {
+    if (!agent) {
+      t.skip("this router has no agent configured to address by name");
+      return;
+    }
 
-    const session = await open(id);
+    const title = uniqueId("titled");
+    const session = await agent.sessions.create({
+      title,
+      description: "opened by the local live suite",
+      project: "docs",
+      custom: { suite: "local" },
+      persist_conversation: true,
+      llm: model,
+    });
+    remember(session);
 
-    assert.equal(session.agent_id, id);
-    assert.equal(session.text, true);
-    assert.equal(session.state, "live");
+    assert.equal(session.created.title, title);
+    assert.equal(session.created.project, "docs");
+    assert.deepEqual(session.created.custom, { suite: "local" });
     assert.match(
-      session.conversation_id ?? "",
+      session.conversationId,
       /^agent:support-[0-9a-f-]{36}$/,
       "the backend names the channel, in the only shape it accepts",
     );
+
+    await session.close();
   });
 
-  it("returns the session already holding a conversation rather than opening a second", async () => {
-    const id = uniqueId("reuse");
+  it("finds a conversation again by what it was called", async (t) => {
+    if (!agent) {
+      t.skip("this router has no agent configured to address by name");
+      return;
+    }
 
-    const first = await open(id);
-    const again = await open(id);
+    const title = `Sendbird ${uniqueId("search")}`;
+    const session = remember(
+      await agent.sessions.create({ title, persist_conversation: true, llm: model }),
+    );
+    await session.close();
 
-    assert.equal(again.id, first.id);
-    assert.equal(again.conversation_id, first.conversation_id);
-  });
+    const listed = await agent.sessions.query({ limit: 50 });
+    assert.ok(
+      listed.some((each) => each.id === session.id),
+      "a conversation that ended is not being listed",
+    );
 
-  it("resumes a closed conversation on the same channel", async () => {
-    const id = uniqueId("resume");
-    const first = await open(id);
-    const channel = first.conversation_id ?? "";
-    await close(api, first.id);
-
-    const resumed = await open(id, channel);
-
-    assert.notEqual(resumed.id, first.id, "a resume is a new session");
-    assert.equal(resumed.conversation_id, channel, "holding the conversation it left");
-  });
-
-  it("refuses a channel nothing has been held in, which is why one is never named up front", async () => {
-    // The reason `conversation` takes no channel on a first open. A resume reads the
-    // channel without creating it, so a name nothing has used is not a conversation to
-    // resume — and a caller who invented one would be told so only by the backend.
-    await assert.rejects(
-      () =>
-        api.post("/v1/agents/sessions", {
-          body: {
-            text: true,
-            persist_conversation: true,
-            agent_id: uniqueId("invented"),
-            conversation_id: `agent:support-${crypto.randomUUID()}`,
-            llm: model,
-          },
-        }),
-      (raised: RouterError) => {
-        assert.ok(raised.status >= 400, `the backend took it: ${raised.message}`);
-        return true;
-      },
+    const found = await agent.sessions.search("Sendbird", { limit: 50 });
+    assert.ok(
+      found.some((each) => each.id === session.id),
+      `searching for the title found nothing; ${found.length} other results`,
     );
   });
 
-  it("answers over the session socket, and keeps what was said", async (t) => {
-    const id = uniqueId("answers");
-    const session = await Session.open(api, {
-      text: true,
-      persist_conversation: true,
-      agent_id: id,
-      llm: model,
-    });
-    opened.push(session.id);
+  it("keeps nothing about an incognito conversation", async (t) => {
+    if (!agent) {
+      t.skip("this router has no agent configured to address by name");
+      return;
+    }
 
-    assert.ok(session.conversationId, "a persistent session carries its channel");
+    const title = uniqueId("incognito");
+    const session = remember(await agent.sessions.create({ incognito: true, title, llm: model }));
+    assert.equal(session.created.incognito, true);
+    assert.equal(session.conversationId, "", "an incognito session opens no channel");
+    await session.close();
 
-    session.respond("Reply with the single word: pong.");
+    const found = await agent.sessions.search(title, { limit: 50 });
+    assert.equal(found.length, 0, "an incognito conversation was written down after all");
+  });
 
-    const seen: string[] = [];
-    let answered = "";
+  it("names the turn it answers, and writes down what the turn was made of", async (t) => {
+    if (!agent) {
+      t.skip("this router has no agent configured to address by name");
+      return;
+    }
+
+    const session = remember(
+      await agent.sessions.create({ persist_conversation: true, llm: model }),
+    );
+
+    const answering = await session.responses.create("Reply with the single word: pong.");
+    assert.ok(answering.id, "a recorded session names its turns");
+    assert.equal(answering.status, "running");
+
     for await (const event of session.events()) {
-      seen.push(event.kind);
       if (event.kind === "responded") {
-        answered = event.text;
         break;
       }
       if (event.kind === "error") {
@@ -150,22 +160,79 @@ describe("the local router", { skip: await unreachable(url) }, () => {
       }
     }
 
-    assert.ok(answered.length > 0, `nothing was answered; saw ${seen.join(", ")}`);
+    const items = await answering.items.all();
+    assert.ok(items.length > 0, "the turn was answered and nothing was written down");
+    assert.equal(items[0]?.kind, "said", "every turn opens with what was asked");
     assert.ok(
-      seen.includes("conversation_updated"),
-      `what was said was never persisted; saw ${seen.join(", ")}`,
+      items.some((item) => item.kind === "answer"),
+      `no answer was recorded; saw ${items.map((item) => item.kind).join(", ")}`,
     );
 
     await session.close();
   });
 
-  it("stops listing a conversation once it is closed", async () => {
-    const id = uniqueId("closes");
-    const session = await open(id);
+  it("forks a conversation into one of its own", async (t) => {
+    if (!agent) {
+      t.skip("this router has no agent configured to address by name");
+      return;
+    }
 
-    await close(api, session.id);
+    const parent = remember(
+      await agent.sessions.create({
+        title: "the first ask",
+        project: "docs",
+        persist_conversation: true,
+        llm: model,
+      }),
+    );
 
-    const running = await api.get("/v1/agents/sessions");
+    const forked = remember(await parent.fork({ title: "asked again" }));
+
+    assert.notEqual(forked.id, parent.id);
+    assert.equal(forked.created.forked_from, parent.id);
+    assert.equal(forked.created.title, "asked again");
+    assert.equal(forked.created.project, "docs", "what the fork did not mention it inherits");
+    assert.notEqual(
+      forked.conversationId,
+      parent.conversationId,
+      "a fork writes its own transcript",
+    );
+
+    await forked.close();
+    await parent.close();
+  });
+
+  it("refuses to fork an incognito conversation, since there is nothing to fork from", async (t) => {
+    if (!agent) {
+      t.skip("this router has no agent configured to address by name");
+      return;
+    }
+
+    const session = remember(await agent.sessions.create({ incognito: true, llm: model }));
+
+    await assert.rejects(
+      () => session.fork(),
+      (raised: RouterError) => {
+        assert.equal(raised.status, 400);
+        assert.match(raised.message, /nothing to fork/);
+        return true;
+      },
+    );
+
+    await session.close();
+  });
+
+  it("stops listing a conversation as running once it is closed", async (t) => {
+    if (!agent) {
+      t.skip("this router has no agent configured to address by name");
+      return;
+    }
+
+    const session = remember(await agent.sessions.create({ llm: model }));
+
+    await session.close();
+
+    const running = await agent.sessions.query({ state: "running", limit: 50 });
     assert.ok(
       !running.some((each) => each.id === session.id),
       "a closed session is still listed as running",

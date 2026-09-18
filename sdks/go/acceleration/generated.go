@@ -77,6 +77,63 @@ func (e AgentMode) Valid() bool {
 	}
 }
 
+// Defines values for AgentResponseStatus.
+const (
+	AgentResponseStatusCancelled AgentResponseStatus = "cancelled"
+	AgentResponseStatusCompleted AgentResponseStatus = "completed"
+	AgentResponseStatusFailed    AgentResponseStatus = "failed"
+	AgentResponseStatusRunning   AgentResponseStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the AgentResponseStatus enum.
+func (e AgentResponseStatus) Valid() bool {
+	switch e {
+	case AgentResponseStatusCancelled:
+		return true
+	case AgentResponseStatusCompleted:
+		return true
+	case AgentResponseStatusFailed:
+		return true
+	case AgentResponseStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AgentResponseItemKind.
+const (
+	AgentResponseItemKindAnswer     AgentResponseItemKind = "answer"
+	AgentResponseItemKindBlocked    AgentResponseItemKind = "blocked"
+	AgentResponseItemKindError      AgentResponseItemKind = "error"
+	AgentResponseItemKindSaid       AgentResponseItemKind = "said"
+	AgentResponseItemKindThought    AgentResponseItemKind = "thought"
+	AgentResponseItemKindToolCall   AgentResponseItemKind = "tool_call"
+	AgentResponseItemKindToolResult AgentResponseItemKind = "tool_result"
+)
+
+// Valid indicates whether the value is a known member of the AgentResponseItemKind enum.
+func (e AgentResponseItemKind) Valid() bool {
+	switch e {
+	case AgentResponseItemKindAnswer:
+		return true
+	case AgentResponseItemKindBlocked:
+		return true
+	case AgentResponseItemKindError:
+		return true
+	case AgentResponseItemKindSaid:
+		return true
+	case AgentResponseItemKindThought:
+		return true
+	case AgentResponseItemKindToolCall:
+		return true
+	case AgentResponseItemKindToolResult:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CallDirection.
 const (
 	Inbound  CallDirection = "inbound"
@@ -145,49 +202,49 @@ func (e ContactState) Valid() bool {
 
 // Defines values for DecisionKind.
 const (
-	Answer      DecisionKind = "answer"
-	Ask         DecisionKind = "ask"
-	Backchannel DecisionKind = "backchannel"
-	Compact     DecisionKind = "compact"
-	Delegate    DecisionKind = "delegate"
-	Fail        DecisionKind = "fail"
-	Ignore      DecisionKind = "ignore"
-	Interrupt   DecisionKind = "interrupt"
-	Queue       DecisionKind = "queue"
-	Settle      DecisionKind = "settle"
-	Shorten     DecisionKind = "shorten"
-	Supersede   DecisionKind = "supersede"
-	Wait        DecisionKind = "wait"
+	DecisionKindAnswer      DecisionKind = "answer"
+	DecisionKindAsk         DecisionKind = "ask"
+	DecisionKindBackchannel DecisionKind = "backchannel"
+	DecisionKindCompact     DecisionKind = "compact"
+	DecisionKindDelegate    DecisionKind = "delegate"
+	DecisionKindFail        DecisionKind = "fail"
+	DecisionKindIgnore      DecisionKind = "ignore"
+	DecisionKindInterrupt   DecisionKind = "interrupt"
+	DecisionKindQueue       DecisionKind = "queue"
+	DecisionKindSettle      DecisionKind = "settle"
+	DecisionKindShorten     DecisionKind = "shorten"
+	DecisionKindSupersede   DecisionKind = "supersede"
+	DecisionKindWait        DecisionKind = "wait"
 )
 
 // Valid indicates whether the value is a known member of the DecisionKind enum.
 func (e DecisionKind) Valid() bool {
 	switch e {
-	case Answer:
+	case DecisionKindAnswer:
 		return true
-	case Ask:
+	case DecisionKindAsk:
 		return true
-	case Backchannel:
+	case DecisionKindBackchannel:
 		return true
-	case Compact:
+	case DecisionKindCompact:
 		return true
-	case Delegate:
+	case DecisionKindDelegate:
 		return true
-	case Fail:
+	case DecisionKindFail:
 		return true
-	case Ignore:
+	case DecisionKindIgnore:
 		return true
-	case Interrupt:
+	case DecisionKindInterrupt:
 		return true
-	case Queue:
+	case DecisionKindQueue:
 		return true
-	case Settle:
+	case DecisionKindSettle:
 		return true
-	case Shorten:
+	case DecisionKindShorten:
 		return true
-	case Supersede:
+	case DecisionKindSupersede:
 		return true
-	case Wait:
+	case DecisionKindWait:
 		return true
 	default:
 		return false
@@ -370,14 +427,15 @@ func (e LlmOptionsVerbosity) Valid() bool {
 
 // Defines values for Modality.
 const (
-	Knowledge Modality = "knowledge"
-	Llm       Modality = "llm"
-	Memory    Modality = "memory"
-	Phone     Modality = "phone"
-	Search    Modality = "search"
-	Sts       Modality = "sts"
-	Stt       Modality = "stt"
-	Tts       Modality = "tts"
+	Knowledge     Modality = "knowledge"
+	Llm           Modality = "llm"
+	LlmClassifier Modality = "llm_classifier"
+	Memory        Modality = "memory"
+	Phone         Modality = "phone"
+	Search        Modality = "search"
+	Sts           Modality = "sts"
+	Stt           Modality = "stt"
+	Tts           Modality = "tts"
 )
 
 // Valid indicates whether the value is a known member of the Modality enum.
@@ -386,6 +444,8 @@ func (e Modality) Valid() bool {
 	case Knowledge:
 		return true
 	case Llm:
+		return true
+	case LlmClassifier:
 		return true
 	case Memory:
 		return true
@@ -398,6 +458,54 @@ func (e Modality) Valid() bool {
 	case Stt:
 		return true
 	case Tts:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ModelOverwritesThinking.
+const (
+	ModelOverwritesThinkingHigh    ModelOverwritesThinking = "high"
+	ModelOverwritesThinkingLow     ModelOverwritesThinking = "low"
+	ModelOverwritesThinkingMedium  ModelOverwritesThinking = "medium"
+	ModelOverwritesThinkingMinimal ModelOverwritesThinking = "minimal"
+	ModelOverwritesThinkingNone    ModelOverwritesThinking = "none"
+)
+
+// Valid indicates whether the value is a known member of the ModelOverwritesThinking enum.
+func (e ModelOverwritesThinking) Valid() bool {
+	switch e {
+	case ModelOverwritesThinkingHigh:
+		return true
+	case ModelOverwritesThinkingLow:
+		return true
+	case ModelOverwritesThinkingMedium:
+		return true
+	case ModelOverwritesThinkingMinimal:
+		return true
+	case ModelOverwritesThinkingNone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ModelOverwritesVerbosity.
+const (
+	ModelOverwritesVerbosityHigh   ModelOverwritesVerbosity = "high"
+	ModelOverwritesVerbosityLow    ModelOverwritesVerbosity = "low"
+	ModelOverwritesVerbosityMedium ModelOverwritesVerbosity = "medium"
+)
+
+// Valid indicates whether the value is a known member of the ModelOverwritesVerbosity enum.
+func (e ModelOverwritesVerbosity) Valid() bool {
+	switch e {
+	case ModelOverwritesVerbosityHigh:
+		return true
+	case ModelOverwritesVerbosityLow:
+		return true
+	case ModelOverwritesVerbosityMedium:
 		return true
 	default:
 		return false
@@ -820,13 +928,13 @@ func (e Tier) Valid() bool {
 
 // Defines values for ToolResultCommandType.
 const (
-	ToolResult ToolResultCommandType = "tool_result"
+	ToolResultCommandTypeToolResult ToolResultCommandType = "tool_result"
 )
 
 // Valid indicates whether the value is a known member of the ToolResultCommandType enum.
 func (e ToolResultCommandType) Valid() bool {
 	switch e {
-	case ToolResult:
+	case ToolResultCommandTypeToolResult:
 		return true
 	default:
 		return false
@@ -893,6 +1001,24 @@ func (e VoiceBindingState) Valid() bool {
 	}
 }
 
+// Defines values for SessionStateFilter.
+const (
+	SessionStateFilterClosed  SessionStateFilter = "closed"
+	SessionStateFilterRunning SessionStateFilter = "running"
+)
+
+// Valid indicates whether the value is a known member of the SessionStateFilter enum.
+func (e SessionStateFilter) Valid() bool {
+	switch e {
+	case SessionStateFilterClosed:
+		return true
+	case SessionStateFilterRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListAgentLogsParamsSeverity.
 const (
 	ListAgentLogsParamsSeverityError ListAgentLogsParamsSeverity = "error"
@@ -923,6 +1049,42 @@ func (e StreamAgentLogsParamsSeverity) Valid() bool {
 	case StreamAgentLogsParamsSeverityError:
 		return true
 	case StreamAgentLogsParamsSeverityInfo:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListSessionsParamsState.
+const (
+	ListSessionsParamsStateClosed  ListSessionsParamsState = "closed"
+	ListSessionsParamsStateRunning ListSessionsParamsState = "running"
+)
+
+// Valid indicates whether the value is a known member of the ListSessionsParamsState enum.
+func (e ListSessionsParamsState) Valid() bool {
+	switch e {
+	case ListSessionsParamsStateClosed:
+		return true
+	case ListSessionsParamsStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SearchSessionsParamsState.
+const (
+	SearchSessionsParamsStateClosed  SearchSessionsParamsState = "closed"
+	SearchSessionsParamsStateRunning SearchSessionsParamsState = "running"
+)
+
+// Valid indicates whether the value is a known member of the SearchSessionsParamsState enum.
+func (e SearchSessionsParamsState) Valid() bool {
+	switch e {
+	case SearchSessionsParamsStateClosed:
+		return true
+	case SearchSessionsParamsStateRunning:
 		return true
 	default:
 		return false
@@ -960,6 +1122,7 @@ func (e ListSimulationRunsParamsState) Valid() bool {
 type AgentConfig struct {
 	CreatedAt          time.Time `json:"created_at"`
 	Greeting           *string   `json:"greeting,omitempty"`
+	Guardrail          *string   `json:"guardrail,omitempty"`
 	Id                 string    `json:"id"`
 	Instructions       *string   `json:"instructions,omitempty"`
 	Keyterms           *[]string `json:"keyterms,omitempty"`
@@ -995,7 +1158,10 @@ type AgentConfig struct {
 
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
-	Greeting     *string `json:"greeting,omitempty"`
+	Greeting *string `json:"greeting,omitempty"`
+
+	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - llm_classifier, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
+	Guardrail    *string `json:"guardrail,omitempty"`
 	Instructions *string `json:"instructions,omitempty"`
 
 	// Keyterms Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
@@ -1081,6 +1247,43 @@ type AgentLogPage struct {
 
 // AgentMode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 type AgentMode string
+
+// AgentResponse defines model for AgentResponse.
+type AgentResponse struct {
+	CreatedAt  time.Time  `json:"created_at"`
+	Error      *string    `json:"error,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	Id         string     `json:"id"`
+
+	// Said What the person asked, which is the first item of every response.
+	Said      *string `json:"said,omitempty"`
+	SessionId string  `json:"session_id"`
+
+	// Status cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+	Status AgentResponseStatus `json:"status"`
+}
+
+// AgentResponseStatus cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+type AgentResponseStatus string
+
+// AgentResponseItem defines model for AgentResponseItem.
+type AgentResponseItem struct {
+	At   time.Time             `json:"at"`
+	Kind AgentResponseItemKind `json:"kind"`
+
+	// Ordinal The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in.
+	Ordinal int `json:"ordinal"`
+
+	// Payload Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result.
+	Payload    *map[string]interface{} `json:"payload,omitempty"`
+	ResponseId string                  `json:"response_id"`
+	SessionId  *string                 `json:"session_id,omitempty"`
+	Text       *string                 `json:"text,omitempty"`
+	ToolName   *string                 `json:"tool_name,omitempty"`
+}
+
+// AgentResponseItemKind defines model for AgentResponseItem.Kind.
+type AgentResponseItemKind string
 
 // AttachNumberRequest defines model for AttachNumberRequest.
 type AttachNumberRequest struct {
@@ -1328,6 +1531,23 @@ type ChatTokenRequest struct {
 	UserName *string `json:"user_name,omitempty"`
 }
 
+// ClaimGuestRequest defines model for ClaimGuestRequest.
+type ClaimGuestRequest struct {
+	GuestId string `json:"guest_id"`
+
+	// UserId The account the guest turned out to be.
+	UserId string `json:"user_id"`
+}
+
+// ClaimGuestResult defines model for ClaimGuestResult.
+type ClaimGuestResult struct {
+	GuestId string `json:"guest_id"`
+
+	// SessionsMoved How many conversations moved onto the account.
+	SessionsMoved int    `json:"sessions_moved"`
+	UserId        string `json:"user_id"`
+}
+
 // Contact defines model for Contact.
 type Contact struct {
 	Attempts int `json:"attempts"`
@@ -1361,8 +1581,19 @@ type ContentPart struct {
 	union json.RawMessage
 }
 
+// CreateResponseRequest defines model for CreateResponseRequest.
+type CreateResponseRequest struct {
+	Images *[]ImageSource `json:"images,omitempty"`
+
+	// Text What to answer, as though it had been said.
+	Text string `json:"text"`
+}
+
 // CreateSessionRequest defines model for CreateSessionRequest.
 type CreateSessionRequest struct {
+	// Agent The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
+	Agent *string `json:"agent,omitempty"`
+
 	// AgentId Keys transcripts and statistics. Empty means the call id.
 	AgentId *string `json:"agent_id,omitempty"`
 
@@ -1382,8 +1613,17 @@ type CreateSessionRequest struct {
 	// ConversationId Stream Chat CID to resume; returned for persistent text sessions.
 	ConversationId *string `json:"conversation_id,omitempty"`
 
+	// Custom Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
+	Custom *map[string]interface{} `json:"custom,omitempty"`
+
+	// Description A longer note about the conversation, searched alongside the title.
+	Description *string `json:"description,omitempty"`
+
 	// Greeting Said on joining without going through the model. Empty means the agent waits to be spoken to.
-	Greeting     *string `json:"greeting,omitempty"`
+	Greeting *string `json:"greeting,omitempty"`
+
+	// Incognito Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+	Incognito    *bool   `json:"incognito,omitempty"`
 	Instructions *string `json:"instructions,omitempty"`
 
 	// Keyterms Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them.
@@ -1402,6 +1642,10 @@ type CreateSessionRequest struct {
 	// MinConfidence How sure the transcriber must be before the agent answers rather than checks what was meant.
 	MinConfidence *float64 `json:"min_confidence,omitempty"`
 
+	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
+	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
+
 	// Navigating The agent placed this call, so let recordings finish and answer their menus.
 	Navigating *bool `json:"navigating,omitempty"`
 
@@ -1410,6 +1654,9 @@ type CreateSessionRequest struct {
 
 	// Phone The number the session acts from, which is what turns transferring on.
 	Phone *SessionPhone `json:"phone,omitempty"`
+
+	// Project What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
+	Project *string `json:"project,omitempty"`
 
 	// Sandbox Where the subagent may run code it writes. Only the subagent is offered it: running code takes seconds, and the model holding the conversation has none to spare. Omit it and the subagent works everything out in its head.
 	Sandbox *Sandbox `json:"sandbox,omitempty"`
@@ -1443,6 +1690,9 @@ type CreateSessionRequest struct {
 
 	// Text Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
 	Text *bool `json:"text,omitempty"`
+
+	// Title What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.
+	Title *string `json:"title,omitempty"`
 
 	// ToolTimeoutMs How long the model waits for a tool result. Zero is the default.
 	ToolTimeoutMs *int           `json:"tool_timeout_ms,omitempty"`
@@ -1483,8 +1733,56 @@ type Error struct {
 	Error string `json:"error"`
 }
 
+// ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
+type ForkSessionRequest struct {
+	Agent *string `json:"agent,omitempty"`
+
+	// CallId The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not.
+	CallId      *string                 `json:"call_id,omitempty"`
+	ConfigId    *string                 `json:"config_id,omitempty"`
+	Custom      *map[string]interface{} `json:"custom,omitempty"`
+	Description *string                 `json:"description,omitempty"`
+
+	// Incognito Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept.
+	Incognito    *bool   `json:"incognito,omitempty"`
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Messages Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
+	Messages *bool `json:"messages,omitempty"`
+
+	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
+	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
+	Project         *string          `json:"project,omitempty"`
+	Title           *string          `json:"title,omitempty"`
+}
+
 // Granularity defines model for Granularity.
 type Granularity string
+
+// GuestUser defines model for GuestUser.
+type GuestUser struct {
+	Custom *map[string]interface{} `json:"custom,omitempty"`
+
+	// ExpiresAt When the token stops working. A guest coming back after it asks for another.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Id        string     `json:"id"`
+	Name      *string    `json:"name,omitempty"`
+
+	// Token A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
+	Token string `json:"token"`
+}
+
+// GuestUserRequest defines model for GuestUserRequest.
+type GuestUserRequest struct {
+	Custom *map[string]interface{} `json:"custom,omitempty"`
+
+	// Id A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+	Id *string `json:"id,omitempty"`
+
+	// Name What to call them, for a transcript a person reads later.
+	Name *string `json:"name,omitempty"`
+}
 
 // HealthStatus defines model for HealthStatus.
 type HealthStatus struct {
@@ -1667,10 +1965,44 @@ type MessageContent0 = string
 // MessageContent1 defines model for MessageContent.1.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first five are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first six are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. llm_classifier answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 //
 // Example: tts
 type Modality string
+
+// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
+// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+type ModelOverwrites struct {
+	// Llm A provider/model or a capability shortcut, in place of the config's.
+	Llm *string `json:"llm,omitempty"`
+
+	// MaxOutputTokens Caps the reply, reasoning included. Omitted leaves the provider's default.
+	MaxOutputTokens *int    `json:"max_output_tokens,omitempty"`
+	Search          *string `json:"search,omitempty"`
+
+	// Sts A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened.
+	Sts *string `json:"sts,omitempty"`
+	Stt *string `json:"stt,omitempty"`
+
+	// Subagent The model delegated work runs on. Naming one replaces a config's default worker, so the config cannot keep answering for the target just overwritten.
+	Subagent *string `json:"subagent,omitempty"`
+
+	// Temperature How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
+	Temperature *float64 `json:"temperature,omitempty"`
+
+	// Thinking How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.
+	Thinking *ModelOverwritesThinking `json:"thinking,omitempty"`
+	Tts      *string                  `json:"tts,omitempty"`
+
+	// Verbosity How much detail to give. Dropped for models that do not take it.
+	Verbosity *ModelOverwritesVerbosity `json:"verbosity,omitempty"`
+}
+
+// ModelOverwritesThinking How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.
+type ModelOverwritesThinking string
+
+// ModelOverwritesVerbosity How much detail to give. Dropped for models that do not take it.
+type ModelOverwritesVerbosity string
 
 // NumberSearchResult defines model for NumberSearchResult.
 type NumberSearchResult struct {
@@ -2000,26 +2332,50 @@ type SearchResult struct {
 
 // Session defines model for Session.
 type Session struct {
-	AgentId string `json:"agent_id"`
+	// Agent The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against.
+	Agent   *string `json:"agent,omitempty"`
+	AgentId string  `json:"agent_id"`
 
 	// CallId Empty for a text session, which joins no call.
 	CallId   string `json:"call_id"`
 	CallType string `json:"call_type"`
 
+	// ClosedAt When the session ended. Absent while it is still running.
+	ClosedAt *time.Time `json:"closed_at,omitempty"`
+
+	// ConfigId The agent config the session ran under, empty for one that spelled itself out.
+	ConfigId *string `json:"config_id,omitempty"`
+
 	// ContextTruncated Older history was omitted from the model context.
 	ContextTruncated *bool `json:"context_truncated,omitempty"`
 
 	// ConversationId Stream Chat CID to resume; returned for persistent text sessions.
-	ConversationId *string   `json:"conversation_id,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	Id             string    `json:"id"`
-	Instructions   *string   `json:"instructions,omitempty"`
+	ConversationId *string                 `json:"conversation_id,omitempty"`
+	CreatedAt      time.Time               `json:"created_at"`
+	Custom         *map[string]interface{} `json:"custom,omitempty"`
+	Description    *string                 `json:"description,omitempty"`
+
+	// ForkedFrom The session this one continued from, empty for one opened fresh.
+	ForkedFrom *string `json:"forked_from,omitempty"`
+	Id         string  `json:"id"`
+
+	// Incognito Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from.
+	Incognito    *bool   `json:"incognito,omitempty"`
+	Instructions *string `json:"instructions,omitempty"`
+
+	// LastResponseAt When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
+	LastResponseAt *time.Time `json:"last_response_at,omitempty"`
 
 	// Llm The provider and model answering, once routing has picked one.
 	Llm *string `json:"llm,omitempty"`
 
+	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
+	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
+
 	// PersistConversation Persist a text conversation in Stream Chat, creating a channel when no CID is supplied.
-	PersistConversation *bool `json:"persist_conversation,omitempty"`
+	PersistConversation *bool   `json:"persist_conversation,omitempty"`
+	Project             *string `json:"project,omitempty"`
 
 	// State Whether the agent is still in the call.
 	State SessionState `json:"state"`
@@ -2037,7 +2393,8 @@ type Session struct {
 	Subagents *map[string]string `json:"subagents,omitempty"`
 
 	// Text The conversation is held in writing rather than on a call.
-	Text *bool `json:"text,omitempty"`
+	Text  *bool   `json:"text,omitempty"`
+	Title *string `json:"title,omitempty"`
 
 	// Tts The provider and model speaking.
 	Tts    *string       `json:"tts,omitempty"`
@@ -2552,6 +2909,9 @@ type SttOptions struct {
 type SyncAgentRequest struct {
 	Greeting *string `json:"greeting,omitempty"`
 
+	// Guardrail The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.
+	Guardrail *string `json:"guardrail,omitempty"`
+
 	// Hash A fingerprint of the directory. A second sync with the same hash does nothing.
 	Hash         string               `json:"hash"`
 	Instructions *string              `json:"instructions,omitempty"`
@@ -2915,14 +3275,56 @@ type VoiceSampleRequest struct {
 	Transcript *string `json:"transcript,omitempty"`
 }
 
+// ConfigName defines model for ConfigName.
+type ConfigName = string
+
+// ItemLimit defines model for ItemLimit.
+type ItemLimit = int
+
 // PluginID defines model for PluginID.
 type PluginID = string
 
 // ResourceID defines model for ResourceID.
 type ResourceID = string
 
+// ResponseIDFilter defines model for ResponseIDFilter.
+type ResponseIDFilter = string
+
+// SessionAgent defines model for SessionAgent.
+type SessionAgent = string
+
+// SessionConfigID defines model for SessionConfigID.
+type SessionConfigID = string
+
+// SessionCreatedAfter defines model for SessionCreatedAfter.
+type SessionCreatedAfter = time.Time
+
+// SessionCreatedBefore defines model for SessionCreatedBefore.
+type SessionCreatedBefore = time.Time
+
+// SessionCustom defines model for SessionCustom.
+type SessionCustom = string
+
 // SessionID defines model for SessionID.
 type SessionID = string
+
+// SessionLimit defines model for SessionLimit.
+type SessionLimit = int
+
+// SessionOffset defines model for SessionOffset.
+type SessionOffset = int
+
+// SessionProject defines model for SessionProject.
+type SessionProject = string
+
+// SessionSearchText defines model for SessionSearchText.
+type SessionSearchText = string
+
+// SessionStateFilter defines model for SessionStateFilter.
+type SessionStateFilter string
+
+// SessionUserID defines model for SessionUserID.
+type SessionUserID = string
 
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
@@ -2959,6 +3361,12 @@ type ListCallsParams struct {
 type GetCallEventsParams struct {
 	// Limit How many to return, oldest first.
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListAgentConfigsParams defines parameters for ListAgentConfigs.
+type ListAgentConfigsParams struct {
+	// Name Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
+	Name *ConfigName `form:"name,omitempty" json:"name,omitempty"`
 }
 
 // GetConversationMessagesParams defines parameters for GetConversationMessages.
@@ -3022,6 +3430,78 @@ type PluginOAuthCallbackParams struct {
 	Code  *string `form:"code,omitempty" json:"code,omitempty"`
 	State *string `form:"state,omitempty" json:"state,omitempty"`
 	Error *string `form:"error,omitempty" json:"error,omitempty"`
+}
+
+// ListSessionsParams defines parameters for ListSessions.
+type ListSessionsParams struct {
+	// Agent The agent name the session was opened against.
+	Agent    *SessionAgent    `form:"agent,omitempty" json:"agent,omitempty"`
+	ConfigId *SessionConfigID `form:"config_id,omitempty" json:"config_id,omitempty"`
+
+	// UserId Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
+	UserId  *SessionUserID  `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Project *SessionProject `form:"project,omitempty" json:"project,omitempty"`
+
+	// State Omitted is both.
+	State *ListSessionsParamsState `form:"state,omitempty" json:"state,omitempty"`
+
+	// Custom Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
+	Custom        *SessionCustom        `form:"custom,omitempty" json:"custom,omitempty"`
+	CreatedAfter  *SessionCreatedAfter  `form:"created_after,omitempty" json:"created_after,omitempty"`
+	CreatedBefore *SessionCreatedBefore `form:"created_before,omitempty" json:"created_before,omitempty"`
+
+	// Limit Up to 200. Omitted is 25.
+	Limit  *SessionLimit  `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *SessionOffset `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ListSessionsParamsState defines parameters for ListSessions.
+type ListSessionsParamsState string
+
+// SearchSessionsParams defines parameters for SearchSessions.
+type SearchSessionsParams struct {
+	// Q What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error.
+	Q *SessionSearchText `form:"q,omitempty" json:"q,omitempty"`
+
+	// Agent The agent name the session was opened against.
+	Agent    *SessionAgent    `form:"agent,omitempty" json:"agent,omitempty"`
+	ConfigId *SessionConfigID `form:"config_id,omitempty" json:"config_id,omitempty"`
+
+	// UserId Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
+	UserId  *SessionUserID  `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Project *SessionProject `form:"project,omitempty" json:"project,omitempty"`
+
+	// State Omitted is both.
+	State *SearchSessionsParamsState `form:"state,omitempty" json:"state,omitempty"`
+
+	// Custom Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
+	Custom        *SessionCustom        `form:"custom,omitempty" json:"custom,omitempty"`
+	CreatedAfter  *SessionCreatedAfter  `form:"created_after,omitempty" json:"created_after,omitempty"`
+	CreatedBefore *SessionCreatedBefore `form:"created_before,omitempty" json:"created_before,omitempty"`
+
+	// Limit Up to 200. Omitted is 25.
+	Limit  *SessionLimit  `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *SessionOffset `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// SearchSessionsParamsState defines parameters for SearchSessions.
+type SearchSessionsParamsState string
+
+// ListResponsesParams defines parameters for ListResponses.
+type ListResponsesParams struct {
+	// Limit Up to 200. Omitted is 25.
+	Limit  *SessionLimit  `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *SessionOffset `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ListResponseItemsParams defines parameters for ListResponseItems.
+type ListResponseItemsParams struct {
+	// ResponseId Narrow to one turn's items. Omitted is every turn in the session.
+	ResponseId *ResponseIDFilter `form:"response_id,omitempty" json:"response_id,omitempty"`
+
+	// Limit Up to 1000. Omitted is 200.
+	Limit  *ItemLimit     `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *SessionOffset `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
 // ListSimulationRunsParams defines parameters for ListSimulationRuns.
@@ -3140,6 +3620,12 @@ type UpdateAgentConfigJSONRequestBody = AgentConfigRequest
 // AuthorizePluginJSONRequestBody defines body for AuthorizePlugin for application/json ContentType.
 type AuthorizePluginJSONRequestBody = AuthorizePluginRequest
 
+// CreateGuestUserJSONRequestBody defines body for CreateGuestUser for application/json ContentType.
+type CreateGuestUserJSONRequestBody = GuestUserRequest
+
+// ClaimGuestUserJSONRequestBody defines body for ClaimGuestUser for application/json ContentType.
+type ClaimGuestUserJSONRequestBody = ClaimGuestRequest
+
 // IngestKnowledgeJSONRequestBody defines body for IngestKnowledge for application/json ContentType.
 type IngestKnowledgeJSONRequestBody = IngestKnowledgeRequest
 
@@ -3149,11 +3635,17 @@ type AddKnowledgeUrlJSONRequestBody = KnowledgeUrlRequest
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = CreateSessionRequest
 
+// ForkSessionJSONRequestBody defines body for ForkSession for application/json ContentType.
+type ForkSessionJSONRequestBody = ForkSessionRequest
+
 // SetSessionInstructionsJSONRequestBody defines body for SetSessionInstructions for application/json ContentType.
 type SetSessionInstructionsJSONRequestBody = InstructionsRequest
 
 // RespondSessionJSONRequestBody defines body for RespondSession for application/json ContentType.
 type RespondSessionJSONRequestBody = SayRequest
+
+// CreateResponseJSONRequestBody defines body for CreateResponse for application/json ContentType.
+type CreateResponseJSONRequestBody = CreateResponseRequest
 
 // SaySessionJSONRequestBody defines body for SaySession for application/json ContentType.
 type SaySessionJSONRequestBody = SayRequest
@@ -3565,8 +4057,11 @@ type ClientInterface interface {
 
 	// ListAgentConfigs The agent configs the calling customer holds
 	//
+	// With a name this is how a name becomes a config, which is what lets a backend say "docs" instead of an id it never chose.
+	// Server-side only, as it always was: a config carries the instructions the agent runs under, and those are not a page's business. A page addressing an agent by name does not need this -- it sends the name on the create-session request and the router resolves it, which is the same lookup without handing the instructions over.
+	//
 	// Corresponds with GET /v1/agents/configs (the `ListAgentConfigs` operationId).
-	ListAgentConfigs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListAgentConfigs(ctx context.Context, params *ListAgentConfigsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateAgentConfigWithBody Store a named configuration a session can be created from
 	//
@@ -3657,6 +4152,48 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
 	GetConversationMessages(ctx context.Context, cid string, params *GetConversationMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateGuestUserWithBody Mint a guest so somebody can talk to an agent before signing up
+	//
+	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+	// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/guests (the `CreateGuestUser` operationId).
+	CreateGuestUserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateGuestUser Mint a guest so somebody can talk to an agent before signing up
+	//
+	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+	// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/guests (the `CreateGuestUser` operationId).
+	CreateGuestUser(ctx context.Context, body CreateGuestUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimGuestUserWithBody Move a guest's conversations onto the account they turned out to be
+	//
+	// For somebody who talked to an agent and then signed up. Their sessions are rewritten to the real user and the guest is marked claimed, in one transaction: a guest marked claimed whose sessions still say the guest owns them is a person who signed up and lost their history, and sessions moved without the guest being marked is a guest that can be claimed again, by somebody else.
+	// Server-side only, and the one operation here that most needs to be. Only the customer's own backend knows that a given guest is a given account -- it is the thing that just authenticated them. A page allowed to ask this could claim anybody's conversations by guessing a guest id, which is the whole attack.
+	// A guest already claimed is refused rather than moved again.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/guests/claim (the `ClaimGuestUser` operationId).
+	ClaimGuestUserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimGuestUser Move a guest's conversations onto the account they turned out to be
+	//
+	// For somebody who talked to an agent and then signed up. Their sessions are rewritten to the real user and the guest is marked claimed, in one transaction: a guest marked claimed whose sessions still say the guest owns them is a person who signed up and lost their history, and sessions moved without the guest being marked is a guest that can be claimed again, by somebody else.
+	// Server-side only, and the one operation here that most needs to be. Only the customer's own backend knows that a given guest is a given account -- it is the thing that just authenticated them. A page allowed to ask this could claim anybody's conversations by guessing a guest id, which is the whole attack.
+	// A guest already claimed is refused rather than moved again.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/guests/claim (the `ClaimGuestUser` operationId).
+	ClaimGuestUser(ctx context.Context, body ClaimGuestUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// IngestKnowledgeWithBody Fill a knowledge base with what the business wrote down
 	//
@@ -3763,8 +4300,11 @@ type ClientInterface interface {
 
 	// ListSessions The sessions the calling customer is running
 	//
+	// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
+	// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
+	//
 	// Corresponds with GET /v1/agents/sessions (the `ListSessions` operationId).
-	ListSessions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListSessions(ctx context.Context, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateSessionWithBody Join a call as a voice agent
 	//
@@ -3786,6 +4326,15 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/sessions (the `CreateSession` operationId).
 	CreateSession(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// SearchSessions Find a conversation by what it was called
+	//
+	// Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
+	// What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
+	// The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+	//
+	// Corresponds with GET /v1/agents/sessions/search (the `SearchSessions` operationId).
+	SearchSessions(ctx context.Context, params *SearchSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CloseSession Leave the call and end the session
 	//
 	// Corresponds with DELETE /v1/agents/sessions/{id} (the `CloseSession` operationId).
@@ -3793,8 +4342,30 @@ type ClientInterface interface {
 
 	// GetSession One session
 	//
+	// Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+	//
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 	GetSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ForkSessionWithBody Continue a conversation as a new one
+	//
+	// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
+	// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
+	ForkSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ForkSession Continue a conversation as a new one
+	//
+	// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
+	// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
+	ForkSession(ctx context.Context, id SessionID, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetSessionInstructionsWithBody Change what the agent is told to be
 	//
@@ -3834,6 +4405,42 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
 	RespondSession(ctx context.Context, id SessionID, body RespondSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListResponses The turns the agent took in a session
+	//
+	// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses (the `ListResponses` operationId).
+	ListResponses(ctx context.Context, id SessionID, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateResponseWithBody Ask the agent something and get a handle on the answer
+	//
+	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
+	CreateResponseWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateResponse Ask the agent something and get a handle on the answer
+	//
+	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
+	CreateResponse(ctx context.Context, id SessionID, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListResponseItems What the agent did, turn by turn, in the order it happened
+	//
+	// One flat stream across every turn rather than a list per turn, because that is how a conversation reads and how it is rendered: the question, what the agent did about it, what it said, then the next question. Naming a response narrows it to that turn.
+	// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
+	// Nothing is returned for an incognito session, which has no items to return.
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
+	ListResponseItems(ctx context.Context, id SessionID, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SaySessionWithBody Speak a piece of text without going through the model
 	//
@@ -4737,9 +5344,12 @@ func (c *Client) CreateChatToken(ctx context.Context, body CreateChatTokenJSONRe
 
 // ListAgentConfigs The agent configs the calling customer holds
 //
+// With a name this is how a name becomes a config, which is what lets a backend say "docs" instead of an id it never chose.
+// Server-side only, as it always was: a config carries the instructions the agent runs under, and those are not a page's business. A page addressing an agent by name does not need this -- it sends the name on the create-session request and the router resolves it, which is the same lookup without handing the instructions over.
+//
 // Corresponds with GET /v1/agents/configs (the `ListAgentConfigs` operationId).
-func (c *Client) ListAgentConfigs(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListAgentConfigsRequest(c.Server)
+func (c *Client) ListAgentConfigs(ctx context.Context, params *ListAgentConfigsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAgentConfigsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -4940,6 +5550,88 @@ func (c *Client) AuthorizePlugin(ctx context.Context, id ResourceID, pluginId Pl
 // Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
 func (c *Client) GetConversationMessages(ctx context.Context, cid string, params *GetConversationMessagesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConversationMessagesRequest(c.Server, cid, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateGuestUserWithBody Mint a guest so somebody can talk to an agent before signing up
+//
+// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/guests (the `CreateGuestUser` operationId).
+func (c *Client) CreateGuestUserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateGuestUserRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateGuestUser Mint a guest so somebody can talk to an agent before signing up
+//
+// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/guests (the `CreateGuestUser` operationId).
+func (c *Client) CreateGuestUser(ctx context.Context, body CreateGuestUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateGuestUserRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimGuestUserWithBody Move a guest's conversations onto the account they turned out to be
+//
+// For somebody who talked to an agent and then signed up. Their sessions are rewritten to the real user and the guest is marked claimed, in one transaction: a guest marked claimed whose sessions still say the guest owns them is a person who signed up and lost their history, and sessions moved without the guest being marked is a guest that can be claimed again, by somebody else.
+// Server-side only, and the one operation here that most needs to be. Only the customer's own backend knows that a given guest is a given account -- it is the thing that just authenticated them. A page allowed to ask this could claim anybody's conversations by guessing a guest id, which is the whole attack.
+// A guest already claimed is refused rather than moved again.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/guests/claim (the `ClaimGuestUser` operationId).
+func (c *Client) ClaimGuestUserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimGuestUserRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimGuestUser Move a guest's conversations onto the account they turned out to be
+//
+// For somebody who talked to an agent and then signed up. Their sessions are rewritten to the real user and the guest is marked claimed, in one transaction: a guest marked claimed whose sessions still say the guest owns them is a person who signed up and lost their history, and sessions moved without the guest being marked is a guest that can be claimed again, by somebody else.
+// Server-side only, and the one operation here that most needs to be. Only the customer's own backend knows that a given guest is a given account -- it is the thing that just authenticated them. A page allowed to ask this could claim anybody's conversations by guessing a guest id, which is the whole attack.
+// A guest already claimed is refused rather than moved again.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/guests/claim (the `ClaimGuestUser` operationId).
+func (c *Client) ClaimGuestUser(ctx context.Context, body ClaimGuestUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimGuestUserRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5185,9 +5877,12 @@ func (c *Client) PluginOAuthCallback(ctx context.Context, params *PluginOAuthCal
 
 // ListSessions The sessions the calling customer is running
 //
+// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
+// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
+//
 // Corresponds with GET /v1/agents/sessions (the `ListSessions` operationId).
-func (c *Client) ListSessions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListSessionsRequest(c.Server)
+func (c *Client) ListSessions(ctx context.Context, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSessionsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -5238,6 +5933,25 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 	return c.Client.Do(req)
 }
 
+// SearchSessions Find a conversation by what it was called
+//
+// Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
+// What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
+// The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+//
+// Corresponds with GET /v1/agents/sessions/search (the `SearchSessions` operationId).
+func (c *Client) SearchSessions(ctx context.Context, params *SearchSessionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchSessionsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CloseSession Leave the call and end the session
 //
 // Corresponds with DELETE /v1/agents/sessions/{id} (the `CloseSession` operationId).
@@ -5255,9 +5969,51 @@ func (c *Client) CloseSession(ctx context.Context, id SessionID, reqEditors ...R
 
 // GetSession One session
 //
+// Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+//
 // Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 func (c *Client) GetSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSessionRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ForkSessionWithBody Continue a conversation as a new one
+//
+// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
+// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
+func (c *Client) ForkSessionWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewForkSessionRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ForkSession Continue a conversation as a new one
+//
+// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
+// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
+func (c *Client) ForkSession(ctx context.Context, id SessionID, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewForkSessionRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5347,6 +6103,82 @@ func (c *Client) RespondSessionWithBody(ctx context.Context, id SessionID, conte
 // Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
 func (c *Client) RespondSession(ctx context.Context, id SessionID, body RespondSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRespondSessionRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListResponses The turns the agent took in a session
+//
+// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses (the `ListResponses` operationId).
+func (c *Client) ListResponses(ctx context.Context, id SessionID, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListResponsesRequest(c.Server, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateResponseWithBody Ask the agent something and get a handle on the answer
+//
+// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
+func (c *Client) CreateResponseWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateResponseRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateResponse Ask the agent something and get a handle on the answer
+//
+// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
+func (c *Client) CreateResponse(ctx context.Context, id SessionID, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateResponseRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListResponseItems What the agent did, turn by turn, in the order it happened
+//
+// One flat stream across every turn rather than a list per turn, because that is how a conversation reads and how it is rendered: the question, what the agent did about it, what it said, then the next question. Naming a response narrows it to that turn.
+// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
+// Nothing is returned for an incognito session, which has no items to return.
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
+func (c *Client) ListResponseItems(ctx context.Context, id SessionID, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListResponseItemsRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -7251,7 +8083,7 @@ func NewCreateChatTokenRequestWithBody(server string, contentType string, body i
 }
 
 // NewListAgentConfigsRequest constructs an http.Request for the ListAgentConfigs method
-func NewListAgentConfigsRequest(server string) (*http.Request, error) {
+func NewListAgentConfigsRequest(server string, params *ListAgentConfigsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -7267,6 +8099,33 @@ func NewListAgentConfigsRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Name != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "name", *params.Name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -7626,6 +8485,86 @@ func NewGetConversationMessagesRequest(server string, cid string, params *GetCon
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewCreateGuestUserRequest calls the generic CreateGuestUser builder with application/json body
+func NewCreateGuestUserRequest(server string, body CreateGuestUserJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateGuestUserRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateGuestUserRequestWithBody constructs an http.Request for the CreateGuestUser method, with any body, and a specified content type
+func NewCreateGuestUserRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/guests")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewClaimGuestUserRequest calls the generic ClaimGuestUser builder with application/json body
+func NewClaimGuestUserRequest(server string, body ClaimGuestUserJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClaimGuestUserRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewClaimGuestUserRequestWithBody constructs an http.Request for the ClaimGuestUser method, with any body, and a specified content type
+func NewClaimGuestUserRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/guests/claim")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -8360,7 +9299,7 @@ func NewPluginOAuthCallbackRequest(server string, params *PluginOAuthCallbackPar
 }
 
 // NewListSessionsRequest constructs an http.Request for the ListSessions method
-func NewListSessionsRequest(server string) (*http.Request, error) {
+func NewListSessionsRequest(server string, params *ListSessionsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -8376,6 +9315,141 @@ func NewListSessionsRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Agent != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent", *params.Agent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ConfigId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "config_id", *params.ConfigId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.UserId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Project != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "project", *params.Project, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Custom != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "custom", *params.Custom, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.CreatedAfter != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "created_after", *params.CreatedAfter, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.CreatedBefore != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "created_before", *params.CreatedBefore, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -8422,6 +9496,180 @@ func NewCreateSessionRequestWithBody(server string, contentType string, body io.
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSearchSessionsRequest constructs an http.Request for the SearchSessions method
+func NewSearchSessionsRequest(server string, params *SearchSessionsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/search")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Agent != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent", *params.Agent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ConfigId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "config_id", *params.ConfigId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.UserId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "user_id", *params.UserId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Project != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "project", *params.Project, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Custom != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "custom", *params.Custom, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.CreatedAfter != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "created_after", *params.CreatedAfter, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.CreatedBefore != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "created_before", *params.CreatedBefore, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -8490,6 +9738,53 @@ func NewGetSessionRequest(server string, id SessionID) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewForkSessionRequest calls the generic ForkSession builder with application/json body
+func NewForkSessionRequest(server string, id SessionID, body ForkSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewForkSessionRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewForkSessionRequestWithBody constructs an http.Request for the ForkSession method, with any body, and a specified content type
+func NewForkSessionRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/fork", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -8618,6 +9913,211 @@ func NewRespondSessionRequestWithBody(server string, id SessionID, contentType s
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListResponsesRequest constructs an http.Request for the ListResponses method
+func NewListResponsesRequest(server string, id SessionID, params *ListResponsesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/responses", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateResponseRequest calls the generic CreateResponse builder with application/json body
+func NewCreateResponseRequest(server string, id SessionID, body CreateResponseJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateResponseRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewCreateResponseRequestWithBody constructs an http.Request for the CreateResponse method, with any body, and a specified content type
+func NewCreateResponseRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/responses", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListResponseItemsRequest constructs an http.Request for the ListResponseItems method
+func NewListResponseItemsRequest(server string, id SessionID, params *ListResponseItemsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/responses/items", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.ResponseId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "response_id", *params.ResponseId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Offset != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -11026,10 +12526,13 @@ type ClientWithResponsesInterface interface {
 
 	// ListAgentConfigsWithResponse The agent configs the calling customer holds
 	//
+	// With a name this is how a name becomes a config, which is what lets a backend say "docs" instead of an id it never chose.
+	// Server-side only, as it always was: a config carries the instructions the agent runs under, and those are not a page's business. A page addressing an agent by name does not need this -- it sends the name on the create-session request and the router resolves it, which is the same lookup without handing the instructions over.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/configs (the `ListAgentConfigs` operationId).
-	ListAgentConfigsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAgentConfigsResponse, error)
+	ListAgentConfigsWithResponse(ctx context.Context, params *ListAgentConfigsParams, reqEditors ...RequestEditorFn) (*ListAgentConfigsResponse, error)
 
 	// CreateAgentConfigWithBodyWithResponse Store a named configuration a session can be created from
 	//
@@ -11130,6 +12633,48 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
 	GetConversationMessagesWithResponse(ctx context.Context, cid string, params *GetConversationMessagesParams, reqEditors ...RequestEditorFn) (*GetConversationMessagesResponse, error)
+
+	// CreateGuestUserWithBodyWithResponse Mint a guest so somebody can talk to an agent before signing up
+	//
+	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+	// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/guests (the `CreateGuestUser` operationId).
+	CreateGuestUserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGuestUserResponse, error)
+
+	// CreateGuestUserWithResponse Mint a guest so somebody can talk to an agent before signing up
+	//
+	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+	// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/guests (the `CreateGuestUser` operationId).
+	CreateGuestUserWithResponse(ctx context.Context, body CreateGuestUserJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGuestUserResponse, error)
+
+	// ClaimGuestUserWithBodyWithResponse Move a guest's conversations onto the account they turned out to be
+	//
+	// For somebody who talked to an agent and then signed up. Their sessions are rewritten to the real user and the guest is marked claimed, in one transaction: a guest marked claimed whose sessions still say the guest owns them is a person who signed up and lost their history, and sessions moved without the guest being marked is a guest that can be claimed again, by somebody else.
+	// Server-side only, and the one operation here that most needs to be. Only the customer's own backend knows that a given guest is a given account -- it is the thing that just authenticated them. A page allowed to ask this could claim anybody's conversations by guessing a guest id, which is the whole attack.
+	// A guest already claimed is refused rather than moved again.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/guests/claim (the `ClaimGuestUser` operationId).
+	ClaimGuestUserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimGuestUserResponse, error)
+
+	// ClaimGuestUserWithResponse Move a guest's conversations onto the account they turned out to be
+	//
+	// For somebody who talked to an agent and then signed up. Their sessions are rewritten to the real user and the guest is marked claimed, in one transaction: a guest marked claimed whose sessions still say the guest owns them is a person who signed up and lost their history, and sessions moved without the guest being marked is a guest that can be claimed again, by somebody else.
+	// Server-side only, and the one operation here that most needs to be. Only the customer's own backend knows that a given guest is a given account -- it is the thing that just authenticated them. A page allowed to ask this could claim anybody's conversations by guessing a guest id, which is the whole attack.
+	// A guest already claimed is refused rather than moved again.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/guests/claim (the `ClaimGuestUser` operationId).
+	ClaimGuestUserWithResponse(ctx context.Context, body ClaimGuestUserJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimGuestUserResponse, error)
 
 	// IngestKnowledgeWithBodyWithResponse Fill a knowledge base with what the business wrote down
 	//
@@ -11254,10 +12799,13 @@ type ClientWithResponsesInterface interface {
 
 	// ListSessionsWithResponse The sessions the calling customer is running
 	//
+	// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
+	// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/sessions (the `ListSessions` operationId).
-	ListSessionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSessionsResponse, error)
+	ListSessionsWithResponse(ctx context.Context, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*ListSessionsResponse, error)
 
 	// CreateSessionWithBodyWithResponse Join a call as a voice agent
 	//
@@ -11279,6 +12827,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/sessions (the `CreateSession` operationId).
 	CreateSessionWithResponse(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error)
 
+	// SearchSessionsWithResponse Find a conversation by what it was called
+	//
+	// Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
+	// What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
+	// The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/search (the `SearchSessions` operationId).
+	SearchSessionsWithResponse(ctx context.Context, params *SearchSessionsParams, reqEditors ...RequestEditorFn) (*SearchSessionsResponse, error)
+
 	// CloseSessionWithResponse Leave the call and end the session
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -11288,10 +12847,32 @@ type ClientWithResponsesInterface interface {
 
 	// GetSessionWithResponse One session
 	//
+	// Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 	GetSessionWithResponse(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*GetSessionResponse, error)
+
+	// ForkSessionWithBodyWithResponse Continue a conversation as a new one
+	//
+	// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
+	// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
+	ForkSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error)
+
+	// ForkSessionWithResponse Continue a conversation as a new one
+	//
+	// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
+	// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
+	ForkSessionWithResponse(ctx context.Context, id SessionID, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error)
 
 	// SetSessionInstructionsWithBodyWithResponse Change what the agent is told to be
 	//
@@ -11333,6 +12914,46 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sessions/{id}/respond (the `RespondSession` operationId).
 	RespondSessionWithResponse(ctx context.Context, id SessionID, body RespondSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*RespondSessionResponse, error)
+
+	// ListResponsesWithResponse The turns the agent took in a session
+	//
+	// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses (the `ListResponses` operationId).
+	ListResponsesWithResponse(ctx context.Context, id SessionID, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*ListResponsesResponse, error)
+
+	// CreateResponseWithBodyWithResponse Ask the agent something and get a handle on the answer
+	//
+	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
+	CreateResponseWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error)
+
+	// CreateResponseWithResponse Ask the agent something and get a handle on the answer
+	//
+	// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+	// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
+	CreateResponseWithResponse(ctx context.Context, id SessionID, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error)
+
+	// ListResponseItemsWithResponse What the agent did, turn by turn, in the order it happened
+	//
+	// One flat stream across every turn rather than a list per turn, because that is how a conversation reads and how it is rendered: the question, what the agent did about it, what it said, then the next question. Naming a response narrows it to that turn.
+	// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
+	// Nothing is returned for an incognito session, which has no items to return.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
+	ListResponseItemsWithResponse(ctx context.Context, id SessionID, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*ListResponseItemsResponse, error)
 
 	// SaySessionWithBodyWithResponse Speak a piece of text without going through the model
 	//
@@ -12008,6 +13629,8 @@ type ListCallsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -12023,6 +13646,11 @@ func (r ListCallsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListCallsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListCallsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -12063,6 +13691,8 @@ type GetCallResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -12080,6 +13710,11 @@ func (r GetCallResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCallResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCallResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -12125,6 +13760,8 @@ type GetCallEventsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -12142,6 +13779,11 @@ func (r GetCallEventsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCallEventsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCallEventsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -12187,6 +13829,8 @@ type GetCallTimelineResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -12204,6 +13848,11 @@ func (r GetCallTimelineResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCallTimelineResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCallTimelineResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -12249,6 +13898,8 @@ type CreateCallTokenResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -12266,6 +13917,11 @@ func (r CreateCallTokenResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateCallTokenResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateCallTokenResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -12311,6 +13967,8 @@ type GetCallTranscriptResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -12328,6 +13986,11 @@ func (r GetCallTranscriptResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCallTranscriptResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCallTranscriptResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -12373,6 +14036,8 @@ type ListCampaignsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -12388,6 +14053,11 @@ func (r ListCampaignsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListCampaignsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListCampaignsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -12490,6 +14160,8 @@ type GetCampaignResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -12507,6 +14179,11 @@ func (r GetCampaignResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetCampaignResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCampaignResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -12552,6 +14229,8 @@ type ListCampaignContactsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -12569,6 +14248,11 @@ func (r ListCampaignContactsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListCampaignContactsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListCampaignContactsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -12821,6 +14505,8 @@ type CreateChatTokenResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -12836,6 +14522,11 @@ func (r CreateChatTokenResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r CreateChatTokenResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateChatTokenResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -12876,6 +14567,8 @@ type ListAgentConfigsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -12891,6 +14584,11 @@ func (r ListAgentConfigsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListAgentConfigsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListAgentConfigsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -13055,6 +14753,8 @@ type GetAgentConfigResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -13072,6 +14772,11 @@ func (r GetAgentConfigResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetAgentConfigResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetAgentConfigResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -13186,6 +14891,8 @@ type ListConfigPluginsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -13203,6 +14910,11 @@ func (r ListConfigPluginsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListConfigPluginsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListConfigPluginsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -13379,6 +15091,8 @@ type GetConversationMessagesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -13394,6 +15108,11 @@ func (r GetConversationMessagesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetConversationMessagesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetConversationMessagesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -13419,6 +15138,137 @@ func (r GetConversationMessagesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetConversationMessagesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateGuestUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *GuestUser
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateGuestUserResponse) GetJSON201() *GuestUser {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateGuestUserResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateGuestUserResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateGuestUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateGuestUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateGuestUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateGuestUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ClaimGuestUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClaimGuestResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClaimGuestUserResponse) GetJSON200() *ClaimGuestResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ClaimGuestUserResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ClaimGuestUserResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ClaimGuestUserResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ClaimGuestUserResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ClaimGuestUserResponse) GetJSON409() *Error {
+	return r.JSON409
+}
+
+// GetBody returns the raw response body bytes
+func (r ClaimGuestUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClaimGuestUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClaimGuestUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClaimGuestUserResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -13496,6 +15346,8 @@ type ListKnowledgeUrlsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -13511,6 +15363,11 @@ func (r ListKnowledgeUrlsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListKnowledgeUrlsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListKnowledgeUrlsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -13675,6 +15532,8 @@ type GetKnowledgeUrlResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -13692,6 +15551,11 @@ func (r GetKnowledgeUrlResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetKnowledgeUrlResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetKnowledgeUrlResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -14004,6 +15868,8 @@ type ListPluginsResponse struct {
 	JSON200 *[]Plugin
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -14014,6 +15880,11 @@ func (r ListPluginsResponse) GetJSON200() *[]Plugin {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListPluginsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListPluginsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -14084,6 +15955,8 @@ type ListSessionsResponse struct {
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
 	JSON200 *[]Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
 }
@@ -14091,6 +15964,11 @@ type ListSessionsResponse struct {
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
 func (r ListSessionsResponse) GetJSON200() *[]Session {
 	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListSessionsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -14189,6 +16067,61 @@ func (r CreateSessionResponse) ContentType() string {
 	return ""
 }
 
+type SearchSessionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SearchSessionsResponse) GetJSON200() *[]Session {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SearchSessionsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SearchSessionsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r SearchSessionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SearchSessionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SearchSessionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SearchSessionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CloseSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -14244,6 +16177,8 @@ type GetSessionResponse struct {
 	JSON200 *Session
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -14256,6 +16191,11 @@ func (r GetSessionResponse) GetJSON200() *Session {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetSessionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -14292,6 +16232,75 @@ func (r GetSessionResponse) ContentType() string {
 	return ""
 }
 
+type ForkSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r ForkSessionResponse) GetJSON201() *Session {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ForkSessionResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ForkSessionResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ForkSessionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ForkSessionResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r ForkSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ForkSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ForkSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ForkSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type SetSessionInstructionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -14299,6 +16308,8 @@ type SetSessionInstructionsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -14311,6 +16322,11 @@ func (r SetSessionInstructionsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SetSessionInstructionsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetSessionInstructionsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -14352,6 +16368,8 @@ type InterruptSessionResponse struct {
 	HTTPResponse *http.Response
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -14359,6 +16377,11 @@ type InterruptSessionResponse struct {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r InterruptSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r InterruptSessionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -14402,6 +16425,8 @@ type RespondSessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -14414,6 +16439,11 @@ func (r RespondSessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RespondSessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RespondSessionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -14450,6 +16480,199 @@ func (r RespondSessionResponse) ContentType() string {
 	return ""
 }
 
+type ListResponsesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]AgentResponse
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListResponsesResponse) GetJSON200() *[]AgentResponse {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListResponsesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListResponsesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListResponsesResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r ListResponsesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListResponsesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListResponsesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListResponsesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateResponseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *AgentResponse
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r CreateResponseResponse) GetJSON202() *AgentResponse {
+	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateResponseResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateResponseResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateResponseResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateResponseResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateResponseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateResponseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateResponseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateResponseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListResponseItemsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]AgentResponseItem
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListResponseItemsResponse) GetJSON200() *[]AgentResponseItem {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListResponseItemsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListResponseItemsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListResponseItemsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r ListResponseItemsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListResponseItemsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListResponseItemsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListResponseItemsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type SaySessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -14457,6 +16680,8 @@ type SaySessionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -14469,6 +16694,11 @@ func (r SaySessionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SaySessionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SaySessionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -14514,6 +16744,8 @@ type ListSimulationRunsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -14529,6 +16761,11 @@ func (r ListSimulationRunsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListSimulationRunsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListSimulationRunsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -14569,6 +16806,8 @@ type GetSimulationRunResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -14586,6 +16825,11 @@ func (r GetSimulationRunResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSimulationRunResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetSimulationRunResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -14700,6 +16944,8 @@ type ListSimulationsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -14715,6 +16961,11 @@ func (r ListSimulationsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListSimulationsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListSimulationsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -14879,6 +17130,8 @@ type GetSimulationResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -14896,6 +17149,11 @@ func (r GetSimulationResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSimulationResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetSimulationResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -15079,6 +17337,8 @@ type ListSkillsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -15094,6 +17354,11 @@ func (r ListSkillsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListSkillsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListSkillsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -15258,6 +17523,8 @@ type GetSkillResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -15275,6 +17542,11 @@ func (r GetSkillResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSkillResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetSkillResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -15451,6 +17723,8 @@ type ListVoicesResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -15466,6 +17740,11 @@ func (r ListVoicesResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListVoicesResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListVoicesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -15630,6 +17909,8 @@ type GetVoiceResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -15647,6 +17928,11 @@ func (r GetVoiceResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetVoiceResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetVoiceResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -15899,6 +18185,8 @@ type PlacePhoneCallResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -15916,6 +18204,11 @@ func (r PlacePhoneCallResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PlacePhoneCallResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PlacePhoneCallResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -15961,6 +18254,8 @@ type TransferPhoneCallResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -15978,6 +18273,11 @@ func (r TransferPhoneCallResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r TransferPhoneCallResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r TransferPhoneCallResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -16021,6 +18321,8 @@ type PressPhoneDigitsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -16033,6 +18335,11 @@ func (r PressPhoneDigitsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r PressPhoneDigitsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PressPhoneDigitsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -16078,6 +18385,8 @@ type ListPhoneNumbersResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -16093,6 +18402,11 @@ func (r ListPhoneNumbersResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListPhoneNumbersResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListPhoneNumbersResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -16133,6 +18447,8 @@ type BuyPhoneNumberResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -16150,6 +18466,11 @@ func (r BuyPhoneNumberResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r BuyPhoneNumberResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r BuyPhoneNumberResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -16195,6 +18516,8 @@ type SearchPhoneNumbersResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -16212,6 +18535,11 @@ func (r SearchPhoneNumbersResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r SearchPhoneNumbersResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SearchPhoneNumbersResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -16255,6 +18583,8 @@ type ReleasePhoneNumberResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -16267,6 +18597,11 @@ func (r ReleasePhoneNumberResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ReleasePhoneNumberResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ReleasePhoneNumberResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -16312,6 +18647,8 @@ type AttachPhoneNumberResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -16329,6 +18666,11 @@ func (r AttachPhoneNumberResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r AttachPhoneNumberResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r AttachPhoneNumberResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -16372,6 +18714,8 @@ type ListPhoneVendorsResponse struct {
 	JSON200 *[]PhoneVendor
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -16382,6 +18726,11 @@ func (r ListPhoneVendorsResponse) GetJSON200() *[]PhoneVendor {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListPhoneVendorsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListPhoneVendorsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -16422,6 +18771,8 @@ type ListRouterConfigsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -16437,6 +18788,11 @@ func (r ListRouterConfigsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListRouterConfigsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListRouterConfigsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -16601,6 +18957,8 @@ type GetRouterConfigResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -16618,6 +18976,11 @@ func (r GetRouterConfigResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetRouterConfigResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetRouterConfigResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -16794,6 +19157,8 @@ type RunRollupResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -16809,6 +19174,11 @@ func (r RunRollupResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RunRollupResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RunRollupResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -16849,6 +19219,8 @@ type TranscribeRecordingResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -16866,6 +19238,11 @@ func (r TranscribeRecordingResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r TranscribeRecordingResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r TranscribeRecordingResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -16911,6 +19288,8 @@ type GetTranscriptionResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -16928,6 +19307,11 @@ func (r GetTranscriptionResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetTranscriptionResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetTranscriptionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -16973,6 +19357,8 @@ type RecordSpeechResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -16990,6 +19376,11 @@ func (r RecordSpeechResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r RecordSpeechResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RecordSpeechResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -17035,6 +19426,8 @@ type GetSpeechResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -17052,6 +19445,11 @@ func (r GetSpeechResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetSpeechResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetSpeechResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -17097,6 +19495,8 @@ type GetTurnStatsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -17112,6 +19512,11 @@ func (r GetTurnStatsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetTurnStatsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetTurnStatsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetBody returns the raw response body bytes
@@ -17150,6 +19555,8 @@ type ListProvidersResponse struct {
 	JSON200 *[]Provider
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -17162,6 +19569,11 @@ func (r ListProvidersResponse) GetJSON200() *[]Provider {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ListProvidersResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListProvidersResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -17205,6 +19617,8 @@ type ResolveTargetResponse struct {
 	JSON200 *[]Candidate
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -17217,6 +19631,11 @@ func (r ResolveTargetResponse) GetJSON200() *[]Candidate {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r ResolveTargetResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ResolveTargetResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -17262,6 +19681,8 @@ type GetStatsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -17279,6 +19700,11 @@ func (r GetStatsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetStatsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetStatsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -17324,6 +19750,8 @@ type GetTagStatsResponse struct {
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
 }
@@ -17341,6 +19769,11 @@ func (r GetTagStatsResponse) GetJSON400() *BadRequest {
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
 func (r GetTagStatsResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetTagStatsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
@@ -17662,11 +20095,14 @@ func (c *ClientWithResponses) CreateChatTokenWithResponse(ctx context.Context, b
 
 // ListAgentConfigsWithResponse The agent configs the calling customer holds
 //
+// With a name this is how a name becomes a config, which is what lets a backend say "docs" instead of an id it never chose.
+// Server-side only, as it always was: a config carries the instructions the agent runs under, and those are not a page's business. A page addressing an agent by name does not need this -- it sends the name on the create-session request and the router resolves it, which is the same lookup without handing the instructions over.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/configs (the `ListAgentConfigs` operationId).
-func (c *ClientWithResponses) ListAgentConfigsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAgentConfigsResponse, error) {
-	rsp, err := c.ListAgentConfigs(ctx, reqEditors...)
+func (c *ClientWithResponses) ListAgentConfigsWithResponse(ctx context.Context, params *ListAgentConfigsParams, reqEditors ...RequestEditorFn) (*ListAgentConfigsResponse, error) {
+	rsp, err := c.ListAgentConfigs(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -17837,6 +20273,72 @@ func (c *ClientWithResponses) GetConversationMessagesWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseGetConversationMessagesResponse(rsp)
+}
+
+// CreateGuestUserWithBodyWithResponse Mint a guest so somebody can talk to an agent before signing up
+//
+// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/guests (the `CreateGuestUser` operationId).
+func (c *ClientWithResponses) CreateGuestUserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateGuestUserResponse, error) {
+	rsp, err := c.CreateGuestUserWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateGuestUserResponse(rsp)
+}
+
+// CreateGuestUserWithResponse Mint a guest so somebody can talk to an agent before signing up
+//
+// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/guests (the `CreateGuestUser` operationId).
+func (c *ClientWithResponses) CreateGuestUserWithResponse(ctx context.Context, body CreateGuestUserJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateGuestUserResponse, error) {
+	rsp, err := c.CreateGuestUser(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateGuestUserResponse(rsp)
+}
+
+// ClaimGuestUserWithBodyWithResponse Move a guest's conversations onto the account they turned out to be
+//
+// For somebody who talked to an agent and then signed up. Their sessions are rewritten to the real user and the guest is marked claimed, in one transaction: a guest marked claimed whose sessions still say the guest owns them is a person who signed up and lost their history, and sessions moved without the guest being marked is a guest that can be claimed again, by somebody else.
+// Server-side only, and the one operation here that most needs to be. Only the customer's own backend knows that a given guest is a given account -- it is the thing that just authenticated them. A page allowed to ask this could claim anybody's conversations by guessing a guest id, which is the whole attack.
+// A guest already claimed is refused rather than moved again.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/guests/claim (the `ClaimGuestUser` operationId).
+func (c *ClientWithResponses) ClaimGuestUserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimGuestUserResponse, error) {
+	rsp, err := c.ClaimGuestUserWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimGuestUserResponse(rsp)
+}
+
+// ClaimGuestUserWithResponse Move a guest's conversations onto the account they turned out to be
+//
+// For somebody who talked to an agent and then signed up. Their sessions are rewritten to the real user and the guest is marked claimed, in one transaction: a guest marked claimed whose sessions still say the guest owns them is a person who signed up and lost their history, and sessions moved without the guest being marked is a guest that can be claimed again, by somebody else.
+// Server-side only, and the one operation here that most needs to be. Only the customer's own backend knows that a given guest is a given account -- it is the thing that just authenticated them. A page allowed to ask this could claim anybody's conversations by guessing a guest id, which is the whole attack.
+// A guest already claimed is refused rather than moved again.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/guests/claim (the `ClaimGuestUser` operationId).
+func (c *ClientWithResponses) ClaimGuestUserWithResponse(ctx context.Context, body ClaimGuestUserJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimGuestUserResponse, error) {
+	rsp, err := c.ClaimGuestUser(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimGuestUserResponse(rsp)
 }
 
 // IngestKnowledgeWithBodyWithResponse Fill a knowledge base with what the business wrote down
@@ -18040,11 +20542,14 @@ func (c *ClientWithResponses) PluginOAuthCallbackWithResponse(ctx context.Contex
 
 // ListSessionsWithResponse The sessions the calling customer is running
 //
+// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
+// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/sessions (the `ListSessions` operationId).
-func (c *ClientWithResponses) ListSessionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSessionsResponse, error) {
-	rsp, err := c.ListSessions(ctx, reqEditors...)
+func (c *ClientWithResponses) ListSessionsWithResponse(ctx context.Context, params *ListSessionsParams, reqEditors ...RequestEditorFn) (*ListSessionsResponse, error) {
+	rsp, err := c.ListSessions(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -18083,6 +20588,23 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 	return ParseCreateSessionResponse(rsp)
 }
 
+// SearchSessionsWithResponse Find a conversation by what it was called
+//
+// Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
+// What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
+// The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/search (the `SearchSessions` operationId).
+func (c *ClientWithResponses) SearchSessionsWithResponse(ctx context.Context, params *SearchSessionsParams, reqEditors ...RequestEditorFn) (*SearchSessionsResponse, error) {
+	rsp, err := c.SearchSessions(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchSessionsResponse(rsp)
+}
+
 // CloseSessionWithResponse Leave the call and end the session
 //
 // Returns a wrapper object for the known response body format(s).
@@ -18098,6 +20620,8 @@ func (c *ClientWithResponses) CloseSessionWithResponse(ctx context.Context, id S
 
 // GetSessionWithResponse One session
 //
+// Reading a session is open to the device holding it, for the same reason listing and closing are: it is the conversation the caller is having. A session belonging to somebody else is reported as not found rather than refused, so this is not a way to find out whose an id is.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
@@ -18107,6 +20631,38 @@ func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id Ses
 		return nil, err
 	}
 	return ParseGetSessionResponse(rsp)
+}
+
+// ForkSessionWithBodyWithResponse Continue a conversation as a new one
+//
+// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
+// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
+func (c *ClientWithResponses) ForkSessionWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error) {
+	rsp, err := c.ForkSessionWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseForkSessionResponse(rsp)
+}
+
+// ForkSessionWithResponse Continue a conversation as a new one
+//
+// Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
+// The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/fork (the `ForkSession` operationId).
+func (c *ClientWithResponses) ForkSessionWithResponse(ctx context.Context, id SessionID, body ForkSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*ForkSessionResponse, error) {
+	rsp, err := c.ForkSession(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseForkSessionResponse(rsp)
 }
 
 // SetSessionInstructionsWithBodyWithResponse Change what the agent is told to be
@@ -18178,6 +20734,70 @@ func (c *ClientWithResponses) RespondSessionWithResponse(ctx context.Context, id
 		return nil, err
 	}
 	return ParseRespondSessionResponse(rsp)
+}
+
+// ListResponsesWithResponse The turns the agent took in a session
+//
+// Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses (the `ListResponses` operationId).
+func (c *ClientWithResponses) ListResponsesWithResponse(ctx context.Context, id SessionID, params *ListResponsesParams, reqEditors ...RequestEditorFn) (*ListResponsesResponse, error) {
+	rsp, err := c.ListResponses(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListResponsesResponse(rsp)
+}
+
+// CreateResponseWithBodyWithResponse Ask the agent something and get a handle on the answer
+//
+// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
+func (c *ClientWithResponses) CreateResponseWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error) {
+	rsp, err := c.CreateResponseWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateResponseResponse(rsp)
+}
+
+// CreateResponseWithResponse Ask the agent something and get a handle on the answer
+//
+// The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+// It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/responses (the `CreateResponse` operationId).
+func (c *ClientWithResponses) CreateResponseWithResponse(ctx context.Context, id SessionID, body CreateResponseJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateResponseResponse, error) {
+	rsp, err := c.CreateResponse(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateResponseResponse(rsp)
+}
+
+// ListResponseItemsWithResponse What the agent did, turn by turn, in the order it happened
+//
+// One flat stream across every turn rather than a list per turn, because that is how a conversation reads and how it is rendered: the question, what the agent did about it, what it said, then the next question. Naming a response narrows it to that turn.
+// Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
+// Nothing is returned for an incognito session, which has no items to return.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/{id}/responses/items (the `ListResponseItems` operationId).
+func (c *ClientWithResponses) ListResponseItemsWithResponse(ctx context.Context, id SessionID, params *ListResponseItemsParams, reqEditors ...RequestEditorFn) (*ListResponseItemsResponse, error) {
+	rsp, err := c.ListResponseItems(ctx, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListResponseItemsResponse(rsp)
 }
 
 // SaySessionWithBodyWithResponse Speak a piece of text without going through the model
@@ -19278,6 +21898,13 @@ func ParseListCallsResponse(rsp *http.Response) (*ListCallsResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	}
 
 	return response, nil
@@ -19317,6 +21944,13 @@ func ParseGetCallResponse(rsp *http.Response) (*GetCallResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -19365,6 +21999,13 @@ func ParseGetCallEventsResponse(rsp *http.Response) (*GetCallEventsResponse, err
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -19411,6 +22052,13 @@ func ParseGetCallTimelineResponse(rsp *http.Response) (*GetCallTimelineResponse,
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -19459,6 +22107,13 @@ func ParseCreateCallTokenResponse(rsp *http.Response) (*CreateCallTokenResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -19506,6 +22161,13 @@ func ParseGetCallTranscriptResponse(rsp *http.Response) (*GetCallTranscriptRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -19552,6 +22214,13 @@ func ParseListCampaignsResponse(rsp *http.Response) (*ListCampaignsResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 
@@ -19640,6 +22309,13 @@ func ParseGetCampaignResponse(rsp *http.Response) (*GetCampaignResponse, error) 
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -19686,6 +22362,13 @@ func ParseListCampaignContactsResponse(rsp *http.Response) (*ListCampaignContact
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -19896,6 +22579,13 @@ func ParseCreateChatTokenResponse(rsp *http.Response) (*CreateChatTokenResponse,
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	}
 
 	return response, nil
@@ -19935,6 +22625,13 @@ func ParseListAgentConfigsResponse(rsp *http.Response) (*ListAgentConfigsRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 
@@ -20073,6 +22770,13 @@ func ParseGetAgentConfigResponse(rsp *http.Response) (*GetAgentConfigResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -20173,6 +22877,13 @@ func ParseListConfigPluginsResponse(rsp *http.Response) (*ListConfigPluginsRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -20325,6 +23036,117 @@ func ParseGetConversationMessagesResponse(rsp *http.Response) (*GetConversationM
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateGuestUserResponse parses an HTTP response from a CreateGuestUserWithResponse call
+func ParseCreateGuestUserResponse(rsp *http.Response) (*CreateGuestUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateGuestUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest GuestUser
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case rsp.StatusCode == 403:
+		break // No content-type
+
+	}
+
+	return response, nil
+}
+
+// ParseClaimGuestUserResponse parses an HTTP response from a ClaimGuestUserWithResponse call
+func ParseClaimGuestUserResponse(rsp *http.Response) (*ClaimGuestUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClaimGuestUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClaimGuestResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	}
 
 	return response, nil
@@ -20411,6 +23233,13 @@ func ParseListKnowledgeUrlsResponse(rsp *http.Response) (*ListKnowledgeUrlsRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 
@@ -20548,6 +23377,13 @@ func ParseGetKnowledgeUrlResponse(rsp *http.Response) (*GetKnowledgeUrlResponse,
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -20798,6 +23634,13 @@ func ParseListPluginsResponse(rsp *http.Response) (*ListPluginsResponse, error) 
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	}
 
 	return response, nil
@@ -20839,6 +23682,13 @@ func ParseListSessionsResponse(rsp *http.Response) (*ListSessionsResponse, error
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Unauthorized
@@ -20893,6 +23743,46 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSearchSessionsResponse parses an HTTP response from a SearchSessionsWithResponse call
+func ParseSearchSessionsResponse(rsp *http.Response) (*SearchSessionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SearchSessionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	}
 
@@ -20963,6 +23853,67 @@ func ParseGetSessionResponse(rsp *http.Response) (*GetSessionResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseForkSessionResponse parses an HTTP response from a ForkSessionWithResponse call
+func ParseForkSessionResponse(rsp *http.Response) (*ForkSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ForkSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -21006,6 +23957,13 @@ func ParseSetSessionInstructionsResponse(rsp *http.Response) (*SetSessionInstruc
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -21041,6 +23999,13 @@ func ParseInterruptSessionResponse(rsp *http.Response) (*InterruptSessionRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -21085,6 +24050,161 @@ func ParseRespondSessionResponse(rsp *http.Response) (*RespondSessionResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListResponsesResponse parses an HTTP response from a ListResponsesWithResponse call
+func ParseListResponsesResponse(rsp *http.Response) (*ListResponsesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListResponsesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []AgentResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateResponseResponse parses an HTTP response from a CreateResponseWithResponse call
+func ParseCreateResponseResponse(rsp *http.Response) (*CreateResponseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateResponseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest AgentResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListResponseItemsResponse parses an HTTP response from a ListResponseItemsWithResponse call
+func ParseListResponseItemsResponse(rsp *http.Response) (*ListResponseItemsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListResponseItemsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []AgentResponseItem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -21127,6 +24247,13 @@ func ParseSaySessionResponse(rsp *http.Response) (*SaySessionResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -21175,6 +24302,13 @@ func ParseListSimulationRunsResponse(rsp *http.Response) (*ListSimulationRunsRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	}
 
 	return response, nil
@@ -21214,6 +24348,13 @@ func ParseGetSimulationRunResponse(rsp *http.Response) (*GetSimulationRunRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -21315,6 +24456,13 @@ func ParseListSimulationsResponse(rsp *http.Response) (*ListSimulationsResponse,
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 
@@ -21452,6 +24600,13 @@ func ParseGetSimulationResponse(rsp *http.Response) (*GetSimulationResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -21608,6 +24763,13 @@ func ParseListSkillsResponse(rsp *http.Response) (*ListSkillsResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	}
 
 	return response, nil
@@ -21744,6 +24906,13 @@ func ParseGetSkillResponse(rsp *http.Response) (*GetSkillResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -21893,6 +25062,13 @@ func ParseListVoicesResponse(rsp *http.Response) (*ListVoicesResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	}
 
 	return response, nil
@@ -22029,6 +25205,13 @@ func ParseGetVoiceResponse(rsp *http.Response) (*GetVoiceResponse, error) {
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -22239,6 +25422,13 @@ func ParsePlacePhoneCallResponse(rsp *http.Response) (*PlacePhoneCallResponse, e
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -22286,6 +25476,13 @@ func ParseTransferPhoneCallResponse(rsp *http.Response) (*TransferPhoneCallRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -22328,6 +25525,13 @@ func ParsePressPhoneDigitsResponse(rsp *http.Response) (*PressPhoneDigitsRespons
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -22376,6 +25580,13 @@ func ParseListPhoneNumbersResponse(rsp *http.Response) (*ListPhoneNumbersRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	}
 
 	return response, nil
@@ -22415,6 +25626,13 @@ func ParseBuyPhoneNumberResponse(rsp *http.Response) (*BuyPhoneNumberResponse, e
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -22463,6 +25681,13 @@ func ParseSearchPhoneNumbersResponse(rsp *http.Response) (*SearchPhoneNumbersRes
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -22505,6 +25730,13 @@ func ParseReleasePhoneNumberResponse(rsp *http.Response) (*ReleasePhoneNumberRes
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -22553,6 +25785,13 @@ func ParseAttachPhoneNumberResponse(rsp *http.Response) (*AttachPhoneNumberRespo
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -22593,6 +25832,13 @@ func ParseListPhoneVendorsResponse(rsp *http.Response) (*ListPhoneVendorsRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	}
 
 	return response, nil
@@ -22632,6 +25878,13 @@ func ParseListRouterConfigsResponse(rsp *http.Response) (*ListRouterConfigsRespo
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 
@@ -22769,6 +26022,13 @@ func ParseGetRouterConfigResponse(rsp *http.Response) (*GetRouterConfigResponse,
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -22918,6 +26178,13 @@ func ParseRunRollupResponse(rsp *http.Response) (*RunRollupResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	}
 
 	return response, nil
@@ -22957,6 +26224,13 @@ func ParseTranscribeRecordingResponse(rsp *http.Response) (*TranscribeRecordingR
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -23005,6 +26279,13 @@ func ParseGetTranscriptionResponse(rsp *http.Response) (*GetTranscriptionRespons
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -23051,6 +26332,13 @@ func ParseRecordSpeechResponse(rsp *http.Response) (*RecordSpeechResponse, error
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -23099,6 +26387,13 @@ func ParseGetSpeechResponse(rsp *http.Response) (*GetSpeechResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -23146,6 +26441,13 @@ func ParseGetTurnStatsResponse(rsp *http.Response) (*GetTurnStatsResponse, error
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	}
 
 	return response, nil
@@ -23178,6 +26480,13 @@ func ParseListProvidersResponse(rsp *http.Response) (*ListProvidersResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -23218,6 +26527,13 @@ func ParseResolveTargetResponse(rsp *http.Response) (*ResolveTargetResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
@@ -23266,6 +26582,13 @@ func ParseGetStatsResponse(rsp *http.Response) (*GetStatsResponse, error) {
 		}
 		response.JSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -23312,6 +26635,13 @@ func ParseGetTagStatsResponse(rsp *http.Response) (*GetTagStatsResponse, error) 
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest NotFound

@@ -257,6 +257,9 @@ type AgentConfig struct {
 	Search         string            `bun:"search,notnull"`
 	Instructions   string            `bun:"instructions,notnull"`
 	Greeting       string            `bun:"greeting,notnull"`
+	// Guardrail is a guardrail.md: frontmatter saying how to screen a turn, then the
+	// policy in prose. Empty, which most configs are, means every turn is answered.
+	Guardrail string `bun:"guardrail,notnull"`
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
@@ -938,4 +941,202 @@ type APIKey struct {
 	LastUsedAt *time.Time `bun:"last_used_at"`
 	RevokedAt  *time.Time `bun:"revoked_at"`
 	RevokedBy  string     `bun:"revoked_by,notnull"`
+}
+
+// What a session is doing, as a stored row reports it.
+const (
+	// SessionRunning is a session the router still holds.
+	SessionRunning = "running"
+	// SessionClosed is one that ended, however it ended.
+	SessionClosed = "closed"
+)
+
+// ModelOverwrites is what a caller asked to change about the models for one session.
+//
+// It is one object rather than a dozen top-level fields because it is one idea: everything
+// here overrides what the agent config already decided, and a caller reading the session
+// back wants to see what they changed in one place rather than diffed against a config they
+// would have to fetch. The route fields name targets the deployment's own catalogue
+// resolves; Thinking, Temperature and MaxOutputTokens are folded into the LLM options the
+// same way the router's own overrides are.
+type ModelOverwrites struct {
+	LLM      string `json:"llm,omitempty"`
+	STT      string `json:"stt,omitempty"`
+	TTS      string `json:"tts,omitempty"`
+	STS      string `json:"sts,omitempty"`
+	Subagent string `json:"subagent,omitempty"`
+	Search   string `json:"search,omitempty"`
+	// Thinking is how hard to reason: off, low, medium or high. It becomes the reasoning
+	// effort on the LLM options, which is what the providers that support one are sent.
+	Thinking        string   `json:"thinking,omitempty"`
+	Temperature     *float64 `json:"temperature,omitempty"`
+	MaxOutputTokens *int     `json:"max_output_tokens,omitempty"`
+	Verbosity       string   `json:"verbosity,omitempty"`
+}
+
+// Empty reports whether the caller asked to change nothing, which is the usual case and
+// worth not writing a row for.
+func (m ModelOverwrites) Empty() bool {
+	return m == ModelOverwrites{}
+}
+
+// AgentSession is one session a caller opened, kept so it can be found after the process
+// that held it is gone.
+//
+// Deliberately not a Call. A call row is a call: keyed by the Stream call it joined,
+// carrying numbers and a direction and the review a finished call gets. A text conversation
+// somebody opened from a page has none of that, and making it borrow them would mean every
+// browser conversation pretending to have been a phone call.
+//
+// What was said is not here either. The transcript is in Stream Chat under ConversationID
+// and the turn timings are in Turn; this row is the handle that ties them together and
+// carries what the caller labelled the conversation with.
+type AgentSession struct {
+	bun.BaseModel `bun:"table:agent_sessions,alias:asn"`
+
+	// ID is the session id the caller already holds the session by.
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// ConfigID names the stored config, and AgentName the name it was found by. The name
+	// is kept as well because it is what a caller filters on, and because renaming a
+	// config must not rewrite what older sessions were opened against.
+	ConfigID  string `bun:"config_id,nullzero"`
+	AgentName string `bun:"agent_name,notnull"`
+	// AgentID is the transcript channel and ConversationID the same thing as a CID.
+	AgentID        string `bun:"agent_id,notnull"`
+	ConversationID string `bun:"conversation_id,notnull"`
+	// UserID is whose session it is; CallerKind says what that name is worth.
+	UserID      string `bun:"user_id,notnull"`
+	CallerKind  string `bun:"caller_kind,notnull"`
+	Title       string `bun:"title,notnull"`
+	Description string `bun:"description,notnull"`
+	// Project is what the conversation belongs to, a column as well as a cost tag so a
+	// list grouped by project needs no JSON unpacking.
+	Project string `bun:"project,notnull"`
+	// Custom is the caller's own, handed back untouched and never read by the router.
+	Custom          map[string]any  `bun:"custom,type:jsonb,nullzero"`
+	ModelOverwrites ModelOverwrites `bun:"model_overwrites,type:jsonb,nullzero"`
+	CallID          string          `bun:"call_id,nullzero"`
+	CallType        string          `bun:"call_type,nullzero"`
+	// ForkedFrom is the session this one continued from, empty for one opened fresh.
+	ForkedFrom string    `bun:"forked_from,nullzero"`
+	State      string    `bun:"state,notnull"`
+	CreatedAt  time.Time `bun:"created_at,notnull"`
+	UpdatedAt  time.Time `bun:"updated_at,notnull"`
+	// ClosedAt is nil while the session is still running.
+	ClosedAt       *time.Time `bun:"closed_at"`
+	LastResponseAt *time.Time `bun:"last_response_at"`
+}
+
+// SessionFilter narrows a session list to the ones worth reading.
+//
+// UserID is not a field a caller sets freely: the handler fills it from the credential for
+// anybody who is not the app's own backend, because a filter a user could widen is not a
+// filter at all.
+type SessionFilter struct {
+	UserID    string
+	ConfigID  string
+	AgentName string
+	Project   string
+	// State is running or closed. Empty is both.
+	State string
+	// Custom matches sessions whose custom object contains every one of these pairs, which
+	// is what makes custom worth writing: a caller that labelled a session can find it
+	// again by the label.
+	Custom map[string]string
+	Before time.Time
+	After  time.Time
+	Limit  int
+	Offset int
+}
+
+// What became of one response.
+const (
+	// ResponseRunning is a turn the agent is still taking.
+	ResponseRunning = "running"
+	// ResponseCompleted is one that finished and said something.
+	ResponseCompleted = "completed"
+	// ResponseFailed is one that could not be taken.
+	ResponseFailed = "failed"
+	// ResponseCancelled is one interrupted partway, which is a different thing from
+	// failing: the caller stopped it, and what it had already said still counts.
+	ResponseCancelled = "cancelled"
+)
+
+// AgentResponse is one turn the agent took in a session.
+type AgentResponse struct {
+	bun.BaseModel `bun:"table:agent_responses,alias:ars"`
+
+	ID         string `bun:"id,pk"`
+	SessionID  string `bun:"session_id,notnull"`
+	CustomerID string `bun:"customer_id,notnull"`
+	// Said is what the person asked. It is on the row as well as being the first item, so
+	// a list of turns reads without loading every turn's items.
+	Said       string     `bun:"said,notnull"`
+	Status     string     `bun:"status,notnull"`
+	Error      string     `bun:"error,notnull"`
+	CreatedAt  time.Time  `bun:"created_at,notnull"`
+	FinishedAt *time.Time `bun:"finished_at"`
+}
+
+// The kinds of item a response is made of.
+const (
+	// ItemSaid is what the person asked, which opens every response.
+	ItemSaid = "said"
+	// ItemThought is the model reasoning out loud, when a model reports any.
+	ItemThought = "thought"
+	// ItemToolCall is the agent deciding to use something, and ItemToolResult what came
+	// back. They are separate items because the gap between them is where the time goes.
+	ItemToolCall   = "tool_call"
+	ItemToolResult = "tool_result"
+	// ItemAnswer is what the agent said.
+	ItemAnswer = "answer"
+	// ItemBlocked is a turn a guardrail refused, and ItemError one that broke.
+	ItemBlocked = "blocked"
+	ItemError   = "error"
+)
+
+// AgentResponseItem is one thing that happened while the agent took a turn.
+//
+// Deltas are not items. A hundred fragments of one sentence are the sentence, and keeping
+// them would make this table mostly punctuation; a caller watching a turn happen reads the
+// deltas off the socket, and a caller reading one back wants the shape of it.
+type AgentResponseItem struct {
+	bun.BaseModel `bun:"table:agent_response_items,alias:ari"`
+
+	ResponseID string `bun:"response_id,pk"`
+	// Ordinal is the position within the response, assigned by the writer so a batch keeps
+	// the order it was produced in rather than the order it was inserted in.
+	Ordinal   int    `bun:"ordinal,pk"`
+	SessionID string `bun:"session_id,notnull"`
+	Kind      string `bun:"kind,notnull"`
+	Text      string `bun:"text,notnull"`
+	ToolName  string `bun:"tool_name,notnull"`
+	// Payload is whatever the kind carries that text cannot: a tool's arguments, a
+	// guardrail's reason, the attachments behind an answer.
+	Payload map[string]any `bun:"payload,type:jsonb,nullzero"`
+	At      time.Time      `bun:"at,notnull"`
+}
+
+// GuestUser is somebody who talked to an agent before they had an account.
+//
+// The row is not what makes them work -- a guest is a real Stream user with role guest, and
+// chat and video need nothing here -- it is what makes claiming them possible. Claiming
+// moves what a guest said onto a real account, so it has to be an operation only a backend
+// may ask for, and that needs a record of which ids were ever guests and which have already
+// been claimed.
+type GuestUser struct {
+	bun.BaseModel `bun:"table:guest_users,alias:gu"`
+
+	// ID is the Stream user id, which the caller holds and sends back to claim.
+	ID         string         `bun:"id,pk"`
+	CustomerID string         `bun:"customer_id,notnull"`
+	Name       string         `bun:"name,notnull"`
+	Custom     map[string]any `bun:"custom,type:jsonb,nullzero"`
+	CreatedAt  time.Time      `bun:"created_at,notnull"`
+	// ClaimedBy is the real user this guest turned out to be, empty while they are still a
+	// guest. A guest is claimed once: a second claim naming somebody else would move one
+	// person's conversations onto another's account.
+	ClaimedBy string     `bun:"claimed_by,nullzero"`
+	ClaimedAt *time.Time `bun:"claimed_at"`
 }

@@ -19,10 +19,11 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifier"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifier/typesafe"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/typesafe"
 )
 
 // benchmarkEnvVar has to be set for the benchmark to run, because six hundred round trips to
@@ -323,9 +324,9 @@ func (s *FlowBenchmarkSuite) jevArms() []arm {
 // The two choices, which are the two axes the conversation reads. Their options are described in
 // the words the production prompt uses, so what differs between the arms is the model and the
 // shape of the answer rather than the policy.
-func jevChoices() map[string]typesafe.Question {
-	return map[string]typesafe.Question{
-		"disposition": typesafe.Choice(
+func jevChoices() map[string]llmclassifier.Question {
+	return map[string]llmclassifier.Question{
+		"disposition": llmclassifier.Choice(
 			"A voice agent is on a live call and has just heard `heard` from `speaker`. "+
 				"What should it do with those words?",
 			map[string]string{
@@ -340,7 +341,7 @@ func jevChoices() map[string]typesafe.Question {
 		// Asked whether or not the agent is speaking. When it is not, the answer decides
 		// nothing and the code ignores it, which costs a few tokens and saves a round trip on
 		// the cases where it does decide.
-		"floor": typesafe.Choice(
+		"floor": llmclassifier.Choice(
 			"Assume the agent is in the middle of saying `agent_has_said` out loud when "+
 				"`heard` arrives. Should it stop, cut its answer short, or carry on?",
 			map[string]string{
@@ -358,26 +359,26 @@ func jevChoices() map[string]typesafe.Question {
 // jevComposed asks the two choices and, separately, the four judgements the conversation
 // already makes in code rather than leaving to a model. Splitting them out is what lets the
 // policy stay in Go: the model says what is true and the code says what to do about it.
-func jevComposed() map[string]typesafe.Question {
+func jevComposed() map[string]llmclassifier.Question {
 	questions := jevChoices()
-	questions["addressed_to_agent"] = typesafe.Noul(
+	questions["addressed_to_agent"] = llmclassifier.Noul(
 		"Were the words in `heard` meant for the agent described in `agent_was_told`?",
 		"Spoken to the agent, whether or not they are finished.",
 		"Spoken to somebody else in the room, to a pet or a child, read off a television, "+
 			"or otherwise not meant for the agent. `different_voice` being true is evidence "+
 			"of this without settling it, because a second person may have leaned in to "+
 			"answer for the caller.")
-	questions["still_growing"] = typesafe.Noul(
+	questions["still_growing"] = llmclassifier.Noul(
 		"Does `heard` end part way through a number, an identifier or a time that the "+
 			"speaker is still reading out?",
 		"It ends mid-sequence, so more digits or words are still coming.",
 		"Whatever number it contains is complete, or it contains none.")
-	questions["recorded_menu"] = typesafe.Noul(
+	questions["recorded_menu"] = llmclassifier.Noul(
 		"Is `heard` a recording reading out its options rather than a person talking?",
 		"An automated menu, hold message or greeting, which is one thought however long "+
 			"the pauses between its parts.",
 		"A person speaking, however stilted.")
-	questions["non_speech"] = typesafe.Noul(
+	questions["non_speech"] = llmclassifier.Noul(
 		"Is `heard` a noise rather than words: a cough, a sneeze, a throat clear, a laugh, "+
 			"a door, static, or something else in the room?",
 		"A noise, or a transcriber's description of one.",
@@ -391,11 +392,14 @@ func (s *FlowBenchmarkSuite) askJev(
 	client *typesafe.Client,
 	one flowCase,
 	attempt int,
-	questions map[string]typesafe.Question,
+	questions map[string]llmclassifier.Question,
 	composed bool,
 ) (judgement, error) {
 	askedAt := time.Now()
-	answered, err := client.Ask(ctx, one.state(s.set.Contracts), questions)
+	answered, err := client.Classify(ctx, llmclassifier.Request{
+		State:     one.state(s.set.Contracts),
+		Questions: questions,
+	})
 	if err != nil {
 		return judgement{}, err
 	}
@@ -437,7 +441,7 @@ func (s *FlowBenchmarkSuite) askJev(
 // no longer measure.
 func composedOutcome(
 	one flowCase,
-	answers map[string]typesafe.Answer,
+	answers map[string]llmclassifier.Answer,
 	disposition Disposition,
 	floor Floor,
 ) flowOutcome {

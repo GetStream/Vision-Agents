@@ -45,6 +45,7 @@ class AgentConfig:
         search (str | Unset):
         instructions (str | Unset):
         greeting (str | Unset):
+        guardrail (str | Unset):
         skills (list[str] | Unset):
         plugins (list[str] | Unset):
         keyterms (list[str] | Unset):
@@ -73,6 +74,7 @@ class AgentConfig:
     search: str | Unset = UNSET
     instructions: str | Unset = UNSET
     greeting: str | Unset = UNSET
+    guardrail: str | Unset = UNSET
     skills: list[str] | Unset = UNSET
     plugins: list[str] | Unset = UNSET
     keyterms: list[str] | Unset = UNSET
@@ -118,6 +120,8 @@ class AgentConfig:
         instructions = self.instructions
 
         greeting = self.greeting
+
+        guardrail = self.guardrail
 
         skills: list[str] | Unset = UNSET
         if not isinstance(self.skills, Unset):
@@ -176,6 +180,8 @@ class AgentConfig:
             field_dict["instructions"] = instructions
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
+        if guardrail is not UNSET:
+            field_dict["guardrail"] = guardrail
         if skills is not UNSET:
             field_dict["skills"] = skills
         if plugins is not UNSET:
@@ -244,6 +250,8 @@ class AgentConfig:
 
         greeting = d.pop("greeting", UNSET)
 
+        guardrail = d.pop("guardrail", UNSET)
+
         skills = cast(list[str], d.pop("skills", UNSET))
 
         plugins = cast(list[str], d.pop("plugins", UNSET))
@@ -285,6 +293,7 @@ class AgentConfig:
             search=search,
             instructions=instructions,
             greeting=greeting,
+            guardrail=guardrail,
             skills=skills,
             plugins=plugins,
             keyterms=keyterms,

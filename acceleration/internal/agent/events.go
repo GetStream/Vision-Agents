@@ -123,6 +123,29 @@ type Responded struct {
 
 func (Responded) isAgentEvent() {}
 
+// Blocked means the guardrail refused a turn, so what the caller hears is the policy's
+// refusal rather than the model's reply.
+//
+// It is reported beside the ordinary turn events rather than instead of them: a refused
+// turn still emits Responding and Responded, so a client that has never heard of a
+// guardrail shows it as a normal exchange. This is what a client that has heard of one
+// needs in order to say why.
+type Blocked struct {
+	TurnID string
+	// Reason is what the check said, for an operator reading the log. It is not what the
+	// caller hears: a reason quoting the policy back is a map of how to get around it.
+	Reason string
+	// Probability is what a classifier or judge put on the turn violating the policy.
+	// Zero from a webhook, which answers yes or no itself.
+	Probability float64
+	// HeldMs is how long a finished reply waited on the verdict, which is the whole of
+	// what screening in parallel costs a caller. Zero in blocking mode, where the model
+	// was not asked until the verdict was in.
+	HeldMs float64
+}
+
+func (Blocked) isAgentEvent() {}
+
 // Spoke means a piece of the reply finished being synthesised and published.
 type Spoke struct {
 	TurnID string

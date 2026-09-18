@@ -9,10 +9,19 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
+
+// Recall names a conversation to read history out of. Both halves are needed because a
+// channel is only readable as the agent it belongs to, and a fork onto a different agent
+// still has to read the old one's words.
+type Recall struct {
+	AgentID        string
+	ConversationID string
+}
 
 // Spec is a conversation somebody outside this process asked for.
 //
@@ -61,16 +70,55 @@ type Spec struct {
 	// ConfigID names the agent config this session was created from, so a call can later
 	// say what the agent was configured as. Empty for a session that spelled itself out.
 	ConfigID string
+	// AgentName is the name that config was found by, which is what a caller addressed the
+	// agent as. Kept alongside the id because it is what a caller filters their old
+	// conversations on, and because renaming a config must not rewrite what older sessions
+	// were opened against.
+	AgentName string
 	// AgentID keys transcripts and statistics. Empty means the call id.
 	AgentID string
 	// Tags are the caller's own cost labels, carried onto every request the session
 	// makes.
 	Tags routing.Tags
 
+	// Incognito holds the conversation and records nothing about it: no session row, no
+	// turns, no transcript. It is the one field that makes a session unfindable afterwards,
+	// which is the whole point of it -- a person asking a question they would rather not
+	// have kept should not have to trust that a "hidden" flag is honoured everywhere.
+	//
+	// It forces PersistConversation off, because a channel in Stream Chat is a record.
+	Incognito bool
+	// Title and Description are the caller's own names for the conversation, for a list a
+	// person reads. Never shown to the model: what a conversation is called is a label on
+	// it rather than part of it.
+	Title       string
+	Description string
+	// Project is what the conversation belongs to. Also merged into Tags, so spend breaks
+	// down by project without the caller labelling it twice.
+	Project string
+	// Custom is whatever the caller wants to remember about the session, handed back
+	// untouched and never read here. A field this package interpreted would be a field it
+	// could break.
+	Custom map[string]any
+	// ModelOverwrites is what the caller asked to change about the models for this session,
+	// over whatever the config decided. The route fields are folded into the targets above
+	// during Normalize; the rest reach the conversation model as options.
+	ModelOverwrites store.ModelOverwrites
+	// ForkedFrom is the session this one continued from, empty for one opened fresh.
+	ForkedFrom string
+	// Recall is the conversation a fork starts from, which is not the conversation it
+	// writes into. The parent's words are read out of its channel and given to the model;
+	// the fork's own transcript goes into its own channel, so continuing a conversation
+	// twice gives two transcripts rather than one with both halves interleaved.
+	Recall *Recall
+
 	Instructions string
 	// Greeting is said on joining without going through the model. Empty means the agent
 	// waits to be spoken to.
 	Greeting string
+	// Guardrail is a guardrail.md, whole: frontmatter saying how a turn is screened, then
+	// the policy in prose. Empty means every turn is answered.
+	Guardrail string
 	// Navigating tells an agent that placed this call how to get past whatever answers.
 	Navigating bool
 
@@ -174,6 +222,7 @@ func FromConfig(config store.AgentConfig) Spec {
 	return Spec{
 		CustomerID: config.CustomerID,
 		ConfigID:   config.ID,
+		AgentName:  config.Name,
 		// A text agent holds its conversation in writing, so a session created from one
 		// joins no call unless the request asks for a voice session explicitly.
 		Text:           config.Mode == store.AgentModeText,
@@ -187,6 +236,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		SearchTarget:       config.Search,
 		Instructions:       config.Instructions,
 		Greeting:           config.Greeting,
+		Guardrail:          config.Guardrail,
 		SkillNames:         config.Skills,
 		Plugins:            config.Plugins,
 		Keyterms:           config.Keyterms,
@@ -198,6 +248,33 @@ func FromConfig(config store.AgentConfig) Spec {
 
 // Normalize fills in the defaults a caller left out and reports what cannot be defaulted.
 func (s *Spec) Normalize() error {
+	// The overwrites are applied before anything is defaulted, so a target the caller asked
+	// for is what gets defaulted around rather than one the config happened to name. A
+	// caller who asks for a native model in a text session, say, should be refused for that
+	// reason rather than have the refusal depend on which of the two was read first.
+	s.applyOverwrites()
+
+	// Incognito is honoured here rather than at each of the places that records something,
+	// because one place that forgot would be a conversation kept against its caller's
+	// wishes. Everything downstream reads the spec, so turning persistence off here turns
+	// it off everywhere.
+	if s.Incognito {
+		s.PersistConversation = false
+		s.ConversationID = ""
+		s.NoReview = true
+	}
+
+	// A project is a cost label as much as it is a grouping, so it is merged into the tags
+	// rather than the caller having to say it twice. An explicit tag wins: somebody who
+	// spelled out project in tags meant that.
+	if s.Project != "" {
+		if s.Tags == nil {
+			s.Tags = routing.Tags{}
+		}
+		if _, named := s.Tags[projectTag]; !named {
+			s.Tags[projectTag] = s.Project
+		}
+	}
 
 	s.CallID = strings.TrimSpace(s.CallID)
 	switch {
@@ -273,6 +350,58 @@ func (s *Spec) Normalize() error {
 // Native reports whether this session is held by one speech-to-speech model rather than
 // the cascade of a transcriber, a conversation model and a voice.
 func (s Spec) Native() bool { return s.STSTarget != "" }
+
+// projectTag is the cost label a project is carried as, which is the one the stats rollups
+// already break spend down by.
+const projectTag = "project"
+
+// applyOverwrites folds what the caller asked to change about the models into the targets.
+//
+// Route names go onto the spec because that is where the rest of the package looks for
+// them; the numbers do not, because they are per-request options rather than routing
+// decisions, and they reach the model through LLMOptions instead.
+func (s *Spec) applyOverwrites() {
+	over := s.ModelOverwrites
+	if over.LLM != "" {
+		s.LLMTarget = over.LLM
+	}
+	if over.STT != "" {
+		s.STTTarget = over.STT
+	}
+	if over.TTS != "" {
+		s.TTSTarget = over.TTS
+	}
+	if over.STS != "" {
+		s.STSTarget = over.STS
+	}
+	if over.Subagent != "" {
+		s.SubagentTarget = over.Subagent
+		// Naming one subagent replaces the default of a config that named several, the same
+		// way the request's own subagent field does: otherwise the map would keep answering
+		// for the target the caller just overrode.
+		delete(s.Subagents, "default")
+	}
+	if over.Search != "" {
+		s.SearchTarget = over.Search
+	}
+}
+
+// LLMOverwrites is what the caller asked to change about the conversation model itself, as
+// options to merge over whatever the route resolved.
+//
+// Separate from the routing half because they travel differently: a target is chosen once
+// when the session opens, while these ride along on every request the session makes. The
+// field names are the provider's own, which is why thinking arrives here as the reasoning
+// effort the providers that support one already speak.
+func (s Spec) LLMOverwrites() options.LLM {
+	over := s.ModelOverwrites
+	return options.LLM{
+		ReasoningEffort: over.Thinking,
+		Temperature:     over.Temperature,
+		MaxOutputTokens: over.MaxOutputTokens,
+		Verbosity:       over.Verbosity,
+	}
+}
 
 // prompt is what the agent is told to be. An agent that placed the call is told how to get
 // through whatever answers, ahead of whatever it was told to do once it has.

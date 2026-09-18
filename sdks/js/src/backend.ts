@@ -16,6 +16,27 @@ const TOKEN_VALIDITY_SECONDS = 60 * 60;
 /** A token the SDK was handed, or a function that fetches a fresh one. */
 export type TokenSource = string | (() => string | Promise<string>);
 
+/**
+ * Somebody a client is acting for, as Stream knows them.
+ *
+ * Only the id is needed here, because it is the token that says who they are and the app's
+ * own backend that minted it. The name and the rest are carried so chat and video have
+ * something to show without a second lookup.
+ */
+export interface StreamUser {
+  id: string;
+  name?: string;
+  image?: string;
+  [custom: string]: unknown;
+}
+
+/** What Stream's own chat and video clients connect with. */
+export interface StreamCredentials {
+  apiKey: string;
+  user: StreamUser;
+  token: string;
+}
+
 /** The subset of the WebSocket constructor this SDK uses. */
 export type WebSocketLike = Pick<
   WebSocket,
@@ -94,11 +115,18 @@ export class Backend {
   readonly url: string;
   readonly customerId: string;
   readonly apiKey: string;
-  readonly userId: string;
   /** Whether the credential is spelled for Stream's proxy rather than for the router. */
   readonly authenticate: boolean;
   private readonly apiSecret: string;
-  private readonly token: TokenSource | undefined;
+  /**
+   * Who this is acting for and what it holds for them, which `setUser` replaces.
+   *
+   * Mutable because a browser has no credential when the page loads: the client is built
+   * against a URL and a key, and the token arrives once the app knows who is looking at it.
+   */
+  private userIdValue: string;
+  private token: TokenSource | undefined;
+  private user: StreamUser | undefined;
   private readonly fetchImpl: typeof fetch;
   private readonly webSocketImpl: WebSocketConstructor | undefined;
 
@@ -117,7 +145,7 @@ export class Backend {
     // secret in its environment, which is most of them and every test.
     this.apiSecret = options.apiSecret ?? (options.token ? "" : env(API_SECRET_ENV) ?? "");
     this.token = options.token;
-    this.userId = options.userId ?? "";
+    this.userIdValue = options.userId ?? "";
     this.authenticate = options.authenticate ?? boolean(env(AUTHENTICATE_ENV));
     this.webSocketImpl = options.webSocket ?? globalWebSocket();
 
@@ -129,6 +157,59 @@ export class Backend {
     }
     this.fetchImpl = chosen;
 
+    // Falling back to the customer header would send a request the proxy refuses, and
+    // report it as whatever the proxy says rather than as what it is. This one is checked
+    // here rather than at first use because it is a contradiction in what was passed, not a
+    // credential that has yet to arrive.
+    if (this.authenticate && !this.apiKey) {
+      throw new ConfigurationError(
+        `a router behind the proxy is reached with a credential; pass apiKey, or ${API_KEY_ENV}`,
+      );
+    }
+  }
+
+  /** Who this is acting for, which is empty until a token or a user id says. */
+  get userId(): string {
+    return this.userIdValue;
+  }
+
+  /** The user `setUser` was given, for a caller that wants their name back. */
+  get identity(): StreamUser | undefined {
+    return this.user;
+  }
+
+  /**
+   * Says who this client is acting for, and hands over the token that proves it.
+   *
+   * A browser has no credential when the page loads: the app knows who is looking at it
+   * only after its own backend has said so, which is also where the token comes from. So
+   * the client is built against a URL and a key, and this arrives afterwards.
+   *
+   * It is async because it is what a caller awaits before making a request — nothing is
+   * fetched here, but `await client.setUser(...)` is the line that reads as "from here on
+   * this is Jim", and making it synchronous would invite requests that raced it.
+   */
+  async setUser(user: StreamUser | string, token: TokenSource): Promise<void> {
+    const named = typeof user === "string" ? { id: user } : user;
+    if (!named.id) {
+      throw new ConfigurationError("a user needs an id");
+    }
+    if (!token) {
+      throw new ConfigurationError(`there is no token for ${named.id} to hold`);
+    }
+    this.user = named;
+    this.userIdValue = named.id;
+    this.token = token;
+  }
+
+  /**
+   * Refuses a request there is no way to authenticate.
+   *
+   * Checked here rather than in the constructor because the requested shape supplies the
+   * credential afterwards: `new Client({ url, apiKey })` is a client waiting for a
+   * `setUser`, and throwing on that line would make the shape impossible to write.
+   */
+  private assertCredentialed(): void {
     if (!this.apiKey && !this.customerId) {
       throw new ConfigurationError(
         `who is calling is not set; pass customerId or ${CUSTOMER_ENV} for a router that ` +
@@ -137,14 +218,7 @@ export class Backend {
     }
     if (this.apiKey && !this.apiSecret && !this.token) {
       throw new ConfigurationError(
-        "apiKey needs the secret it belongs to, or a token minted with it",
-      );
-    }
-    // Falling back to the customer header would send a request the proxy refuses, and
-    // report it as whatever the proxy says rather than as what it is.
-    if (this.authenticate && !this.apiKey) {
-      throw new ConfigurationError(
-        `a router behind the proxy is reached with a credential; pass apiKey, or ${API_KEY_ENV}`,
+        "apiKey needs the secret it belongs to, a token minted with it, or a setUser call",
       );
     }
   }
@@ -167,6 +241,7 @@ export class Backend {
    * holding an expired one.
    */
   async headers(): Promise<Record<string, string>> {
+    this.assertCredentialed();
     if (!this.apiKey) {
       return { "X-Customer-Id": this.customerId };
     }
@@ -205,6 +280,7 @@ export class Backend {
    * from a browser cannot claim to be a backend.
    */
   async socketURL(path: string, query: Record<string, string> = {}): Promise<string> {
+    this.assertCredentialed();
     const url = new URL(this.url.replace(/^http/, "ws") + path);
     for (const [name, value] of Object.entries(query)) {
       url.searchParams.set(name, value);
@@ -242,6 +318,35 @@ export class Backend {
   /** Sends one request. Exposed so the client and the sockets share one fetch. */
   request(url: string, init: RequestInit): Promise<Response> {
     return this.fetchImpl(url, init);
+  }
+
+  /**
+   * What Stream's own chat and video clients need to connect, or undefined.
+   *
+   * Undefined for a backend reached by customer id: that is this router's own way of
+   * trusting a caller and means nothing to Stream, so there is no credential to pass on. A
+   * server-side backend gets a token minted for the user it is acting for rather than its
+   * own server token, because a chat client connects as somebody.
+   */
+  async streamCredentials(): Promise<StreamCredentials | undefined> {
+    if (!this.apiKey) {
+      return undefined;
+    }
+    const user = this.user ?? (this.userIdValue ? { id: this.userIdValue } : undefined);
+    if (!user) {
+      return undefined;
+    }
+    if (this.token) {
+      return { apiKey: this.apiKey, user, token: await this.userToken() };
+    }
+    if (!this.apiSecret) {
+      return undefined;
+    }
+    return {
+      apiKey: this.apiKey,
+      user,
+      token: await signToken({ user_id: user.id }, this.apiSecret),
+    };
   }
 
   /**

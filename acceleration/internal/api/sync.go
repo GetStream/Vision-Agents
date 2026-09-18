@@ -72,6 +72,7 @@ func (s *Server) SyncAgent(ctx context.Context, request SyncAgentRequestObject) 
 		config = store.AgentConfig{CustomerID: customerID, Name: name}
 	}
 	config.Instructions = value(body.Instructions)
+	config.Guardrail = value(body.Guardrail)
 	config.Skills = named
 	config.KnowledgeNamespace = namespace
 	config.SyncHash = hash
@@ -106,6 +107,9 @@ func syncComplaint(body SyncAgentRequest) (string, bool) {
 	}
 	if _, ok := modeOf(body.Mode); !ok {
 		return fmt.Sprintf("an agent is either %s or %s", store.AgentModeVoice, store.AgentModeText), false
+	}
+	if complaint, ok := guardrailComplaint(body.Guardrail); !ok {
+		return complaint, false
 	}
 	if len(keytermsOf(body.Keyterms)) > stt.MaxKeyterms {
 		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false

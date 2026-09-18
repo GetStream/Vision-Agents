@@ -370,7 +370,11 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** The agent configs the calling customer holds */
+        /**
+         * The agent configs the calling customer holds
+         * @description With a name this is how a name becomes a config, which is what lets a backend say "docs" instead of an id it never chose.
+         *     Server-side only, as it always was: a config carries the instructions the agent runs under, and those are not a page's business. A page addressing an agent by name does not need this -- it sends the name on the create-session request and the router resolves it, which is the same lookup without handing the instructions over.
+         */
         readonly get: operations["listAgentConfigs"];
         readonly put?: never;
         /**
@@ -481,6 +485,49 @@ export type paths = {
         readonly get: operations["getConversationMessages"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/guests": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Mint a guest so somebody can talk to an agent before signing up
+         * @description Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+         *     Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
+         */
+        readonly post: operations["createGuestUser"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/guests/claim": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Move a guest's conversations onto the account they turned out to be
+         * @description For somebody who talked to an agent and then signed up. Their sessions are rewritten to the real user and the guest is marked claimed, in one transaction: a guest marked claimed whose sessions still say the guest owns them is a person who signed up and lost their history, and sessions moved without the guest being marked is a guest that can be claimed again, by somebody else.
+         *     Server-side only, and the one operation here that most needs to be. Only the customer's own backend knows that a given guest is a given account -- it is the thing that just authenticated them. A page allowed to ask this could claim anybody's conversations by guessing a guest id, which is the whole attack.
+         *     A guest already claimed is refused rather than moved again.
+         */
+        readonly post: operations["claimGuestUser"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -677,7 +724,11 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** The sessions the calling customer is running */
+        /**
+         * The sessions the calling customer is running
+         * @description Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
+         *     A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
+         */
         readonly get: operations["listSessions"];
         readonly put?: never;
         /**
@@ -734,6 +785,27 @@ export type paths = {
         readonly get: operations["watchSession"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/fork": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Continue a conversation as a new one
+         * @description Opens a session from another's spec, carrying its history across by default, and records where it came from. The usual reason is to ask the same question of a different model without losing the original answer, which is why anything in the request is written over what the parent was opened with.
+         *     The parent is untouched and keeps running if it was running. Forking an incognito session is refused rather than answered with an empty conversation: there is nothing recorded to fork from, and pretending otherwise would hand back a session that quietly lost everything the caller thought they were continuing.
+         */
+        readonly post: operations["forkSession"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -797,6 +869,53 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/sessions/{id}/responses": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The turns the agent took in a session
+         * @description Oldest first, which read in order are the conversation. This is the shape of it rather than the text: what was asked, whether the turn finished, and how long it took. The items endpoint is what carries what happened inside each one.
+         */
+        readonly get: operations["listResponses"];
+        readonly put?: never;
+        /**
+         * Ask the agent something and get a handle on the answer
+         * @description The same thing respond does, with an id back. That is the whole difference and the reason this exists: respond returns nothing, so a caller that wants to follow one particular turn has to watch the socket and guess which events belong to it. With an id it can ask for that turn's items instead.
+         *     It returns as soon as the turn has started, not when it has finished. A model takes seconds and a request that waited them out would time out on anything long enough to be worth asking.
+         */
+        readonly post: operations["createResponse"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/responses/items": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What the agent did, turn by turn, in the order it happened
+         * @description One flat stream across every turn rather than a list per turn, because that is how a conversation reads and how it is rendered: the question, what the agent did about it, what it said, then the next question. Naming a response narrows it to that turn.
+         *     Deltas are not here. A hundred fragments of one sentence are the sentence, and keeping them would make this mostly punctuation; a caller watching a turn happen reads the deltas off the events socket, and a caller reading one back wants the shape of it.
+         *     Nothing is returned for an incognito session, which has no items to return.
+         */
+        readonly get: operations["listResponseItems"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sessions/{id}/say": {
         readonly parameters: {
             readonly query?: never;
@@ -811,6 +930,28 @@ export type paths = {
          * @description For when the caller already knows what should be said, such as a greeting. A model would only add latency and cost to words that were never in question.
          */
         readonly post: operations["saySession"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/search": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Find a conversation by what it was called
+         * @description Full text over the title, description, project and agent name, best match first, with titles weighted above the rest so the conversation called "billing" beats every conversation in the billing project.
+         *     What was said is not searched. Doing so would mean either reading every conversation out of Stream Chat on each query, which is too slow to offer, or keeping a second copy of every message here, which is a transcript that can drift from the real one. Titles and descriptions are what a person names a conversation with, and naming them is the habit worth encouraging.
+         *     The same owner scoping as listing applies, and the same filters narrow it, so a search cannot reach a conversation a list could not. An empty q is the same as no q and falls through to the list, because a search box nobody has typed in yet should show a person their conversations rather than nothing.
+         */
+        readonly get: operations["searchSessions"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1584,6 +1725,38 @@ export type components = {
          * @enum {string}
          */
         readonly AgentMode: "voice" | "text";
+        readonly AgentResponse: {
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly error?: string;
+            /** Format: date-time */
+            readonly finished_at?: string;
+            readonly id: string;
+            /** @description What the person asked, which is the first item of every response. */
+            readonly said?: string;
+            readonly session_id: string;
+            /**
+             * @description cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts.
+             * @enum {string}
+             */
+            readonly status: "running" | "completed" | "failed" | "cancelled";
+        };
+        readonly AgentResponseItem: {
+            /** Format: date-time */
+            readonly at: string;
+            /** @enum {string} */
+            readonly kind: "said" | "thought" | "tool_call" | "tool_result" | "answer" | "blocked" | "error";
+            /** @description The position within the response, assigned by the writer rather than by the database, so items keep the order they happened in. */
+            readonly ordinal: number;
+            /** @description Whatever the kind carries that text cannot: a tool's arguments, a guardrail's reason, the id that ties a call to its result. */
+            readonly payload?: {
+                readonly [key: string]: unknown;
+            };
+            readonly response_id: string;
+            readonly session_id?: string;
+            readonly text?: string;
+            readonly tool_name?: string;
+        };
         readonly AttachedNumber: {
             readonly route_id: string;
             /** @description Where the vendor sends calls, e.g. sip:trunk@sip.stream-io-api.com. */
@@ -1784,6 +1957,17 @@ export type components = {
             /** @description The name shown against anything they write. Defaults to the user id. */
             readonly user_name?: string;
         };
+        readonly ClaimGuestRequest: {
+            readonly guest_id: string;
+            /** @description The account the guest turned out to be. */
+            readonly user_id: string;
+        };
+        readonly ClaimGuestResult: {
+            readonly guest_id: string;
+            /** @description How many conversations moved onto the account. */
+            readonly sessions_moved: number;
+            readonly user_id: string;
+        };
         readonly Contact: {
             readonly attempts: number;
             /** @description The call this contact became, which is what the call paths take. */
@@ -1805,7 +1989,14 @@ export type components = {
             }[];
         };
         readonly ContentPart: components["schemas"]["TextContentPart"] | components["schemas"]["ImageContentPart"];
+        readonly CreateResponseRequest: {
+            readonly images?: readonly components["schemas"]["ImageSource"][];
+            /** @description What to answer, as though it had been said. */
+            readonly text: string;
+        };
         readonly CreateSessionRequest: {
+            /** @description The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree. */
+            readonly agent?: string;
             /** @description Keys transcripts and statistics. Empty means the call id. */
             readonly agent_id?: string;
             /**
@@ -1823,8 +2014,19 @@ export type components = {
             readonly context_truncated?: boolean;
             /** @description Stream Chat CID to resume; returned for persistent text sessions. */
             readonly conversation_id?: string;
+            /** @description Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing. */
+            readonly custom?: {
+                readonly [key: string]: unknown;
+            };
+            /** @description A longer note about the conversation, searched alongside the title. */
+            readonly description?: string;
             /** @description Said on joining without going through the model. Empty means the agent waits to be spoken to. */
             readonly greeting?: string;
+            /**
+             * @description Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+             * @default false
+             */
+            readonly incognito?: boolean;
             readonly instructions?: string;
             /** @description Business-specific words the transcriber would otherwise get wrong. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
             readonly keyterms?: readonly string[];
@@ -1839,6 +2041,7 @@ export type components = {
              * @description How sure the transcriber must be before the agent answers rather than checks what was meant.
              */
             readonly min_confidence?: number;
+            readonly model_overwrites?: components["schemas"]["ModelOverwrites"];
             /**
              * @description The agent placed this call, so let recordings finish and answer their menus.
              * @default false
@@ -1847,6 +2050,8 @@ export type components = {
             /** @description Persist a text conversation in Stream Chat, creating a channel when no CID is supplied. */
             readonly persist_conversation?: boolean;
             readonly phone?: components["schemas"]["SessionPhone"];
+            /** @description What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins. */
+            readonly project?: string;
             readonly sandbox?: components["schemas"]["Sandbox"];
             /** @description Omit it and the config decides, or search-fast when there is no config. */
             readonly search?: string;
@@ -1875,6 +2080,8 @@ export type components = {
              * @default false
              */
             readonly text?: boolean;
+            /** @description What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it. */
+            readonly title?: string;
             /** @description How long the model waits for a tool result. Zero is the default. */
             readonly tool_timeout_ms?: number;
             readonly tools?: readonly components["schemas"]["SessionTool"][];
@@ -1914,11 +2121,56 @@ export type components = {
         readonly Error: {
             readonly error: string;
         };
+        /** @description Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model. */
+        readonly ForkSessionRequest: {
+            readonly agent?: string;
+            /** @description The call the fork joins. A voice session cannot be forked into a text one or the other way about, so this is required when the parent held a call and refused when it did not. */
+            readonly call_id?: string;
+            readonly config_id?: string;
+            readonly custom?: {
+                readonly [key: string]: unknown;
+            };
+            readonly description?: string;
+            /** @description Hold the fork off the record. The parent still exists; this conversation onwards is simply not kept. */
+            readonly incognito?: boolean;
+            readonly instructions?: string;
+            /**
+             * @description Carry the parent's history into the fork, so the new conversation continues from what was already said. False starts the same configuration over from nothing, which is what comparing two answers to the same opening question wants.
+             * @default true
+             */
+            readonly messages?: boolean;
+            readonly model_overwrites?: components["schemas"]["ModelOverwrites"];
+            readonly project?: string;
+            readonly title?: string;
+        };
         /**
          * @default hourly
          * @enum {string}
          */
         readonly Granularity: "hourly" | "daily";
+        readonly GuestUser: {
+            readonly custom?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Format: date-time
+             * @description When the token stops working. A guest coming back after it asks for another.
+             */
+            readonly expires_at?: string;
+            readonly id: string;
+            readonly name?: string;
+            /** @description A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it. */
+            readonly token: string;
+        };
+        readonly GuestUserRequest: {
+            readonly custom?: {
+                readonly [key: string]: unknown;
+            };
+            /** @description A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person. */
+            readonly id?: string;
+            /** @description What to call them, for a transcript a person reads later. */
+            readonly name?: string;
+        };
         readonly HealthStatus: {
             /**
              * @description Dependency name to "ok" or a failure description.
@@ -2065,6 +2317,38 @@ export type components = {
          * @enum {string}
          */
         readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "llm_classifier" | "memory" | "knowledge" | "phone";
+        /**
+         * @description What to change about the models for one session, over whatever its agent config decided.
+         *     It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+         */
+        readonly ModelOverwrites: {
+            /** @description A provider/model or a capability shortcut, in place of the config's. */
+            readonly llm?: string;
+            /** @description Caps the reply, reasoning included. Omitted leaves the provider's default. */
+            readonly max_output_tokens?: number;
+            readonly search?: string;
+            /** @description A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened. */
+            readonly sts?: string;
+            readonly stt?: string;
+            /** @description The model delegated work runs on. Naming one replaces a config's default worker, so the config cannot keep answering for the target just overwritten. */
+            readonly subagent?: string;
+            /**
+             * Format: double
+             * @description How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
+             */
+            readonly temperature?: number;
+            /**
+             * @description How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.
+             * @enum {string}
+             */
+            readonly thinking?: "none" | "minimal" | "low" | "medium" | "high";
+            readonly tts?: string;
+            /**
+             * @description How much detail to give. Dropped for models that do not take it.
+             * @enum {string}
+             */
+            readonly verbosity?: "low" | "medium" | "high";
+        };
         readonly NumberSearchResult: {
             /** @description What the vendors are offering, cheapest first. */
             readonly numbers: readonly components["schemas"]["AvailableNumber"][];
@@ -2336,22 +2620,46 @@ export type components = {
             readonly url: string;
         };
         readonly Session: {
+            /** @description The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against. */
+            readonly agent?: string;
             readonly agent_id: string;
             /** @description Empty for a text session, which joins no call. */
             readonly call_id: string;
             readonly call_type: string;
+            /**
+             * Format: date-time
+             * @description When the session ended. Absent while it is still running.
+             */
+            readonly closed_at?: string;
+            /** @description The agent config the session ran under, empty for one that spelled itself out. */
+            readonly config_id?: string;
             /** @description Older history was omitted from the model context. */
             readonly context_truncated?: boolean;
             /** @description Stream Chat CID to resume; returned for persistent text sessions. */
             readonly conversation_id?: string;
             /** Format: date-time */
             readonly created_at: string;
+            readonly custom?: {
+                readonly [key: string]: unknown;
+            };
+            readonly description?: string;
+            /** @description The session this one continued from, empty for one opened fresh. */
+            readonly forked_from?: string;
             readonly id: string;
+            /** @description Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from. */
+            readonly incognito?: boolean;
             readonly instructions?: string;
+            /**
+             * Format: date-time
+             * @description When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
+             */
+            readonly last_response_at?: string;
             /** @description The provider and model answering, once routing has picked one. */
             readonly llm?: string;
+            readonly model_overwrites?: components["schemas"]["ModelOverwrites"];
             /** @description Persist a text conversation in Stream Chat, creating a channel when no CID is supplied. */
             readonly persist_conversation?: boolean;
+            readonly project?: string;
             readonly state: components["schemas"]["SessionState"];
             /** @description The provider and model holding a native conversation, once routing has picked one. */
             readonly sts?: string;
@@ -2365,6 +2673,7 @@ export type components = {
             };
             /** @description The conversation is held in writing rather than on a call. */
             readonly text?: boolean;
+            readonly title?: string;
             /** @description The provider and model speaking. */
             readonly tts?: string;
             readonly user_id: string;
@@ -3238,14 +3547,40 @@ export type components = {
         };
     };
     parameters: {
+        /** @description Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one. */
+        readonly ConfigName: string;
+        /** @description Up to 1000. Omitted is 200. */
+        readonly ItemLimit: number;
         /** @description Which kind of model to route. */
         readonly Modality: components["schemas"]["Modality"];
         /** @description A built-in catalog id such as slack or calendly. */
         readonly PluginID: string;
         /** @description The resource, as returned when it was created. */
         readonly ResourceID: string;
+        /** @description Narrow to one turn's items. Omitted is every turn in the session. */
+        readonly ResponseIDFilter: string;
+        /** @description The agent name the session was opened against. */
+        readonly SessionAgent: string;
+        readonly SessionConfigID: string;
+        readonly SessionCreatedAfter: string;
+        readonly SessionCreatedBefore: string;
+        /**
+         * @description Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
+         * @example {"tenant":"acme"}
+         */
+        readonly SessionCustom: string;
         /** @description The session, as returned when it was created. */
         readonly SessionID: string;
+        /** @description Up to 200. Omitted is 25. */
+        readonly SessionLimit: number;
+        readonly SessionOffset: number;
+        readonly SessionProject: string;
+        /** @description What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error. */
+        readonly SessionSearchText: string;
+        /** @description Omitted is both. */
+        readonly SessionStateFilter: "running" | "closed";
+        /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary. */
+        readonly SessionUserID: string;
     };
     requestBodies: never;
     headers: never;
@@ -3845,7 +4180,10 @@ export interface operations {
     };
     readonly listAgentConfigs: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                /** @description Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one. */
+                readonly name?: components["parameters"]["ConfigName"];
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -4091,6 +4429,76 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly createGuestUser: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GuestUserRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The guest and a token for them */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GuestUser"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            /** @description This app does not admit guests */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly claimGuestUser: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ClaimGuestRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The conversations were moved */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ClaimGuestResult"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description That guest was already claimed */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly ingestKnowledge: {
@@ -4424,14 +4832,33 @@ export interface operations {
     };
     readonly listSessions: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                /** @description The agent name the session was opened against. */
+                readonly agent?: components["parameters"]["SessionAgent"];
+                readonly config_id?: components["parameters"]["SessionConfigID"];
+                readonly created_after?: components["parameters"]["SessionCreatedAfter"];
+                readonly created_before?: components["parameters"]["SessionCreatedBefore"];
+                /**
+                 * @description Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
+                 * @example {"tenant":"acme"}
+                 */
+                readonly custom?: components["parameters"]["SessionCustom"];
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: components["parameters"]["SessionLimit"];
+                readonly offset?: components["parameters"]["SessionOffset"];
+                readonly project?: components["parameters"]["SessionProject"];
+                /** @description Omitted is both. */
+                readonly state?: components["parameters"]["SessionStateFilter"];
+                /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary. */
+                readonly user_id?: components["parameters"]["SessionUserID"];
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The customer's sessions, newest first */
+            /** @description The customer's sessions, newest first. A page shorter than the limit asked for is the last one, which is all a caller walking the list needs: counting every conversation a busy customer ever had costs more than the page itself. */
             readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -4440,6 +4867,7 @@ export interface operations {
                     readonly "application/json": readonly components["schemas"]["Session"][];
                 };
             };
+            readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
         };
     };
@@ -4547,6 +4975,37 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
+    readonly forkSession: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: components["parameters"]["SessionID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ForkSessionRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The fork is running */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Session"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
     readonly setSessionInstructions: {
         readonly parameters: {
             readonly query?: never;
@@ -4629,6 +5088,99 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
+    readonly listResponses: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: components["parameters"]["SessionLimit"];
+                readonly offset?: components["parameters"]["SessionOffset"];
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: components["parameters"]["SessionID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The session's turns, oldest first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentResponse"][];
+                };
+            };
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly createResponse: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: components["parameters"]["SessionID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CreateResponseRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The agent is answering */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentResponse"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly listResponseItems: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description Up to 1000. Omitted is 200. */
+                readonly limit?: components["parameters"]["ItemLimit"];
+                readonly offset?: components["parameters"]["SessionOffset"];
+                /** @description Narrow to one turn's items. Omitted is every turn in the session. */
+                readonly response_id?: components["parameters"]["ResponseIDFilter"];
+            };
+            readonly header?: never;
+            readonly path: {
+                /** @description The session, as returned when it was created. */
+                readonly id: components["parameters"]["SessionID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The items, oldest first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentResponseItem"][];
+                };
+            };
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
     readonly saySession: {
         readonly parameters: {
             readonly query?: never;
@@ -4656,6 +5208,49 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly searchSessions: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The agent name the session was opened against. */
+                readonly agent?: components["parameters"]["SessionAgent"];
+                readonly config_id?: components["parameters"]["SessionConfigID"];
+                readonly created_after?: components["parameters"]["SessionCreatedAfter"];
+                readonly created_before?: components["parameters"]["SessionCreatedBefore"];
+                /**
+                 * @description Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
+                 * @example {"tenant":"acme"}
+                 */
+                readonly custom?: components["parameters"]["SessionCustom"];
+                /** @description Up to 200. Omitted is 25. */
+                readonly limit?: components["parameters"]["SessionLimit"];
+                readonly offset?: components["parameters"]["SessionOffset"];
+                readonly project?: components["parameters"]["SessionProject"];
+                /** @description What to search for. Quoted phrases and bare words both work, and punctuation is taken rather than refused: this comes from a search box, so an apostrophe must not become a syntax error. */
+                readonly q?: components["parameters"]["SessionSearchText"];
+                /** @description Omitted is both. */
+                readonly state?: components["parameters"]["SessionStateFilter"];
+                /** @description Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary. */
+                readonly user_id?: components["parameters"]["SessionUserID"];
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The matching sessions, best match first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["Session"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
         };
     };
     readonly listSimulationRuns: {

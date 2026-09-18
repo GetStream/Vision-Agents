@@ -27,7 +27,11 @@ const askTimeout = 2 * time.Minute
 type messageEvent struct {
 	ChannelType string `json:"channel_type"`
 	ChannelID   string `json:"channel_id"`
-	Message     struct {
+	// ChannelCustom is whatever the channel was created with. One field of it is read
+	// here, for a channel no agent has ever run on, where it is the only thing that says
+	// who should answer; see ownerOf. The rest is carried to the worker unread.
+	ChannelCustom map[string]any `json:"channel_custom"`
+	Message       struct {
 		ID   string `json:"id"`
 		Text string `json:"text"`
 		User struct {
@@ -135,12 +139,10 @@ func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
 		return
 	}
 
-	// Nothing is running, so somebody has written to a conversation that ended. The row
-	// the last one left is what says whose channel this is and what agent was on it.
-	previous, err := s.store.CallByAgent(r.Context(), event.ChannelID)
-	if err != nil {
-		s.logger.Debug("no agent has ever run on an arriving message's channel",
-			"channel", event.ChannelID, "error", err)
+	// Nothing is running, so this has to be given to a worker, and that needs to know
+	// whose channel it is and which agent answers in it.
+	customerID, configID, found := s.ownerOf(r.Context(), event)
+	if !found {
 		return
 	}
 
@@ -148,7 +150,8 @@ func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
 		ChannelType: event.ChannelType,
 		ChannelID:   event.ChannelID,
 		AgentID:     event.ChannelID,
-		ConfigID:    previous.ConfigID,
+		ConfigID:    configID,
+		Custom:      customOf(event.ChannelCustom),
 		Text:        event.Message.Text,
 		MessageID:   event.Message.ID,
 		UserID:      event.Message.User.ID,
@@ -156,17 +159,59 @@ func (s *Server) routeArrivingMessage(r *http.Request, event messageEvent) {
 		At:          time.Now().UTC(),
 	}
 
-	worker, err := s.dispatch.AssignMessage(previous.CustomerID, message)
+	worker, err := s.dispatch.AssignMessage(customerID, message)
 	if err != nil {
 		// Somebody has written to an agent that nothing is going to answer, which is the
 		// most useful error this service can report.
 		s.logger.Error("nobody could answer an arriving message",
-			"channel", event.ChannelID, "customer", previous.CustomerID, "error", err)
+			"channel", event.ChannelID, "customer", customerID, "error", err)
 		return
 	}
 	s.logger.Info("handed an arriving message to a worker",
-		"channel", event.ChannelID, "customer", previous.CustomerID,
-		"config", previous.ConfigID, "worker", worker.ID)
+		"channel", event.ChannelID, "customer", customerID,
+		"config", configID, "worker", worker.ID)
+}
+
+// ConfigField is the custom field on an agent channel naming the agent config that answers
+// in it.
+//
+// It is how a conversation that starts in writing is reachable at all. A channel a call
+// left behind is claimed by the row that call wrote; a channel created for somebody opening
+// a support chat has no such row, and without this there is nothing to say which agent they
+// have written to.
+//
+// The customer is not read from the channel. Whoever creates a channel decides what is on
+// it, so a customer id there would be a claim rather than a fact, and acting on it would let
+// one app's channel be answered by another app's workers. A config id is not a claim: the
+// store says who owns that config, and a channel naming one nobody owns is answered by
+// nobody.
+const ConfigField = "agent_config_id"
+
+// ownerOf works out whose channel an arriving message was written in, and which agent config
+// answers there.
+//
+// The row the last conversation left is asked first, because a channel that has held one is
+// the ordinary case and its row is what actually ran. A channel with no row falls back to
+// what the channel itself declares.
+func (s *Server) ownerOf(ctx context.Context, event messageEvent) (customerID, configID string, found bool) {
+	if previous, err := s.store.CallByAgent(ctx, event.ChannelID); err == nil {
+		return previous.CustomerID, previous.ConfigID, true
+	}
+
+	declared, _ := event.ChannelCustom[ConfigField].(string)
+	if declared == "" {
+		s.logger.Debug("no agent has ever run on an arriving message's channel, and it names no config",
+			"channel", event.ChannelID, "field", ConfigField)
+		return "", "", false
+	}
+
+	config, err := s.store.AgentConfigOwner(ctx, declared)
+	if err != nil {
+		s.logger.Error("an arriving message's channel names a config nobody holds",
+			"channel", event.ChannelID, "config", declared, "error", err)
+		return "", "", false
+	}
+	return config.CustomerID, config.ID, true
 }
 
 // answerMessage answers from a session that is already running.
