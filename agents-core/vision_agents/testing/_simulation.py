@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
 
 from vision_agents.core.agents.conversation import InMemoryConversation
+from vision_agents.core.llm.events import LLMErrorEvent
 from vision_agents.core.llm.llm import LLM
 from vision_agents.core.llm.realtime import Realtime
 
@@ -497,12 +498,9 @@ class Simulator:
                         "the agent uses a Realtime LLM, which needs an audio session; "
                         "simulate runs in text mode and needs a text LLM"
                     )
-                async with TestSession(
-                    llm=agent.llm, instructions=agent.instructions.full_reference
-                ) as session:
-                    ended = await self._converse(
-                        session, brief, scenario.max_turns, transcript
-                    )
+                ended = await self._converse(
+                    agent, brief, scenario.max_turns, transcript
+                )
                 verdicts = await self._judge(transcript, scenario.criteria)
             finally:
                 await agent.close()
@@ -540,14 +538,29 @@ class Simulator:
 
     async def _converse(
         self,
-        session: TestSession,
+        agent: "Agent",
         brief: str,
         max_turns: int,
         transcript: list[TranscriptLine],
     ) -> Ended:
-        """Alternate caller and agent until the caller is done or turns run out."""
+        """Alternate caller and agent until the caller is done or turns run out.
+
+        Plugin LLMs report provider failures through ``LLMErrorEvent`` and
+        return an empty reply, so those are watched for and turned into a
+        ``SimulationError`` rather than judged as a failed scenario.
+        """
+        provider_errors: list[str] = []
+
+        async def on_llm_error(event: LLMErrorEvent) -> None:
+            provider_errors.append(event.error_message)
+
+        agent.events.subscribe(on_llm_error)
         caller = _Caller(self._llm_factory(), brief)
         try:
+            session = TestSession(
+                llm=agent.llm, instructions=agent.instructions.full_reference
+            )
+            await session.start()
             text, done = _split_end_token(await caller.say(_OPENING_PROMPT))
             turns = 0
             while True:
@@ -562,6 +575,11 @@ class Simulator:
                 turns += 1
                 transcript.append(TranscriptLine(caller=True, text=text, at=_now()))
                 response = await session.simple_response(text)
+                await agent.events.wait()
+                if provider_errors:
+                    raise SimulationError(
+                        f"the agent's LLM failed: {provider_errors[0]}"
+                    )
                 reply = response.output or ""
                 transcript.append(
                     TranscriptLine(
@@ -578,6 +596,7 @@ class Simulator:
                     return "turns"
                 text, done = _split_end_token(await caller.say(reply or _NO_REPLY))
         finally:
+            agent.events.unsubscribe(on_llm_error)
             await caller.close()
 
     async def _judge(

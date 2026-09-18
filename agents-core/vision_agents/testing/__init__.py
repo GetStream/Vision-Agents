@@ -41,7 +41,7 @@ from vision_agents.testing._events import (
     FunctionCallOutputEvent,
     RunEvent,
 )
-from vision_agents.testing._judge import Judge, JudgeVerdict, LLMJudge
+from vision_agents.testing._judge import Judge, JudgeVerdict, LLMJudge, parse_verdict
 from vision_agents.testing._run_result import TestResponse
 from vision_agents.testing._scenario import (
     Scenario,
@@ -66,6 +66,7 @@ __all__ = [
     "Judge",
     "JudgeVerdict",
     "LLMJudge",
+    "parse_verdict",
     "TestSession",
     "TestResponse",
     "ChatMessageEvent",
