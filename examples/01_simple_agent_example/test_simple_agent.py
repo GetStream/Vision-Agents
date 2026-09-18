@@ -84,3 +84,27 @@ async def test_weather_tool_call_mocked():
                 response.chat_messages[0], intent="Reports rainy weather for Berlin"
             )
             assert verdict.success, verdict.reason
+
+
+@pytest.mark.integration
+async def test_scenario_weather_trip_planning(simulate):
+    """Simulated traveller works out whether to pack a rain jacket for Berlin."""
+    _skip_if_no_key()
+
+    result = await simulate(
+        "scenarios/weather-trip-planning.yaml", instructions=INSTRUCTIONS
+    )
+    assert result.passed, result.summary()
+    assert any(call.name == "get_weather" for call in result.trials[0].tool_calls)
+
+
+@pytest.mark.integration
+async def test_scenario_small_talk_then_weather(simulate):
+    """Simulated user chats first, then asks for the weather in Tokyo."""
+    _skip_if_no_key()
+
+    result = await simulate(
+        "scenarios/small-talk-then-weather.yaml", instructions=INSTRUCTIONS
+    )
+    assert result.passed, result.summary()
+    assert result.trials[0].turn_count >= 2
