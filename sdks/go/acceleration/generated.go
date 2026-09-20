@@ -2473,6 +2473,9 @@ type SessionSkill struct {
 	Instructions string `json:"instructions"`
 	Name         string `json:"name"`
 
+	// Revision Immutable skill revision selected by the application's authorized registry.
+	Revision *int64 `json:"revision,omitempty"`
+
 	// Subagent Named worker binding; omitted uses default.
 	Subagent *string `json:"subagent,omitempty"`
 }

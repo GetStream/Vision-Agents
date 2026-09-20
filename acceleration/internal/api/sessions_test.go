@@ -731,6 +731,17 @@ func (s *SessionAPISuite) TestATextSessionTakesItsSkillsAndKnowledgeFromItsConfi
 	s.Equal("config-subagent", spec.SubagentTarget, "and there is somebody to hand work to")
 }
 
+func (s *SessionAPISuite) TestACallerSelectedSkillKeepsItsImmutableRevision() {
+	revision := int64(7)
+	selected := []SessionSkill{{Name: "focus", Description: "Focus check", Instructions: "Return the verification codeword.", Revision: &revision}}
+	text := true
+	spec := specOf(CreateSessionRequest{Text: &text, Skills: &selected}, "acme", nil)
+	s.Require().NotNil(spec.Skills)
+	s.Require().Len(spec.Skills.Skills, 1)
+	s.Equal(int64(7), spec.Skills.Skills[0].Revision)
+	s.Equal("focus", spec.Skills.Skills[0].Name)
+}
+
 func (s *SessionAPISuite) TestNamingAConfigWithoutADatabaseIsRefused() {
 	// The deployment under test has no store, so a config could only ever be ignored,
 	// and a session that quietly ran on the wrong model is worse than one that failed.

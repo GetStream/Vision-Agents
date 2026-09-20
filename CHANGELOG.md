@@ -1,5 +1,9 @@
 # Unreleased
 
+## Athena integration fixes
+
+- Preserve the immutable registry revision on caller-selected session skills.
+
 ## Breaking Changes
 
 ### `ROUTER_AUTH_MODE` defaults to `api_key`, and `noauth` has been split in two

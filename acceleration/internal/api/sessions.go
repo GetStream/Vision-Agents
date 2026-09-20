@@ -645,7 +645,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 		skills := harness.Skills{Skills: make([]harness.Skill, 0, len(*request.Skills))}
 		for _, skill := range *request.Skills {
 			skills.Skills = append(skills.Skills, harness.Skill{
-				Name:     skill.Name,
+				Name: skill.Name, Revision: value(skill.Revision),
 				Subagent: value(skill.Subagent), CaptureVideo: value(skill.CaptureVideo),
 				Description:  skill.Description,
 				Instructions: skill.Instructions,

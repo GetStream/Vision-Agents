@@ -98,6 +98,10 @@ extension Components {
         internal struct SessionSkill: Codable, Hashable, Sendable {
             /// - Remark: Generated from `#/components/schemas/SessionSkill/name`.
             internal var name: Swift.String
+            /// Immutable skill revision selected by the application's authorized registry.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionSkill/revision`.
+            internal var revision: Swift.Int64?
             /// The one line the fast model sees.
             ///
             /// - Remark: Generated from `#/components/schemas/SessionSkill/description`.
@@ -122,6 +126,7 @@ extension Components {
             ///
             /// - Parameters:
             ///   - name:
+            ///   - revision: Immutable skill revision selected by the application's authorized registry.
             ///   - description: The one line the fast model sees.
             ///   - subagent: Named worker binding; omitted uses default.
             ///   - captureVideo: Capture task-scoped visual evidence before reasoning.
@@ -129,6 +134,7 @@ extension Components {
             ///   - deadlineMs: How long the work may run before it is abandoned. Zero is the default.
             internal init(
                 name: Swift.String,
+                revision: Swift.Int64? = nil,
                 description: Swift.String,
                 subagent: Swift.String? = nil,
                 captureVideo: Swift.Bool? = nil,
@@ -136,6 +142,7 @@ extension Components {
                 deadlineMs: Swift.Int64? = nil
             ) {
                 self.name = name
+                self.revision = revision
                 self.description = description
                 self.subagent = subagent
                 self.captureVideo = captureVideo
@@ -144,6 +151,7 @@ extension Components {
             }
             internal enum CodingKeys: String, CodingKey {
                 case name
+                case revision
                 case description
                 case subagent
                 case captureVideo = "capture_video"

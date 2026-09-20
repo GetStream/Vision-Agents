@@ -21,6 +21,7 @@ class SessionSkill:
             name (str):
             description (str): The one line the fast model sees.
             instructions (str): The full prompt, which only the subagent sees.
+            revision (int | Unset): Immutable skill revision selected by the application's authorized registry.
             subagent (str | Unset): Named worker binding; omitted uses default.
             capture_video (bool | Unset): Capture task-scoped visual evidence before reasoning.
             deadline_ms (int | Unset): How long the work may run before it is abandoned. Zero is the default.
@@ -29,6 +30,7 @@ class SessionSkill:
     name: str
     description: str
     instructions: str
+    revision: int | Unset = UNSET
     subagent: str | Unset = UNSET
     capture_video: bool | Unset = UNSET
     deadline_ms: int | Unset = UNSET
@@ -40,6 +42,8 @@ class SessionSkill:
         description = self.description
 
         instructions = self.instructions
+
+        revision = self.revision
 
         subagent = self.subagent
 
@@ -56,6 +60,8 @@ class SessionSkill:
                 "instructions": instructions,
             }
         )
+        if revision is not UNSET:
+            field_dict["revision"] = revision
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
         if capture_video is not UNSET:
@@ -74,6 +80,8 @@ class SessionSkill:
 
         instructions = d.pop("instructions")
 
+        revision = d.pop("revision", UNSET)
+
         subagent = d.pop("subagent", UNSET)
 
         capture_video = d.pop("capture_video", UNSET)
@@ -84,6 +92,7 @@ class SessionSkill:
             name=name,
             description=description,
             instructions=instructions,
+            revision=revision,
             subagent=subagent,
             capture_video=capture_video,
             deadline_ms=deadline_ms,

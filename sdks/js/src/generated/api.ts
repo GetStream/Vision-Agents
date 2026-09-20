@@ -2800,6 +2800,11 @@ export type components = {
             /** @description The full prompt, which only the subagent sees. */
             readonly instructions: string;
             readonly name: string;
+            /**
+             * Format: int64
+             * @description Immutable skill revision selected by the application's authorized registry.
+             */
+            readonly revision?: number;
             /** @description Named worker binding; omitted uses default. */
             readonly subagent?: string;
         };
