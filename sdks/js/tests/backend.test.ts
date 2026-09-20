@@ -201,6 +201,30 @@ describe("Backend", () => {
     }
   });
 
+  it("does not turn one into a backend when the token arrives from setUser either", async () => {
+    // The same rule for the shape a page is actually written in, where the token cannot be
+    // passed to the constructor because the page loads before it knows who is looking at it.
+    // This is the one that matters: the claim that moves a guest's conversations is refused
+    // by asking serverSide, so a page reading as a backend gets to attempt it.
+    process.env["STREAM_API_SECRET"] = "shh";
+    try {
+      const page = new Backend({ url: router.url, apiKey: "vak_live_x" });
+      await page.setUser({ id: "jlahey" }, await signToken({ user_id: "jlahey" }, "shh"));
+
+      assert.equal(page.serverSide, false);
+      assert.equal((await page.headers())["Stream-Auth-Type"], "jwt");
+
+      // A secret that was passed is a different matter: the caller said it is the backend,
+      // and acting for one of its users does not stop it being one.
+      const server = new Backend({ url: router.url, apiKey: "vak_live_x", apiSecret: "shh" });
+      await server.setUser({ id: "jlahey" }, "token-for-jim");
+
+      assert.equal(server.serverSide, true);
+    } finally {
+      delete process.env["STREAM_API_SECRET"];
+    }
+  });
+
   it("asks a token callback again on every request, so an idle client never holds a stale one", async () => {
     let minted = 0;
     const backend = new Backend({

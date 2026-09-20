@@ -117,7 +117,13 @@ export class Backend {
   readonly apiKey: string;
   /** Whether the credential is spelled for Stream's proxy rather than for the router. */
   readonly authenticate: boolean;
-  private readonly apiSecret: string;
+  /**
+   * Mutable, and `declaredSecret` is what says whether it may be dropped: a secret that was
+   * passed is the caller's own claim to be the app's backend, and one that was only lying
+   * about in the environment is not.
+   */
+  private apiSecret: string;
+  private readonly declaredSecret: boolean;
   /**
    * Who this is acting for and what it holds for them, which `setUser` replaces.
    *
@@ -144,6 +150,7 @@ export class Backend {
     // one turns into a backend as soon as it runs in a process that happens to have the
     // secret in its environment, which is most of them and every test.
     this.apiSecret = options.apiSecret ?? (options.token ? "" : env(API_SECRET_ENV) ?? "");
+    this.declaredSecret = Boolean(options.apiSecret);
     this.token = options.token;
     this.userIdValue = options.userId ?? "";
     this.authenticate = options.authenticate ?? boolean(env(AUTHENTICATE_ENV));
@@ -200,6 +207,15 @@ export class Backend {
     this.user = named;
     this.userIdValue = named.id;
     this.token = token;
+    // The same reasoning as the constructor's, and it has to be here as well because this
+    // is the shape a page is written in: the token arrives after the client was built, so
+    // there was nothing to suppress an ambient secret at construction. Without this a
+    // page-shaped client turns into a backend in any process that happens to hold the
+    // secret — which is most of them, and every test — and `serverSide` says so, so the
+    // one operation that must not be reachable from a page is attempted from one.
+    if (!this.declaredSecret) {
+      this.apiSecret = "";
+    }
   }
 
   /**

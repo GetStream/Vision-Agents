@@ -11,7 +11,14 @@ import {
   type AgentHandle,
   type WebSocketConstructor,
 } from "../../src/index.js";
-import { close, conversationModel, exhausted, uniqueId, unreachable } from "./target.js";
+import {
+  close,
+  conversationModel,
+  eventually,
+  exhausted,
+  uniqueId,
+  unreachable,
+} from "./target.js";
 
 /**
  * A WebSocket that carries credentials in headers, which the standard one cannot.
@@ -62,8 +69,16 @@ describe(
     const backend = new Client({ url: acceleration, apiKey, apiSecret, authenticate: true });
     const opened: { api: Client; id: string }[] = [];
     let model = "";
-    /** An agent this deployment has configured, which is what a name resolves against. */
+    /**
+     * The agent a name resolves against, stored by this suite rather than borrowed.
+     *
+     * It used to take whichever config the deployment happened to hold, which reads as
+     * harmless and is not: a deployment holding none skipped every test that opens a
+     * conversation, so the suite went green having checked nothing about the surface it is
+     * here for. A freshly migrated one holds none, which is exactly when this matters.
+     */
     let agentName = "";
+    let agentId = "";
 
     /**
      * What a browser holds: the key, and a token naming one person.
@@ -85,13 +100,22 @@ describe(
 
     before(async () => {
       model = await conversationModel(backend);
-      const configs = await backend.get("/v1/agents/configs").catch(() => []);
-      agentName = configs.find((config) => config.name)?.name ?? "";
+      // Named for this run and deleted afterwards, so a deployment somebody else is also
+      // talking to is left as it was found.
+      const named = uniqueId("qa-agent");
+      const stored = await backend
+        .post("/v1/agents/configs", { body: { name: named, mode: "text", llm: model } })
+        .catch(() => undefined);
+      agentName = stored?.name ?? "";
+      agentId = stored?.id ?? "";
     });
 
     after(async () => {
       for (const { api, id } of opened) {
         await close(api, id);
+      }
+      if (agentId) {
+        await backend.delete("/v1/agents/configs/{id}", { path: { id: agentId } }).catch(() => {});
       }
     });
 
@@ -172,11 +196,15 @@ describe(
       const page = await asUser(uniqueId("opens"));
       const title = uniqueId("titled");
 
+      // `watch: false`, because this is a page: the proxy refuses the only socket a browser
+      // can open, and a create that insisted on one could not be done from a page at all.
+      // Everything a page does with the conversation afterwards is HTTP.
       const session = await agentOf(page).sessions.create({
         title,
         project: "qa",
         persist_conversation: true,
         llm: model,
+        watch: false,
       });
       opened.push({ api: page, id: session.id });
 
@@ -190,6 +218,23 @@ describe(
         found.some((each) => each.id === session.id),
         "a conversation cannot be found by the title it was given",
       );
+
+      // The whole of what a page can do, and the reason the rest of this is worth having: it
+      // asks over HTTP and reads the turn back by paging. Nothing here holds a socket.
+      const answering = await session.responses.create("Reply with the single word: pong.");
+      assert.ok(answering.id, "a turn with no id cannot be read back");
+
+      const reading = agentOf(page).sessions.responses(session.id);
+      const items = await eventually(
+        () => reading.items.all(),
+        (each) => each.length > 0,
+      );
+      assert.ok(items.length > 0, "the turn was created and nothing was written down");
+      assert.equal(items[0]?.kind, "said", "every turn opens with what was asked");
+
+      // And the one thing it cannot do, said plainly rather than as a property read on
+      // undefined: this is the first wall a caller writing a page hits.
+      assert.throws(() => session.respond("anything"), /not being watched/);
     });
 
     it("does not show one person's conversation to another", {
@@ -206,7 +251,9 @@ describe(
       const mine = await asUser(uniqueId("mine"));
       const theirs = await asUser(uniqueId("theirs"));
 
-      const session = await agentOf(mine).sessions.create({ llm: model });
+      // Unwatched, so that when this stops being a todo it reports what it is about. Held as
+      // a page it failed on the socket instead, which is a different limitation entirely.
+      const session = await agentOf(mine).sessions.create({ llm: model, watch: false });
       opened.push({ api: mine, id: session.id });
 
       const listed = await theirs.get("/v1/agents/sessions");
@@ -285,7 +332,10 @@ describe(
       assert.ok(answered.length > 0, `nothing was answered; saw ${seen.join(", ")}`);
 
       if (answering.id) {
-        const items = await answering.items.all();
+        const items = await eventually(
+          () => answering.items.all(),
+          (each) => each.length > 0,
+        );
         assert.ok(items.length > 0, "the turn was answered and nothing was written down");
         assert.equal(items[0]?.kind, "said", "every turn opens with what was asked");
       }

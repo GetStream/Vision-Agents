@@ -47,6 +47,17 @@ export interface SessionOptions {
   interim?: boolean;
   /** Report the router's own routing decisions. On by default at the backend. */
   decisions?: boolean;
+  /**
+   * Whether to watch the conversation. On by default, and what a browser has to turn off.
+   *
+   * A watched conversation is the lower-latency arrangement and the only one that reports
+   * what the agent is doing word by word, so it is what a server wants. It is also not
+   * available to a page on a hosted deployment: the proxy requires a header a browser
+   * WebSocket cannot set. Off, the conversation is opened and read over HTTP instead —
+   * `responses.create()` asks, `responses.items` reads the turn back — and `say`, `respond`,
+   * `interrupt`, `setInstructions` and `events` have nothing to send to.
+   */
+  watch?: boolean;
 }
 
 /** What to change about a conversation while continuing it. */
@@ -138,7 +149,14 @@ export class Session {
   /** This conversation's turns, and what each of them was made of. */
   readonly responses: Responses;
 
-  private readonly socket: Socket;
+  /**
+   * Undefined for a conversation that is read and written to over HTTP rather than watched.
+   *
+   * That is what a browser has on a hosted deployment: the proxy wants a header a browser
+   * WebSocket cannot set, so a page that insisted on a socket could not open a conversation
+   * at all. Turns go in through `responses.create` and come back out of `responses.items`.
+   */
+  private readonly socket: Socket | undefined;
   /** The Stream Chat channel and the video call, each opened on first use. */
   private chatPeer: Promise<SessionChat> | undefined;
   private videoPeer: Promise<SessionVideo> | undefined;
@@ -153,7 +171,7 @@ export class Session {
   private constructor(
     client: Client,
     created: Schemas["Session"],
-    socket: Socket,
+    socket: Socket | undefined,
     tools: Tools | undefined,
   ) {
     this.client = client;
@@ -161,7 +179,7 @@ export class Session {
     this.socket = socket;
     this.tools = tools;
     this.responses = new Responses(client, created.id);
-    this.finished = this.watch();
+    this.finished = socket ? this.watch() : Promise.resolve();
   }
 
   /**
@@ -194,6 +212,13 @@ export class Session {
     created: Schemas["Session"],
     options: SessionOptions = {},
   ): Promise<Session> {
+    // A conversation nothing is watching. The turns are the whole of what a caller here
+    // does with it, and asking for a socket first would mean a page could not have one:
+    // the proxy refuses the only socket a browser is able to open.
+    if (options.watch === false) {
+      return new Session(client, created, undefined, options.tools);
+    }
+
     const query: Record<string, string> = {};
     if (options.interim) {
       query["interim"] = "true";
@@ -263,27 +288,46 @@ export class Session {
   /** Speaks text without going through the model, for when you know what should be said. */
   say(said: string, options: { interrupt?: boolean } = {}): void {
     if (options.interrupt) {
-      this.socket.send({ type: "interrupt" });
+      this.held().send({ type: "interrupt" });
     }
-    this.socket.send({ type: "say", text: said });
+    this.held().send({ type: "say", text: said });
   }
 
   /** Answers text through the model, as though it had been said on the call. */
   respond(said: string, options: { interrupt?: boolean } = {}): void {
     if (options.interrupt) {
-      this.socket.send({ type: "interrupt" });
+      this.held().send({ type: "interrupt" });
     }
-    this.socket.send({ type: "respond", text: said });
+    this.held().send({ type: "respond", text: said });
   }
 
   /** Abandons the reply being spoken. */
   interrupt(): void {
-    this.socket.send({ type: "interrupt" });
+    this.held().send({ type: "interrupt" });
   }
 
   /** Changes what the agent is told to be, from the next turn. */
   setInstructions(instructions: string): void {
-    this.socket.send({ type: "instructions", instructions });
+    this.held().send({ type: "instructions", instructions });
+  }
+
+  /**
+   * The socket, or what to do instead of it.
+   *
+   * Everything reached through here is a message to a conversation being watched, and a
+   * conversation opened with `watch: false` is not being watched by anything. Saying so, and
+   * saying what does work, beats a property read on undefined: this is the difference
+   * between a page and a server, and it is the first thing a caller writing a page hits.
+   */
+  private held(): Socket {
+    if (!this.socket) {
+      throw new ConfigurationError(
+        "this conversation is not being watched, so there is nothing to send to: open it " +
+          "without watch: false, or use responses.create() and read the turn back through " +
+          "responses.items",
+      );
+    }
+    return this.socket;
   }
 
   /**
@@ -298,7 +342,7 @@ export class Session {
    * to which. An incognito parent cannot be forked, because there is nothing to fork from.
    */
   async fork(options: ForkOptions = {}): Promise<Session> {
-    const { tools, interim, decisions, modelOverwrites, ...rest } = options;
+    const { tools, interim, decisions, watch, modelOverwrites, ...rest } = options;
     const forked = await this.client.post("/v1/agents/sessions/{id}/fork", {
       path: { id: this.id },
       body: {
@@ -314,6 +358,9 @@ export class Session {
       ...(inherited ? { tools: inherited } : {}),
       ...(interim === undefined ? {} : { interim }),
       ...(decisions === undefined ? {} : { decisions }),
+      // A fork of a conversation nothing is watching is not watched either, unless the
+      // caller says otherwise: whatever stopped the parent holding a socket still holds.
+      watch: watch ?? Boolean(this.socket),
     });
   }
 
@@ -350,14 +397,14 @@ export class Session {
 
   /** Ends the conversation. Safe to call after it has already ended. */
   async close(): Promise<void> {
-    if (this.socket.open) {
+    if (this.socket?.open) {
       this.socket.send({ type: "close" });
     } else if (!this.ended) {
       await this.client
         .delete("/v1/agents/sessions/{id}", { path: { id: this.id } })
         .catch(() => undefined);
     }
-    this.socket.close();
+    this.socket?.close();
     await this.finished;
   }
 
@@ -370,7 +417,7 @@ export class Session {
    */
   private async watch(): Promise<void> {
     try {
-      for await (const message of this.socket.messages()) {
+      for await (const message of this.held().messages()) {
         if (message instanceof Uint8Array) {
           continue;
         }
@@ -421,7 +468,7 @@ export class Session {
       this.running.delete(id);
     }
 
-    if (this.socket.open) {
+    if (this.socket?.open) {
       this.socket.send(result);
     }
   }

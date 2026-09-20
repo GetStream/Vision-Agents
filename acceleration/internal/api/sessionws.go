@@ -95,10 +95,11 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 
 	// Reading and writing each own the connection in one direction, which is what gorilla
 	// requires: two goroutines writing to one socket interleave frames.
+	owner := OwnerFrom(r.Context())
 	gone := make(chan struct{})
 	go func() {
 		defer close(gone)
-		s.readCommands(connection, found)
+		s.readCommands(connection, found, owner)
 	}()
 	s.writeEvents(connection, events, watching(r), gone)
 }
@@ -176,7 +177,7 @@ func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.E
 //
 // A frame it cannot read is reported and skipped rather than closing the socket: dropping
 // the connection over one bad message would take the tool calls in flight with it.
-func (s *Server) readCommands(connection *websocket.Conn, found *session.Session) {
+func (s *Server) readCommands(connection *websocket.Conn, found *session.Session, owner session.Owner) {
 	connection.SetReadDeadline(time.Now().Add(pongWait))
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
@@ -266,7 +267,15 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			found.SetInstructions(command.Instructions)
 
 		case "close":
-			found.Close()
+			// Through the manager rather than found.Close(), which ends the conversation
+			// and leaves it in the manager's map: a session closed this way stayed listed
+			// as live for the rest of the process's life. Every SDK closes over the socket
+			// when it is holding one, so that was every conversation, and the resource
+			// surface made it visible — a query returns live sessions ahead of the rows,
+			// so conversations that were over came back as running ones.
+			if _, err := s.sessions.Close(found.ID(), owner); err != nil {
+				s.logger.Debug("could not close the session", "session", found.ID(), "error", err)
+			}
 			return
 
 		default:

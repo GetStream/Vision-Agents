@@ -313,6 +313,36 @@ func (s *SessionOwnershipSuite) TestTheUserWhoOpenedASessionReachesIt() {
 		s.send(http.MethodDelete, "/v1/agents/sessions/"+opened.Id, alice, nil).StatusCode)
 }
 
+func (s *SessionOwnershipSuite) TestASessionClosedOverItsSocketStopsBeingOneOfTheirs() {
+	// The socket is how every SDK closes a conversation it is holding, so this was the
+	// ordinary path rather than an edge of one. Closing this way ended the conversation and
+	// left it in the manager, which listed it as live for as long as the router ran: a query
+	// answers with what is being held before it reads any rows, so conversations that were
+	// over came back as running ones, and an incognito conversation — which has no row and is
+	// supposed to be unfindable the moment it ends — stayed findable.
+	alice := s.authenticated("alice")
+	opened := s.opens(alice)
+
+	connection, status := s.watch(opened.Id, alice)
+	s.Require().Equal(http.StatusSwitchingProtocols, status)
+	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "close"}))
+
+	// The close is applied on the reading goroutine, so this waits for it rather than
+	// assuming the write was enough.
+	s.Eventually(func() bool {
+		for _, listed := range s.listed(alice) {
+			if listed.Id == opened.Id {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 20*time.Millisecond, "it is still listed as one of their sessions")
+
+	s.Equal(http.StatusNotFound,
+		s.send(http.MethodDelete, "/v1/agents/sessions/"+opened.Id, alice, nil).StatusCode,
+		"a session that closed itself is gone rather than closable twice")
+}
+
 func (s *SessionOwnershipSuite) TestWritingIntoASessionIsNotForDevicesEvenTheOwners() {
 	// Ownership is not the only thing between a device and a session. Everything the spec
 	// does not open is server-side whoever asks, so the owner is refused these too, and
