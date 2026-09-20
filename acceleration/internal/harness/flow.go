@@ -88,6 +88,11 @@ type flow struct {
 // Athena's isolated llm-flow alias actually is.
 const flowDeadline = 12 * time.Second
 
+// Ongoing speech cannot wait for the conversation model to finish reasoning.
+// Noise is filtered before an overlap reaches the controller; on timeout yield
+// the floor, without submitting the caller's unfinished words as a new turn.
+const overlapDeadline = 750 * time.Millisecond
+
 // candidate is one transcript revision the controller is deciding about.
 type candidate struct {
 	turn    FlowTurn
@@ -155,7 +160,11 @@ func (f *flow) Decide(turn FlowTurn) error {
 		return errors.New("harness: flow candidate text is required")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), flowDeadline)
+	deadline := flowDeadline
+	if turn.Unfinished && turn.Speaking {
+		deadline = overlapDeadline
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	asked := &candidate{turn: turn, askedAt: time.Now(), ctx: ctx, cancel: cancel}
 
 	f.mu.Lock()
@@ -196,6 +205,9 @@ func (f *flow) run(asked *candidate) {
 		if f.forget(turn.ID) == nil {
 			return
 		}
+		if f.yieldExpiredOverlap(asked) {
+			return
+		}
 		f.logger.Error("flow controller failed", "error", err)
 		f.emitter.Send(Decided{
 			CandidateID: turn.ID,
@@ -214,6 +226,8 @@ func (f *flow) run(asked *candidate) {
 		return
 	}
 
+	stopExpiry := context.AfterFunc(asked.ctx, func() { _ = stream.Close() })
+	defer stopExpiry()
 	f.consume(asked, stream)
 }
 
@@ -354,6 +368,9 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream) {
 		return
 	}
 	took := millis(time.Since(asked.askedAt))
+	if f.yieldExpiredOverlap(asked) {
+		return
+	}
 	if err != nil {
 		if response.Status == llm.StatusCancelled {
 			return
@@ -387,6 +404,16 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream) {
 		Floor:       answer.Floor,
 		TookMs:      took,
 	})
+}
+
+// The caller has already removed this candidate from pending, so a superseded
+// or closed request cannot produce a late interruption here.
+func (f *flow) yieldExpiredOverlap(asked *candidate) bool {
+	if !asked.turn.Unfinished || !asked.turn.Speaking || !errors.Is(asked.ctx.Err(), context.DeadlineExceeded) {
+		return false
+	}
+	f.emitter.Send(Decided{CandidateID: asked.turn.ID, Disposition: Wait, Floor: Stop, TookMs: millis(time.Since(asked.askedAt))})
+	return true
 }
 
 // forget drops a candidate and hands it back, so the wait it cost the caller is measured
