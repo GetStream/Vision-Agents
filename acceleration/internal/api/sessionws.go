@@ -12,6 +12,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -73,7 +74,7 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	found, ok := s.sessions.Get(r.PathValue("id"), OwnerFrom(r.Context()))
-	if !ok {
+	if !ok || !canReadSession(r.Context(), found.Spec()) {
 		writeError(w, http.StatusNotFound, unknownSession)
 		return
 	}
@@ -94,8 +95,12 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 
 	// Reading and writing each own the connection in one direction, which is what gorilla
 	// requires: two goroutines writing to one socket interleave frames.
-	go s.readCommands(connection, found)
-	s.writeEvents(connection, events, watching(r))
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		s.readCommands(connection, found)
+	}()
+	s.writeEvents(connection, events, watching(r), gone)
 }
 
 // wanted says which of the frequent frames this watcher asked for.
@@ -129,12 +134,14 @@ func (w wanted) takes(event session.Event) bool {
 
 // writeEvents pushes the conversation to the caller until the session ends or the socket
 // breaks.
-func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted) {
+func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted, gone <-chan struct{}) {
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
 
 	for {
 		select {
+		case <-gone:
+			return
 		case event, open := <-events:
 			if !open {
 				connection.SetWriteDeadline(time.Now().Add(writeWait))
@@ -180,6 +187,8 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			Type string `json:"type"`
 			// ToolCallID names the call a tool_result answers.
 			ToolCallID string `json:"tool_call_id"`
+			CommandID  string `json:"command_id"`
+			TurnID     string `json:"turn_id"`
 			// Output is a string or a parts array, which is what a tool that returns an
 			// image sends.
 			Output json.RawMessage `json:"output"`
@@ -205,13 +214,13 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			parts, err := parseToolOutput(command.Output)
 			if err != nil {
 				found.Report(err, "tool")
-				if !found.ResolveTool(command.ToolCallID, "", err.Error()) {
+				if !resolveTool(found, command.ToolCallID, command.CommandID, command.TurnID, nil, err.Error()) {
 					s.logger.Debug("a tool result answered nothing",
 						"session", found.ID(), "call", command.ToolCallID)
 				}
 				continue
 			}
-			if !found.ResolveToolParts(command.ToolCallID, parts, command.Error) {
+			if !resolveTool(found, command.ToolCallID, command.CommandID, command.TurnID, parts, command.Error) {
 				s.logger.Debug("a tool result answered nothing",
 					"session", found.ID(), "call", command.ToolCallID)
 			}
@@ -222,6 +231,16 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			}
 
 		case "respond":
+			if command.CommandID != "" {
+				if len(command.Images) > 0 {
+					found.Report(fmt.Errorf("durable commands currently support text only"), "llm")
+					continue
+				}
+				if _, err := found.RespondCommand(context.Background(), command.CommandID, command.Text); err != nil {
+					found.Report(err, "llm")
+				}
+				continue
+			}
 			images, err := imagesFromWire(command.Images)
 			if err != nil {
 				found.Report(err, "llm")
@@ -232,6 +251,15 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 			}
 
 		case "interrupt":
+			// A stop naming a command stops that command wherever it got to. Without a
+			// name it stops whatever is being said now, which is what a voice caller
+			// talking over the agent means.
+			if command.CommandID != "" {
+				if _, err := found.InterruptCommand(command.CommandID); err != nil {
+					found.Report(err, "command")
+				}
+				continue
+			}
 			found.Interrupt()
 
 		case "instructions":
@@ -249,6 +277,13 @@ func (s *Server) readCommands(connection *websocket.Conn, found *session.Session
 	}
 }
 
+func resolveTool(found *session.Session, callID, commandID, turnID string, parts []llm.ContentPart, failure string) bool {
+	if commandID != "" || turnID != "" {
+		return found.ResolveCommandTool(callID, commandID, turnID, parts, failure)
+	}
+	return found.ResolveToolParts(callID, parts, failure)
+}
+
 // frameOf renders one event for the wire, reporting false for anything with no
 // representation.
 //
@@ -258,13 +293,15 @@ func frameOf(event session.Event) (frame, bool) {
 	switch typed := event.(type) {
 	case session.ToolCall:
 		if typed.Cancel {
-			return frame{"type": "tool_cancel", "id": typed.ID}, true
+			return frame{"type": "tool_cancel", "id": typed.ID, "command_id": typed.CommandID, "turn_id": typed.TurnID}, true
 		}
 		return frame{
-			"type":      "tool_call",
-			"id":        typed.ID,
-			"name":      typed.Name,
-			"arguments": typed.Arguments,
+			"type":       "tool_call",
+			"id":         typed.ID,
+			"name":       typed.Name,
+			"arguments":  typed.Arguments,
+			"command_id": typed.CommandID,
+			"turn_id":    typed.TurnID,
 		}, true
 
 	case agent.Joined:
@@ -393,6 +430,10 @@ func frameOf(event session.Event) (frame, bool) {
 			"reason":  typed.Reason,
 		}, true
 
+	case conversation.CommandReceipt:
+		return frame{"type": "command_accepted", "command": typed}, true
+	case session.CommandStopped:
+		return frame{"type": "command_stopped", "command": typed.CommandReceipt}, true
 	case conversation.Updated:
 		return frame{"type": "conversation_updated", "conversation_id": typed.CID, "message": typed.Message}, true
 	case agent.ToolStarted:

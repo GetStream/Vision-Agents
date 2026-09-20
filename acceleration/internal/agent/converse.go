@@ -461,18 +461,27 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) []Action {
 	}
 
 	if ruling.Err != nil || !ruling.Valid() {
-		// A ruling that cannot be read must not cost the caller their turn, so the words
-		// go back to settling and are put again once they have.
-		c.cadence.Resolve(ruling.CandidateID, true)
-		return []Action{c.decide(Action{
-			Kind:        ActFail,
-			Reason:      "the flow controller did not answer, giving the caller longer to finish",
-			Candidate:   ready,
-			Participant: ready.Participant,
-			Text:        ready.Text,
-			LatencyMs:   ruling.TookMs,
-			Err:         ruling.Error(),
-		})}
+		if ready.Unfinished {
+			// A ruling that cannot be read must not cost the caller their turn, so the
+			// words go back to settling and are put again once they have.
+			c.cadence.Resolve(ruling.CandidateID, true)
+			return []Action{c.decide(Action{
+				Kind:        ActFail,
+				Reason:      "the flow controller did not answer, giving the caller longer to finish",
+				Candidate:   ready,
+				Participant: ready.Participant,
+				Text:        ready.Text,
+				LatencyMs:   ruling.TookMs,
+				Err:         ruling.Error(),
+			})}
+		}
+		// A finished thought is still the caller's turn. Putting it back to
+		// settling is how a slow controller (Muse Spark on llm-flow) never
+		// answers and never records what they said.
+		ruling.Disposition = harness.Respond
+		if !ruling.Floor.Valid() {
+			ruling.Floor = harness.Continue
+		}
 	}
 
 	clarify, clarified := "", ""

@@ -343,6 +343,38 @@ Provider capabilities, prices and the capability shortcuts live in
 [internal/routing/router.yaml](internal/routing/router.yaml), one section per modality.
 Adding a provider or model is a config edit.
 
+A deployment with only an `llm` section supports text sessions without STT or TTS
+providers. Voice sessions require the appropriate speech routers and are refused
+before opening a call when those routers are absent. Configure the LLM aliases used
+by your sessions and controllers in the same file.
+
+### Per-app model policy and attribution
+
+A modality may declare `customer_policies`, keyed by the authenticated app/customer ID:
+
+```yaml
+customer_policies:
+  "example-app":
+    allowed_models: [meta/muse-spark-1.3]
+    tags:
+      application: athena
+      environment: development
+```
+
+Place this beside that modality's `providers` and `aliases` in `ROUTER_CONFIG`.
+Every allowed model must also be declared in `providers`. Selection filters concrete
+candidates after alias/priority expansion, including fallback attempts. An empty
+`allowed_models` list denies all routing for that app; an absent app policy preserves
+existing behavior. Authenticate the app ID before routing: this policy does not make
+`noauth` safe on a public endpoint. Discovery still describes the deployment catalogue.
+
+Policy tags override caller tags in both successful and failed usage rows, without
+mutating the caller's map. The merged labels must fit the sixteen-tag limit. Configure
+Postgres to retain these rows for stats/Volt; an in-memory router is not cost evidence.
+Policies load at startup, so changing one requires a controlled router restart and
+does not dynamically revoke already-running sessions. They constrain model routing,
+not conversation or tool access. Keep verified provider rates in the provider config.
+
 ## Targets
 
 A request names either a concrete `provider/model` or one of four capability shortcuts,

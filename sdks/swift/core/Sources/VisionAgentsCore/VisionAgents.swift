@@ -139,6 +139,8 @@ public struct VisionAgents: Sendable {
         switch output {
         case .ok(let response):
             return try response.body.json.map(Session.init)
+        case .badRequest(let response):
+            throw AgentsError.http(status: 400, message: try response.body.json.error)
         case .unauthorized(let response):
             throw AgentsError.http(status: 401, message: try response.body.json.error)
         case .undocumented(let status, _):

@@ -40,7 +40,11 @@ func TestRequestFailureFallsBackThroughAccelerate(t *testing.T) {
 	registry.Register("anthropic", func(spec routing.Spec) (Provider, error) {
 		return Started(anthropic.New(anthropic.Options{APIKey: "test", BaseURL: backup.URL, Model: spec.Model}))
 	})
-	router, err := New(Options{Registry: registry, Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{Provider: "openai", Model: "gpt-5.6-luna", Languages: []string{"en"}}, {Provider: "anthropic", Model: "claude-opus-5", Languages: []string{"en"}}}, Aliases: map[string]routing.Alias{"docs-support": {Prefer: "openai/gpt-5.6-luna", Only: []string{"openai/gpt-5.6-luna", "anthropic/claude-opus-5"}}}}})
+	router, err := New(Options{Registry: registry, Config: routing.ModalityConfig{
+		Providers:        []routing.ProviderConfig{{Provider: "openai", Model: "gpt-5.6-luna", Languages: []string{"en"}}, {Provider: "anthropic", Model: "claude-opus-5", Languages: []string{"en"}}},
+		Aliases:          map[string]routing.Alias{"docs-support": {Prefer: "openai/gpt-5.6-luna", Only: []string{"openai/gpt-5.6-luna", "anthropic/claude-opus-5"}}},
+		CustomerPolicies: map[string]routing.CustomerPolicy{"restricted": {AllowedModels: []string{"openai/gpt-5.6-luna"}}},
+	}})
 	require.NoError(t, err)
 	defer router.Close()
 	session, err := router.Start(t.Context(), Request{CustomerID: "customer", Target: "docs-support", Tags: routing.Tags{"project": "docs", "user_id": "user", "organization_id": "org"}})
@@ -69,5 +73,13 @@ func TestRequestFailureFallsBackThroughAccelerate(t *testing.T) {
 	primaryStatus.Store(400)
 	_, err = session.Create(t.Context(), params)
 	require.Error(t, err)
+	require.Empty(t, requests)
+	// The same working fallback cannot bypass the restricted app's model allowlist.
+	primaryStatus.Store(503)
+	restricted, err := router.Start(t.Context(), Request{CustomerID: "restricted", Target: "docs-support"})
+	require.NoError(t, err)
+	defer restricted.Close()
+	_, err = restricted.Create(t.Context(), params)
+	require.ErrorContains(t, err, "no requested model is permitted")
 	require.Empty(t, requests)
 }

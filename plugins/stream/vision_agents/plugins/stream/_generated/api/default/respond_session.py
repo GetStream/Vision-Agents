@@ -6,15 +6,16 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.command_receipt import CommandReceipt
 from ...models.error import Error
-from ...models.say_request import SayRequest
+from ...models.respond_request import RespondRequest
 from ...types import Response
 
 
 def _get_kwargs(
     id: str,
     *,
-    body: SayRequest,
+    body: RespondRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -35,7 +36,12 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Any | Error | None:
+) -> Any | CommandReceipt | Error | None:
+    if response.status_code == 200:
+        response_200 = CommandReceipt.from_dict(response.json())
+
+        return response_200
+
     if response.status_code == 204:
         response_204 = cast(Any, None)
         return response_204
@@ -60,6 +66,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Error.from_dict(response.json())
+
+        return response_409
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -68,7 +79,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Any | Error]:
+) -> Response[Any | CommandReceipt | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -81,20 +92,20 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SayRequest,
-) -> Response[Any | Error]:
+    body: RespondRequest,
+) -> Response[Any | CommandReceipt | Error]:
     """Answer a piece of text through the model, as though it had been said
 
     Args:
         id (str):
-        body (SayRequest):
+        body (RespondRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Error]
+        Response[Any | CommandReceipt | Error]
     """
 
     kwargs = _get_kwargs(
@@ -113,20 +124,20 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SayRequest,
-) -> Any | Error | None:
+    body: RespondRequest,
+) -> Any | CommandReceipt | Error | None:
     """Answer a piece of text through the model, as though it had been said
 
     Args:
         id (str):
-        body (SayRequest):
+        body (RespondRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Error
+        Any | CommandReceipt | Error
     """
 
     return sync_detailed(
@@ -140,20 +151,20 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SayRequest,
-) -> Response[Any | Error]:
+    body: RespondRequest,
+) -> Response[Any | CommandReceipt | Error]:
     """Answer a piece of text through the model, as though it had been said
 
     Args:
         id (str):
-        body (SayRequest):
+        body (RespondRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | Error]
+        Response[Any | CommandReceipt | Error]
     """
 
     kwargs = _get_kwargs(
@@ -170,20 +181,20 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: SayRequest,
-) -> Any | Error | None:
+    body: RespondRequest,
+) -> Any | CommandReceipt | Error | None:
     """Answer a piece of text through the model, as though it had been said
 
     Args:
         id (str):
-        body (SayRequest):
+        body (RespondRequest):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | Error
+        Any | CommandReceipt | Error
     """
 
     return (

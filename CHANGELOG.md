@@ -83,6 +83,13 @@ await voice.join(credentials: yourBackend.callCredentials)
 
 `examples/voice_agents/swift_demo` shows the backend half: `configure/` writes the agent,
 and `backend/` mints the tokens.
+### Personal persistent text submissions require a command ID
+
+Authenticated personal conversations require `command_id` on REST and WebSocket
+respond commands. Keep the ID and exact text across retries; changing the text under
+the same ID is a conflict. Swift callers can use `sendCommand(id:text:)`. Legacy
+backend-owned conversations keep their existing respond behavior. The local outbox
+now requires exclusive ownership of its directory; do not share it between routers.
 
 ### Source research belongs to the agent, and managed research sandboxes are gone
 
@@ -558,6 +565,28 @@ vocabulary it has for a turn boundary and the sole way to ask it for `PUSH_TO_TA
 Nemotron takes `turn_grace_ms` — the router's own wait for the transcript to stop changing,
 since nothing on that protocol says where a turn ended. A field neither has is still an
 error rather than a setting that goes nowhere.
+- Acceleration supports text sessions in deployments configured with only an LLM router; unavailable voice routes are refused before opening a call.
+
+- Per-app model policies can restrict each modality to approved concrete models,
+  including alias resolution, priority lists and fallback attempts. An empty app
+  allowlist disables routing. Policy-owned usage labels override client labels in
+  recorded success and failure rows; apps without a policy retain existing behavior.
+
+- Persistent text commands return stable user/assistant message IDs and suppress
+  duplicate inference. Acceptance records both initial Chat writes and the command
+  mapping atomically. Restarted unfinished commands report interruption instead of
+  rerunning. Existing per-operation outboxes migrate to the versioned snapshot once.
+  Empty caller-owned channels supplied by an application can initialize the same
+  ledger after ownership and membership validation. Caller-owned tool requests carry
+  command and turn IDs, and persistent sessions reject results that do not repeat the
+  matching IDs or replay a resolved call.
+
+- Persistent Stream replies emit bounded schema-v1 observable activity with monotonic
+  revisions, fixed safe summaries for approved caller-owned tools and validated public
+  HTTPS sources. Provider reasoning, prompts, raw tool data and unknown metadata are
+  excluded.
+
+- Added the Go `meta` LLM provider for Muse Spark 1.3 through Meta's hosted API, with streamed text/usage, tool-result replay, reasoning-effort selection and cancellation. Applications opt in through their routing configuration using `META_API_KEY`.
 
 ### An agent directory declares the pages it reads, in `knowledge/urls.yaml`
 
@@ -1031,6 +1060,37 @@ answers out of a knowledge directory and a page on the docs site, both under one
 directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
+
+- A late text-session disconnect cannot interrupt a subsequent session that has
+  reopened the same persistent conversation, including another shared member's reply.
+
+- Explicitly shared persistent conversations can be reopened by current channel
+  members with their own identity and saved context. Private channels stay
+  owner-bound; durable command replay and cancellation stay with the submitter.
+
+- Persistent conversation writes retain the submitting user's identity in the outbox,
+  so queued messages are not reattributed if the session owner changes before retry.
+
+- Disconnecting a session event socket promptly detaches its watcher. Persistent text
+  conversations can reopen without waiting for the next server ping to notice the lost client.
+
+- Worker ping replies now share the dispatch socket's single writer with ready,
+  call and message frames, preventing concurrent writes during call delivery.
+
+- Persistent `agent:support-…` conversations accept inference through session commands
+  only. Chat webhook deliveries cannot start a second response, including retries and
+  messages with missing or forged source markers. New channels record this trigger
+  policy in their metadata.
+
+- Persistent text conversations created by an authenticated end user now bind channel
+  membership, stored user messages, history and session access to that caller. Another
+  user in the same app cannot reopen that conversation through these paths. Existing
+  backend-owned demo channels remain separate; empty caller credentials do not gain
+  access to personal conversations.
+
+- Model WebSocket requests preserve assistant tool calls and correlated tool results,
+  including opaque signatures. Completed responses expose their incomplete reason, and
+  the LLM handshake advertises tool-history support for external worker clients.
 
 - Chat readers are explicitly added to existing agent channels before their token is
   issued, so opening a members-only transcript no longer fails with `ReadChannel`.

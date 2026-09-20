@@ -13,11 +13,92 @@ import struct Foundation.Date
 internal enum Operations {
     /// The sessions the calling customer is running
     ///
+    /// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
+    /// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
+    ///
+    ///
     /// - Remark: HTTP `GET /v1/agents/sessions`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/get(listSessions)`.
     internal enum ListSessions {
         internal static let id: Swift.String = "listSessions"
         internal struct Input: Sendable, Hashable {
+            /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query`.
+            internal struct Query: Sendable, Hashable {
+                /// The agent name the session was opened against.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/agent`.
+                internal var agent: Components.Parameters.SessionAgent?
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/config_id`.
+                internal var configId: Components.Parameters.SessionConfigID?
+                /// Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
+                ///
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/user_id`.
+                internal var userId: Components.Parameters.SessionUserID?
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/project`.
+                internal var project: Components.Parameters.SessionProject?
+                /// - Remark: Generated from `#/components/parameters/SessionStateFilter`.
+                internal enum SessionStateFilter: String, Codable, Hashable, Sendable, CaseIterable {
+                    case running = "running"
+                    case closed = "closed"
+                }
+                /// Omitted is both.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/state`.
+                internal var state: Components.Parameters.SessionStateFilter?
+                /// Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
+                ///
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/custom`.
+                internal var custom: Components.Parameters.SessionCustom?
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/created_after`.
+                internal var createdAfter: Components.Parameters.SessionCreatedAfter?
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/created_before`.
+                internal var createdBefore: Components.Parameters.SessionCreatedBefore?
+                /// Up to 200. Omitted is 25.
+                ///
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/limit`.
+                internal var limit: Components.Parameters.SessionLimit?
+                /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/query/offset`.
+                internal var offset: Components.Parameters.SessionOffset?
+                /// Creates a new `Query`.
+                ///
+                /// - Parameters:
+                ///   - agent: The agent name the session was opened against.
+                ///   - configId:
+                ///   - userId: Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
+                ///   - project:
+                ///   - state: Omitted is both.
+                ///   - custom: Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
+                ///   - createdAfter:
+                ///   - createdBefore:
+                ///   - limit: Up to 200. Omitted is 25.
+                ///   - offset:
+                internal init(
+                    agent: Components.Parameters.SessionAgent? = nil,
+                    configId: Components.Parameters.SessionConfigID? = nil,
+                    userId: Components.Parameters.SessionUserID? = nil,
+                    project: Components.Parameters.SessionProject? = nil,
+                    state: Components.Parameters.SessionStateFilter? = nil,
+                    custom: Components.Parameters.SessionCustom? = nil,
+                    createdAfter: Components.Parameters.SessionCreatedAfter? = nil,
+                    createdBefore: Components.Parameters.SessionCreatedBefore? = nil,
+                    limit: Components.Parameters.SessionLimit? = nil,
+                    offset: Components.Parameters.SessionOffset? = nil
+                ) {
+                    self.agent = agent
+                    self.configId = configId
+                    self.userId = userId
+                    self.project = project
+                    self.state = state
+                    self.custom = custom
+                    self.createdAfter = createdAfter
+                    self.createdBefore = createdBefore
+                    self.limit = limit
+                    self.offset = offset
+                }
+            }
+            internal var query: Operations.ListSessions.Input.Query
             /// - Remark: Generated from `#/paths/v1/agents/sessions/GET/header`.
             internal struct Headers: Sendable, Hashable {
                 internal var accept: [OpenAPIRuntime.AcceptHeaderContentType<Operations.ListSessions.AcceptableContentType>]
@@ -33,8 +114,13 @@ internal enum Operations {
             /// Creates a new `Input`.
             ///
             /// - Parameters:
+            ///   - query:
             ///   - headers:
-            internal init(headers: Operations.ListSessions.Input.Headers = .init()) {
+            internal init(
+                query: Operations.ListSessions.Input.Query = .init(),
+                headers: Operations.ListSessions.Input.Headers = .init()
+            ) {
+                self.query = query
                 self.headers = headers
             }
         }
@@ -67,7 +153,8 @@ internal enum Operations {
                     self.body = body
                 }
             }
-            /// The customer's sessions, newest first
+            /// The customer's sessions, newest first. A page shorter than the limit asked for is the last one, which is all a caller walking the list needs: counting every conversation a busy customer ever had costs more than the page itself.
+            ///
             ///
             /// - Remark: Generated from `#/paths//v1/agents/sessions/get(listSessions)/responses/200`.
             ///
@@ -85,6 +172,29 @@ internal enum Operations {
                     default:
                         try throwUnexpectedResponseStatus(
                             expectedStatus: "ok",
+                            response: self
+                        )
+                    }
+                }
+            }
+            /// The request was malformed
+            ///
+            /// - Remark: Generated from `#/paths//v1/agents/sessions/get(listSessions)/responses/400`.
+            ///
+            /// HTTP response code: `400 badRequest`.
+            case badRequest(Components.Responses.BadRequest)
+            /// The associated value of the enum case if `self` is `.badRequest`.
+            ///
+            /// - Throws: An error if `self` is not `.badRequest`.
+            /// - SeeAlso: `.badRequest`.
+            internal var badRequest: Components.Responses.BadRequest {
+                get throws {
+                    switch self {
+                    case let .badRequest(response):
+                        return response
+                    default:
+                        try throwUnexpectedResponseStatus(
+                            expectedStatus: "badRequest",
                             response: self
                         )
                     }

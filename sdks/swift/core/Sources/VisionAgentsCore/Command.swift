@@ -9,8 +9,13 @@ public enum Command: Sendable, Hashable {
     case say(String)
     /// Answer this as though it had been heard.
     case respond(String)
+    /// Submit durable text. Retain this ID and exact text when retrying.
+    case respondCommand(id: String, text: String)
     /// Abandon the reply in flight.
     case interrupt
+    /// Stop one durable command wherever it got to. A stop arriving after that command
+    /// finished replays its receipt and leaves the command running now alone.
+    case interruptCommand(id: String)
     /// Replace the system prompt, from the next turn on.
     case instructions(String)
     /// Answer a tool call. One of `output` or `error` says how it went.
@@ -21,7 +26,7 @@ public enum Command: Sendable, Hashable {
 
 extension Command: Encodable {
     private enum CodingKeys: String, CodingKey {
-        case type, text, instructions, toolCallID = "tool_call_id", output, error
+        case type, text, instructions, toolCallID = "tool_call_id", commandID = "command_id", output, error
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -33,8 +38,15 @@ extension Command: Encodable {
         case .respond(let text):
             try container.encode("respond", forKey: .type)
             try container.encode(text, forKey: .text)
+        case .respondCommand(let id, let text):
+            try container.encode("respond", forKey: .type)
+            try container.encode(text, forKey: .text)
+            try container.encode(id, forKey: .commandID)
         case .interrupt:
             try container.encode("interrupt", forKey: .type)
+        case .interruptCommand(let id):
+            try container.encode("interrupt", forKey: .type)
+            try container.encode(id, forKey: .commandID)
         case .instructions(let instructions):
             try container.encode("instructions", forKey: .type)
             try container.encode(instructions, forKey: .instructions)

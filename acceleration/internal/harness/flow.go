@@ -83,8 +83,10 @@ type flow struct {
 }
 
 // flowDeadline bounds one floor decision. The conversation model may sit for minutes;
-// the controller must not, or a 429 leaves the caller unanswered.
-const flowDeadline = 3 * time.Second
+// the controller must not, or a 429 leaves the caller unanswered. Three seconds is
+// enough for a dedicated classifier and too short for Muse Spark, which is what
+// Athena's isolated llm-flow alias actually is.
+const flowDeadline = 12 * time.Second
 
 // candidate is one transcript revision the controller is deciding about.
 type candidate struct {

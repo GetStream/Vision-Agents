@@ -13,6 +13,10 @@ import struct Foundation.Date
 internal protocol APIProtocol: Sendable {
     /// The sessions the calling customer is running
     ///
+    /// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
+    /// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
+    ///
+    ///
     /// - Remark: HTTP `GET /v1/agents/sessions`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/get(listSessions)`.
     func listSessions(_ input: Operations.ListSessions.Input) async throws -> Operations.ListSessions.Output
@@ -44,10 +48,20 @@ internal protocol APIProtocol: Sendable {
 extension APIProtocol {
     /// The sessions the calling customer is running
     ///
+    /// Without filters this is what is happening now, which is what it has always been. With any of them it is a query over what has happened as well: the sessions this process is still holding and the rows recorded for the ones that ended, as one list deduplicated by id, because a caller asking for their conversations does not care which of them this instance happens to be holding.
+    /// A backend gets its customer's sessions; an end user gets their own, whatever they ask for. That is not a filter they can widen, and it is why listing is safe to expose to a page: one person's conversations are not a way to find another's. An anonymous caller who named nobody gets nothing at all, since they reach their own session by holding its id.
+    ///
+    ///
     /// - Remark: HTTP `GET /v1/agents/sessions`.
     /// - Remark: Generated from `#/paths//v1/agents/sessions/get(listSessions)`.
-    internal func listSessions(headers: Operations.ListSessions.Input.Headers = .init()) async throws -> Operations.ListSessions.Output {
-        try await listSessions(Operations.ListSessions.Input(headers: headers))
+    internal func listSessions(
+        query: Operations.ListSessions.Input.Query = .init(),
+        headers: Operations.ListSessions.Input.Headers = .init()
+    ) async throws -> Operations.ListSessions.Output {
+        try await listSessions(Operations.ListSessions.Input(
+            query: query,
+            headers: headers
+        ))
     }
     /// Join a call as a voice agent
     ///

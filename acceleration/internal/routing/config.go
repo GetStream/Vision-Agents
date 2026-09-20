@@ -294,6 +294,25 @@ func (a Alias) matches(provider ProviderConfig) bool {
 type ModalityConfig struct {
 	Providers []ProviderConfig `yaml:"providers"`
 	Aliases   map[string]Alias `yaml:"aliases"`
+	// CustomerPolicies restrict concrete models and reserve usage labels for an app.
+	// Missing apps retain the deployment's default routing; an empty allowlist denies all.
+	CustomerPolicies map[string]CustomerPolicy `yaml:"customer_policies"`
+}
+
+type CustomerPolicy struct {
+	AllowedModels []string `yaml:"allowed_models"`
+	Tags          Tags     `yaml:"tags"`
+}
+
+func (p CustomerPolicy) attributed(tags Tags) Tags {
+	result := maps.Clone(tags)
+	if result == nil && len(p.Tags) > 0 {
+		result = Tags{}
+	}
+	for key, value := range p.Tags {
+		result[key] = value
+	}
+	return result
 }
 
 // Provider returns the declaration for a "provider/model" name.
@@ -381,6 +400,20 @@ func (c ModalityConfig) validate() error {
 			return fmt.Errorf("%s is declared twice", provider.Name())
 		}
 		seen[provider.Name()] = struct{}{}
+	}
+	for _, customer := range slices.Sorted(maps.Keys(c.CustomerPolicies)) {
+		if strings.TrimSpace(customer) == "" {
+			return errors.New("customer policy requires an app ID")
+		}
+		policy := c.CustomerPolicies[customer]
+		if err := policy.Tags.Validate(); err != nil {
+			return fmt.Errorf("customer %s attribution: %w", customer, err)
+		}
+		for _, model := range policy.AllowedModels {
+			if _, declared := seen[model]; !declared {
+				return fmt.Errorf("customer %s permits undeclared model %s", customer, model)
+			}
+		}
 	}
 
 	for _, name := range slices.Sorted(maps.Keys(c.Aliases)) {

@@ -74,10 +74,19 @@ const (
 // types declared in this package are the session's own.
 type Event any
 
+// CommandStopped is how one named command ended after somebody asked for it to stop. It
+// is separate from the receipt a submission returns, because a watcher has to tell a
+// command it asked to stop from a command that was just accepted.
+type CommandStopped struct {
+	persistent.CommandReceipt
+}
+
 // ToolCall is the model asking for one of the caller's own tools. It is the only event a
 // watcher is obliged to answer: everything else is a report.
 type ToolCall struct {
-	Cancel bool
+	Cancel    bool
+	CommandID string
+	TurnID    string
 	// ID is what a result must quote to answer this call.
 	ID string
 	// Name is which tool was asked for.
@@ -104,7 +113,9 @@ type Session struct {
 	// or nothing at all, and nothing at all means the built-in set.
 	skills harness.Skills
 
-	mu sync.Mutex
+	// Serializes persistent command acceptance/start with command-targeted interruption.
+	commandMu sync.Mutex
+	mu        sync.Mutex
 	// watchers are the connections being fanned out to, keyed so one can detach without
 	// disturbing the others.
 	watchers    map[uint64]*watcher
@@ -256,7 +267,11 @@ func (s *Session) Watch() (<-chan Event, func()) {
 		// Persistent text clients own no call; a disconnected operator leaves no tool host.
 		// End this session so the saved channel can be reopened after a terminal crash.
 		if detached {
-			go func() { s.Interrupt(); _ = s.Close() }()
+			go func() {
+				// Interrupt belongs to the same one-time teardown as Close. A late
+				// detach from an ended session must not cancel a reopened conversation.
+				s.closeOnce.Do(func() { s.Interrupt(); _ = s.close() })
+			}()
 		}
 	}
 }
@@ -273,7 +288,12 @@ func (s *Session) Say(ctx context.Context, text string) error {
 // recorded -- an incognito session, or a deployment with no store -- and empty for a native
 // session, where the model decides for itself what counts as a turn.
 func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePart) (string, error) {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
 	if s.persisted != nil {
+		if s.spec.Caller.UserID != "" {
+			return "", errors.New("personal conversations require a command ID")
+		}
 		if err := s.persisted.Begin(text); err != nil {
 			return "", err
 		}
@@ -291,6 +311,34 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// Opening the turn here as well as on the event is what makes the id available to whoever
 	// asked for the answer. It happens once whichever way round the two arrive.
 	return s.openTurn(turnID, text), nil
+}
+
+// RespondCommand accepts one durable text submission. The receipt may be replayed,
+// but only the first successful acceptance is allowed to invoke the model.
+func (s *Session) RespondCommand(ctx context.Context, id, text string) (persistent.CommandReceipt, error) {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	if s.persisted == nil {
+		return persistent.CommandReceipt{}, errors.New("command IDs require a persistent text conversation")
+	}
+	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
+		return persistent.CommandReceipt{}, err
+	}
+	receipt, err := s.persisted.BeginCommand(id, text)
+	if err != nil {
+		return receipt, err
+	}
+	s.broadcast(receipt)
+	if receipt.Duplicate {
+		return receipt, nil
+	}
+	turnID, err := s.voiceAgent.RespondTo(ctx, text, nil)
+	if err != nil {
+		s.persisted.Cancel()
+		return receipt, err
+	}
+	s.persisted.BindTurn(receipt.CommandID, turnID)
+	return receipt, nil
 }
 
 // Report publishes a failure the watcher should see, without ending the session.
@@ -320,10 +368,57 @@ func (s *Session) Ask(ctx context.Context, text string) (string, error) {
 
 // Interrupt abandons the reply being spoken.
 func (s *Session) Interrupt() {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
 	s.voiceAgent.Interrupt()
 	if s.persisted != nil {
 		s.persisted.Cancel()
 	}
+}
+
+// Command reads what is known about a durable command without accepting, running or
+// stopping anything. The caller must already be authorized for this session.
+func (s *Session) Command(id string) (persistent.CommandReceipt, error) {
+	if s.persisted == nil {
+		return persistent.CommandReceipt{}, persistent.ErrCommandNotFound
+	}
+	if err := s.persisted.CheckCaller(context.Background(), s.spec.Caller.UserID); err != nil {
+		return persistent.CommandReceipt{}, err
+	}
+	return s.persisted.Command(id)
+}
+
+// InterruptCommand targets a durable text command, never whichever command starts
+// later. Holding commandMu across lookup/interruption prevents a new submission
+// from entering the acceptance-to-execution gap.
+func (s *Session) InterruptCommand(id string) (persistent.CommandReceipt, error) {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	if s.persisted == nil {
+		return persistent.CommandReceipt{}, persistent.ErrCommandNotFound
+	}
+	if err := s.persisted.CheckCaller(context.Background(), s.spec.Caller.UserID); err != nil {
+		return persistent.CommandReceipt{}, err
+	}
+	receipt, err := s.persisted.Command(id)
+	if err != nil {
+		return persistent.CommandReceipt{}, err
+	}
+	switch receipt.State {
+	case "completed", "cancelled", "interrupted", "failed":
+		return s.stopped(s.persisted.CancelCommand(id))
+	}
+	s.voiceAgent.Interrupt()
+	return s.stopped(s.persisted.CancelCommand(id))
+}
+
+// stopped tells the watchers how the named command ended. An unknown outcome is not
+// published: the caller holding the stop is the one that has to retry it.
+func (s *Session) stopped(receipt persistent.CommandReceipt, err error) (persistent.CommandReceipt, error) {
+	if err == nil {
+		s.broadcast(CommandStopped{CommandReceipt: receipt})
+	}
+	return receipt, err
 }
 
 // Busy reports whether the agent still has something to finish, which is how anything
@@ -344,7 +439,21 @@ func (s *Session) ResolveTool(id, output, failure string) bool {
 
 // ResolveToolParts is ResolveTool for a result that may carry images.
 func (s *Session) ResolveToolParts(id string, parts []llm.ContentPart, failure string) bool {
-	return s.tools.Resolve(id, parts, failure)
+	if s.persisted != nil && s.spec.Caller.UserID != "" {
+		return false
+	}
+	return s.tools.Resolve(id, "", parts, failure)
+}
+
+func (s *Session) ResolveCommandTool(id, commandID, turnID string, parts []llm.ContentPart, failure string) bool {
+	if s.persisted == nil || commandID == "" || turnID == "" {
+		return false
+	}
+	expected, bound := s.persisted.CommandForTurn(turnID)
+	if !bound || expected != commandID {
+		return false
+	}
+	return s.tools.Resolve(id, turnID, parts, failure)
 }
 
 // Close leaves the call and releases everything the session opened. It is safe to call
@@ -662,6 +771,12 @@ func (s *Session) broadcast(event Event) {
 // The failure matters: without it the model would wait out the whole timeout on a call the
 // caller disconnected from, and the caller would hear a pause it could not explain.
 func (s *Session) askTool(call ToolCall) error {
+	if call.TurnID != "" && s.persisted != nil {
+		call.CommandID, _ = s.persisted.CommandForTurn(call.TurnID)
+	}
+	if s.persisted != nil && s.spec.Caller.UserID != "" && (call.CommandID == "" || call.TurnID == "") {
+		return errors.New("session: tool call has no durable command binding")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

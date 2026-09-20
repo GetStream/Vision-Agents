@@ -2361,6 +2361,39 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/agents/conversations/{cid}/commands/{command_id}:
+    get:
+      operationId: getConversationCommand
+      summary: What a command in this conversation ended as
+      description: >
+        Reads one command's receipt from the conversation's own durable record. It opens
+        nothing and starts nothing, so a client whose stop found no session left to reach
+        reconciles that command here rather than reopening a session to ask about it.
+
+        A command still running is reported as it stands; the session holding it is where
+        it can be stopped.
+      parameters:
+        - name: cid
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/CommandID"
+        - name: agent_id
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: The command's current receipt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandReceipt"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/sessions:
     get:
       operationId: listSessions
@@ -2780,8 +2813,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SayRequest"
+              $ref: "#/components/schemas/RespondRequest"
       responses:
+        "200":
+          description: Durable command accepted or replayed; only a new command starts inference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandReceipt"
+        "409":
+          description: The command ID was already accepted with different content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "204":
           description: The model is answering
         "400":
@@ -2811,6 +2856,69 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}/commands/{command_id}:
+    get:
+      operationId: getSessionCommand
+      summary: What is known about one durable command
+      description: >
+        Reads a command's receipt without accepting, running or stopping anything. It is
+        how a client whose stop or submission had an unknown outcome reconciles the same
+        command id rather than inventing another one.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+        - $ref: "#/components/parameters/CommandID"
+      responses:
+        "200":
+          description: The command's current receipt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandReceipt"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/sessions/{id}/commands/{command_id}/interrupt:
+    post:
+      operationId: interruptSessionCommand
+      summary: Stop one named command, and nothing else
+      description: >
+        Abandons the reply that command is generating. Unlike interrupting the session, a
+        stop that arrives after its command finished replays that command's terminal
+        receipt and leaves the command running now alone, so a delayed stop for one
+        question can never take the answer to the next one.
+
+        A command accepted but not yet generating is prevented from starting. A command
+        already completed, failed, cancelled or interrupted returns what it ended as. An
+        unknown command is a 404, the same answer as a conversation the caller does not
+        own.
+
+        Interrupting model work claims nothing about a tool whose external side effect
+        already happened.
+      parameters:
+        - $ref: "#/components/parameters/SessionID"
+        - $ref: "#/components/parameters/CommandID"
+      responses:
+        "200":
+          description: The command's terminal receipt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandReceipt"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: >
+            The stop was accepted but its durable outcome is unknown. The command is not
+            reported stopped; retry the same command id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/agents/sessions/{id}/instructions:
     put:
@@ -2856,13 +2964,27 @@ paths:
         `conversation_compacted`, `error` and `left`.
 
         Persistent text sessions also emit `conversation_updated` with conversation_id
-        and a complete message snapshot: id, role, text, state, response_started_at,
+        and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at,
         state_started_at, finished_at, duration_ms, saved, persistence_error and
         attachments. Each tool_calling attachment has tool_call_id, name, title,
         status, phase, summary, immutable started_at, execution_started_at, finished_at
         and duration_ms. Activity states are thinking, queued, tools, writing,
         completed, failed and cancelled. tool_started includes tool_call_id, tool,
         turn_id and started_at; tool_ran also includes tool_call_id.
+
+        A respond command carrying command_id emits command_accepted with a nested
+        command receipt (command_id, user_message_id, assistant_message_id, state,
+        duplicate). Personal persistent text sessions require this ID. A retry with
+        the same text returns the existing IDs without invoking the model again;
+        reuse with different text emits an error. Commands with IDs currently accept
+        text only. After restart an interrupted command is reported, not rerun.
+
+        An `interrupt` command carrying `command_id` stops that command and emits
+        `command_stopped` with its terminal receipt. A stop arriving after its command
+        finished replays that command's receipt and leaves the command running now
+        alone; an unknown command is reported as an error. Without `command_id` the frame
+        stops whichever reply is current, which is what a caller with no command to name
+        means by it.
 
         A `decision` frame is one judgement the conversation made, carrying the same
         fields as a CallEvent. Together they are why the call went the way it did, and
@@ -2875,8 +2997,11 @@ paths:
         drops `decision`.
 
         The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`,
-        `interrupt`, `instructions` or `close` to act on the session. A `tool_call`
-        is the only frame that must be answered: everything else is a report.
+        `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act
+        on the session. A `tool_call` is the only frame that must be answered:
+        everything else is a report. Tool calls made by durable personal commands carry
+        `command_id` and `turn_id`; their result must repeat both values so a result cannot
+        be adopted by another command or turn.
 
         `tool_result.output` is a string, or an array of parts `[{type: text|image_url,
         ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of
@@ -2939,6 +3064,12 @@ paths:
         `complete` per response; a `complete` reports the `status` the response ended in,
         what it cost in tokens and how long the caller waited for the first of them.
         `messages[].content` is a string, or an array of parts `[{type: text|image_url,
+        ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`,
+        with arguments encoded as a JSON string and optional opaque signature. Tool-result
+        messages use `role: tool` and `tool_call_id` to correlate their content. Completed
+        tool calls include the same replay fields; incomplete responses additionally report
+        `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises
+        `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url,
         ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images
         is refused with an `error` frame naming the model and the modality, before anything
         is billed. An
@@ -3240,6 +3371,13 @@ components:
       in: path
       required: true
       description: The session, as returned when it was created.
+      schema:
+        type: string
+    CommandID:
+      name: command_id
+      in: path
+      required: true
+      description: The client's own command id, as sent when the command was submitted.
       schema:
         type: string
     ResourceID:
@@ -5805,6 +5943,10 @@ components:
           enum: [respond]
         text:
           type: string
+        command_id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,128}$'
+          description: Required for personal persistent text conversations; reuse on retries. Text only when present.
         images:
           type: array
           items:
@@ -5817,6 +5959,10 @@ components:
           type: string
           enum: [tool_result]
         tool_call_id:
+          type: string
+        command_id:
+          type: string
+        turn_id:
           type: string
         output:
           $ref: "#/components/schemas/MessageContent"
@@ -6092,6 +6238,33 @@ components:
           type: integer
           description: How many conversations moved onto the account.
 
+    RespondRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+        command_id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,128}$'
+          description: Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
+    CommandReceipt:
+      type: object
+      required: [command_id, user_message_id, assistant_message_id, state, duplicate]
+      properties:
+        command_id:
+          type: string
+        user_message_id:
+          type: string
+        assistant_message_id:
+          type: string
+        state:
+          type: string
+          description: Latest locally recorded response state; an interrupted command is never automatically rerun.
+        duplicate:
+          type: boolean
+          description: True when this command already exists and no new inference was started.
     SayRequest:
       type: object
       required: [text]

@@ -70,11 +70,14 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 	// ping failed and hold the worker's place in the rotation for that whole time, which
 	// is calls handed to a socket nobody is on the other end of.
 	gone := make(chan struct{})
+	pongs := make(chan float64)
+	writerDone := make(chan struct{})
+	defer close(writerDone)
 	go func() {
 		defer close(gone)
-		s.readWorker(connection, worker)
+		s.readWorker(connection, worker, pongs, writerDone)
 	}()
-	s.writeCalls(connection, worker, gone)
+	s.writeCalls(connection, worker, gone, pongs)
 
 	s.logger.Info("a dispatch worker stopped waiting", "worker", worker.ID)
 }
@@ -82,7 +85,7 @@ func (s *Server) dispatchCalls(w http.ResponseWriter, r *http.Request) {
 // writeCalls pushes calls and messages to the worker until it goes away, is released, or
 // the socket breaks. Both queues close together, so either arm reporting a closed channel
 // means the worker was released.
-func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan struct{}) {
+func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker, gone <-chan struct{}, pongs <-chan float64) {
 	connection.SetWriteDeadline(time.Now().Add(writeWait))
 	ready := frame{"type": "ready", "worker_id": worker.ID}
 	if err := connection.WriteJSON(ready); err != nil {
@@ -95,6 +98,12 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 
 	for {
 		select {
+		case at := <-pongs:
+			connection.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := connection.WriteJSON(frame{"type": "pong", "at": at}); err != nil {
+				return
+			}
+
 		case call, open := <-worker.Calls():
 			if !open {
 				connection.SetWriteDeadline(time.Now().Add(writeWait))
@@ -142,7 +151,7 @@ func (s *Server) writeCalls(connection *websocket.Conn, worker *dispatch.Worker,
 //
 // A frame it cannot read is reported and skipped rather than closing the socket: dropping a
 // worker over one bad message would take the calls it is already in with it.
-func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker) {
+func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker, pongs chan<- float64, writerDone <-chan struct{}) {
 	connection.SetReadDeadline(time.Now().Add(pongWait))
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongWait))
@@ -183,8 +192,10 @@ func (s *Server) readWorker(connection *websocket.Conn, worker *dispatch.Worker)
 		case "ping":
 			// The worker times its own round trip, because the network it is on is the one
 			// that will carry the audio. All this does is send the timestamp back.
-			connection.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := connection.WriteJSON(frame{"type": "pong", "at": report.At}); err != nil {
+			// Keep all data writes in writeCalls, including their deadlines.
+			select {
+			case pongs <- report.At:
+			case <-writerDone:
 				return
 			}
 

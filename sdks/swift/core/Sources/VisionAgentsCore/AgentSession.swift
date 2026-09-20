@@ -76,6 +76,12 @@ public final class AgentSession {
         try await socket.send(.respond(trimmed))
     }
 
+    /// Submit or retry a persistent text command without adding a second local row.
+    /// Keep the ID across reconnects; reconcile the receipt and Chat messages by ID.
+    public func sendCommand(id: String, text: String) async throws {
+        try await socket.send(.respondCommand(id: id, text: text))
+    }
+
     /// Speaks this without going through the model.
     public func say(_ text: String) async throws {
         try await socket.send(.say(text))
@@ -84,6 +90,13 @@ public final class AgentSession {
     /// Abandons the reply in flight.
     public func interrupt() async throws {
         try await socket.send(.interrupt)
+    }
+
+    /// Stops the named durable command, and only that one. Keep the ID while the stop is
+    /// in flight: a stop that arrives after its command finished reports how it ended
+    /// rather than interrupting the command accepted after it.
+    public func stopCommand(id: String) async throws {
+        try await socket.send(.interruptCommand(id: id))
     }
 
     /// Replaces the system prompt, from the next turn on.

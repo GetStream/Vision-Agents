@@ -410,9 +410,10 @@ func (s *Server) streamLLM(
 	defer session.Close()
 
 	out.frame(frame{
-		"type":     "started",
-		"provider": session.Provider(),
-		"model":    session.Model(),
+		"type":         "started",
+		"provider":     session.Provider(),
+		"model":        session.Model(),
+		"tool_history": true,
 	})
 
 	// Each response is drained by a goroutine of its own, since a caller may have several
@@ -766,6 +767,13 @@ func writeSTS(out *socket, event sts.Event) error {
 // because a routed completion should be able to call a tool or cache a prompt prefix the
 // way a session's can. Anything it leaves out falls back to the socket's options, which
 // fall back to its config.
+type wireToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Signature string `json:"signature,omitempty"`
+}
+
 type respond struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
@@ -774,8 +782,10 @@ type respond struct {
 
 	Instructions string `json:"instructions"`
 	Messages     []struct {
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		ToolCalls  []wireToolCall  `json:"tool_calls,omitempty"`
+		ToolCallID string          `json:"tool_call_id,omitempty"`
 	} `json:"messages"`
 	Tools      []llm.Tool `json:"tools"`
 	ToolChoice string     `json:"tool_choice"`
@@ -803,7 +813,22 @@ func (r respond) params(held options.LLM) (llm.ResponseParams, error) {
 		if err != nil {
 			return llm.ResponseParams{}, err
 		}
-		item := llm.Message{Role: llm.Role(message.Role)}
+		item := llm.Message{Role: llm.Role(message.Role), ToolCallID: message.ToolCallID}
+		if len(message.ToolCalls) > 0 && item.Role != llm.Assistant {
+			return llm.ResponseParams{}, errors.New("tool_calls belong to an assistant message")
+		}
+		if item.ToolCallID != "" && item.Role != llm.ToolResult {
+			return llm.ResponseParams{}, errors.New("tool_call_id belongs to a tool message")
+		}
+		if item.Role == llm.ToolResult && item.ToolCallID == "" {
+			return llm.ResponseParams{}, errors.New("a tool message requires tool_call_id")
+		}
+		for _, call := range message.ToolCalls {
+			if call.ID == "" || call.Name == "" || !json.Valid([]byte(call.Arguments)) {
+				return llm.ResponseParams{}, errors.New("a tool call requires id, name and JSON arguments")
+			}
+			item.ToolCalls = append(item.ToolCalls, llm.ToolCall{ID: call.ID, Name: call.Name, Arguments: call.Arguments, Signature: call.Signature})
+		}
 		if len(parts) > 0 {
 			item.Parts = parts
 		} else {
@@ -984,6 +1009,7 @@ func llmFrame(event llm.Event) (frame, bool) {
 				"id":        call.ID,
 				"name":      call.Name,
 				"arguments": call.Arguments,
+				"signature": call.Signature,
 			})
 		}
 		return frame{
@@ -992,6 +1018,7 @@ func llmFrame(event llm.Event) (frame, bool) {
 			"provider":               response.Provider,
 			"model":                  response.Model,
 			"status":                 string(response.Status),
+			"incomplete_reason":      response.IncompleteReason,
 			"text":                   response.OutputText,
 			"tool_calls":             calls,
 			"input_tokens":           response.Usage.InputTokens,

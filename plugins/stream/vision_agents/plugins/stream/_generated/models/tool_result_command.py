@@ -24,12 +24,16 @@ class ToolResultCommand:
     Attributes:
         type_ (ToolResultCommandType):
         tool_call_id (str):
+        command_id (str | Unset):
+        turn_id (str | Unset):
         output (list[ImageContentPart | TextContentPart] | str | Unset):
         error (str | Unset):
     """
 
     type_: ToolResultCommandType
     tool_call_id: str
+    command_id: str | Unset = UNSET
+    turn_id: str | Unset = UNSET
     output: list[ImageContentPart | TextContentPart] | str | Unset = UNSET
     error: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -40,6 +44,10 @@ class ToolResultCommand:
         type_ = self.type_.value
 
         tool_call_id = self.tool_call_id
+
+        command_id = self.command_id
+
+        turn_id = self.turn_id
 
         output: list[dict[str, Any]] | str | Unset
         if isinstance(self.output, Unset):
@@ -74,6 +82,10 @@ class ToolResultCommand:
                 "tool_call_id": tool_call_id,
             }
         )
+        if command_id is not UNSET:
+            field_dict["command_id"] = command_id
+        if turn_id is not UNSET:
+            field_dict["turn_id"] = turn_id
         if output is not UNSET:
             field_dict["output"] = output
         if error is not UNSET:
@@ -90,6 +102,10 @@ class ToolResultCommand:
         type_ = ToolResultCommandType(d.pop("type"))
 
         tool_call_id = d.pop("tool_call_id")
+
+        command_id = d.pop("command_id", UNSET)
+
+        turn_id = d.pop("turn_id", UNSET)
 
         def _parse_output(
             data: object,
@@ -148,6 +164,8 @@ class ToolResultCommand:
         tool_result_command = cls(
             type_=type_,
             tool_call_id=tool_call_id,
+            command_id=command_id,
+            turn_id=turn_id,
             output=output,
             error=error,
         )

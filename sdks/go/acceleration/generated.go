@@ -1548,6 +1548,19 @@ type ClaimGuestResult struct {
 	UserId        string `json:"user_id"`
 }
 
+// CommandReceipt defines model for CommandReceipt.
+type CommandReceipt struct {
+	AssistantMessageId string `json:"assistant_message_id"`
+	CommandId          string `json:"command_id"`
+
+	// Duplicate True when this command already exists and no new inference was started.
+	Duplicate bool `json:"duplicate"`
+
+	// State Latest locally recorded response state; an interrupted command is never automatically rerun.
+	State         string `json:"state"`
+	UserMessageId string `json:"user_message_id"`
+}
+
 // Contact defines model for Contact.
 type Contact struct {
 	Attempts int `json:"attempts"`
@@ -2185,6 +2198,13 @@ type RecordingSource struct {
 // RecordingStatus Where a job has got to. A failed job carries the reason in `error`, and a completed one carries its result.
 type RecordingStatus string
 
+// RespondRequest defines model for RespondRequest.
+type RespondRequest struct {
+	// CommandId Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference.
+	CommandId *string `json:"command_id,omitempty"`
+	Text      string  `json:"text"`
+}
+
 // RollupRequest defines model for RollupRequest.
 type RollupRequest struct {
 	From        time.Time    `json:"from"`
@@ -2428,9 +2448,11 @@ type SessionPhone struct {
 
 // SessionRespondCommand defines model for SessionRespondCommand.
 type SessionRespondCommand struct {
-	Images *[]ImageSource            `json:"images,omitempty"`
-	Text   string                    `json:"text"`
-	Type   SessionRespondCommandType `json:"type"`
+	// CommandId Required for personal persistent text conversations; reuse on retries. Text only when present.
+	CommandId *string                   `json:"command_id,omitempty"`
+	Images    *[]ImageSource            `json:"images,omitempty"`
+	Text      string                    `json:"text"`
+	Type      SessionRespondCommandType `json:"type"`
 }
 
 // SessionRespondCommandType defines model for SessionRespondCommand.Type.
@@ -3010,9 +3032,11 @@ type TimelineEntry struct {
 
 // ToolResultCommand defines model for ToolResultCommand.
 type ToolResultCommand struct {
+	CommandId  *string               `json:"command_id,omitempty"`
 	Error      *string               `json:"error,omitempty"`
 	Output     *MessageContent       `json:"output,omitempty"`
 	ToolCallId string                `json:"tool_call_id"`
+	TurnId     *string               `json:"turn_id,omitempty"`
 	Type       ToolResultCommandType `json:"type"`
 }
 
@@ -3275,6 +3299,9 @@ type VoiceSampleRequest struct {
 	Transcript *string `json:"transcript,omitempty"`
 }
 
+// CommandID defines model for CommandID.
+type CommandID = string
+
 // ConfigName defines model for ConfigName.
 type ConfigName = string
 
@@ -3367,6 +3394,11 @@ type GetCallEventsParams struct {
 type ListAgentConfigsParams struct {
 	// Name Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one.
 	Name *ConfigName `form:"name,omitempty" json:"name,omitempty"`
+}
+
+// GetConversationCommandParams defines parameters for GetConversationCommand.
+type GetConversationCommandParams struct {
+	AgentId string `form:"agent_id" json:"agent_id"`
 }
 
 // GetConversationMessagesParams defines parameters for GetConversationMessages.
@@ -3642,7 +3674,7 @@ type ForkSessionJSONRequestBody = ForkSessionRequest
 type SetSessionInstructionsJSONRequestBody = InstructionsRequest
 
 // RespondSessionJSONRequestBody defines body for RespondSession for application/json ContentType.
-type RespondSessionJSONRequestBody = SayRequest
+type RespondSessionJSONRequestBody = RespondRequest
 
 // CreateResponseJSONRequestBody defines body for CreateResponse for application/json ContentType.
 type CreateResponseJSONRequestBody = CreateResponseRequest
@@ -4148,6 +4180,14 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 	AuthorizePlugin(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetConversationCommand What a command in this conversation ended as
+	//
+	// Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
+	// A command still running is reported as it stands; the session holding it is where it can be stopped.
+	//
+	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
+	GetConversationCommand(ctx context.Context, cid string, commandId CommandID, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetConversationMessages Read a persistent text conversation
 	//
 	// Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
@@ -4346,6 +4386,22 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 	GetSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSessionCommand What is known about one durable command
+	//
+	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
+	GetSessionCommand(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// InterruptSessionCommand Stop one named command, and nothing else
+	//
+	// Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives after its command finished replays that command's terminal receipt and leaves the command running now alone, so a delayed stop for one question can never take the answer to the next one.
+	// A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
+	// Interrupting model work claims nothing about a tool whose external side effect already happened.
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
+	InterruptSessionCommand(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ForkSessionWithBody Continue a conversation as a new one
 	//
@@ -5545,6 +5601,24 @@ func (c *Client) AuthorizePlugin(ctx context.Context, id ResourceID, pluginId Pl
 	return c.Client.Do(req)
 }
 
+// GetConversationCommand What a command in this conversation ended as
+//
+// Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
+// A command still running is reported as it stands; the session holding it is where it can be stopped.
+//
+// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
+func (c *Client) GetConversationCommand(ctx context.Context, cid string, commandId CommandID, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConversationCommandRequest(c.Server, cid, commandId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetConversationMessages Read a persistent text conversation
 //
 // Corresponds with GET /v1/agents/conversations/{cid}/messages (the `GetConversationMessages` operationId).
@@ -5974,6 +6048,42 @@ func (c *Client) CloseSession(ctx context.Context, id SessionID, reqEditors ...R
 // Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 func (c *Client) GetSession(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSessionRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSessionCommand What is known about one durable command
+//
+// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+//
+// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
+func (c *Client) GetSessionCommand(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSessionCommandRequest(c.Server, id, commandId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// InterruptSessionCommand Stop one named command, and nothing else
+//
+// Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives after its command finished replays that command's terminal receipt and leaves the command running now alone, so a delayed stop for one question can never take the answer to the next one.
+// A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
+// Interrupting model work claims nothing about a tool whose external side effect already happened.
+//
+// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
+func (c *Client) InterruptSessionCommand(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewInterruptSessionCommandRequest(c.Server, id, commandId)
 	if err != nil {
 		return nil, err
 	}
@@ -8420,6 +8530,70 @@ func NewAuthorizePluginRequestWithBody(server string, id ResourceID, pluginId Pl
 	return req, nil
 }
 
+// NewGetConversationCommandRequest constructs an http.Request for the GetConversationCommand method
+func NewGetConversationCommandRequest(server string, cid string, commandId CommandID, params *GetConversationCommandParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "cid", cid, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "command_id", commandId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/conversations/%s/commands/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "agent_id", params.AgentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetConversationMessagesRequest constructs an http.Request for the GetConversationMessages method
 func NewGetConversationMessagesRequest(server string, cid string, params *GetConversationMessagesParams) (*http.Request, error) {
 	var err error
@@ -9735,6 +9909,88 @@ func NewGetSessionRequest(server string, id SessionID) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetSessionCommandRequest constructs an http.Request for the GetSessionCommand method
+func NewGetSessionCommandRequest(server string, id SessionID, commandId CommandID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "command_id", commandId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/commands/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewInterruptSessionCommandRequest constructs an http.Request for the InterruptSessionCommand method
+func NewInterruptSessionCommandRequest(server string, id SessionID, commandId CommandID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "command_id", commandId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/commands/%s/interrupt", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -12627,6 +12883,16 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
 	AuthorizePluginWithResponse(ctx context.Context, id ResourceID, pluginId PluginID, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
 
+	// GetConversationCommandWithResponse What a command in this conversation ended as
+	//
+	// Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
+	// A command still running is reported as it stands; the session holding it is where it can be stopped.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
+	GetConversationCommandWithResponse(ctx context.Context, cid string, commandId CommandID, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error)
+
 	// GetConversationMessagesWithResponse Read a persistent text conversation
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -12853,6 +13119,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/sessions/{id} (the `GetSession` operationId).
 	GetSessionWithResponse(ctx context.Context, id SessionID, reqEditors ...RequestEditorFn) (*GetSessionResponse, error)
+
+	// GetSessionCommandWithResponse What is known about one durable command
+	//
+	// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
+	GetSessionCommandWithResponse(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error)
+
+	// InterruptSessionCommandWithResponse Stop one named command, and nothing else
+	//
+	// Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives after its command finished replays that command's terminal receipt and leaves the command running now alone, so a delayed stop for one question can never take the answer to the next one.
+	// A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
+	// Interrupting model work claims nothing about a tool whose external side effect already happened.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
+	InterruptSessionCommandWithResponse(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error)
 
 	// ForkSessionWithBodyWithResponse Continue a conversation as a new one
 	//
@@ -15082,6 +15368,61 @@ func (r AuthorizePluginResponse) ContentType() string {
 	return ""
 }
 
+type GetConversationCommandResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CommandReceipt
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConversationCommandResponse) GetJSON200() *CommandReceipt {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetConversationCommandResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetConversationCommandResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConversationCommandResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConversationCommandResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConversationCommandResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConversationCommandResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetConversationMessagesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -16232,6 +16573,123 @@ func (r GetSessionResponse) ContentType() string {
 	return ""
 }
 
+type GetSessionCommandResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CommandReceipt
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetSessionCommandResponse) GetJSON200() *CommandReceipt {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetSessionCommandResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetSessionCommandResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSessionCommandResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSessionCommandResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSessionCommandResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSessionCommandResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type InterruptSessionCommandResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CommandReceipt
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r InterruptSessionCommandResponse) GetJSON200() *CommandReceipt {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r InterruptSessionCommandResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r InterruptSessionCommandResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r InterruptSessionCommandResponse) GetJSON503() *Error {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r InterruptSessionCommandResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r InterruptSessionCommandResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r InterruptSessionCommandResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r InterruptSessionCommandResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ForkSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -16421,6 +16879,8 @@ func (r InterruptSessionResponse) ContentType() string {
 type RespondSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CommandReceipt
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -16429,6 +16889,13 @@ type RespondSessionResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RespondSessionResponse) GetJSON200() *CommandReceipt {
+	return r.JSON200
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
@@ -16449,6 +16916,11 @@ func (r RespondSessionResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r RespondSessionResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r RespondSessionResponse) GetJSON409() *Error {
+	return r.JSON409
 }
 
 // GetBody returns the raw response body bytes
@@ -20262,6 +20734,22 @@ func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, i
 	return ParseAuthorizePluginResponse(rsp)
 }
 
+// GetConversationCommandWithResponse What a command in this conversation ended as
+//
+// Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
+// A command still running is reported as it stands; the session holding it is where it can be stopped.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/conversations/{cid}/commands/{command_id} (the `GetConversationCommand` operationId).
+func (c *ClientWithResponses) GetConversationCommandWithResponse(ctx context.Context, cid string, commandId CommandID, params *GetConversationCommandParams, reqEditors ...RequestEditorFn) (*GetConversationCommandResponse, error) {
+	rsp, err := c.GetConversationCommand(ctx, cid, commandId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConversationCommandResponse(rsp)
+}
+
 // GetConversationMessagesWithResponse Read a persistent text conversation
 //
 // Returns a wrapper object for the known response body format(s).
@@ -20631,6 +21119,38 @@ func (c *ClientWithResponses) GetSessionWithResponse(ctx context.Context, id Ses
 		return nil, err
 	}
 	return ParseGetSessionResponse(rsp)
+}
+
+// GetSessionCommandWithResponse What is known about one durable command
+//
+// Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/sessions/{id}/commands/{command_id} (the `GetSessionCommand` operationId).
+func (c *ClientWithResponses) GetSessionCommandWithResponse(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*GetSessionCommandResponse, error) {
+	rsp, err := c.GetSessionCommand(ctx, id, commandId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSessionCommandResponse(rsp)
+}
+
+// InterruptSessionCommandWithResponse Stop one named command, and nothing else
+//
+// Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives after its command finished replays that command's terminal receipt and leaves the command running now alone, so a delayed stop for one question can never take the answer to the next one.
+// A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
+// Interrupting model work claims nothing about a tool whose external side effect already happened.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt (the `InterruptSessionCommand` operationId).
+func (c *ClientWithResponses) InterruptSessionCommandWithResponse(ctx context.Context, id SessionID, commandId CommandID, reqEditors ...RequestEditorFn) (*InterruptSessionCommandResponse, error) {
+	rsp, err := c.InterruptSessionCommand(ctx, id, commandId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseInterruptSessionCommandResponse(rsp)
 }
 
 // ForkSessionWithBodyWithResponse Continue a conversation as a new one
@@ -23001,6 +23521,46 @@ func ParseAuthorizePluginResponse(rsp *http.Response) (*AuthorizePluginResponse,
 	return response, nil
 }
 
+// ParseGetConversationCommandResponse parses an HTTP response from a GetConversationCommandWithResponse call
+func ParseGetConversationCommandResponse(rsp *http.Response) (*GetConversationCommandResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConversationCommandResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CommandReceipt
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetConversationMessagesResponse parses an HTTP response from a GetConversationMessagesWithResponse call
 func ParseGetConversationMessagesResponse(rsp *http.Response) (*GetConversationMessagesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -23872,6 +24432,93 @@ func ParseGetSessionResponse(rsp *http.Response) (*GetSessionResponse, error) {
 	return response, nil
 }
 
+// ParseGetSessionCommandResponse parses an HTTP response from a GetSessionCommandWithResponse call
+func ParseGetSessionCommandResponse(rsp *http.Response) (*GetSessionCommandResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSessionCommandResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CommandReceipt
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseInterruptSessionCommandResponse parses an HTTP response from a InterruptSessionCommandWithResponse call
+func ParseInterruptSessionCommandResponse(rsp *http.Response) (*InterruptSessionCommandResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &InterruptSessionCommandResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CommandReceipt
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseForkSessionResponse parses an HTTP response from a ForkSessionWithResponse call
 func ParseForkSessionResponse(rsp *http.Response) (*ForkSessionResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -24033,6 +24680,13 @@ func ParseRespondSessionResponse(rsp *http.Response) (*RespondSessionResponse, e
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CommandReceipt
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case rsp.StatusCode == 204:
 		break // No content-type
 
@@ -24063,6 +24717,13 @@ func ParseRespondSessionResponse(rsp *http.Response) (*RespondSessionResponse, e
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	}
 

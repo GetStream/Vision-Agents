@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
@@ -291,6 +292,13 @@ type SessionSuite struct {
 	// thinks routes the target a session defaults its thinking model to, for a test that
 	// wants delegation without naming anything.
 	thinks bool
+	// gated answers the conversation model instead of stubLLM, for a test that needs a
+	// reply it can hold open while something else happens to the session.
+	gated *gatedLLM
+	// conversations persists text commands, for a test that submits one, and outbox is
+	// where it writes them.
+	conversations *persistent.Service
+	outbox        string
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -303,6 +311,8 @@ func (s *SessionSuite) SetupTest() {
 	s.remembers = nil
 	s.records = nil
 	s.thinks = false
+	s.gated = nil
+	s.conversations = nil
 }
 
 // thinking is what the LLM router routes. A deployment that routes no high-quality model
@@ -340,6 +350,9 @@ func (s *SessionSuite) manages() {
 	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
 		defer func() { opened++ }()
 		if opened == 0 {
+			if s.gated != nil {
+				return s.gated, nil
+			}
 			return s.model, nil
 		}
 		return &stubLLM{}, nil
@@ -372,12 +385,13 @@ func (s *SessionSuite) manages() {
 	}
 
 	manager, err := NewManager(ManagerOptions{
-		LLM:        reasoner,
-		STT:        transcriber,
-		TTS:        speaker,
-		Memory:     remembering,
-		Transcript: storing,
-		Logger:     logger,
+		LLM:           reasoner,
+		STT:           transcriber,
+		TTS:           speaker,
+		Memory:        remembering,
+		Transcript:    storing,
+		Conversations: s.conversations,
+		Logger:        logger,
 		Edge: func(Spec, *slog.Logger) (agent.Edge, error) {
 			edge := newQuietEdge()
 			s.edges = append(s.edges, edge)
@@ -855,6 +869,35 @@ func (s *SessionSuite) TestATextSessionOpensNoEdgeBecauseThereIsNoCall() {
 	s.Empty(s.edges, "a conversation held in writing joins nothing")
 }
 
+func (s *SessionSuite) TestAnLLMOnlyManagerAnswersTextAndRefusesVoice() {
+	s.manages()
+	manager, err := NewManager(ManagerOptions{LLM: s.manager.options.LLM, Edge: s.manager.options.Edge})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { manager.Shutdown() })
+	s.manager = manager
+	created := s.writes(Spec{})
+	events, detach := created.Watch()
+	defer detach()
+	_, err = created.Respond(s.ctx, "hello", nil)
+	s.Require().NoError(err)
+	s.Equal("Hello.", awaitReply(events))
+	_, err = manager.Create(s.ctx, Spec{CallID: "voice", CustomerID: "acme"})
+	s.ErrorContains(err, "stt router is required for voice")
+	_, err = manager.Create(s.ctx, Spec{CallID: "native", CustomerID: "acme", STSTarget: "unconfigured/native"})
+	s.ErrorContains(err, "no speech-to-speech model")
+	s.Empty(s.edges, "unsupported voice must not open a call")
+}
+
+func (s *SessionSuite) TestVoiceWithoutATTSRouterIsRefusedBeforeOpeningACall() {
+	s.manages()
+	manager, err := NewManager(ManagerOptions{LLM: s.manager.options.LLM, STT: s.manager.options.STT, Edge: s.manager.options.Edge})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { manager.Shutdown() })
+	_, err = manager.Create(s.ctx, Spec{CallID: "voice", CustomerID: "acme"})
+	s.ErrorContains(err, "tts router is required for voice")
+	s.Empty(s.edges)
+}
+
 func (s *SessionSuite) TestATextSessionCannotAlsoJoinACall() {
 	s.manages()
 
@@ -926,8 +969,19 @@ func (s *SessionSuite) TestAWatcherSeesTheConversationAndStopsWhenItDetaches() {
 	s.Require().NotNil(<-events, "the watcher saw nothing")
 
 	detach()
-	_, open := <-events
-	s.False(open, "detaching left the channel open")
+	// Closing a buffered channel preserves events already queued by Say. Drain
+	// those before checking closure; a queued event is not evidence of an open channel.
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case _, open := <-events:
+			if !open {
+				return
+			}
+		case <-deadline:
+			s.FailNow("detaching left the channel open")
+		}
+	}
 }
 
 func (s *SessionSuite) TestACallersToolIsAskedForAndItsAnswerReachesTheModel() {

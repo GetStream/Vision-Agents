@@ -193,12 +193,14 @@ func New[P Provider](options Options[P]) (*Router[P], error) {
 		logger = slog.Default()
 	}
 
+	recorder := NewRecorder(options.Modality, options.Store, options.Live, logger)
+	recorder.customerPolicies = options.Config.CustomerPolicies
 	return &Router[P]{
 		validate: options.Validate,
 		modality: options.Modality,
 		config:   options.Config,
 		registry: options.Registry,
-		recorder: NewRecorder(options.Modality, options.Store, options.Live, logger),
+		recorder: recorder,
 		live:     options.Live,
 		voices:   options.Voices,
 		logger:   logger,
@@ -283,10 +285,22 @@ func (r *Router[P]) Select(ctx context.Context, request Request) (P, ProviderCon
 	if err := request.Tags.Validate(); err != nil {
 		return zero, ProviderConfig{}, err
 	}
+	policy, restricted := r.config.CustomerPolicies[request.CustomerID]
+	if err := policy.attributed(request.Tags).Validate(); err != nil {
+		return zero, ProviderConfig{}, err
+	}
 
 	candidates, err := r.candidates(ctx, request)
 	if err != nil {
 		return zero, ProviderConfig{}, err
+	}
+	if restricted {
+		candidates = slices.DeleteFunc(candidates, func(candidate Candidate) bool {
+			return !slices.Contains(policy.AllowedModels, candidate.Config.Name())
+		})
+		if len(candidates) == 0 {
+			return zero, ProviderConfig{}, errors.New("routing: no requested model is permitted for this customer")
+		}
 	}
 	candidates, err = serving(candidates, request.Terms)
 	if err != nil {

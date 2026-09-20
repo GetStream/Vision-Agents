@@ -66,6 +66,7 @@ import Testing
     /// under the names in `readCommands`.
     @Test(arguments: [
         (Command.respond("hi"), #"{"text":"hi","type":"respond"}"#),
+        (Command.respondCommand(id: "retry-1", text: "hi"), #"{"command_id":"retry-1","text":"hi","type":"respond"}"#),
         (Command.say("welcome"), #"{"text":"welcome","type":"say"}"#),
         (Command.interrupt, #"{"type":"interrupt"}"#),
         (Command.instructions("be brief"), #"{"instructions":"be brief","type":"instructions"}"#),

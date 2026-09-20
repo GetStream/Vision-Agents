@@ -79,6 +79,9 @@ type Tool struct {
 
 // ToolCall is the model asking for a tool to be run.
 type ToolCall struct {
+	// TurnID is runtime correlation supplied by the agent after provider decoding. It is
+	// not provider state and is never included when a call is replayed to a model.
+	TurnID string
 	// ID correlates the call with the result sent back, and is what the provider matches
 	// a Tool message against.
 	ID string
