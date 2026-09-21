@@ -1049,6 +1049,35 @@ func (s *SessionSuite) TestAToolNobodyAnswersGivesUpRatherThanHangingTheTurn() {
 	s.Require().NotNil(awaitToolCall(events), "the caller was never asked in the first place")
 }
 
+func (s *SessionSuite) TestToolCancellationRetainsTheInterruptedTurn() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(chan ToolCall, 2)
+	tools := newBridge(time.Second, func(call ToolCall) error { events <- call; return nil })
+	finished := make(chan error, 1)
+	go func() {
+		_, err := tools.Run(ctx, llm.ToolCall{ID: "call-one", TurnID: "turn-one", Name: "lookup_order", Arguments: "{}"})
+		finished <- err
+	}()
+	select {
+	case requested := <-events:
+		s.False(requested.Cancel)
+	case <-time.After(time.Second):
+		s.FailNow("tool request was not emitted")
+	}
+	cancel()
+	select {
+	case stopped := <-events:
+		s.True(stopped.Cancel)
+		s.Equal("call-one", stopped.ID)
+		s.Equal("turn-one", stopped.TurnID)
+	case <-time.After(time.Second):
+		s.FailNow("tool cancellation was not emitted")
+	}
+	s.Error(<-finished)
+	s.False(tools.Resolve("call-one", "turn-one", nil, ""), "a cancelled call must not accept a late result")
+}
+
 func (s *SessionSuite) TestAnAnswerToAToolNobodyIsWaitingOnIsDropped() {
 	// The commonest cause is a caller answering a call that already timed out, which is
 	// not worth failing anything over.

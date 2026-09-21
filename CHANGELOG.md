@@ -2,6 +2,8 @@
 
 ## Athena integration fixes
 
+- Retain turn identity when cancelling an external tool after interruption.
+
 - Publish saved voice artifacts as native Chat cards, independently of interrupted speech.
 - Allow session cleanup after the caller exhausts their generation quota while retaining ownership checks.
 

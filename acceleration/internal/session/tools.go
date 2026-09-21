@@ -96,7 +96,7 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		}
 		return result.parts, nil
 	case <-deadline.Done():
-		_ = b.ask(ToolCall{ID: call.ID, Name: call.Name, Cancel: true})
+		_ = b.ask(ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Cancel: true})
 		return nil, fmt.Errorf("session: %s did not answer within %s", call.Name, b.timeout)
 	}
 }
