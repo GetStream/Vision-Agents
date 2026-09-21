@@ -5,7 +5,9 @@ from typing import Any
 
 import pytest
 
-from vision_agents.testing import Scenario, load_scenario
+from pathlib import Path
+
+from vision_agents.testing import Scenario, find_scenarios, load_scenario
 
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "test_assets")
 
@@ -157,3 +159,37 @@ class TestScenario:
         assert "- impatient: True" in brief
         assert "- appointment: Tuesday 3pm" in brief
         assert "- Reject anything after 11am." in brief
+
+
+class TestFindScenarios:
+    def test_file_is_returned_as_is(self, tmp_path: Path):
+        path = tmp_path / "one.yaml"
+        path.write_text("name: one\n")
+
+        assert find_scenarios(path) == [path]
+
+    def test_directory_lists_yaml_files_sorted(self, tmp_path: Path):
+        for name in ("b.yaml", "a.yml", "notes.toml", "README.md"):
+            (tmp_path / name).write_text("")
+        (tmp_path / "nested").mkdir()
+        (tmp_path / "nested" / "c.yaml").write_text("")
+
+        assert find_scenarios(tmp_path) == [tmp_path / "a.yml", tmp_path / "b.yaml"]
+
+    def test_missing_target_raises(self, tmp_path: Path):
+        with pytest.raises(ValueError, match="does not exist"):
+            find_scenarios(tmp_path / "nowhere")
+
+    def test_load_error_names_the_file(self, tmp_path: Path):
+        path = tmp_path / "broken.yaml"
+        path.write_text("goal: x\n")
+
+        with pytest.raises(ValueError, match="broken.yaml: .*missing required field"):
+            load_scenario(path)
+
+    def test_yaml_syntax_error_names_the_file(self, tmp_path: Path):
+        path = tmp_path / "bad.yaml"
+        path.write_text("name: [unclosed\n")
+
+        with pytest.raises(ValueError, match="bad.yaml"):
+            load_scenario(path)

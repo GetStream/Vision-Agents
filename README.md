@@ -44,6 +44,62 @@ plus extra credits via the Maker Program.
 
 Follow the [quickstart guide](https://visionagents.ai/introduction/quickstart) to build your first agent.
 
+## Command-line interface
+
+The `vision-agents` CLI scaffolds and runs agent projects:
+
+```bash
+uvx vision-agents init my-agent           # scaffold a new project
+vision-agents agent run                   # run one agent in the console
+vision-agents agent serve                 # start the HTTP server
+vision-agents agent simulate scenarios/   # run scenarios and write a report
+```
+
+`agent` resolves the project's `Runner` from `[tool.vision-agents.agent] entrypoint` in `pyproject.toml`
+and forwards the remaining arguments to it, so `uv run agent.py simulate scenarios/` works too.
+
+### Simulations
+
+`vision-agents agent simulate <dir-or-file>` plays every scenario against your agent in text mode. A simulated
+user follows the scenario brief, your agent replies turn by turn, and a judge model rules on each success
+criterion once the conversation ends. It prints a table with the scenario, variations, pass@k, turns, P50 turn
+latency and failed criteria, writes `report.json` and `report.md` with the full transcripts and verdicts, and
+exits `0` when every scenario passed, `1` when any failed and `2` when it could not reach a verdict (a judge,
+simulated-user or provider error, a bad `--judge`, or missing or malformed scenario files), so it can gate CI.
+
+A scenario is a YAML file:
+
+```yaml
+name: refund
+persona:
+  impatient: true
+context:
+  order_number: A1234
+  product: running shoes
+goal: Get a refund for shoes that do not fit.
+constraints:
+  - Only give the order number when asked.
+success:
+  - agent_asks_for_order_number
+  - agent_explains_refund_policy
+  - concise   # built-in criterion
+```
+
+| Option | What it does |
+|---|---|
+| `--repeat N` | Run every variation `N` times and report pass@k; overrides the file. |
+| `--variations N` | Phrase each brief `N` ways (the brief as written is always the first); overrides the file. |
+| `--max-turns N` | Cap the simulated user at `N` messages per conversation (default 10). |
+| `--judge MODEL` | Model that plays the user and judges: `provider/model` such as `gemini/gemini-2.5-flash` (default), or `module:attribute` naming a callable that returns an LLM. |
+| `--report DIR` | Where `report.json` and `report.md` go (default `simulation-report/`). |
+| `--filter NAME` | Only run scenarios whose name contains `NAME`. |
+
+The same scenarios run under pytest with the `simulate` fixture, and `mode: audio` scenarios exercise the full
+STT, LLM and TTS path over an in-process loopback edge. See the
+[testing guide](https://visionagents.ai/guides/testing) for the scenario reference, the built-in judge criteria
+and a GitHub Actions example. Simulations run the agent's LLM in text mode, so the agent needs a text LLM such as
+`gemini.LLM`; realtime (audio) LLMs are only supported in `mode: audio`.
+
 ## See It In Action
 
 https://github.com/user-attachments/assets/d1258ac2-ca98-4019-80e4-41ec5530117e
@@ -78,6 +134,7 @@ agent = Agent(
 | **Memory**               | Agents recall context across turns and sessions via Stream Chat.                                        |
 | **Text Back-channel**    | Message the agent silently during a call — coaching overlays, silent instructions, etc.                 |
 | **Production Ready**     | Built-in HTTP server, Prometheus metrics, horizontal scaling, and Kubernetes deployment.                |
+| **Testing & Simulation** | Evals for single decisions, LLM-driven multi-turn simulations from YAML scenarios, and a CLI for CI.   |
 
 ## Out-of-the-Box Integrations
 

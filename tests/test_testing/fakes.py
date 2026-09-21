@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import AsyncIterator
 
 import numpy as np
@@ -11,7 +11,13 @@ from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.stt.stt import STT, TranscriptResponse
 from vision_agents.core.tts.tts import TTS
-from vision_agents.testing import ChatMessageEvent, JudgeVerdict
+from vision_agents.testing import (
+    Criterion,
+    CriterionVerdict,
+    JudgeVerdict,
+    RunEvent,
+    render_transcript,
+)
 
 
 def user_says(message: str) -> str:
@@ -85,23 +91,47 @@ class BookingLLM(ScriptedLLM):
             yield item
 
 
-JudgeOutcome = bool | Exception | Callable[[ChatMessageEvent, str], bool]
+JudgeOutcome = bool | Exception | Callable[[str, Criterion], bool]
 
 
 class ScriptedJudge:
-    """Judge that replays outcomes: a verdict, an exception to raise, or a
-    predicate over (event, intent). Passes once the script is exhausted."""
+    """Judge that replays one outcome per criterion: a verdict, an exception to
+    raise, or a predicate over (rendered transcript, criterion). Passes once
+    the script is exhausted."""
 
     def __init__(self, outcomes: list[JudgeOutcome] | None = None) -> None:
         self.outcomes = list(outcomes or [])
 
-    async def evaluate(self, event: ChatMessageEvent, intent: str) -> JudgeVerdict:
-        outcome: JudgeOutcome = self.outcomes.pop(0) if self.outcomes else True
-        if isinstance(outcome, Exception):
-            raise outcome
-        if callable(outcome):
-            outcome = outcome(event, intent)
-        return JudgeVerdict(success=outcome, reason="scripted")
+    async def evaluate_conversation(
+        self,
+        events: Sequence[RunEvent],
+        criteria: Sequence[Criterion | str],
+        *,
+        instructions: str | None = None,
+    ) -> JudgeVerdict:
+        transcript = render_transcript(list(events))
+        verdicts: list[CriterionVerdict] = []
+        for item in criteria:
+            criterion = item if isinstance(item, Criterion) else Criterion(item, item)
+            outcome: JudgeOutcome = self.outcomes.pop(0) if self.outcomes else True
+            if isinstance(outcome, Exception):
+                raise outcome
+            if callable(outcome):
+                outcome = outcome(transcript, criterion)
+            verdicts.append(
+                CriterionVerdict(
+                    name=criterion.name,
+                    success=outcome,
+                    score=1.0 if outcome else 0.0,
+                    reason="scripted",
+                )
+            )
+        return JudgeVerdict(
+            success=all(v.success for v in verdicts),
+            reason="scripted",
+            score=sum(v.score for v in verdicts) / len(verdicts),
+            criteria=verdicts,
+        )
 
 
 BLOCK = 320  # samples per character: 20 ms at 16 kHz

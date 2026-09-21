@@ -117,6 +117,11 @@ RESPONDS_IN_USER_LANGUAGE = Criterion(
     ),
 )
 
+BUILTIN_CRITERIA: dict[str, Criterion] = {
+    c.name: c
+    for c in (SAY_DO_CONSISTENCY, STAYS_IN_SCOPE, CONCISE, RESPONDS_IN_USER_LANGUAGE)
+}
+
 
 @runtime_checkable
 class Judge(Protocol):

@@ -10,6 +10,7 @@ ScenarioValue = str | bool | int | float
 
 _REQUIRED_FIELDS = ("name", "goal", "success")
 _MODES = frozenset({"text", "audio"})
+_SUFFIXES = frozenset({".yaml", ".yml"})
 
 
 @dataclass(frozen=True)
@@ -120,10 +121,35 @@ def load_scenario(path: str | Path) -> Scenario:
         ValueError: If the file is not a mapping or fails scenario validation.
     """
     with open(path, encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
+        try:
+            data = yaml.safe_load(fh)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"{path}: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"Scenario file {path} must contain a YAML mapping")
-    return Scenario.from_dict(data)
+    try:
+        return Scenario.from_dict(data)
+    except ValueError as exc:
+        raise ValueError(f"{path}: {exc}") from exc
+
+
+def find_scenarios(target: str | Path) -> list[Path]:
+    """Return the scenario files at ``target``.
+
+    A file is returned as-is; a directory yields every ``*.yaml`` and
+    ``*.yml`` file directly in it, sorted by name.
+
+    Raises:
+        ValueError: If ``target`` does not exist.
+    """
+    target = Path(target)
+    if target.is_file():
+        return [target]
+    if target.is_dir():
+        return sorted(
+            p for p in target.iterdir() if p.is_file() and p.suffix in _SUFFIXES
+        )
+    raise ValueError(f"{target} does not exist")
 
 
 def _require_str(value: object, name: str) -> None:

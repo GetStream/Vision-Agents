@@ -98,7 +98,8 @@ Key exports:
     SAY_DO_CONSISTENCY, STAYS_IN_SCOPE, CONCISE, RESPONDS_IN_USER_LANGUAGE:
         built-in criteria.
     RunEvent: union of ChatMessageEvent, FunctionCallEvent, FunctionCallOutputEvent.
-    Scenario: validated scenario definition; ``load_scenario`` reads one from YAML.
+    Scenario: validated scenario definition; ``load_scenario`` reads one from YAML
+        and ``find_scenarios`` lists the files in a directory.
     SimulatedUser: LLM that plays the user from a scenario brief.
     Simulation: runs scenarios against an agent or LLM and judges the outcome.
     SimulationResult: trials plus ``passed``, ``pass_rate``, ``pass_at_k``, ``pass_pow_k``.
@@ -107,6 +108,8 @@ Key exports:
         ``intended_reply`` and ``voice_to_voice_ms``.
     LoopbackEdge: in-process ``EdgeTransport`` with no network, for audio mode
         and for exercising an ``Agent``'s lifecycle in tests.
+    SimulationReport / SimulationRun / SimulationCase: the report ``agent simulate``
+        builds from trials, with ``TranscriptLine``, ``ToolCall`` and ``CriterionResult``.
     generate_variations: reword a scenario N times keeping every fact.
     pass_at_k, pass_pow_k: estimators used for repeat reporting.
 """
@@ -131,7 +134,15 @@ from vision_agents.testing._judge import (
 )
 from vision_agents.testing._loopback import LoopbackEdge, LoopbackMicrophone
 from vision_agents.testing._run_result import TestResponse
-from vision_agents.testing._scenario import Scenario, load_scenario
+from vision_agents.testing._report import (
+    CriterionResult,
+    SimulationCase,
+    SimulationReport,
+    SimulationRun,
+    ToolCall,
+    TranscriptLine,
+)
+from vision_agents.testing._scenario import Scenario, find_scenarios, load_scenario
 from vision_agents.testing._session import TestSession
 from vision_agents.testing._simulated_user import SimulatedUser, SimulatedUserError
 from vision_agents.testing._simulation import (
@@ -167,6 +178,13 @@ __all__ = [
     "RunEvent",
     "Scenario",
     "load_scenario",
+    "find_scenarios",
+    "SimulationReport",
+    "SimulationRun",
+    "SimulationCase",
+    "CriterionResult",
+    "TranscriptLine",
+    "ToolCall",
     "SimulatedUser",
     "SimulatedUserError",
     "Simulation",

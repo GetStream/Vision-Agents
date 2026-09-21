@@ -11,9 +11,13 @@ from getstream.video.rtc.track_util import PcmData
 from vision_agents.core import Agent, User
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.llm.realtime import Realtime
 from vision_agents.testing import (
+    CONCISE,
     ChatMessageEvent,
+    Criterion,
     JudgeError,
+    JudgeVerdict,
     LoopbackEdge,
     Scenario,
     SimulatedUser,
@@ -344,16 +348,16 @@ class TestSimulation:
         user_llm = ScriptedLLM([user_says("Move me to Friday"), user_done()])
         agent_llm = BookingLLM(["Done."])
 
-        def transcript_complete(event: ChatMessageEvent, intent: str) -> bool:
+        def transcript_complete(transcript: str, criterion: Criterion) -> bool:
             return (
-                "[user] Move me to Friday" in event.content
-                and "[agent called tool book_slot]" in event.content
-                and "[assistant] Done." in event.content
-                and scenario.goal in intent
+                "[user] Move me to Friday" in transcript
+                and "[agent called tool book_slot]" in transcript
+                and "[assistant] Done." in transcript
+                and scenario.goal in criterion.description
             )
 
-        def names_criterion(event: ChatMessageEvent, intent: str) -> bool:
-            return "correct_time_confirmed" in intent
+        def names_criterion(transcript: str, criterion: Criterion) -> bool:
+            return criterion.name == "correct_time_confirmed"
 
         judge = ScriptedJudge([transcript_complete, names_criterion])
         result = await Simulation(user_llm=user_llm).run(agent_llm, scenario, judge)
@@ -576,16 +580,146 @@ class TestSimulation:
         assert "correct_time_confirmed: fail" in summary
         assert "[user] Hi" in summary
 
+    async def test_async_factory_is_awaited(self, scenario):
+        async def build() -> ScriptedLLM:
+            return ScriptedLLM(["Booked Friday 10am."])
+
+        user_llm = ScriptedLLM([user_says("Move me to Friday"), user_done()])
+        result = await Simulation(user_llm=user_llm).run(
+            build, scenario, ScriptedJudge()
+        )
+
+        assert result.passed, result.summary()
+        assert result.trials[0].turns[0].agent_reply == "Booked Friday 10am."
+
+    async def test_on_trial_receives_each_judged_trial(self, scenario):
+        seen: list = []
+        repeated = dataclasses.replace(scenario, repeat=2)
+
+        result = await Simulation(
+            user_llm=lambda: ScriptedLLM([user_says("Hi"), user_done()])
+        ).run(
+            lambda: ScriptedLLM(["Done."]),
+            repeated,
+            ScriptedJudge([True, True, True, False]),
+            on_trial=seen.append,
+        )
+
+        assert [(t.variation, t.repeat, t.passed) for t in seen] == [
+            (0, 0, True),
+            (0, 1, False),
+        ]
+        assert seen == result.trials
+
+    async def test_factory_built_agent_is_closed_after_its_conversation(self, scenario):
+        agents: list[Agent] = []
+
+        def build() -> Agent:
+            agent = spoken_agent(["Booked Friday 10am."])
+            agents.append(agent)
+            return agent
+
+        result = await Simulation(
+            user_llm=lambda: ScriptedLLM([user_says("Move me"), user_done()])
+        ).run(build, dataclasses.replace(scenario, repeat=2), ScriptedJudge())
+
+        assert result.passed, result.summary()
+        assert [agent.closed for agent in agents] == [True, True]
+
+    async def test_provider_error_marks_trial_invalid(self, scenario):
+        class FailingProviderLLM(ScriptedLLM):
+            async def simple_response(
+                self,
+                text: str,
+                participant: Participant | None = None,
+            ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+                self.on_llm_error(error=RuntimeError("provider exploded"))
+                yield LLMResponseFinal(text="")
+
+        result = await Simulation(
+            user_llm=ScriptedLLM([user_says("Hi"), user_done()])
+        ).run(
+            FailingProviderLLM(["unused"]),
+            scenario,
+            ScriptedJudge([RuntimeError("judge must not run")]),
+        )
+
+        trial = result.trials[0]
+        assert trial.valid is False
+        assert trial.error is not None and "provider exploded" in trial.error
+        assert result.invalid_trials == [trial]
+        assert result.pass_rate is None
+
+    async def test_realtime_llm_rejected_in_text_mode(self, scenario):
+        class FakeRealtime(Realtime):
+            async def connect(self) -> None:
+                return None
+
+            async def simple_audio_response(self, pcm, participant) -> None:
+                return None
+
+            async def close(self) -> None:
+                return None
+
+            async def watch_video_track(self, *args, **kwargs) -> None:
+                return None
+
+            async def stop_watching_video_track(self) -> None:
+                return None
+
+            async def simple_response(
+                self,
+                text: str,
+                participant: Participant | None = None,
+            ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+                yield LLMResponseFinal(text="")
+
+        with pytest.raises(ValueError, match="Text mode needs a text LLM"):
+            await Simulation(user_llm=ScriptedLLM([user_says("Hi")])).run(
+                FakeRealtime(), scenario, ScriptedJudge()
+            )
+
+    async def test_builtin_criterion_is_resolved_by_name(self, scenario):
+        builtin = dataclasses.replace(scenario, success=["concise"])
+
+        def is_builtin(transcript: str, criterion: Criterion) -> bool:
+            return criterion.description == CONCISE.description
+
+        result = await Simulation(
+            user_llm=ScriptedLLM([user_says("Hi"), user_done()])
+        ).run(ScriptedLLM(["Done."]), builtin, ScriptedJudge([is_builtin]))
+
+        assert result.passed, result.summary()
+        assert list(result.trials[0].verdicts) == ["concise"]
+
+    async def test_judge_verdict_without_criteria_applies_to_every_criterion(
+        self, scenario
+    ):
+        class OverallJudge:
+            async def evaluate_conversation(
+                self, events, criteria, *, instructions=None
+            ) -> JudgeVerdict:
+                return JudgeVerdict(success=False, reason="not convinced", score=0.0)
+
+        result = await Simulation(
+            user_llm=ScriptedLLM([user_says("Hi"), user_done()])
+        ).run(ScriptedLLM(["Done."]), scenario, OverallJudge())
+
+        trial = result.trials[0]
+        assert trial.passed is False
+        assert set(trial.verdicts) == set(scenario.success)
+        assert all(v.reason == "not convinced" for v in trial.verdicts.values())
+
 
 class TestSpokenSimulation:
     async def test_judge_reads_what_the_caller_heard(self, spoken_scenario):
         user_llm = ScriptedLLM([user_says("Move me to Friday"), user_done()])
 
-        def heard_transcript(event: ChatMessageEvent, intent: str) -> bool:
+        def heard_transcript(transcript: str, criterion: Criterion) -> bool:
             return (
-                "[user] Move me to Friday" in event.content
-                and "[agent called tool book_slot]" in event.content
-                and "[assistant] Booked Friday 10am." in event.content
+                "[user] Move me to Friday" in transcript
+                and "[agent called tool book_slot]" in transcript
+                and "[assistant] Booked Friday 10am." in transcript
             )
 
         judge = ScriptedJudge([heard_transcript, heard_transcript])
