@@ -353,12 +353,16 @@ func (s *Service) HistoryForCaller(ctx context.Context, customer, agentID, cid, 
 
 // ContextForCaller returns completed user and assistant turns for a voice
 // session that must not open a persistent text conversation. Empty cid is no
-// history rather than an error.
-func (s *Service) ContextForCaller(ctx context.Context, customer, agentID, cid, caller string) ([]llm.Message, bool, error) {
+// history rather than an error. An optional voiceAgent is the server-configured
+// media identity used to recognize settled legacy voice transcripts.
+func (s *Service) ContextForCaller(ctx context.Context, customer, agentID, cid, caller string, voiceAgent ...string) ([]llm.Message, bool, error) {
 	if cid == "" {
 		return nil, false, nil
 	}
-	page, err := s.HistoryForCaller(ctx, customer, agentID, cid, "", caller)
+	if len(voiceAgent) > 1 || (len(voiceAgent) == 1 && voiceAgent[0] != "" && !displayID.MatchString(voiceAgent[0])) {
+		return nil, false, errors.New("invalid voice transcript author")
+	}
+	page, err := s.history(ctx, customer, agentID, cid, "", caller, voiceAgent...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -459,7 +463,7 @@ func (s *Service) CommandForCaller(ctx context.Context, customer, agentID, cid, 
 	return record.CommandReceipt, nil
 }
 
-func (s *Service) history(ctx context.Context, customer, agentID, cid, before, caller string) (Page, error) {
+func (s *Service) history(ctx context.Context, customer, agentID, cid, before, caller string, voiceAgent ...string) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	id := strings.TrimPrefix(cid, "agent:")
@@ -510,12 +514,19 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before, c
 			continue
 		}
 		if msg, err := messageFromWire(m.ID, m.Text, m.Custom); err == nil {
+			msg.Artifacts = artifactsFromAttachments(m.Attachments)
 			msg.authorID = m.User.ID
 			if m.User.Name != nil {
 				msg.authorName = *m.User.Name
 			}
 			p.Messages = append(p.Messages, msg)
 			continue
+		}
+		if len(voiceAgent) == 1 && voiceAgent[0] != "" {
+			if msg, ok := messageFromVoice(m, voiceAgent[0]); ok {
+				p.Messages = append(p.Messages, msg)
+				continue
+			}
 		}
 		raw, ok := m.Custom["support_message"]
 		if !ok {
@@ -587,13 +598,32 @@ func history(p Page) ([]llm.Message, bool) {
 	tr := p.Truncated
 	for i := len(p.Messages) - 1; i >= 0; i-- {
 		m := p.Messages[i]
-		if m.State != "completed" || m.Text == "" {
+		if m.State != "completed" {
 			continue
 		}
 		if m.Role != "user" && m.Role != "assistant" {
 			continue
 		}
 		content := m.Text
+		var artifacts []ArtifactAttachment
+		for _, artifact := range m.Artifacts {
+			if len(artifacts) == maxArtifactAttachments {
+				break
+			}
+			if validArtifact(artifact) {
+				artifacts = append(artifacts, artifact)
+			}
+		}
+		if len(artifacts) > 0 && m.Role == "assistant" {
+			envelope, _ := json.Marshal(struct {
+				Text      string               `json:"text,omitempty"`
+				Artifacts []ArtifactAttachment `json:"saved_artifact_references"`
+			}{m.Text, artifacts})
+			content = string(envelope)
+		}
+		if content == "" {
+			continue
+		}
 		if p.shared && m.Role == "user" {
 			// Labels are quoted user data, not instructions or authorization.
 			label := []rune(m.authorName)
