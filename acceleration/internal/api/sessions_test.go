@@ -534,6 +534,29 @@ func (s *SessionAPISuite) TestTheSocketAsksTheCallerToRunItsOwnToolsAndUsesTheAn
 	s.Empty(ran["error"])
 }
 
+func (s *SessionAPISuite) TestVoiceToolReplayRequiresOptInAndRetainsTheRequest() {
+	s.model.calls = []llm.ToolCall{{ID: "pending-replay", Name: "lookup_order", Arguments: `{"order":"12"}`}}
+	created := s.creates(CreateSessionRequest{CallId: callID("pending-replay"), Tools: &[]SessionTool{{Name: "lookup_order", Description: "find an order"}}})
+	first := s.watches(created.Id, "acme")
+	s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/respond", "acme", SayRequest{Text: "where is my order"})
+	asked := s.await(first, "tool_call")
+	s.Require().NoError(first.Close())
+	address := "ws" + strings.TrimPrefix(s.server.URL, "http") + "/v1/agents/sessions/" + created.Id + "/events?replay_pending_tools=true"
+	_, denied, err := websocket.DefaultDialer.Dial(address, http.Header{CustomerHeader: []string{"another-customer"}})
+	s.Require().Error(err)
+	s.Require().NotNil(denied)
+	s.Equal(http.StatusNotFound, denied.StatusCode)
+	denied.Body.Close()
+	reconnected, _, err := websocket.DefaultDialer.Dial(address, http.Header{CustomerHeader: []string{"acme"}})
+	s.Require().NoError(err)
+	defer reconnected.Close()
+	replayed := s.await(reconnected, "tool_call")
+	s.Equal(asked, replayed)
+	s.Require().NoError(reconnected.WriteJSON(map[string]any{"type": "tool_result", "tool_call_id": replayed["id"], "output": "saved receipt"}))
+	ran := s.await(reconnected, "tool_ran")
+	s.Equal("saved receipt", ran["result"])
+}
+
 func (s *SessionAPISuite) TestAToolTheCallerCouldNotRunIsToldToTheModelInWords() {
 	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: "{}"}}
 	created := s.creates(CreateSessionRequest{

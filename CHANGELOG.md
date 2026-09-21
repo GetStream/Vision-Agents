@@ -2,6 +2,8 @@
 
 ## Athena integration fixes
 
+- Add opt-in pending voice-tool replay for reconnecting hosts that persist execution receipts.
+
 - Retain turn identity when cancelling an external tool after interruption.
 
 - Publish saved voice artifacts as native Chat cards, independently of interrupted speech.

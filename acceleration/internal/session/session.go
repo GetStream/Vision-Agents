@@ -245,6 +245,16 @@ func (w *watcher) send(event Event) bool {
 // that connects late has missed the conversation, and a control channel that opened with a
 // backlog would have it answering tool calls that timed out before it arrived.
 func (s *Session) Watch() (<-chan Event, func()) {
+	return s.watch(false)
+}
+
+// WatchPendingVoiceTools opts a durable tool host into replay of pending live
+// voice requests. Text command recovery uses the persistent conversation path.
+func (s *Session) WatchPendingVoiceTools() (<-chan Event, func()) {
+	return s.watch(true)
+}
+
+func (s *Session) watch(replayVoiceTools bool) (<-chan Event, func()) {
 	attached := &watcher{events: make(chan Event, watcherBuffer)}
 
 	s.mu.Lock()
@@ -256,6 +266,11 @@ func (s *Session) Watch() (<-chan Event, func()) {
 	id := s.nextWatcher
 	s.nextWatcher++
 	s.watchers[id] = attached
+	if replayVoiceTools && !s.spec.Text && s.persisted == nil && s.tools != nil {
+		for _, pending := range s.tools.Pending() {
+			attached.send(pending)
+		}
+	}
 	s.mu.Unlock()
 
 	return attached.events, func() {

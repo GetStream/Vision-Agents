@@ -39,6 +39,8 @@ type bridge struct {
 
 type pendingTool struct {
 	turnID   string
+	call     llm.ToolCall
+	ctx      context.Context
 	answer   chan toolResult
 	resolved bool
 }
@@ -62,6 +64,8 @@ func newBridge(timeout time.Duration, ask func(ToolCall) error) *bridge {
 
 // Run carries one tool call out to the caller and waits for the answer.
 func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	deadline, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
 	answer := make(chan toolResult, 1)
 
 	b.mu.Lock()
@@ -73,7 +77,7 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		b.mu.Unlock()
 		return nil, fmt.Errorf("session: %s was already asked for", call.ID)
 	}
-	b.pending[call.ID] = pendingTool{turnID: call.TurnID, answer: answer}
+	b.pending[call.ID] = pendingTool{turnID: call.TurnID, call: call, ctx: deadline, answer: answer}
 	b.mu.Unlock()
 
 	defer func() {
@@ -86,9 +90,6 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		return nil, err
 	}
 
-	deadline, cancel := context.WithTimeout(ctx, b.timeout)
-	defer cancel()
-
 	select {
 	case result := <-answer:
 		if result.failure != "" {
@@ -99,6 +100,25 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		_ = b.ask(ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Cancel: true})
 		return nil, fmt.Errorf("session: %s did not answer within %s", call.Name, b.timeout)
 	}
+}
+
+// Pending returns only requests still waiting for a result at this instant.
+// Reconnecting tool hosts must fence repeated execution with durable receipts.
+func (b *bridge) Pending() []ToolCall {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return nil
+	}
+	var calls []ToolCall
+	for _, pending := range b.pending {
+		if pending.resolved || pending.ctx.Err() != nil {
+			continue
+		}
+		call := pending.call
+		calls = append(calls, ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments})
+	}
+	return calls
 }
 
 // Resolve hands an answer back to the call waiting for it, reporting whether one was.

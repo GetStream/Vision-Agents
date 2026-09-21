@@ -80,7 +80,11 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Watching starts before the upgrade so nothing said between the two is missed.
-	events, detach := found.Watch()
+	watch := found.Watch
+	if r.URL.Query().Get("replay_pending_tools") == "true" {
+		watch = found.WatchPendingVoiceTools
+	}
+	events, detach := watch()
 	defer detach()
 
 	connection, err := s.upgrader.Upgrade(w, r, nil)

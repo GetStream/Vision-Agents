@@ -2996,6 +2996,14 @@ paths:
         a transcript revision as it arrives rather than a settled turn. `decisions=false`
         drops `decision`.
 
+        `replay_pending_tools=true` opts a durable tool host into replay of external
+        tool calls still awaiting results in a live voice session. Completed,
+        cancelled and timed-out requests are excluded at snapshot time. Replays
+        retain their tool and turn IDs and may duplicate live delivery; the host
+        must persist execution receipts and refuse to repeat uncertain writes.
+        Ordinary status watchers should leave this disabled. Persistent text
+        command recovery is unchanged.
+
         The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`,
         `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act
         on the session. A `tool_call` is the only frame that must be answered:
@@ -3028,6 +3036,13 @@ paths:
           schema:
             type: boolean
             default: true
+        - name: replay_pending_tools
+          in: query
+          required: false
+          description: Replay pending live voice tool requests to a durable tool host.
+          schema:
+            type: boolean
+            default: false
       responses:
         "101":
           description: The socket is open

@@ -1078,6 +1078,69 @@ func (s *SessionSuite) TestToolCancellationRetainsTheInterruptedTurn() {
 	s.False(tools.Resolve("call-one", "turn-one", nil, ""), "a cancelled call must not accept a late result")
 }
 
+func (s *SessionSuite) TestReconnectedVoiceToolHostReceivesOnlyPendingRequests() {
+	s.manages()
+	created := s.joins(Spec{Tools: []harness.Tool{{Name: "lookup_order", Description: "find an order"}}})
+	first, detach := created.Watch()
+	finished := make(chan error, 1)
+	go func() {
+		_, err := created.tools.Run(s.ctx, llm.ToolCall{ID: "pending-one", TurnID: "turn-one", Name: "lookup_order", Arguments: `{"order":"12"}`})
+		finished <- err
+	}()
+	request := awaitToolCall(first)
+	s.Require().NotNil(request)
+	detach()
+	// Ordinary status connections must not solicit work from a late client.
+	ordinary, stopOrdinary := created.Watch()
+	defer stopOrdinary()
+	select {
+	case event := <-ordinary:
+		_, tool := event.(ToolCall)
+		s.False(tool)
+	default:
+	}
+	reconnected, stop := created.WatchPendingVoiceTools()
+	defer stop()
+	replayed := awaitToolCall(reconnected)
+	s.Require().NotNil(replayed)
+	s.Equal(*request, *replayed)
+	s.True(created.ResolveTool(replayed.ID, "saved result", ""))
+	s.NoError(<-finished)
+	s.Empty(created.tools.Pending(), "resolved operations must not replay")
+	late, stopLate := created.WatchPendingVoiceTools()
+	defer stopLate()
+	select {
+	case event := <-late:
+		_, tool := event.(ToolCall)
+		s.False(tool, "completed request replayed")
+	default:
+	}
+}
+
+func (s *SessionSuite) TestCancelledAndExpiredToolsAreNotPending() {
+	for _, expired := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(context.Background())
+		asked := make(chan ToolCall, 2)
+		timeout := time.Second
+		if expired {
+			timeout = 10 * time.Millisecond
+		}
+		tools := newBridge(timeout, func(call ToolCall) error { asked <- call; return nil })
+		finished := make(chan error, 1)
+		go func() {
+			_, err := tools.Run(ctx, llm.ToolCall{ID: "pending", TurnID: "turn", Name: "lookup_order"})
+			finished <- err
+		}()
+		<-asked
+		if !expired {
+			cancel()
+		}
+		s.Error(<-finished)
+		s.Empty(tools.Pending())
+		cancel()
+	}
+}
+
 func (s *SessionSuite) TestAnAnswerToAToolNobodyIsWaitingOnIsDropped() {
 	// The commonest cause is a caller answering a call that already timed out, which is
 	// not worth failing anything over.
