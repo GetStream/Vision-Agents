@@ -1241,7 +1241,7 @@ func (a *Agent) consumePresence() {
 func (a *Agent) floor() floor {
 	a.mu.Lock()
 	state := floor{
-		Quiet:           a.utterances == 0 && !a.generating,
+		Quiet:           a.utterances == 0 && !a.generating && a.pendingTools == 0,
 		Speaking:        a.speakingTurn,
 		LastSpokeAt:     a.lastSpokeAt,
 		LastHeardAt:     a.lastHeardAt,
@@ -1281,6 +1281,12 @@ func (a *Agent) perform(action Action) {
 
 	case ActInterrupt:
 		a.abandon(action.TurnID)
+		a.mu.Lock()
+		for _, cancel := range a.toolCancels {
+			cancel()
+		}
+		a.toolReply = false
+		a.mu.Unlock()
 		a.interrupt(action.Participant)
 
 	case ActShorten:
@@ -1312,7 +1318,9 @@ func (a *Agent) ask(ready candidate) {
 	}
 	history := llm.OmitImages(append([]llm.Message(nil), a.history...))
 	instructions := a.instructions()
-	speaking := a.generating || a.utterances > 0
+	// Pending tools still own the turn even after its spoken acknowledgement ends.
+	// The flow controller must be able to stop that work on a caller's correction.
+	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
 	reply := a.saying
 	if reply == "" {
 		reply = lastAssistantSaid(history)
@@ -2098,7 +2106,20 @@ func (a *Agent) consumeHarness() {
 			})
 
 		case harness.ToolRequested:
-			a.runTool(typed)
+			// Flow decisions arrive on this same event stream. A tool waiting for
+			// an external result must not prevent the caller from interrupting it.
+			a.mu.Lock()
+			if a.closed {
+				a.mu.Unlock()
+				continue
+			}
+			a.running.Add(1)
+			a.mu.Unlock()
+			ctx, cancel := a.prepareTool(typed)
+			go func() {
+				defer a.running.Done()
+				a.executeTool(ctx, cancel, typed)
+			}()
 
 		case harness.Settled:
 			a.converse.Delegated(typed.Result)
