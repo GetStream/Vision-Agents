@@ -16,7 +16,7 @@ Sarvam LLM no longer accepts `sarvam-m` or `sarvam-30b`; the default is `sarvam-
 
 ## New Features
 
-### Testing: conversation judge, YAML scenario simulations, audio loopback and `agent simulate` (#652, #654, #655, #656)
+### Testing: conversation judge, YAML scenario simulations, audio loopback and `agent simulate` (#652, #654, #655, #656, #659)
 
 `vision_agents.testing` now tests outcomes over whole conversations, not only one reply. `LLMJudge.evaluate_conversation()` scores a transcript against named criteria and ships the built-ins `SAY_DO_CONSISTENCY`, `STAYS_IN_SCOPE`, `CONCISE` and `RESPONDS_IN_USER_LANGUAGE`; `TestSession(agent=...)` wraps a full `Agent` including its MCP tools; `TestResponse` gains `assert_function_not_called()` and `assert_function_call_order()`. `Simulation` plays a YAML scenario (`persona`, `context`, `goal`, `constraints`, `success`, `variations`, `repeat`) with an LLM-driven simulated user and reports `pass@k` / `pass^k`; the `simulate` pytest fixture turns a scenario file into a one-line test, and `mode: audio` runs the same scenario through TTS, STT and a `LoopbackEdge` so the judge reads what a caller heard. `vision-agents agent simulate scenarios/` (also `uv run agent.py simulate`) runs scenarios from the terminal or CI, prints a table, writes `report.json` / `report.md` and exits `0`, `1` or `2`. A judge that cannot rule raises `JudgeError` instead of returning a failed verdict, so simulations count it as invalid rather than failed.
 
