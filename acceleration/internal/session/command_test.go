@@ -375,10 +375,12 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	_, detachBob := bob.Watch()
 	defer detachBob()
 	s.Equal("bob", bob.Spec().Caller.UserID)
-	s.Equal([]llm.Message{
-		{Role: llm.User, Content: "The team codeword is TEAM_CANVAS_42"},
-		{Role: llm.Assistant, Content: "Hello."},
-	}, bob.voiceAgent.History())
+	restored := bob.voiceAgent.History()
+	s.Require().Len(restored, 3)
+	s.Equal(llm.System, restored[0].Role)
+	s.Contains(restored[0].Content, "conversational attribution")
+	s.Equal(llm.Message{Role: llm.User, Content: `{"author":{"user_id":""},"text":"The team codeword is TEAM_CANVAS_42"}`}, restored[1])
+	s.Equal(llm.Message{Role: llm.Assistant, Content: "Hello."}, restored[2])
 	_, err = bob.InterruptCommand("alice-command")
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	// Hold Bob's durable command before model output, exposing a late callback

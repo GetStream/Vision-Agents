@@ -2,6 +2,8 @@
 
 ## Athena integration fixes
 
+- Preserve message author identities and display labels when restoring shared conversation context.
+
 - Preserve the immutable registry revision on caller-selected session skills.
 
 ## Breaking Changes

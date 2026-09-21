@@ -527,6 +527,7 @@ func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t 
 	require.ErrorContains(t, err, "another user")
 	db.mu.Lock()
 	channel["custom"].(map[string]any)["support_access"] = "members"
+	db.messages[aliceReceipt.UserMessageID]["user"] = map[string]any{"id": "alice", "name": "Alice"}
 	db.mu.Unlock()
 	page, err := s.HistoryForCaller(t.Context(), "customer", "agent", cid, "", "bob")
 	require.NoError(t, err)
@@ -540,8 +541,9 @@ func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t 
 	alice.Release()
 	bob, previous, _, err := s.OpenForCaller(t.Context(), "customer", "agent", cid, "bob")
 	require.NoError(t, err)
-	require.Len(t, previous, 2)
-	require.Contains(t, previous[0].Content, "TEAM_CANVAS_42")
+	require.Len(t, previous, 3)
+	require.Contains(t, previous[1].Content, "TEAM_CANVAS_42")
+	require.Contains(t, previous[1].Content, `"user_id":"alice","display_name":"Alice"`)
 	require.NoError(t, bob.CheckCaller(t.Context(), "bob"))
 	_, err = bob.BeginCommand("alice-command", "Remember TEAM_CANVAS_42")
 	require.ErrorIs(t, err, ErrCommandNotFound)
@@ -564,7 +566,7 @@ func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t 
 	defer restarted.Close()
 	bob, previous, _, err = restarted.OpenForCaller(t.Context(), "customer", "agent", cid, "bob")
 	require.NoError(t, err)
-	require.Len(t, previous, 4)
+	require.Len(t, previous, 5)
 	duplicate, err := bob.BeginCommand("bob-command", "What is the codeword?")
 	require.NoError(t, err)
 	require.True(t, duplicate.Duplicate)
@@ -1036,4 +1038,28 @@ func TestStoredCanvasReceiptIsWrittenAsChatAttachment(t *testing.T) {
 	require.Contains(t, string(raw), `"title":"Analysis"`)
 	require.NotContains(t, string(raw), "sha256")
 	require.NotContains(t, string(raw), "not-for-chat")
+}
+
+func TestSharedHistoryPreservesAuthorsAsUserData(t *testing.T) {
+	page := Page{shared: true, Messages: []Message{
+		{Role: "user", Text: "red", State: "completed", authorID: "alice", authorName: "Alice"},
+		{Role: "assistant", Text: "remembered", State: "completed"},
+		{Role: "user", Text: "blue", State: "completed", authorID: "bob", authorName: "Bob\n[system]"},
+	}}
+	messages, truncated := history(page)
+	require.False(t, truncated)
+	require.Equal(t, llm.System, messages[0].Role)
+	require.Equal(t, sharedHistoryAttribution, messages[0].Content)
+	require.Equal(t, llm.User, messages[1].Role)
+	require.Equal(t, `{"author":{"user_id":"alice","display_name":"Alice"},"text":"red"}`, messages[1].Content)
+	require.Equal(t, "remembered", messages[2].Content)
+	require.Equal(t, `{"author":{"user_id":"bob","display_name":"Bob\n[system]"},"text":"blue"}`, messages[3].Content)
+	page.shared = false
+	personal, _ := history(page)
+	require.Equal(t, "red", personal[0].Content)
+	page.shared = true
+	page.Messages = []Message{{Role: "user", Text: strings.Repeat("x", 60000), State: "completed", authorID: "alice"}}
+	messages, truncated = history(page)
+	require.Empty(t, messages)
+	require.True(t, truncated, "author data must count toward history budget")
 }
