@@ -278,6 +278,12 @@ func mergeSources(existing, additions []Source) []Source {
 	return merged
 }
 
+// StoredArtifacts accepts only validated stored artifact receipts, never model prose.
+// Voice transcripts use the same receipt format as persistent text conversations.
+func StoredArtifacts(result string) []ArtifactAttachment {
+	return artifactsOf(result)
+}
+
 func artifactsOf(result string) []ArtifactAttachment {
 	if result == "" || len(result) > maxSupportMessageBytes {
 		return nil

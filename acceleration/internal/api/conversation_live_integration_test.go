@@ -263,7 +263,7 @@ When a request contains TOOL_PROBE, call lookup_probe exactly once before answer
 	}
 	require.NoError(t, connection.Close())
 	require.Eventually(t, func() bool {
-		found, ok := manager.Get(created.Id, "1257545")
+		found, ok := manager.Get(created.Id, session.Owner{CustomerID: "1257545", UserID: owner, Kind: auth.KindAuthenticated})
 		return !ok || found.State() == session.Ended
 	}, 5*time.Second, 50*time.Millisecond, "disconnect must release the persistent conversation for reconnect")
 	payload["conversation_id"] = cid

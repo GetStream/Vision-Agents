@@ -1,15 +1,59 @@
 package chatlog
 
 import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
+
+func (s *ChatLogSuite) TestSavedVoiceArtifactIsStoredEvenWithoutASpokenReply() {
+	s.log.client = chattest.Client(s.T())
+	event := agent.ToolRan{ID: "tool-one", TurnID: "turn-one", Tool: "athena_save_canvas", Result: `{"schema_version":1,"status":"stored","publication":"pending","attachment":{"type":"athena_canvas","artifact_id":"canvas-one","revision":2,"title":"Lilacs","sha256":"saved"}}`}
+	s.log.Record(event)
+	queued := s.queued()
+	s.Require().Len(queued, 1)
+	writer := newWriter(s.log)
+	writer.handle(queued[0])
+	// Repeated delivery has the same stored identity rather than a second card.
+	writer.handle(queued[0])
+	id := fmt.Sprintf("voice-artifact-%x", sha256.Sum256([]byte(s.log.channel+"\x00turn-one\x00tool-one")))
+	response, err := s.log.client.Chat().GetMessage(context.Background(), id, &getstream.GetMessageRequest{})
+	s.Require().NoError(err)
+	stored := response.Data.Message
+	s.Equal(id, stored.ID)
+	s.Equal(SourceAgent, stored.Custom[SourceField])
+	s.Equal(false, stored.Custom[generatingField])
+	s.Require().Len(stored.Attachments, 1)
+	s.Equal("athena_canvas", *stored.Attachments[0].Type)
+	s.Equal("Lilacs", *stored.Attachments[0].Title)
+	s.Equal("canvas-one", stored.Attachments[0].Custom["artifact_id"])
+	s.Equal(float64(2), stored.Attachments[0].Custom["revision"])
+	s.Empty(stored.Text, "the card must not duplicate the speech transcript")
+}
+
+func (s *ChatLogSuite) TestOnlySuccessfulStoredToolReceiptsCreateCards() {
+	valid := `{"schema_version":1,"status":"stored","publication":"pending","attachment":{"type":"athena_canvas","artifact_id":"canvas-one","revision":1,"title":"Lilacs"}}`
+	for _, event := range []agent.ToolRan{
+		{ID: "one", TurnID: "turn", Tool: "athena_save_canvas", Result: valid, Err: errors.New("denied")},
+		{ID: "two", TurnID: "turn", Tool: "search_web", Result: valid},
+		{ID: "three", TurnID: "turn", Tool: "athena_save_canvas", Result: `{"status":"not_stored"}`},
+		{ID: "four", Tool: "athena_save_canvas", Result: valid},
+	} {
+		s.log.Record(event)
+	}
+	s.Empty(s.queued())
+}
 
 type ChatLogSuite struct {
 	suite.Suite

@@ -15,6 +15,7 @@ package chatlog
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,6 +27,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -76,6 +78,7 @@ const (
 	piece
 	// end closes a streamed reply, storing what it came to.
 	end
+	artifact
 )
 
 // Options configures a Log. The credentials fall back to the environment, the same way
@@ -133,7 +136,9 @@ type message struct {
 	turnID string
 	kind   kind
 	// source is what the message is written as, one of the SourceField values.
-	source string
+	source    string
+	receiptID string
+	artifacts []conversation.ArtifactAttachment
 }
 
 // New validates the options and returns a Log. It writes nothing; Start does that.
@@ -209,6 +214,18 @@ func (l *Log) Start(ctx context.Context) error {
 // said are ignored, so a caller can hand it every event without filtering.
 func (l *Log) Record(event agent.Event) {
 	switch typed := event.(type) {
+	case agent.ToolRan:
+		if typed.Err != nil || typed.ID == "" || typed.TurnID == "" {
+			return
+		}
+		switch typed.Tool {
+		case "athena_save_canvas", "athena_revise_canvas", "athena_save_image", "athena_save_pdf", "athena_save_file", "athena_save_site":
+		default:
+			return
+		}
+		if artifacts := conversation.StoredArtifacts(typed.Result); len(artifacts) > 0 {
+			l.enqueue(message{author: l.agent, turnID: typed.TurnID, kind: artifact, source: SourceAgent, receiptID: typed.ID, artifacts: artifacts})
+		}
 	case agent.Heard:
 		l.Say(participantUser(typed.Participant), typed.Text)
 	case agent.ResponseDelta:
@@ -329,6 +346,8 @@ func newWriter(l *Log) *writer {
 // handle takes one queued message.
 func (w *writer) handle(queued message) {
 	switch queued.kind {
+	case artifact:
+		w.storeArtifacts(queued)
 	case piece:
 		writing, started := w.writing[queued.turnID]
 		if !started {
@@ -340,6 +359,29 @@ func (w *writer) handle(queued message) {
 		w.settle(queued.turnID, queued.text)
 	case whole:
 		w.store(queued.author, queued.text, queued.source)
+	}
+}
+
+// A saved artifact is available even if the subsequent spoken reply is interrupted.
+// Its card is separate from the speech transcript and has a stable receipt identity.
+func (w *writer) storeArtifacts(queued message) {
+	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	attachments := make([]getstream.Attachment, 0, len(queued.artifacts))
+	for _, saved := range queued.artifacts {
+		custom := map[string]any{"artifact_id": saved.ArtifactID, "revision": saved.Revision}
+		if saved.Alt != "" {
+			custom["alt"] = saved.Alt
+		}
+		attachments = append(attachments, getstream.Attachment{Type: &saved.Type, Title: &saved.Title, Custom: custom})
+	}
+	id := fmt.Sprintf("voice-artifact-%x", sha256.Sum256([]byte(w.log.channel+"\x00"+queued.turnID+"\x00"+queued.receiptID)))
+	_, err := w.log.client.Chat().SendMessage(ctx, ChannelType, w.log.channel, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{ID: &id, UserID: &queued.author.ID, Attachments: attachments,
+			Custom: map[string]any{generatingField: false, SourceField: SourceAgent}},
+	})
+	if err != nil {
+		w.log.logger.Error("could not store a saved artifact card", "turn", queued.turnID, "error", err)
 	}
 }
 

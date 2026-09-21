@@ -2,6 +2,9 @@
 
 ## Athena integration fixes
 
+- Publish saved voice artifacts as native Chat cards, independently of interrupted speech.
+- Allow session cleanup after the caller exhausts their generation quota while retaining ownership checks.
+
 - Preserve message author identities and display labels when restoring shared conversation context.
 
 - Preserve the immutable registry revision on caller-selected session skills.
