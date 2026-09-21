@@ -1,4 +1,5 @@
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -448,6 +449,18 @@ success:
 
 
 class TestSimulateCommand:
+    @pytest.fixture(autouse=True)
+    def _restore_sdk_logger(self):
+        """``simulate`` configures the SDK logger; undo that so later tests can capture logs."""
+        sdk_logger = logging.getLogger("vision_agents")
+        handlers = list(sdk_logger.handlers)
+        propagate = sdk_logger.propagate
+        level = sdk_logger.level
+        yield
+        sdk_logger.handlers = handlers
+        sdk_logger.propagate = propagate
+        sdk_logger.setLevel(level)
+
     @pytest.fixture
     def runner(self) -> CliRunner:
         return CliRunner()
