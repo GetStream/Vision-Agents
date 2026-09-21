@@ -46,6 +46,8 @@ tts = voxcpm.TTS(
 
 Reference files must be valid, uncompressed WAV files no larger than 5 MiB. Audio supplied for cloning is sent to ModelBest; only use recordings you have permission to process and clone.
 
+For a minimal live API check, see [`example/`](example/README.md). It writes the streamed response to a WAV file and can optionally test reference-audio cloning.
+
 ## Configuration
 
 | Parameter | Default | Description |
