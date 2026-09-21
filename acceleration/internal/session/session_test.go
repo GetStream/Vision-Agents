@@ -1046,6 +1046,7 @@ func (s *SessionSuite) TestAToolNobodyAnswersGivesUpRatherThanHangingTheTurn() {
 
 	s.Require().Error(err)
 	s.ErrorContains(err, "did not answer")
+	s.ErrorIs(err, context.DeadlineExceeded)
 	s.Require().NotNil(awaitToolCall(events), "the caller was never asked in the first place")
 }
 
@@ -1074,7 +1075,9 @@ func (s *SessionSuite) TestToolCancellationRetainsTheInterruptedTurn() {
 	case <-time.After(time.Second):
 		s.FailNow("tool cancellation was not emitted")
 	}
-	s.Error(<-finished)
+	err := <-finished
+	s.ErrorIs(err, context.Canceled)
+	s.NotContains(err.Error(), "did not answer")
 	s.False(tools.Resolve("call-one", "turn-one", nil, ""), "a cancelled call must not accept a late result")
 }
 

@@ -98,7 +98,10 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		return result.parts, nil
 	case <-deadline.Done():
 		_ = b.ask(ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Cancel: true})
-		return nil, fmt.Errorf("session: %s did not answer within %s", call.Name, b.timeout)
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("session: %s stopped: %w", call.Name, err)
+		}
+		return nil, fmt.Errorf("session: %s did not answer within %s: %w", call.Name, b.timeout, deadline.Err())
 	}
 }
 
