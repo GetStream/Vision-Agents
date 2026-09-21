@@ -15,6 +15,7 @@ import pytest
 from getstream.video.rtc import AudioStreamTrack
 from vision_agents.core import Agent, User
 from vision_agents.core.edge.edge_transport import EdgeTransport
+from vision_agents.core.runner.simulate import run_simulation
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.tts import TTS
 from vision_agents.testing import (
@@ -532,6 +533,21 @@ class TestImportOrder:
         assert result.returncode == 0, result.stderr
 
 
+class TestRunSimulation:
+    def test_rejects_unsupported_log_level(self, tmp_path: Path):
+        with pytest.raises(ValueError, match="unsupported log level"):
+            run_simulation(
+                _agent_factory(ScriptedLLM),
+                str(tmp_path),
+                repeat=1,
+                variations=None,
+                judge="x:y",
+                report_dir=str(tmp_path),
+                name_filter=None,
+                log_level="LOUD",
+            )
+
+
 class TestParseVerdict:
     def test_pass_and_fail(self):
         assert parse_verdict('{"verdict": "PASS", "reason": "ok"}').success is True
@@ -539,8 +555,17 @@ class TestParseVerdict:
         assert verdict.success is False
         assert verdict.reason == "nope"
 
-    def test_strips_code_fences_and_defaults_reason(self):
-        verdict = parse_verdict('```json\n{"verdict": "pass"}\n```')
+    @pytest.mark.parametrize(
+        "text",
+        [
+            '```json\n{"verdict": "pass"}\n```',
+            '```\n{"verdict": "pass"}\n```',
+            '```{"verdict": "pass"}```',
+            '  ```json\n{"verdict":\n "pass"}\n```  ',
+        ],
+    )
+    def test_strips_code_fences_and_defaults_reason(self, text: str):
+        verdict = parse_verdict(text)
         assert verdict.success is True
         assert verdict.reason == "Passed."
 

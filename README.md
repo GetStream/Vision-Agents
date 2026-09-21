@@ -64,7 +64,8 @@ and forwards the remaining arguments to it, so `uv run agent.py simulate scenari
 model follows the scenario brief, your agent replies turn by turn, and a judge model rules on each criterion
 once the conversation ends. It prints a table with the scenario, variations, pass@k, turns, P50 turn latency
 and failed criteria, writes `report.json` and `report.md` with the full transcripts and verdicts, and exits
-`0` when every scenario passed, `1` when any failed and `2` on a judge or provider error, so it can gate CI.
+`0` when every scenario passed, `1` when any failed and `2` when it could not reach a verdict (a judge or
+provider error, a bad `--judge`, or missing or malformed scenario files), so it can gate CI.
 
 A scenario is a TOML file:
 
