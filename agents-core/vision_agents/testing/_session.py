@@ -196,7 +196,7 @@ class TestSession:
             await self._llm.events.wait()
         finally:
             _current_turn.reset(token)
-            self._active_turns.remove(turn)
+            self._active_turns = [t for t in self._active_turns if t is not turn]
 
         if response.text:
             turn.append(ChatMessageEvent(role="assistant", content=response.text))

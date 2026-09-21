@@ -5,15 +5,14 @@ from typing import Any
 
 import pytest
 from getstream.video.rtc import AudioStreamTrack
-from mcp import types as mcp_types
 
 from tests.test_testing.fake_llms import ToolCallingLLM
+from tests.test_testing.fakes import FakeMCPServer
 from vision_agents.core import Agent, User
 from vision_agents.core.edge import EdgeTransport
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm.events import ToolEndEvent, ToolStartEvent
 from vision_agents.core.llm.llm_types import NormalizedToolCallItem
-from vision_agents.core.mcp import MCPBaseServer
 from vision_agents.core.tts import TTS
 from vision_agents.testing import (
     ChatMessageEvent,
@@ -79,43 +78,6 @@ class _FakeTTS(TTS):
 
     async def stop_audio(self) -> None:
         pass
-
-
-class _FakeMCPServer(MCPBaseServer):
-    """In-memory MCP server exposing a single ``lookup`` tool."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
-    async def connect(self) -> None:
-        self._is_connected = True
-
-    async def disconnect(self) -> None:
-        self._is_connected = False
-
-    async def list_tools(self) -> list[mcp_types.Tool]:
-        return [
-            mcp_types.Tool(
-                name="lookup",
-                description="Look up a record",
-                inputSchema={
-                    "type": "object",
-                    "properties": {"key": {"type": "string"}},
-                    "required": ["key"],
-                },
-            )
-        ]
-
-    async def call_tool(
-        self, name: str, arguments: dict[str, Any]
-    ) -> mcp_types.CallToolResult:
-        self.calls.append((name, arguments))
-        return mcp_types.CallToolResult(
-            content=[
-                mcp_types.TextContent(type="text", text=f"record {arguments['key']}")
-            ]
-        )
 
 
 @pytest.fixture
@@ -326,7 +288,7 @@ class TestTestSession:
         assert response.output == "Sunny."
 
     async def test_agent_mode_connects_mcp_servers_and_captures_their_tools(self):
-        server = _FakeMCPServer()
+        server = FakeMCPServer()
         llm = ToolCallingLLM(
             script={"find": [_call("mcp_0_lookup", {"key": "42"}, "c1")]},
             reply="Found it.",

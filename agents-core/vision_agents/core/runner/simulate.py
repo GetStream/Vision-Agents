@@ -39,6 +39,7 @@ REPORT_MD = "report.md"
 _TABLE_HEADERS = (
     "Scenario",
     "Variations",
+    "Passed",
     "pass@k",
     "Turns",
     "P50 latency",
@@ -134,6 +135,10 @@ def load_scenarios(
         raise SimulateError(str(err)) from err
     if not scenarios:
         raise SimulateError(f"no scenario files (*.yaml) found in {target}")
+    if name_filter:
+        scenarios = [s for s in scenarios if name_filter.lower() in s.name.lower()]
+        if not scenarios:
+            raise SimulateError(f"no scenarios match --filter {name_filter!r}")
     spoken = [s.name for s in scenarios if s.mode == "audio"]
     if spoken:
         click.echo(
@@ -145,10 +150,6 @@ def load_scenarios(
         scenarios = [s for s in scenarios if s.mode == "text"]
         if not scenarios:
             raise SimulateError(f"no text scenarios found in {target}")
-    if name_filter:
-        scenarios = [s for s in scenarios if name_filter.lower() in s.name.lower()]
-        if not scenarios:
-            raise SimulateError(f"no scenarios match --filter {name_filter!r}")
     if repeat is not None or variations is not None:
         scenarios = [
             dataclasses.replace(
@@ -221,13 +222,15 @@ async def _run_scenario(
             on_case(scenario, case)
 
     error: Optional[str] = None
+    pass_at_k: Optional[float] = None
     try:
-        await simulation.run(
+        result = await simulation.run(
             create_agent,
             scenario,
-            testing.LLMJudge(llm_factory()),
+            lambda: testing.LLMJudge(llm_factory()),
             on_trial=on_trial,
         )
+        pass_at_k = result.pass_at_k
     except Exception as exc:
         logger.exception("Scenario %s could not run", scenario.name)
         error = str(exc)
@@ -239,6 +242,7 @@ async def _run_scenario(
         started_at=started,
         finished_at=_now(),
         error=error,
+        pass_at_k=pass_at_k,
     )
 
 
@@ -286,7 +290,12 @@ def _import_factory(spec: str) -> Callable[[], LLM]:
         raise SimulateError(
             f"--judge {spec!r}: failed to import module '{module_name}': {err}"
         ) from err
-    factory = getattr(module, attribute, None)
+    try:
+        factory = module.__dict__[attribute]
+    except KeyError as err:
+        raise SimulateError(
+            f"--judge {spec!r}: '{module_name}' has no callable '{attribute}'"
+        ) from err
     if not callable(factory):
         raise SimulateError(
             f"--judge {spec!r}: '{module_name}' has no callable '{attribute}'"
@@ -324,6 +333,7 @@ def render_table(report: "SimulationReport") -> str:
             run.name,
             str(run.variations),
             f"{run.passed}/{run.cases}",
+            _format_pass_at_k(run),
             _format_turns(run),
             _format_latency(run),
             _format_issues(run),
@@ -367,6 +377,7 @@ def render_markdown(report: "SimulationReport") -> str:
             run.name,
             str(run.variations),
             f"{run.passed}/{run.cases}",
+            _format_pass_at_k(run),
             _format_turns(run),
             _format_latency(run),
             _format_issues(run, limit=None),
@@ -380,7 +391,7 @@ def render_markdown(report: "SimulationReport") -> str:
             "",
             f"- Mode: {run.mode}",
             f"- Variations: {run.variations}, repeat: {run.repeat}, "
-            f"max turns: {run.max_turns}",
+            f"max turns: {run.max_turns}, pass@{run.repeat}: {_format_pass_at_k(run)}",
             "",
             "**Brief:**",
             "",
@@ -446,6 +457,10 @@ def _summary(report: "SimulationReport") -> str:
     )
     color = {"passed": "green", "failed": "red", "errored": "red"}[report.state]
     return click.style(text, fg=color, bold=True)
+
+
+def _format_pass_at_k(run: "SimulationRun") -> str:
+    return "-" if run.pass_at_k is None else f"{run.pass_at_k:.2f}"
 
 
 def _format_turns(run: "SimulationRun") -> str:

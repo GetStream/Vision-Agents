@@ -90,7 +90,8 @@ class SimulationCase:
             simulated user, a provider or the judge failed.
         turns: How many times the user spoke.
         ended: Why the conversation stopped: the user finished, ``max_turns``
-            was hit, or it failed.
+            was hit (also reported when the user finished on exactly the
+            last allowed turn), or it failed.
         criteria: The judge's ruling per criterion; empty when the case errored.
         error: What went wrong, for a failed or errored case.
     """
@@ -217,6 +218,7 @@ class SimulationRun:
     started_at: datetime
     finished_at: datetime
     error: str | None = None
+    pass_at_k: float | None = None
 
     @classmethod
     def from_scenario(
@@ -229,6 +231,7 @@ class SimulationRun:
         started_at: datetime,
         finished_at: datetime,
         error: str | None = None,
+        pass_at_k: float | None = None,
     ) -> "SimulationRun":
         return cls(
             id=uuid4().hex,
@@ -244,6 +247,7 @@ class SimulationRun:
             started_at=started_at,
             finished_at=finished_at,
             error=error,
+            pass_at_k=pass_at_k,
         )
 
     @property
@@ -303,6 +307,7 @@ class SimulationRun:
             "passed": self.passed,
             "failed": self.failed,
             "errored": self.errored,
+            "pass_at_k": self.pass_at_k,
             "error": self.error,
             "started_at": self.started_at.isoformat(),
             "finished_at": self.finished_at.isoformat(),

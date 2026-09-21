@@ -256,11 +256,41 @@ class TestLLMJudge:
         with pytest.raises(JudgeError, match="empty response"):
             await LLMJudge(ScriptedLLM("")).evaluate_conversation(transcript, [CONCISE])
 
-    async def test_llm_failure_raises_judge_error(self, transcript):
-        llm = ScriptedLLM("unused", error=RuntimeError("quota exceeded"))
+    @pytest.mark.parametrize(
+        "error",
+        [RuntimeError("quota exceeded"), ConnectionResetError("quota exceeded")],
+    )
+    async def test_llm_failure_raises_judge_error(self, transcript, error: Exception):
+        llm = ScriptedLLM("unused", error=error)
 
         with pytest.raises(JudgeError, match="quota exceeded"):
             await LLMJudge(llm).evaluate_conversation(transcript, [CONCISE])
+
+    async def test_provider_error_event_raises_judge_error_with_message(
+        self, transcript
+    ):
+        class SwallowingLLM(ScriptedLLM):
+            async def simple_response(self, text, participant=None):
+                self.on_llm_error(error=RuntimeError("provider exploded"))
+                async for item in super().simple_response(text, participant):
+                    yield item
+
+        with pytest.raises(JudgeError, match="provider exploded"):
+            await LLMJudge(SwallowingLLM("")).evaluate_conversation(
+                transcript, [CONCISE]
+            )
+
+    async def test_close_releases_the_llm(self):
+        class ClosableLLM(ScriptedLLM):
+            closed = False
+
+            async def close(self) -> None:
+                self.closed = True
+
+        llm = ClosableLLM("unused")
+        await LLMJudge(llm).close()
+
+        assert llm.closed is True
 
     async def test_duplicate_criterion_names_raise(self, transcript):
         with pytest.raises(ValueError, match="unique"):

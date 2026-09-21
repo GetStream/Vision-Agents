@@ -25,7 +25,14 @@ from ._events import (
     FunctionCallOutputEvent,
     RunEvent,
 )
-from ._judge import BUILTIN_CRITERIA, Criterion, CriterionVerdict, Judge, JudgeError
+from ._judge import (
+    BUILTIN_CRITERIA,
+    Criterion,
+    CriterionVerdict,
+    Judge,
+    JudgeError,
+    LLMJudge,
+)
 from ._run_result import TestResponse
 from ._scenario import Scenario
 from ._session import TestSession
@@ -344,21 +351,25 @@ class Simulation:
         self,
         agent_or_llm: Target | TargetFactory,
         scenario: Scenario,
-        judge: Judge,
+        judge: Judge | Callable[[], Judge],
         instructions: str | None = None,
         on_trial: Callable[[Trial], None] | None = None,
     ) -> SimulationResult:
         """Hold ``variations * repeat`` conversations and judge each one.
 
-        Targets built by a factory are closed after their conversation. A
-        success criterion that names a built-in criterion (``concise``,
-        ``say_do_consistency``, ...) is judged by that criterion's definition.
+        Targets, user LLMs and judges built by a factory are closed after
+        their conversation. An ``Agent`` target is wrapped like
+        ``TestSession(agent=...)``, so its instructions and MCP tools are
+        used. A success criterion that names a built-in criterion
+        (``concise``, ``say_do_consistency``, ...) is judged by that
+        criterion's definition.
 
         Args:
             agent_or_llm: The agent or LLM under test, or a factory building one.
                 The factory may be async. An ``Agent`` supplies its own instructions.
             scenario: Scenario to simulate.
-            judge: Judge that evaluates the success criteria over the transcript.
+            judge: Judge that evaluates the success criteria over the transcript,
+                or a factory building a fresh one per conversation.
             instructions: System instructions for a bare ``LLM`` target.
                 Ignored for an ``Agent``. Defaults to the ``TestSession`` default.
             on_trial: Called with each trial as soon as it has been judged.
@@ -395,28 +406,42 @@ class Simulation:
         else:
             target_factory = agent_or_llm
         user_factory: Callable[[], LLM]
+        owns_user = not isinstance(self._user_llm, LLM)
         if isinstance(self._user_llm, LLM):
             _require_factory_for_many(conversations, "user_llm")
             user_factory = _constant(self._user_llm)
         else:
             user_factory = self._user_llm
+        judge_factory: Callable[[], Judge]
+        owns_judge = callable(judge)
+        if callable(judge):
+            judge_factory = judge
+        else:
+            judge_factory = _constant(judge)
 
         variants = [scenario]
         if scenario.variations > 1:
-            variants = await generate_variations(
-                user_factory(), scenario, scenario.variations
-            )
+            variations_llm = user_factory()
+            try:
+                variants = await generate_variations(
+                    variations_llm, scenario, scenario.variations
+                )
+            finally:
+                if owns_user:
+                    await variations_llm.close()
 
         trials: list[Trial] = []
         for variation, variant in enumerate(variants):
             for repeat in range(scenario.repeat):
                 trial = Trial(scenario=variant, variation=variation, repeat=repeat)
+                user_llm = user_factory()
                 user = SimulatedUser(
-                    user_factory(),
+                    user_llm,
                     variant,
                     max_turns=self._max_turns,
                     turn_timeout=self._turn_timeout,
                 )
+                trial_judge = judge_factory()
                 target = await _build_target(target_factory)
                 try:
                     if voice_factory is not None and ears_factory is not None:
@@ -426,11 +451,15 @@ class Simulation:
                     else:
                         await self._converse_in_text(trial, target, user, instructions)
                     await self._judge_trial(
-                        trial, judge, _target_instructions(target, instructions)
+                        trial, trial_judge, _target_instructions(target, instructions)
                     )
                 finally:
                     if owns_target:
                         await target.close()
+                    if owns_user:
+                        await user_llm.close()
+                    if owns_judge and isinstance(trial_judge, LLMJudge):
+                        await trial_judge.close()
                 trials.append(trial)
                 logger.info(
                     "Scenario %s variation=%d repeat=%d: %s",
@@ -459,12 +488,13 @@ class Simulation:
                 f"{type(llm).__name__}. Use 'mode: audio' with a LoopbackEdge to "
                 "simulate a Realtime LLM."
             )
-        session_instructions = _target_instructions(target, instructions)
-        session = (
-            TestSession(llm=llm, instructions=session_instructions)
-            if session_instructions is not None
-            else TestSession(llm=llm)
-        )
+        session: TestSession
+        if isinstance(target, Agent):
+            session = TestSession(agent=target)
+        elif instructions is not None:
+            session = TestSession(llm=target, instructions=instructions)
+        else:
+            session = TestSession(llm=target)
         # Plugin LLMs report provider failures through LLMErrorEvent and
         # return an empty reply, so watch for them rather than judging silence.
         provider_errors: list[str] = []
@@ -514,12 +544,22 @@ class Simulation:
             turn_timeout=self._turn_timeout,
             settle=self._audio_settle,
         )
+        provider_errors: list[str] = []
+
+        async def on_llm_error(event: LLMErrorEvent) -> None:
+            provider_errors.append(event.error_message)
+
+        target.llm.events.subscribe(on_llm_error)
         try:
             async with conversation:
                 message = await user.next_message(None)
                 while message is not None:
                     started = time.monotonic()
                     line = await conversation.say(message)
+                    if provider_errors:
+                        trial.error = f"Agent LLM failed: {provider_errors[0]}"
+                        trial.valid = False
+                        return
                     events: list[RunEvent] = [
                         ChatMessageEvent(role="user", content=message),
                         *line.events,
@@ -541,10 +581,16 @@ class Simulation:
                     )
                     message = await user.next_message(line.heard)
         except AgentSilentError as exc:
-            trial.error = str(exc)
+            if provider_errors:
+                trial.error = f"Agent LLM failed: {provider_errors[0]}"
+                trial.valid = False
+            else:
+                trial.error = str(exc)
         except (SimulatedUserError, CallerError) as exc:
             trial.error = str(exc)
             trial.valid = False
+        finally:
+            target.llm.events.unsubscribe(on_llm_error)
 
     async def _judge_trial(
         self, trial: Trial, judge: Judge, instructions: str | None

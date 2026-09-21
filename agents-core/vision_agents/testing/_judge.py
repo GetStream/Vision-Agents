@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
+from vision_agents.core.llm.events import LLMErrorEvent
 from vision_agents.core.llm.llm import LLM
 
 from ._events import (
@@ -166,6 +167,10 @@ class LLMJudge:
         self._llm = llm
         self._llm.set_instructions(_JUDGE_SYSTEM_PROMPT)
 
+    async def close(self) -> None:
+        """Release the judge's LLM."""
+        await self._llm.close()
+
     async def evaluate(self, event: ChatMessageEvent, intent: str) -> JudgeVerdict:
         """Evaluate a single message against one intent."""
         if not event.content:
@@ -221,15 +226,27 @@ class LLMJudge:
             raise ValueError(f"Criterion names must be unique, got {names!r}")
 
         prompt = self._build_prompt(events, resolved, instructions)
+        # Plugin LLMs report provider failures through LLMErrorEvent and
+        # return an empty reply; keep the message so the error is not lost.
+        provider_errors: list[str] = []
 
+        async def on_llm_error(event: LLMErrorEvent) -> None:
+            provider_errors.append(event.error_message)
+
+        self._llm.events.subscribe(on_llm_error)
         try:
             _, response = await collect_simple_response(
                 self._llm.simple_response(text=prompt)
             )
-        except (OSError, ValueError, RuntimeError) as exc:
+            await self._llm.events.wait()
+        except Exception as exc:
             logger.exception("Judge evaluation failed")
             raise JudgeError(f"Judge evaluation error: {exc}") from exc
+        finally:
+            self._llm.events.unsubscribe(on_llm_error)
 
+        if provider_errors:
+            raise JudgeError(f"Judge LLM failed: {provider_errors[0]}")
         if not response.text:
             raise JudgeError("Judge LLM returned an empty response.")
 

@@ -62,8 +62,8 @@ and forwards the remaining arguments to it, so `uv run agent.py simulate scenari
 
 `vision-agents agent simulate <dir-or-file>` plays every scenario against your agent in text mode. A simulated
 user follows the scenario brief, your agent replies turn by turn, and a judge model rules on each success
-criterion once the conversation ends. It prints a table with the scenario, variations, pass@k, turns, P50 turn
-latency and failed criteria, writes `report.json` and `report.md` with the full transcripts and verdicts, and
+criterion once the conversation ends. It prints a table with the scenario, variations, conversations passed,
+pass@k, turns, P50 turn latency and failed criteria, writes `report.json` and `report.md` with the full transcripts and verdicts, and
 exits `0` when every scenario passed, `1` when any failed and `2` when it could not reach a verdict (a judge,
 simulated-user or provider error, a bad `--judge`, or missing or malformed scenario files), so it can gate CI.
 

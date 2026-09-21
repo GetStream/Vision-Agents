@@ -3,12 +3,14 @@
 import asyncio
 import json
 from collections.abc import Callable, Sequence
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import numpy as np
 from getstream.video.rtc.track_util import AudioFormat, PcmData
+from mcp import types as mcp_types
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import LLM, LLMResponseDelta, LLMResponseFinal
+from vision_agents.core.mcp import MCPBaseServer
 from vision_agents.core.stt.stt import STT, TranscriptResponse
 from vision_agents.core.tts.tts import TTS
 from vision_agents.testing import (
@@ -131,6 +133,43 @@ class ScriptedJudge:
             reason="scripted",
             score=sum(v.score for v in verdicts) / len(verdicts),
             criteria=verdicts,
+        )
+
+
+class FakeMCPServer(MCPBaseServer):
+    """In-memory MCP server exposing a single ``lookup`` tool."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def connect(self) -> None:
+        self._is_connected = True
+
+    async def disconnect(self) -> None:
+        self._is_connected = False
+
+    async def list_tools(self) -> list[mcp_types.Tool]:
+        return [
+            mcp_types.Tool(
+                name="lookup",
+                description="Look up a record",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"key": {"type": "string"}},
+                    "required": ["key"],
+                },
+            )
+        ]
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any]
+    ) -> mcp_types.CallToolResult:
+        self.calls.append((name, arguments))
+        return mcp_types.CallToolResult(
+            content=[
+                mcp_types.TextContent(type="text", text=f"record {arguments['key']}")
+            ]
         )
 
 

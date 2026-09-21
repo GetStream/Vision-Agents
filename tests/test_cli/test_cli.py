@@ -507,6 +507,7 @@ class TestSimulateCommand:
         for header in (
             "Scenario",
             "Variations",
+            "Passed",
             "pass@k",
             "Turns",
             "P50 latency",
@@ -598,6 +599,7 @@ class TestSimulateCommand:
         assert "6/6" in result.output
         run = self._report(project)["runs"][0]
         assert run["repeat"] == 2
+        assert run["pass_at_k"] == 1.0
         assert run["variations"] == 3
         assert run["cases"] == 6
         assert sorted((c["variation"], c["attempt"]) for c in run["conversations"]) == [
@@ -678,14 +680,28 @@ class TestSimulateCommand:
         assert (
             "The agent does something impossible: stub judge" in failed_case["verdict"]
         )
+        assert impossible["pass_at_k"] == 0.0
 
         markdown = (project / "out" / "reports" / "report.md").read_text()
         assert "# Simulation report" in markdown
-        assert "| greeting | 1 | 1/1 |" in markdown
+        assert "| greeting | 1 | 1/1 | 1.00 |" in markdown
         assert "**User:** What's the weather in Amsterdam?" in markdown
         assert "It is sunny in Amsterdam today." in markdown
         assert "PASS: The agent tells the user the weather in Amsterdam" in markdown
         assert "FAIL: The agent does something impossible (stub judge)" in markdown
+
+    def test_filter_applies_before_the_audio_skip(
+        self, runner: CliRunner, project: Path
+    ):
+        (project / "scenarios" / "spoken.yaml").write_text(
+            _GREETING_SCENARIO.replace("name: greeting", "name: spoken\nmode: audio")
+        )
+        result = runner.invoke(
+            agent_cmd,
+            ["simulate", "scenarios", "--judge", "sim_stub:judge", "--filter", "greet"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "Skipping" not in result.output
 
     def test_audio_scenarios_are_skipped(self, runner: CliRunner, project: Path):
         (project / "scenarios" / "spoken.yaml").write_text(

@@ -12,6 +12,7 @@ from vision_agents.core import Agent, User
 from vision_agents.core.edge.types import Participant
 from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.core.llm.realtime import Realtime
+from tests.test_testing.fake_llms import ToolCallingLLM
 from vision_agents.testing import (
     CONCISE,
     ChatMessageEvent,
@@ -32,6 +33,7 @@ from .fakes import (
     BookingLLM,
     CodecSTT,
     CodecTTS,
+    FakeMCPServer,
     ScriptedJudge,
     ScriptedLLM,
     user_done,
@@ -71,6 +73,29 @@ def spoken_simulation(user_llm, **kwargs) -> Simulation:
     kwargs.setdefault("caller_tts", CodecTTS())
     kwargs.setdefault("caller_stt", CodecSTT())
     return Simulation(user_llm=user_llm, audio_settle=0.2, **kwargs)
+
+
+class FailingProviderLLM(ScriptedLLM):
+    """Agent LLM whose provider fails: reports the error and returns nothing."""
+
+    async def simple_response(
+        self,
+        text: str,
+        participant: Participant | None = None,
+    ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
+        self.on_llm_error(error=RuntimeError("provider exploded"))
+        yield LLMResponseFinal(text="")
+
+
+class ClosableLLM(ScriptedLLM):
+    """Scripted LLM that remembers whether it was closed."""
+
+    def __init__(self, replies: list[str]) -> None:
+        super().__init__(replies)
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class MuteTTS(CodecTTS):
@@ -627,15 +652,6 @@ class TestSimulation:
         assert [agent.closed for agent in agents] == [True, True]
 
     async def test_provider_error_marks_trial_invalid(self, scenario):
-        class FailingProviderLLM(ScriptedLLM):
-            async def simple_response(
-                self,
-                text: str,
-                participant: Participant | None = None,
-            ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
-                self.on_llm_error(error=RuntimeError("provider exploded"))
-                yield LLMResponseFinal(text="")
-
         result = await Simulation(
             user_llm=ScriptedLLM([user_says("Hi"), user_done()])
         ).run(
@@ -710,6 +726,79 @@ class TestSimulation:
         assert set(trial.verdicts) == set(scenario.success)
         assert all(v.reason == "not convinced" for v in trial.verdicts.values())
 
+    async def test_agent_target_uses_its_mcp_tools(self, scenario):
+        server = FakeMCPServer()
+        llm = ToolCallingLLM(
+            script={
+                "find": [
+                    {
+                        "type": "tool_call",
+                        "name": "mcp_0_lookup",
+                        "arguments_json": {"key": "42"},
+                        "id": "c1",
+                    }
+                ]
+            },
+            reply="Found record 42.",
+        )
+        agent = Agent(
+            edge=LoopbackEdge(),
+            llm=llm,
+            tts=CodecTTS(),
+            agent_user=User(id="agent", name="Agent"),
+            instructions="Look things up.",
+            mcp_servers=[server],
+        )
+
+        result = await Simulation(
+            user_llm=ScriptedLLM([user_says("find"), user_done()])
+        ).run(agent, scenario, ScriptedJudge())
+
+        assert result.passed, result.summary()
+        trial = result.trials[0]
+        assert [c.name for c in trial.tool_calls] == ["mcp_0_lookup"]
+        assert server.calls == [("lookup", {"key": "42"})]
+        assert not server.is_connected
+
+    async def test_judge_factory_builds_a_fresh_judge_per_trial(self, scenario):
+        judges = [ScriptedJudge([True, True]), ScriptedJudge([False, False])]
+
+        result = await Simulation(
+            user_llm=lambda: ScriptedLLM([user_says("Hi"), user_done()])
+        ).run(
+            lambda: ScriptedLLM(["Done."]),
+            dataclasses.replace(scenario, repeat=2),
+            lambda: judges.pop(0),
+        )
+
+        assert [t.passed for t in result.trials] == [True, False]
+
+    async def test_factory_built_user_llms_are_closed(self, scenario):
+        users: list[ClosableLLM] = []
+
+        def build_user() -> ClosableLLM:
+            user = ClosableLLM([user_says("Hi"), user_done()])
+            users.append(user)
+            return user
+
+        result = await Simulation(user_llm=build_user).run(
+            lambda: ScriptedLLM(["Done."]),
+            dataclasses.replace(scenario, repeat=2),
+            ScriptedJudge(),
+        )
+
+        assert result.passed, result.summary()
+        assert [user.closed for user in users] == [True, True]
+
+    async def test_user_llm_instance_is_not_closed(self, scenario):
+        user = ClosableLLM([user_says("Hi"), user_done()])
+
+        await Simulation(user_llm=user).run(
+            ScriptedLLM(["Done."]), scenario, ScriptedJudge()
+        )
+
+        assert user.closed is False
+
 
 class TestSpokenSimulation:
     async def test_judge_reads_what_the_caller_heard(self, spoken_scenario):
@@ -740,6 +829,25 @@ class TestSpokenSimulation:
         assert trial.voice_to_voice_ms == [turn.voice_to_voice_ms]
         assert [c.name for c in trial.tool_calls] == ["book_slot"]
         assert "Booked Friday 10am." in user_llm.history[2][1]
+
+    async def test_provider_error_marks_spoken_trial_invalid(self, spoken_scenario):
+        agent = Agent(
+            edge=LoopbackEdge(),
+            llm=FailingProviderLLM(["unused"]),
+            stt=CodecSTT(),
+            tts=CodecTTS(),
+            agent_user=User(id="agent", name="Agent"),
+            instructions="You book appointments.",
+        )
+        user_llm = ScriptedLLM([user_says("Move me to Friday"), user_done()])
+
+        result = await spoken_simulation(user_llm, turn_timeout=1.0).run(
+            agent, spoken_scenario, ScriptedJudge([RuntimeError("judge must not run")])
+        )
+
+        trial = result.trials[0]
+        assert trial.valid is False
+        assert trial.error is not None and "provider exploded" in trial.error
 
     async def test_summary_shows_intended_text_and_latency(self, spoken_scenario):
         user_llm = ScriptedLLM([user_says("Hi"), user_done()])
