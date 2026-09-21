@@ -41,6 +41,13 @@ _TABLE_HEADERS = (
     "Failed criteria",
 )
 _ISSUES_MAX_LEN = 60
+_LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
 
 AgentFactory = Callable[[], Awaitable["Agent"]]
 
@@ -66,8 +73,15 @@ def run_simulation(
 
     Returns:
         The process exit code: 0 all passed, 1 a scenario failed, 2 an error.
+
+    Raises:
+        ValueError: if ``log_level`` is not a standard logging level name.
     """
-    configure_sdk_logger(level=getattr(logging, log_level.upper(), logging.WARNING))
+    try:
+        level = _LOG_LEVELS[log_level.upper()]
+    except KeyError as err:
+        raise ValueError(f"unsupported log level: {log_level!r}") from err
+    configure_sdk_logger(level=level)
     scenarios = load_scenarios(Path(target), name_filter)
     llm_factory = resolve_llm_factory(judge)
     simulator = testing.Simulator(
@@ -132,7 +146,12 @@ async def probe_llm_factory(factory: Callable[[], LLM], spec: str) -> None:
         raise SimulateError(
             f"--judge {spec!r}: expected an LLM instance, got {type(llm).__name__}"
         )
-    await llm.close()
+    try:
+        await llm.close()
+    except Exception as err:
+        raise SimulateError(
+            f"--judge {spec!r}: failed to close the probe LLM: {err}"
+        ) from err
 
 
 def _import_factory(spec: str) -> Callable[[], LLM]:

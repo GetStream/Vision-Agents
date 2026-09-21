@@ -592,8 +592,9 @@ class Runner:
             Run scenario files against the agent and report pass/fail.
 
             SCENARIOS is a scenario file or a directory of *.toml scenario files.
-            Exits 0 when every scenario passes, 1 when any fails and 2 on a
-            judge or provider error, so it can gate CI.
+            Exits 0 when every scenario passes, 1 when any fails and 2 when no
+            verdict could be reached (judge or provider error, bad --judge,
+            missing or malformed scenarios), so it can gate CI.
             """
             code = self.simulate(
                 target,
