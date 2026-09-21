@@ -154,13 +154,36 @@ for object detection.
 ## Running Tests
 
 Run the integration tests to verify the example works end-to-end. Requires a `GOOGLE_API_KEY`.
-The tests use the `test_session` and `judge` fixtures from `vision_agents.testing.fixtures`,
-configured in `conftest.py`, and judge whole conversations against built-in criteria.
+The single-turn tests are evals: they use the `test_session` and `judge` fixtures from
+`vision_agents.testing.fixtures`, configured in `conftest.py`, and judge whole conversations
+against built-in criteria. The `test_scenario_*` tests are simulations: the `simulate` fixture
+plays a scenario from `scenarios/` with an LLM-driven user and judges the outcome.
 
 ```bash
 cd examples/01_simple_agent_example
 uv run py.test -m integration
 ```
+
+## Simulating Conversations
+
+Each file in `scenarios/` describes one conversation for a simulated user to hold with the agent:
+who they are (`persona`), what they know (`context`), what they want (`goal`), how they behave
+(`constraints`) and what the judge checks afterwards (`success`). Run them all from the CLI:
+
+```bash
+cd examples/01_simple_agent_example
+uv run simple_agent_example.py simulate scenarios/
+```
+
+`vision-agents agent simulate scenarios/` does the same through the entrypoint in `pyproject.toml`.
+The command prints a table with one row per scenario, writes `simulation-report/report.json` and
+`report.md` with the full transcripts and verdicts, and exits `0` only when every scenario passed.
+It needs a `GOOGLE_API_KEY` for the simulated user and judge (`--judge` picks another model) plus the
+agent's own keys, because it builds the agent exactly as `run` does. `spoken-weather.yaml` is an audio
+scenario: the CLI skips it, and `test_scenario_spoken_weather` runs it over a loopback edge with
+ElevenLabs and Deepgram.
+
+See the [testing guide](https://visionagents.ai/guides/testing) for the scenario reference.
 
 ## Next Steps
 

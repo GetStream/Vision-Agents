@@ -674,6 +674,32 @@ class TestSimulateCommand:
         assert "PASS: The agent tells the user the weather in Amsterdam" in markdown
         assert "FAIL: The agent does something impossible (stub judge)" in markdown
 
+    def test_audio_scenarios_are_skipped(self, runner: CliRunner, project: Path):
+        (project / "scenarios" / "spoken.yaml").write_text(
+            _GREETING_SCENARIO.replace("name: greeting", "name: spoken\nmode: audio")
+        )
+        result = runner.invoke(
+            agent_cmd, ["simulate", "scenarios", "--judge", "sim_stub:judge"]
+        )
+        assert result.exit_code == 1, result.output
+        assert "Skipping audio scenario(s) spoken" in result.output
+        assert [run["name"] for run in self._report(project)["runs"]] == [
+            "greeting",
+            "impossible",
+        ]
+
+    def test_only_audio_scenarios_exits_two(self, runner: CliRunner, project: Path):
+        for name in ("greeting.yaml", "impossible.yaml"):
+            (project / "scenarios" / name).unlink()
+        (project / "scenarios" / "spoken.yaml").write_text(
+            _GREETING_SCENARIO.replace("name: greeting", "name: spoken\nmode: audio")
+        )
+        result = runner.invoke(
+            agent_cmd, ["simulate", "scenarios", "--judge", "sim_stub:judge"]
+        )
+        assert result.exit_code == 2, result.output
+        assert "no text scenarios" in result.output
+
     def test_missing_target_exits_two(self, runner: CliRunner, project: Path):
         result = runner.invoke(
             agent_cmd, ["simulate", "nowhere", "--judge", "sim_stub:judge"]

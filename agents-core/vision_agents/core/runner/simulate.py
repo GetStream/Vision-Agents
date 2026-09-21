@@ -122,9 +122,10 @@ def load_scenarios(
     repeat: Optional[int] = None,
     variations: Optional[int] = None,
 ) -> list["Scenario"]:
-    """Load every scenario at ``target`` whose name contains ``name_filter``.
+    """Load every text scenario at ``target`` whose name contains ``name_filter``.
 
-    ``repeat`` and ``variations`` override the scenario files when given.
+    Audio scenarios are skipped with a notice. ``repeat`` and ``variations``
+    override the scenario files when given.
     """
     try:
         paths = testing.find_scenarios(target)
@@ -133,6 +134,17 @@ def load_scenarios(
         raise SimulateError(str(err)) from err
     if not scenarios:
         raise SimulateError(f"no scenario files (*.yaml) found in {target}")
+    spoken = [s.name for s in scenarios if s.mode == "audio"]
+    if spoken:
+        click.echo(
+            "Skipping audio scenario(s) "
+            + ", ".join(spoken)
+            + ": agent simulate runs in text mode, run them with pytest",
+            file=sys.stderr,
+        )
+        scenarios = [s for s in scenarios if s.mode == "text"]
+        if not scenarios:
+            raise SimulateError(f"no text scenarios found in {target}")
     if name_filter:
         scenarios = [s for s in scenarios if name_filter.lower() in s.name.lower()]
         if not scenarios:

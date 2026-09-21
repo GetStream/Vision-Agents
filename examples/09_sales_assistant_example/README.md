@@ -76,6 +76,20 @@ See the README there for build and run instructions. The app expects the agent s
 
 5. Click **Stop** to end the session.
 
+## Testing
+
+`scenarios/` holds two simulated meetings: a seller facing a pricing objection and a candidate asked
+about their strengths. In each, an LLM plays the person being coached, relays what was just said as a
+live transcript line, and asks for coaching; a judge then checks that the coach answered with words to
+say, stayed on topic and kept it short. Requires a `GOOGLE_API_KEY`.
+
+```bash
+cd examples/09_sales_assistant_example
+uv run pytest -m integration
+```
+
+See the [testing guide](https://visionagents.ai/guides/testing) for the scenario format.
+
 ## Project Structure
 
 ```
