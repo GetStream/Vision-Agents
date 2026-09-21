@@ -7,11 +7,12 @@ import time
 import wave
 
 from dotenv import load_dotenv
+from getstream.video.rtc import PcmData
 from vision_agents.plugins import voxcpm
 
 load_dotenv()
 
-OUTPUT_PATH = "voxcpm_smoke.wav"
+OUTPUT_PATH: str = "voxcpm_smoke.wav"
 
 
 async def main() -> None:
@@ -29,8 +30,8 @@ async def main() -> None:
     )
 
     started = time.perf_counter()
-    first_chunk_at = None
-    pcm_chunks = []
+    first_chunk_at: float | None = None
+    pcm_chunks: list[PcmData] = []
     try:
         async for chunk in instance.send_iter(text):
             if chunk.data is not None:
