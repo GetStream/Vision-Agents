@@ -290,12 +290,7 @@ def _import_factory(spec: str) -> Callable[[], LLM]:
         raise SimulateError(
             f"--judge {spec!r}: failed to import module '{module_name}': {err}"
         ) from err
-    try:
-        factory = module.__dict__[attribute]
-    except KeyError as err:
-        raise SimulateError(
-            f"--judge {spec!r}: '{module_name}' has no callable '{attribute}'"
-        ) from err
+    factory = module.__dict__.get(attribute)
     if not callable(factory):
         raise SimulateError(
             f"--judge {spec!r}: '{module_name}' has no callable '{attribute}'"

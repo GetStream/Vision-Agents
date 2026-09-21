@@ -750,9 +750,12 @@ class TestSimulation:
             mcp_servers=[server],
         )
 
-        result = await Simulation(
-            user_llm=ScriptedLLM([user_says("find"), user_done()])
-        ).run(agent, scenario, ScriptedJudge())
+        try:
+            result = await Simulation(
+                user_llm=ScriptedLLM([user_says("find"), user_done()])
+            ).run(agent, scenario, ScriptedJudge())
+        finally:
+            await agent.close()
 
         assert result.passed, result.summary()
         trial = result.trials[0]
@@ -789,6 +792,24 @@ class TestSimulation:
 
         assert result.passed, result.summary()
         assert [user.closed for user in users] == [True, True]
+
+    async def test_failing_judge_factory_still_closes_the_user_llm(self, scenario):
+        users: list[ClosableLLM] = []
+
+        def build_user() -> ClosableLLM:
+            user = ClosableLLM([user_says("Hi"), user_done()])
+            users.append(user)
+            return user
+
+        def broken_judge() -> ScriptedJudge:
+            raise RuntimeError("no judge today")
+
+        with pytest.raises(RuntimeError, match="no judge today"):
+            await Simulation(user_llm=build_user).run(
+                lambda: ScriptedLLM(["Done."]), scenario, broken_judge
+            )
+
+        assert [user.closed for user in users] == [True]
 
     async def test_user_llm_instance_is_not_closed(self, scenario):
         user = ClosableLLM([user_says("Hi"), user_done()])

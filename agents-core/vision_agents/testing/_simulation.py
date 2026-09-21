@@ -8,6 +8,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from math import comb
 from typing import TypeVar
@@ -357,8 +358,8 @@ class Simulation:
     ) -> SimulationResult:
         """Hold ``variations * repeat`` conversations and judge each one.
 
-        Targets, user LLMs and judges built by a factory are closed after
-        their conversation. An ``Agent`` target is wrapped like
+        Targets, user LLMs and ``LLMJudge`` instances built by a factory are
+        closed after their conversation. An ``Agent`` target is wrapped like
         ``TestSession(agent=...)``, so its instructions and MCP tools are
         used. A success criterion that names a built-in criterion
         (``concise``, ``say_do_consistency``, ...) is judged by that
@@ -434,16 +435,22 @@ class Simulation:
         for variation, variant in enumerate(variants):
             for repeat in range(scenario.repeat):
                 trial = Trial(scenario=variant, variation=variation, repeat=repeat)
-                user_llm = user_factory()
-                user = SimulatedUser(
-                    user_llm,
-                    variant,
-                    max_turns=self._max_turns,
-                    turn_timeout=self._turn_timeout,
-                )
-                trial_judge = judge_factory()
-                target = await _build_target(target_factory)
-                try:
+                async with AsyncExitStack() as stack:
+                    user_llm = user_factory()
+                    if owns_user:
+                        stack.push_async_callback(user_llm.close)
+                    user = SimulatedUser(
+                        user_llm,
+                        variant,
+                        max_turns=self._max_turns,
+                        turn_timeout=self._turn_timeout,
+                    )
+                    trial_judge = judge_factory()
+                    if owns_judge and isinstance(trial_judge, LLMJudge):
+                        stack.push_async_callback(trial_judge.close)
+                    target = await _build_target(target_factory)
+                    if owns_target:
+                        stack.push_async_callback(target.close)
                     if voice_factory is not None and ears_factory is not None:
                         await self._converse_aloud(
                             trial, target, user, voice_factory(), ears_factory()
@@ -453,13 +460,6 @@ class Simulation:
                     await self._judge_trial(
                         trial, trial_judge, _target_instructions(target, instructions)
                     )
-                finally:
-                    if owns_target:
-                        await target.close()
-                    if owns_user:
-                        await user_llm.close()
-                    if owns_judge and isinstance(trial_judge, LLMJudge):
-                        await trial_judge.close()
                 trials.append(trial)
                 logger.info(
                     "Scenario %s variation=%d repeat=%d: %s",
