@@ -5,6 +5,7 @@ package chattest
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -63,10 +64,17 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		result["messages"] = messages
 	case strings.HasSuffix(r.URL.Path, "/message"):
 		message := body["message"].(map[string]any)
-		id := message["id"].(string)
+		id, _ := message["id"].(string)
+		if id == "" {
+			id = fmt.Sprintf("msg-%d", len(db.order)+1)
+			message["id"] = id
+		}
 		if _, exists := db.messages[id]; !exists {
 			db.order = append(db.order, id)
 			message["cid"] = "agent:" + parts[len(parts)-2]
+			if _, ok := message["custom"].(map[string]any); !ok {
+				message["custom"] = map[string]any{}
+			}
 			db.messages[id] = message
 		}
 		result["message"] = db.messages[id]
@@ -77,11 +85,15 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		if id == "ephemeral" {
 			id = parts[len(parts)-2]
 		} else if r.Method == http.MethodPut {
+			stored := db.messages[id]
+			if stored["custom"] == nil {
+				stored["custom"] = map[string]any{}
+			}
 			for key, value := range body["set"].(map[string]any) {
 				if key == "text" || key == "attachments" {
-					db.messages[id][key] = value
+					stored[key] = value
 				} else {
-					db.messages[id]["custom"].(map[string]any)[key] = value
+					stored["custom"].(map[string]any)[key] = value
 				}
 			}
 		}

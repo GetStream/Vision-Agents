@@ -2049,11 +2049,15 @@ func (a *Agent) consumeTTS() {
 				"interrupted", typed.Interrupted)
 			a.respondQueued()
 			a.turns.spoke(turnOf(typed.SynthesisID), typed.TimeToFirstByteMs, typed.AudioDurationMs)
-			a.emitter.Send(Spoke{
-				TurnID:            turnOf(typed.SynthesisID),
-				AudioDurationMs:   typed.AudioDurationMs,
-				TimeToFirstByteMs: typed.TimeToFirstByteMs,
-			})
+			if !typed.Interrupted {
+				// An interrupted utterance was not heard in full, so it must not be
+				// recorded as a finished spoken reply.
+				a.emitter.Send(Spoke{
+					TurnID:            turnOf(typed.SynthesisID),
+					AudioDurationMs:   typed.AudioDurationMs,
+					TimeToFirstByteMs: typed.TimeToFirstByteMs,
+				})
+			}
 			// An answer that came back while the agent was talking waited for this.
 			a.followUp()
 

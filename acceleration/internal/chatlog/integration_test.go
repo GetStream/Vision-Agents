@@ -80,6 +80,7 @@ func (s *ChatlogIntegrationSuite) TestAReplyIsVisibleBeforeItIsFinished() {
 
 	s.log.Record(agent.ResponseDelta{TurnID: "turn-1", Text: "now"})
 	s.log.Record(agent.Responded{TurnID: "turn-1", Text: "checking the diary now"})
+	s.log.Record(agent.Spoke{TurnID: "turn-1"})
 
 	finished := s.await(func(message getstream.MessageResponse) bool {
 		return message.ID == writing.ID && message.Text == "checking the diary now"
@@ -88,16 +89,19 @@ func (s *ChatlogIntegrationSuite) TestAReplyIsVisibleBeforeItIsFinished() {
 		"the pieces were ephemeral, so the whole reply has to be stored")
 }
 
-func (s *ChatlogIntegrationSuite) TestAnInterruptedReplyIsKeptAsFarAsItGot() {
+func (s *ChatlogIntegrationSuite) TestAnInterruptedReplyIsNotStoredAsFullySpoken() {
 	s.log.Record(agent.ResponseDelta{TurnID: "turn-2", Text: "let me check"})
 
 	writing := s.await(said("let me check"))
+	s.log.Record(agent.Responded{TurnID: "turn-2", Text: "let me check the next thirty days in the diary"})
 	s.log.Record(agent.Interrupted{TurnID: "turn-2"})
 
 	finished := s.await(func(message getstream.MessageResponse) bool {
 		return message.ID == writing.ID && message.Custom[generatingField] == false
 	})
-	s.Equal("let me check", finished.Text, "the caller heard that much")
+	s.Equal(true, finished.Custom[interruptedField])
+	s.NotEqual("let me check the next thirty days in the diary", finished.Text,
+		"unplayed model text must not look like a finished spoken reply")
 }
 
 // said matches a message by what it says.
