@@ -52,6 +52,20 @@ func TestVoiceContextRestoresSpeechAndArtifactOnlyCards(t *testing.T) {
 	withoutIdentity, _, err := service.ContextForCaller(t.Context(), "customer", "agent", cid, "alice")
 	require.NoError(t, err)
 	require.Empty(t, withoutIdentity)
+	_, _, _, err = service.OpenForCallerWithVoice(t.Context(), "customer", "agent", cid, "bob", "media-agent")
+	require.Error(t, err)
+	reopened, restored, _, err := service.OpenForCallerWithVoice(t.Context(), "customer", "agent", cid, "alice", "media-agent")
+	require.NoError(t, err)
+	require.Equal(t, context, restored)
+	reopened.Release()
+	// Exercise loading from a new service as well as the cached conversation.
+	other, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(other.Close)
+	reopened, restored, _, err = other.OpenForCallerWithVoice(t.Context(), "customer", "agent", cid, "alice", "media-agent")
+	require.NoError(t, err)
+	require.Equal(t, context, restored)
+	reopened.Release()
 }
 
 func TestVoiceHistoryKeepsReferencesBoundedAndUntrusted(t *testing.T) {

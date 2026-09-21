@@ -247,6 +247,15 @@ func (s *Service) Open(ctx context.Context, customer, agentID, cid string, scope
 // OpenForCaller binds persistent messages to a verified end-user identity. Empty
 // caller preserves backend-owned demo channels; it cannot open a private channel.
 func (s *Service) OpenForCaller(ctx context.Context, customer, agentID, cid, caller string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+	return s.OpenForCallerWithVoice(ctx, customer, agentID, cid, caller, "", scopes...)
+}
+
+// OpenForCallerWithVoice also restores settled transcripts from the configured
+// media agent when a caller returns from voice to a persistent text session.
+func (s *Service) OpenForCallerWithVoice(ctx context.Context, customer, agentID, cid, caller, voiceAgent string, scopes ...memory.Scope) (*Conversation, []llm.Message, bool, error) {
+	if voiceAgent != "" && !displayID.MatchString(voiceAgent) {
+		return nil, nil, false, errors.New("invalid voice transcript author")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	s.mu.Lock()
@@ -275,7 +284,7 @@ func (s *Service) OpenForCaller(ctx context.Context, customer, agentID, cid, cal
 		if c.active {
 			return nil, nil, false, errors.New("conversation is already open")
 		}
-		page, err := s.history(ctx, customer, agentID, cid, "", caller)
+		page, err := s.history(ctx, customer, agentID, cid, "", caller, voiceAgent)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -311,7 +320,7 @@ func (s *Service) OpenForCaller(ctx context.Context, customer, agentID, cid, cal
 			return nil, nil, false, err
 		}
 	}
-	page, err := s.history(ctx, customer, agentID, cid, "", caller)
+	page, err := s.history(ctx, customer, agentID, cid, "", caller, voiceAgent)
 	if err != nil {
 		return nil, nil, false, err
 	}
