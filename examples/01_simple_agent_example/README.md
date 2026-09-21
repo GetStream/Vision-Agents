@@ -154,6 +154,8 @@ for object detection.
 ## Running Tests
 
 Run the integration tests to verify the example works end-to-end. Requires a `GOOGLE_API_KEY`.
+The tests use the `test_session` and `judge` fixtures from `vision_agents.testing.fixtures`,
+configured in `conftest.py`, and judge whole conversations against built-in criteria.
 
 ```bash
 cd examples/01_simple_agent_example

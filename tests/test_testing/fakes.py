@@ -71,7 +71,16 @@ class BookingLLM(ScriptedLLM):
         text: str,
         participant: Participant | None = None,
     ) -> AsyncIterator[LLMResponseDelta | LLMResponseFinal]:
-        await self.call_function("book_slot", {"day": "Friday", "time": "10am"})
+        await self._dedup_and_execute(
+            [
+                {
+                    "type": "tool_call",
+                    "name": "book_slot",
+                    "arguments_json": {"day": "Friday", "time": "10am"},
+                    "id": f"call_{len(self.replies)}",
+                }
+            ]
+        )
         async for item in super().simple_response(text, participant):
             yield item
 

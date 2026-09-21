@@ -213,6 +213,9 @@ class SpokenConversation:
                     f"Agent did not reply within {self._turn_timeout}s"
                 )
 
+        # Tool events are dispatched on separate tasks; make sure they have
+        # all been recorded before reporting the line.
+        await self._agent.llm.events.wait()
         return SpokenLine(
             heard=" ".join(self._heard),
             intended=" ".join(self._intended),

@@ -143,11 +143,7 @@ class Trial:
 
     @property
     def transcript(self) -> list[RunEvent]:
-        events: list[RunEvent] = []
-        for turn in self.turns:
-            events.append(ChatMessageEvent(role="user", content=turn.user_message))
-            events.extend(turn.response.events)
-        return events
+        return [event for turn in self.turns for event in turn.response.events]
 
     @property
     def tool_calls(self) -> list[FunctionCallEvent]:
@@ -494,10 +490,11 @@ class Simulation:
                 while message is not None:
                     started = time.monotonic()
                     line = await conversation.say(message)
-                    events: list[RunEvent] = list(line.events)
-                    events.append(
-                        ChatMessageEvent(role="assistant", content=line.heard)
-                    )
+                    events: list[RunEvent] = [
+                        ChatMessageEvent(role="user", content=message),
+                        *line.events,
+                        ChatMessageEvent(role="assistant", content=line.heard),
+                    ]
                     response = dataclasses.replace(
                         TestResponse.build(
                             events=events, user_input=message, start_time=started

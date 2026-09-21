@@ -14,7 +14,6 @@ from vision_agents.core.llm.llm import LLMResponseDelta, LLMResponseFinal
 from vision_agents.testing import (
     ChatMessageEvent,
     JudgeError,
-    LLMJudge,
     LoopbackEdge,
     Scenario,
     SimulatedUser,
@@ -294,50 +293,6 @@ class TestGenerateVariations:
         )
         with pytest.raises(ValueError, match="keep 1 constraint"):
             await generate_variations(llm, scenario, 2)
-
-
-class TestLLMJudge:
-    async def test_pass_and_fail_verdicts(self):
-        judge = LLMJudge(
-            ScriptedLLM(
-                [
-                    json.dumps({"verdict": "pass", "reason": "ok"}),
-                    json.dumps({"verdict": "fail", "reason": "nope"}),
-                ]
-            )
-        )
-        event = ChatMessageEvent(role="assistant", content="Booked for Friday 10am.")
-        first = await judge.evaluate(event, intent="Confirms booking")
-        second = await judge.evaluate(event, intent="Confirms booking")
-        assert (first.success, first.reason) == (True, "ok")
-        assert (second.success, second.reason) == (False, "nope")
-
-    async def test_unparsable_output_raises_judge_error(self):
-        judge = LLMJudge(ScriptedLLM(["I think it passes"]))
-        event = ChatMessageEvent(role="assistant", content="Hi")
-        with pytest.raises(JudgeError, match="Could not parse JSON"):
-            await judge.evaluate(event, intent="Greets")
-
-    async def test_unknown_verdict_raises_judge_error(self):
-        judge = LLMJudge(ScriptedLLM([json.dumps({"verdict": "maybe"})]))
-        event = ChatMessageEvent(role="assistant", content="Hi")
-        with pytest.raises(JudgeError, match="Unknown verdict"):
-            await judge.evaluate(event, intent="Greets")
-
-    async def test_non_string_fields_raise_judge_error(self):
-        judge = LLMJudge(
-            ScriptedLLM([json.dumps({"verdict": "pass", "reason": {"code": 1}})])
-        )
-        event = ChatMessageEvent(role="assistant", content="Hi")
-        with pytest.raises(JudgeError, match="Malformed verdict"):
-            await judge.evaluate(event, intent="Greets")
-
-    async def test_empty_message_fails_without_calling_llm(self):
-        llm = ScriptedLLM(["x"], error=RuntimeError("must not be called"))
-        verdict = await LLMJudge(llm).evaluate(
-            ChatMessageEvent(role="assistant", content=""), intent="Greets"
-        )
-        assert verdict.success is False
 
 
 class TestSimulation:

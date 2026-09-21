@@ -3,26 +3,31 @@
 Provides text testing of agents without audio/video infrastructure or edge
 connections, and audio-path simulation over an in-process loopback edge.
 
+Evals test decisions: send one message, assert on tool calls and judge the
+reply. Simulations test outcomes: an LLM plays the user from a YAML scenario
+over several turns and a judge scores the whole transcript.
+
 Usage:
 
-Verify a greeting::
-
-    async def test_greeting():
-        judge = LLMJudge(gemini.LLM(MODEL))
-        async with TestSession(llm=llm, instructions="Be friendly") as session:
-            response = await session.simple_response("Hello")
-            verdict = await judge.evaluate(response.chat_messages[0], intent="Friendly greeting")
-            assert verdict.success, verdict.reason
-
-Verify tool calls::
+Judge a conversation against built-in and ad-hoc criteria::
 
     async def test_weather():
         judge = LLMJudge(gemini.LLM(MODEL))
         async with TestSession(llm=llm, instructions="...") as session:
             response = await session.simple_response("Weather in Tokyo?")
             response.assert_function_called("get_weather", arguments={"location": "Tokyo"})
-            verdict = await judge.evaluate(response.chat_messages[0], intent="Reports weather for Tokyo")
+            verdict = await judge.evaluate_conversation(
+                session.transcript,
+                ["Reports the weather for Tokyo", SAY_DO_CONSISTENCY, CONCISE],
+                instructions=session.instructions,
+            )
             assert verdict.success, verdict.reason
+
+Wrap a full ``Agent`` so its instructions and MCP tools are used::
+
+    async with TestSession(agent=agent) as session:
+        response = await session.simple_response("Look up order 42")
+        response.assert_function_call_order(["mcp_0_find_order", "notify_user"])
 
 Simulate a multi-turn conversation from a YAML scenario::
 
@@ -73,16 +78,25 @@ the agent meant to say and its voice-to-voice latency::
     simulation = Simulation(user_llm=lambda: gemini.LLM(MODEL))
     result = await simulation.run(create_agent, load_scenario("spoken.yaml"), judge)
 
-For pytest, register ``vision_agents.testing.pytest_plugin`` and use the
-``simulate`` fixture; see that module's docstring.
+The same scenarios run from the command line with
+``vision-agents agent simulate scenarios/``, which prints a table and writes
+``report.json`` / ``report.md``.
+
+Pytest fixtures for evals (``test_session``, ``judge``) live in
+``vision_agents.testing.fixtures``; the ``simulate`` fixture for scenarios
+lives in ``vision_agents.testing.pytest_plugin``. Enable them with
+``pytest_plugins = [...]`` in ``conftest.py``.
 
 Key exports:
-    TestSession: async context manager that wraps an LLM for testing.
+    TestSession: async context manager that wraps an LLM or Agent for testing.
     TestResponse: returned by ``simple_response()`` — carries events and assertions.
-    Judge: protocol for intent evaluation strategies.
-    JudgeVerdict: dataclass returned by ``Judge.evaluate()``.
+    Judge: protocol for evaluation strategies.
+    JudgeVerdict: dataclass returned by judges; holds per-criterion verdicts.
     JudgeError: raised by a judge that could not produce a verdict.
+    Criterion / CriterionVerdict: a named check and its result.
     LLMJudge: default judge backed by an LLM instance.
+    SAY_DO_CONSISTENCY, STAYS_IN_SCOPE, CONCISE, RESPONDS_IN_USER_LANGUAGE:
+        built-in criteria.
     RunEvent: union of ChatMessageEvent, FunctionCallEvent, FunctionCallOutputEvent.
     Scenario: validated scenario definition; ``load_scenario`` reads one from YAML.
     SimulatedUser: LLM that plays the user from a scenario brief.
@@ -103,7 +117,18 @@ from vision_agents.testing._events import (
     FunctionCallOutputEvent,
     RunEvent,
 )
-from vision_agents.testing._judge import Judge, JudgeError, JudgeVerdict, LLMJudge
+from vision_agents.testing._judge import (
+    CONCISE,
+    RESPONDS_IN_USER_LANGUAGE,
+    SAY_DO_CONSISTENCY,
+    STAYS_IN_SCOPE,
+    Criterion,
+    CriterionVerdict,
+    Judge,
+    JudgeError,
+    JudgeVerdict,
+    LLMJudge,
+)
 from vision_agents.testing._loopback import LoopbackEdge, LoopbackMicrophone
 from vision_agents.testing._run_result import TestResponse
 from vision_agents.testing._scenario import Scenario, load_scenario
@@ -125,7 +150,13 @@ __all__ = [
     "Judge",
     "JudgeError",
     "JudgeVerdict",
+    "Criterion",
+    "CriterionVerdict",
     "LLMJudge",
+    "SAY_DO_CONSISTENCY",
+    "STAYS_IN_SCOPE",
+    "CONCISE",
+    "RESPONDS_IN_USER_LANGUAGE",
     "TestSession",
     "TestResponse",
     "LoopbackEdge",
