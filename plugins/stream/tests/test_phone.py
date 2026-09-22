@@ -1,3 +1,4 @@
+import json
 from typing import Any, AsyncIterator, Optional
 
 import pytest
@@ -104,7 +105,8 @@ class Router:
 
     async def _attach(self, request: web.Request) -> web.Response:
         self.attached_e164 = request.match_info["e164"]
-        self.attached = await request.json() if request.body_exists else {}
+        raw = await request.read()
+        self.attached = json.loads(raw) if raw else None
         if self.refuse:
             return web.json_response(status=400, data={"error": self.refuse})
         return web.json_response(
@@ -283,6 +285,19 @@ class TestPhone:
         assert attached.route_id == "route-1"
         assert attached.sip_uri == "sip:trunk@sip.stream-io-api.com"
 
+    async def test_attach_with_only_e164_sends_no_body(
+        self, router: Router, phone: stream.Phone
+    ):
+        # No call_id/call_type/allowed_ips leaves the request body UNSET, so the router
+        # must never see a JSON body for this call.
+        attached = await phone.attach("+15125551234")
+
+        assert router.attached_e164 == "+15125551234"
+        assert router.attached is None
+        assert attached.trunk_id == "trunk-1"
+        assert attached.route_id == "route-1"
+        assert attached.sip_uri == "sip:trunk@sip.stream-io-api.com"
+
     async def test_release_completes(self, router: Router, phone: stream.Phone):
         await phone.release("+15125551234")
 
@@ -298,7 +313,9 @@ class TestPhone:
         from vision_agents.plugins.stream._generated.models import (
             AttachedNumber,
             NumberSearchResult,
+            PhoneCapability,
             PhoneNumber,
+            PhoneNumberType,
             SkippedVendor,
         )
 
@@ -306,3 +323,5 @@ class TestPhone:
         assert stream.AttachedNumber is AttachedNumber
         assert stream.NumberSearchResult is NumberSearchResult
         assert stream.SkippedVendor is SkippedVendor
+        assert stream.PhoneNumberType is PhoneNumberType
+        assert stream.PhoneCapability is PhoneCapability
