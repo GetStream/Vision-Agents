@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
@@ -53,7 +54,11 @@ func (s *Server) withQuota(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if exemptFromQuota(r.Context()) {
+		// Closing an existing session cannot create new model work. Keep the
+		// normal authentication/ownership handler, even after generation is spent.
+		sessionID, sessionPath := strings.CutPrefix(r.URL.Path, "/v1/agents/sessions/")
+		closingSession := r.Method == http.MethodDelete && sessionPath && sessionID != "" && !strings.Contains(sessionID, "/")
+		if exemptFromQuota(r.Context()) || closingSession {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -63,6 +63,7 @@ type TranscriptFactory func(spec Spec, logger *slog.Logger) (Transcript, error)
 // ManagerOptions is everything a session needs that is the same for all of them.
 type ManagerOptions struct {
 	LLM *llmrouter.Router
+	// Speech routers are optional for text sessions and native speech-to-speech.
 	STT *sttrouter.Router
 	TTS *ttsrouter.Router
 	// STS is optional, and is what a session naming a speech-to-speech target holds its
@@ -122,12 +123,6 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	if options.LLM == nil {
 		return nil, errors.New("session: an llm router is required")
 	}
-	if options.STT == nil {
-		return nil, errors.New("session: an stt router is required")
-	}
-	if options.TTS == nil {
-		return nil, errors.New("session: a tts router is required")
-	}
 	if options.Edge == nil {
 		return nil, errors.New("session: an edge factory is required")
 	}
@@ -162,6 +157,18 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if err := spec.Normalize(); err != nil {
 		return nil, err
+	}
+	// Refuse unsupported voice modes before opening a call or persistent resource.
+	if spec.Native() && m.options.STS == nil {
+		return nil, errors.New("session: this deployment routes no speech-to-speech model")
+	}
+	if !spec.Text && !spec.Native() {
+		if m.options.STT == nil {
+			return nil, errors.New("session: an stt router is required for voice sessions")
+		}
+		if m.options.TTS == nil {
+			return nil, errors.New("session: a tts router is required for voice sessions")
+		}
 	}
 
 	m.mu.Lock()
@@ -293,9 +300,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	var conversing *stsrouter.Router
 	if spec.Native() {
-		if m.options.STS == nil {
-			return nil, errors.New("session: this deployment routes no speech-to-speech model")
-		}
 		conversing = m.options.STS
 	}
 

@@ -94,8 +94,13 @@ func (s *Server) watchSession(w http.ResponseWriter, r *http.Request) {
 
 	// Reading and writing each own the connection in one direction, which is what gorilla
 	// requires: two goroutines writing to one socket interleave frames.
-	go s.readCommands(connection, found, OwnerFrom(r.Context()))
-	s.writeEvents(connection, events, watching(r))
+	owner := OwnerFrom(r.Context())
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		s.readCommands(connection, found, owner)
+	}()
+	s.writeEvents(connection, events, watching(r), gone)
 }
 
 // wanted says which of the frequent frames this watcher asked for.
@@ -129,12 +134,14 @@ func (w wanted) takes(event session.Event) bool {
 
 // writeEvents pushes the conversation to the caller until the session ends or the socket
 // breaks.
-func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted) {
+func (s *Server) writeEvents(connection *websocket.Conn, events <-chan session.Event, asked wanted, gone <-chan struct{}) {
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
 
 	for {
 		select {
+		case <-gone:
+			return
 		case event, open := <-events:
 			if !open {
 				connection.SetWriteDeadline(time.Now().Add(writeWait))

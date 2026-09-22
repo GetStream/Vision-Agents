@@ -1237,6 +1237,13 @@ off it. Those, and the three agent-log handlers excluded for the same reason, ar
 that list and this map disagree, because an operation the spec cannot see is the one place a
 default that refuses by default could fail open.
 
+## Text-only deployments and Redis
+
+Text sessions require only an LLM router. Cascade voice sessions still require STT
+and TTS, and native voice requires an STS router; missing speech dependencies are
+rejected before opening a call. Redis deployments may configure
+`ROUTER_REDIS_USERNAME` and `ROUTER_REDIS_PASSWORD` alongside `ROUTER_REDIS_ADDR`.
+
 ## Tool history on the LLM socket
 
 `/v1/llm/stream` advertises `tool_history: true` in its `started` frame. To continue

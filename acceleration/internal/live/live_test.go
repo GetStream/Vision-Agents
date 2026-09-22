@@ -36,7 +36,7 @@ func (s *LiveSuite) SetupSuite() {
 		s.T().Skipf("%s not set", AddressEnvVar)
 	}
 
-	client, err := New(Options{Address: address})
+	client, err := New(Options{Address: address, Username: os.Getenv("ROUTER_REDIS_USERNAME"), Password: os.Getenv("ROUTER_REDIS_PASSWORD")})
 	s.Require().NoError(err)
 	s.client = client
 	s.ctx = context.Background()

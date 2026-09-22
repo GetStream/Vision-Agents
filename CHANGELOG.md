@@ -1033,6 +1033,13 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- Dispatch ping replies are serialized with call delivery, and disconnected session
+  watchers release their handlers immediately. Text sessions work in LLM-only
+  deployments, and exhausted generation quota no longer blocks session cleanup.
+
+- Router Redis connections support username/password authentication through
+  `ROUTER_REDIS_USERNAME` and `ROUTER_REDIS_PASSWORD`.
+
 - LLM WebSockets preserve tool-call IDs, arguments, provider signatures and correlated
   tool results when replaying conversation history. Completion frames retain the
   incomplete reason, and malformed tool history is rejected before reaching the model.
