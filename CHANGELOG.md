@@ -277,6 +277,10 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 
 ## New Features
 
+- Optional Meta Muse Spark provider using the shared OpenAI-compatible transport.
+  Direct DeepSeek routes can configure thinking and reasoning effort per model,
+  with model-specific Flash and Pro request payloads. Default model aliases are unchanged.
+
 ### An agent can be given a guardrail: `guardrail.md`
 
 A `guardrail.md` beside `instructions.md` says what the agent may be asked about. Every

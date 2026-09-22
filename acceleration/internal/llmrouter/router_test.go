@@ -407,3 +407,25 @@ func (s *LLMRouterSuite) TestVisionFailoverRejectsContradictoryAdapterCapabiliti
 	defer session.Close()
 	s.Equal("vision", session.Provider())
 }
+
+func (s *LLMRouterSuite) TestDirectModelCarriesExplicitThinkingConfiguration() {
+	var received routing.Spec
+	registry := NewRegistry()
+	registry.Register("stub", func(spec routing.Spec) (Provider, error) {
+		received = spec
+		return Started(newStubLLM(), nil)
+	})
+	router, err := New(Options{
+		Registry: registry,
+		Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{
+			Provider: "stub", Model: "DeepSeek-V4-Pro-0813", Languages: []string{"en"},
+			Thinking: true, ReasoningEffort: "low",
+		}}},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	_, err = router.Start(s.ctx, Request{CustomerID: "acme", Target: "stub/DeepSeek-V4-Pro-0813", LanguageHints: []string{"en"}})
+	s.Require().NoError(err)
+	s.True(received.Thinking)
+	s.Equal("low", received.ReasoningEffort)
+}

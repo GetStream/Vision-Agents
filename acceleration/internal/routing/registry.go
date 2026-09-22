@@ -17,6 +17,12 @@ import (
 // nothing to a modality are ignored by its factories.
 type Spec struct {
 	Model string
+	// Thinking enables the model's reasoning mode when the provider supports one.
+	// It is declared by the model entry rather than inferred from an alias so a direct
+	// model target has the same behavior as a shortcut.
+	Thinking bool
+	// ReasoningEffort bounds the amount of reasoning a thinking model performs.
+	ReasoningEffort string
 	// LanguageHints narrow multilingual models.
 	LanguageHints []string
 	// Voice selects the speaker for modalities that produce audio.

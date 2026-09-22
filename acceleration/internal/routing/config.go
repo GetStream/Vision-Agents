@@ -168,6 +168,10 @@ func (t Tags) Validate() error {
 type ProviderConfig struct {
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
+	// Thinking enables provider-specific reasoning for this concrete model.
+	Thinking bool `yaml:"thinking"`
+	// ReasoningEffort selects the provider-specific reasoning budget.
+	ReasoningEffort string `yaml:"reasoning_effort"`
 	// Description is one sentence for someone choosing a model: what it is good at, and
 	// what it costs them in speed or money to get it.
 	Description string `yaml:"description"`

@@ -1239,6 +1239,12 @@ default that refuses by default could fail open.
 
 ## Text-only deployments and Redis
 
+LLM provider entries may set `thinking` and `reasoning_effort` for DeepSeek. These
+settings travel with a concrete model whether selected directly or through an alias;
+they do not change which model an alias prefers. For example, a Pro entry can set
+`thinking: true` and `reasoning_effort: low`. The optional `meta` provider is documented
+in [Meta Muse Spark](internal/llm/meta/README.md).
+
 Text sessions require only an LLM router. Cascade voice sessions still require STT
 and TTS, and native voice requires an STS router; missing speech dependencies are
 rejected before opening a call. Redis deployments may configure
