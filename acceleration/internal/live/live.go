@@ -54,7 +54,9 @@ func (h Health) ErrorRate() float64 {
 // Options configures the client.
 type Options struct {
 	// Address is a host:port, for example localhost:6379.
-	Address string
+	Address  string
+	Username string
+	Password string
 	// Window is how long health observations stay relevant.
 	Window time.Duration
 	// MaxErrorRate is the error rate at or above which a provider is treated as
@@ -82,6 +84,8 @@ func New(options Options) (*Client, error) {
 
 	client, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress:  []string{options.Address},
+		Username:     options.Username,
+		Password:     options.Password,
 		DisableCache: true,
 	})
 	if err != nil {

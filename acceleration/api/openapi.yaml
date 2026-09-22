@@ -3124,6 +3124,57 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/images/generate:
+    post:
+      operationId: generateImage
+      summary: Generate one image with the configured server-side image provider
+      description: Backend-only, bounded text-to-image generation. The deployment chooses the model; no provider credentials or URLs are accepted from callers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                  minLength: 1
+                  maxLength: 4000
+      responses:
+        "200":
+          description: One generated image
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [media_type, data, model]
+                properties:
+                  media_type:
+                    type: string
+                  data:
+                    type: string
+                    description: Base64-encoded PNG or JPEG, at most 10 MiB decoded.
+                  model:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          description: Image generation failed or returned no valid image
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: string
+
   /v1/search:
     post:
       operationId: search

@@ -79,6 +79,7 @@ const clientAccessibleExtension = "x-client-accessible"
 // Options configures a Server. The store and live client are optional; endpoints that
 // need them report the dependency as unavailable rather than panicking.
 type Options struct {
+	Images ImageGenerator
 	// Routers is the router serving each modality. A modality that is absent is a 404.
 	Routers map[routing.Modality]routing.Inspector
 	Store   *store.Store
@@ -153,6 +154,7 @@ type Options struct {
 
 // Server implements the generated StrictServerInterface.
 type Server struct {
+	images        ImageGenerator
 	routers       map[routing.Modality]routing.Inspector
 	store         *store.Store
 	live          *live.Client
@@ -232,6 +234,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		logger = slog.Default()
 	}
 	return &Server{
+		images:        options.Images,
 		routers:       options.Routers,
 		store:         options.Store,
 		live:          options.Live,

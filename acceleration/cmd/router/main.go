@@ -279,7 +279,7 @@ func run(logger *slog.Logger) error {
 
 	var liveClient *live.Client
 	if address := os.Getenv(redisEnvVar); address != "" {
-		liveClient, err = live.New(live.Options{Address: address})
+		liveClient, err = live.New(live.Options{Address: address, Username: os.Getenv("ROUTER_REDIS_USERNAME"), Password: os.Getenv("ROUTER_REDIS_PASSWORD")})
 		if err != nil {
 			return err
 		}
@@ -600,6 +600,9 @@ func run(logger *slog.Logger) error {
 		DashboardURL:   dashboardBaseURL(),
 		Auth:           authenticator,
 		Logger:         logger,
+	}
+	if key := os.Getenv("GOOGLE_API_KEY"); key != "" && os.Getenv("ROUTER_IMAGE_GENERATION") == "1" {
+		options.Images = api.NewGeminiImages(key)
 	}
 	if options.StreamSecret == "" {
 		logger.Warn("no "+streamSecretEnvVar+" set, so inbound calls cannot be dispatched: "+
