@@ -601,8 +601,8 @@ func run(logger *slog.Logger) error {
 		Auth:           authenticator,
 		Logger:         logger,
 	}
-	if key := os.Getenv("GOOGLE_API_KEY"); key != "" && os.Getenv("ROUTER_IMAGE_GENERATION") == "1" {
-		options.Images = api.NewGeminiImages(key)
+	if key := os.Getenv("FAL_KEY"); key != "" && os.Getenv("ROUTER_IMAGE_GENERATION") == "1" {
+		options.Images = api.NewFALImages(key)
 	}
 	if options.StreamSecret == "" {
 		logger.Warn("no "+streamSecretEnvVar+" set, so inbound calls cannot be dispatched: "+
