@@ -16,12 +16,21 @@ class Router:
 
     def __init__(self):
         self.placed: Optional[dict[str, Any]] = None
+        self.searched: Optional[dict[str, Any]] = None
+        self.bought: Optional[dict[str, Any]] = None
+        self.attached: Optional[dict[str, Any]] = None
+        self.attached_e164: Optional[str] = None
+        self.released_e164: Optional[str] = None
         self.url = ""
         self.refuse = ""
 
     def app(self) -> web.Application:
         app = web.Application()
         app.router.add_post("/v1/phone/calls", self._place)
+        app.router.add_get("/v1/phone/numbers/available", self._search)
+        app.router.add_post("/v1/phone/numbers", self._buy)
+        app.router.add_post("/v1/phone/numbers/{e164}/attach", self._attach)
+        app.router.add_delete("/v1/phone/numbers/{e164}", self._release)
         return app
 
     async def _place(self, request: web.Request) -> web.Response:
@@ -38,6 +47,63 @@ class Router:
                 "call_type": self.placed.get("call_type", "default"),
             },
         )
+
+    async def _search(self, request: web.Request) -> web.Response:
+        self.searched = dict(request.query)
+        if self.refuse:
+            return web.json_response(status=400, data={"error": self.refuse})
+        return web.json_response(
+            status=200,
+            data={
+                "numbers": [
+                    {
+                        "e164": "+15125551234",
+                        "vendor": "telnyx",
+                        "country": "US",
+                        "capabilities": ["voice", "sms"],
+                    }
+                ],
+                "skipped": [
+                    {"vendor": "twilio", "reason": "cannot search by area_code"}
+                ],
+            },
+        )
+
+    async def _buy(self, request: web.Request) -> web.Response:
+        self.bought = await request.json()
+        if self.refuse:
+            return web.json_response(status=400, data={"error": self.refuse})
+        return web.json_response(
+            status=201,
+            data={
+                "e164": self.bought["e164"],
+                "vendor": self.bought["vendor"],
+                "country": self.bought.get("country", "US"),
+                "capabilities": ["voice"],
+                "monthly_cost_micros": 1_000_000,
+                "purchased_at": "2026-01-01T00:00:00Z",
+            },
+        )
+
+    async def _attach(self, request: web.Request) -> web.Response:
+        self.attached_e164 = request.match_info["e164"]
+        self.attached = await request.json() if request.body_exists else {}
+        if self.refuse:
+            return web.json_response(status=400, data={"error": self.refuse})
+        return web.json_response(
+            status=200,
+            data={
+                "trunk_id": "trunk-1",
+                "route_id": "route-1",
+                "sip_uri": "sip:trunk@sip.stream-io-api.com",
+            },
+        )
+
+    async def _release(self, request: web.Request) -> web.Response:
+        self.released_e164 = request.match_info["e164"]
+        if self.refuse:
+            return web.json_response(status=400, data={"error": self.refuse})
+        return web.Response(status=204)
 
 
 class TestPhone:
@@ -113,3 +179,59 @@ class TestPhone:
             await phone.place(
                 OutboundCall(from_="+17195551234", to="+13035559876", ring_timeout=20.0)
             )
+
+    async def test_search_returns_both_offered_and_skipped_vendors(
+        self, router: Router, phone: stream.Phone
+    ):
+        # Dropping `skipped` would answer a search for eight vendors as if only two exist.
+        result = await phone.search(country="US", area_code="512")
+
+        assert router.searched is not None
+        assert router.searched["country"] == "US"
+        assert router.searched["area_code"] == "512"
+        assert len(result.numbers) == 1
+        assert result.numbers[0].e164 == "+15125551234"
+        assert result.numbers[0].vendor == "telnyx"
+        assert len(result.skipped) == 1
+        assert result.skipped[0].vendor == "twilio"
+        assert result.skipped[0].reason == "cannot search by area_code"
+
+    async def test_buy_returns_the_bought_number(
+        self, router: Router, phone: stream.Phone
+    ):
+        bought = await phone.buy(vendor="telnyx", e164="+15125551234", country="US")
+
+        assert router.bought == {
+            "vendor": "telnyx",
+            "e164": "+15125551234",
+            "country": "US",
+        }
+        assert bought.e164 == "+15125551234"
+        assert bought.vendor == "telnyx"
+
+    async def test_attach_returns_the_trunk_route_and_sip_uri(
+        self, router: Router, phone: stream.Phone
+    ):
+        attached = await phone.attach(
+            "+15125551234", call_id="support-line", call_type="livestream"
+        )
+
+        assert router.attached_e164 == "+15125551234"
+        assert router.attached == {
+            "call_id": "support-line",
+            "call_type": "livestream",
+        }
+        assert attached.trunk_id == "trunk-1"
+        assert attached.route_id == "route-1"
+        assert attached.sip_uri == "sip:trunk@sip.stream-io-api.com"
+
+    async def test_release_completes(self, router: Router, phone: stream.Phone):
+        await phone.release("+15125551234")
+
+        assert router.released_e164 == "+15125551234"
+
+    async def test_a_refused_search_says_why(self, router: Router, phone: stream.Phone):
+        router.refuse = "phone: bird cannot search by administrative_area"
+
+        with pytest.raises(RuntimeError, match="administrative_area"):
+            await phone.search(country="US", administrative_area="TX")
