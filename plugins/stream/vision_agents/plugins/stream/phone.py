@@ -11,6 +11,7 @@ from ._generated.api.default import (
     place_phone_call,
     release_phone_number,
     search_phone_numbers,
+    transfer_phone_call,
 )
 from ._generated.models import (
     AttachedNumber,
@@ -24,6 +25,7 @@ from ._generated.models import (
     PlaceCallRequest,
     PlaceCallRequestCustom,
     PlaceCallRequestHeaders,
+    TransferCallRequest,
 )
 from ._generated.types import UNSET, Unset
 
@@ -106,6 +108,52 @@ class Phone:
             raise RuntimeError("the router did not answer with a placed call")
 
         logger.info("calling %s, vendor call %s", call.to, placed.vendor_call_id)
+        return PlacedCall(
+            vendor_call_id=placed.vendor_call_id,
+            status=placed.status,
+            vendor=_or_empty(placed.vendor),
+            call_id=_or_empty(placed.call_id),
+            call_type=_or_empty(placed.call_type),
+        )
+
+    async def transfer(
+        self,
+        from_: str,
+        to: str,
+        call_id: str,
+        call_type: Optional[str] = None,
+    ) -> PlacedCall:
+        """Bring a human onto a call that is already happening.
+
+        A transfer is a second leg rather than a handover: the vendor dials the human
+        and the answered leg is routed into the same Stream call, after which the agent
+        can leave. The caller is never moved, so nothing is lost if nobody answers.
+
+        Args:
+            from_: The customer's number the human is dialled from, which is what they see.
+            to: The human being brought onto the call.
+            call_id: The Stream call the caller and the agent are already on.
+            call_type: The Stream call type. Omit for "agent".
+
+        Returns:
+            The ringing leg, and the call its answer is routed into.
+
+        Raises:
+            RuntimeError: If the router refused the transfer, saying why.
+        """
+        request = TransferCallRequest(from_=from_, to=to, call_id=call_id)
+        if call_type:
+            request.call_type = call_type
+
+        placed = await transfer_phone_call.asyncio(
+            client=self.backend.client(), body=request
+        )
+        if isinstance(placed, Error):
+            raise RuntimeError(placed.error)
+        if placed is None:
+            raise RuntimeError("the router did not answer with a placed call")
+
+        logger.info("transferring to %s, vendor call %s", to, placed.vendor_call_id)
         return PlacedCall(
             vendor_call_id=placed.vendor_call_id,
             status=placed.status,
@@ -273,6 +321,8 @@ class Phone:
         Raises:
             RuntimeError: If the router refused to release the number, saying why.
         """
+        # No `is None` check: a successful release is a 204 with no body, which parses
+        # to None, so treating that as a failure would fail every release that worked.
         released = await release_phone_number.asyncio(
             e164=e164, client=self.backend.client()
         )
