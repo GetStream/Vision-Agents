@@ -1807,6 +1807,24 @@ type ImageSource struct {
 // ImageSourceDetail defines model for ImageSource.Detail.
 type ImageSourceDetail string
 
+// IndexedKnowledgeDocument defines model for IndexedKnowledgeDocument.
+type IndexedKnowledgeDocument struct {
+	CreatedAt time.Time `json:"created_at"`
+	Id        string    `json:"id"`
+	Namespace string    `json:"namespace"`
+
+	// Passages How many passages it was last cut into.
+	Passages int `json:"passages"`
+
+	// Source What the document was posted as, and what its passages are keyed by.
+	//
+	// Example: pricing.md
+	Source string `json:"source"`
+
+	// UpdatedAt When it was last written.
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // IngestKnowledgeRequest defines model for IngestKnowledgeRequest.
 type IngestKnowledgeRequest struct {
 	// ChunkSize Characters per passage. Zero is the default, which is small enough that several passages fit in front of a model and large enough that one still answers the question on its own.
@@ -1865,7 +1883,7 @@ type KnowledgeUrl struct {
 	// Passages How many passages the page was last cut into.
 	Passages int `json:"passages"`
 
-	// State Where the page has got to. Pending means it has been added but not yet read, which is also what a read that died halfway through leaves behind.
+	// State Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
 	State KnowledgeUrlState `json:"state"`
 
 	// Title What the page is called: the title it was subscribed with, or what it called itself when it was last read.
@@ -1901,7 +1919,7 @@ type KnowledgeUrlRequest struct {
 	Url string `json:"url"`
 }
 
-// KnowledgeUrlState Where the page has got to. Pending means it has been added but not yet read, which is also what a read that died halfway through leaves behind.
+// KnowledgeUrlState Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
 type KnowledgeUrlState string
 
 // LlmOptions How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things.
@@ -3395,6 +3413,12 @@ type GetConversationMessagesParams struct {
 	Before  *string `form:"before,omitempty" json:"before,omitempty"`
 }
 
+// ListKnowledgeDocumentsParams defines parameters for ListKnowledgeDocuments.
+type ListKnowledgeDocumentsParams struct {
+	// Namespace One knowledge base. Omit to list every document the customer has.
+	Namespace *string `form:"namespace,omitempty" json:"namespace,omitempty"`
+}
+
 // ListKnowledgeUrlsParams defines parameters for ListKnowledgeUrls.
 type ListKnowledgeUrlsParams struct {
 	// Namespace One knowledge base. Omit to list every page the customer has.
@@ -4240,6 +4264,21 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/knowledge (the `IngestKnowledge` operationId).
 	IngestKnowledge(ctx context.Context, body IngestKnowledgeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListKnowledgeDocuments The documents a knowledge base was filled with
+	//
+	// What was posted to /v1/agents/knowledge or synced from an agent directory's knowledge folder, one entry per source. Pages are listed at /v1/agents/knowledge/urls.
+	//
+	// Corresponds with GET /v1/agents/knowledge/documents (the `ListKnowledgeDocuments` operationId).
+	ListKnowledgeDocuments(ctx context.Context, params *ListKnowledgeDocumentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteKnowledgeDocument Take a document out of a knowledge base
+	//
+	// The passages it was cut into are removed too, so the agent stops answering out of it.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/knowledge/documents/{id} (the `DeleteKnowledgeDocument` operationId).
+	DeleteKnowledgeDocument(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListKnowledgeUrls The pages a knowledge base is kept filled from
 	//
 	// Corresponds with GET /v1/agents/knowledge/urls (the `ListKnowledgeUrls` operationId).
@@ -4247,8 +4286,8 @@ type ClientInterface interface {
 
 	// AddKnowledgeUrlWithBody Keep a knowledge base filled from a page
 	//
-	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
-	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+	// The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page comes back pending, and indexed or failed once it has been read. A read that fails is tried again a few times first. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
 	// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -4259,8 +4298,8 @@ type ClientInterface interface {
 
 	// AddKnowledgeUrl Keep a knowledge base filled from a page
 	//
-	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
-	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+	// The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page comes back pending, and indexed or failed once it has been read. A read that fails is tried again a few times first. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
 	// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -4284,7 +4323,7 @@ type ClientInterface interface {
 
 	// IndexKnowledgeUrl Read a page again
 	//
-	// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+	// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. The read is queued, the same as adding the page; last_indexed_at moves once it has happened. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
@@ -4628,6 +4667,7 @@ type ClientInterface interface {
 	//
 	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -4639,6 +4679,7 @@ type ClientInterface interface {
 	//
 	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
@@ -5741,6 +5782,41 @@ func (c *Client) IngestKnowledge(ctx context.Context, body IngestKnowledgeJSONRe
 	return c.Client.Do(req)
 }
 
+// ListKnowledgeDocuments The documents a knowledge base was filled with
+//
+// What was posted to /v1/agents/knowledge or synced from an agent directory's knowledge folder, one entry per source. Pages are listed at /v1/agents/knowledge/urls.
+//
+// Corresponds with GET /v1/agents/knowledge/documents (the `ListKnowledgeDocuments` operationId).
+func (c *Client) ListKnowledgeDocuments(ctx context.Context, params *ListKnowledgeDocumentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListKnowledgeDocumentsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteKnowledgeDocument Take a document out of a knowledge base
+//
+// The passages it was cut into are removed too, so the agent stops answering out of it.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/knowledge/documents/{id} (the `DeleteKnowledgeDocument` operationId).
+func (c *Client) DeleteKnowledgeDocument(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteKnowledgeDocumentRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListKnowledgeUrls The pages a knowledge base is kept filled from
 //
 // Corresponds with GET /v1/agents/knowledge/urls (the `ListKnowledgeUrls` operationId).
@@ -5758,8 +5834,8 @@ func (c *Client) ListKnowledgeUrls(ctx context.Context, params *ListKnowledgeUrl
 
 // AddKnowledgeUrlWithBody Keep a knowledge base filled from a page
 //
-// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
-// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+// The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page comes back pending, and indexed or failed once it has been read. A read that fails is tried again a few times first. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
 // Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -5780,8 +5856,8 @@ func (c *Client) AddKnowledgeUrlWithBody(ctx context.Context, contentType string
 
 // AddKnowledgeUrl Keep a knowledge base filled from a page
 //
-// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
-// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+// The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page comes back pending, and indexed or failed once it has been read. A read that fails is tried again a few times first. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
 // Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -5835,7 +5911,7 @@ func (c *Client) GetKnowledgeUrl(ctx context.Context, id ResourceID, reqEditors 
 
 // IndexKnowledgeUrl Read a page again
 //
-// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. The read is queued, the same as adding the page; last_indexed_at moves once it has happened. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with POST /v1/agents/knowledge/urls/{id}/index (the `IndexKnowledgeUrl` operationId).
@@ -6609,6 +6685,7 @@ func (c *Client) UpdateSkill(ctx context.Context, id ResourceID, body UpdateSkil
 //
 // Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -6630,6 +6707,7 @@ func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body
 //
 // Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
@@ -8736,6 +8814,94 @@ func NewIngestKnowledgeRequestWithBody(server string, contentType string, body i
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListKnowledgeDocumentsRequest constructs an http.Request for the ListKnowledgeDocuments method
+func NewListKnowledgeDocumentsRequest(server string, params *ListKnowledgeDocumentsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge/documents")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Namespace != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "namespace", *params.Namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteKnowledgeDocumentRequest constructs an http.Request for the DeleteKnowledgeDocument method
+func NewDeleteKnowledgeDocumentRequest(server string, id ResourceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge/documents/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -12937,6 +13103,25 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/knowledge (the `IngestKnowledge` operationId).
 	IngestKnowledgeWithResponse(ctx context.Context, body IngestKnowledgeJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestKnowledgeResponse, error)
 
+	// ListKnowledgeDocumentsWithResponse The documents a knowledge base was filled with
+	//
+	// What was posted to /v1/agents/knowledge or synced from an agent directory's knowledge folder, one entry per source. Pages are listed at /v1/agents/knowledge/urls.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/knowledge/documents (the `ListKnowledgeDocuments` operationId).
+	ListKnowledgeDocumentsWithResponse(ctx context.Context, params *ListKnowledgeDocumentsParams, reqEditors ...RequestEditorFn) (*ListKnowledgeDocumentsResponse, error)
+
+	// DeleteKnowledgeDocumentWithResponse Take a document out of a knowledge base
+	//
+	// The passages it was cut into are removed too, so the agent stops answering out of it.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/knowledge/documents/{id} (the `DeleteKnowledgeDocument` operationId).
+	DeleteKnowledgeDocumentWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteKnowledgeDocumentResponse, error)
+
 	// ListKnowledgeUrlsWithResponse The pages a knowledge base is kept filled from
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -12946,8 +13131,8 @@ type ClientWithResponsesInterface interface {
 
 	// AddKnowledgeUrlWithBodyWithResponse Keep a knowledge base filled from a page
 	//
-	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
-	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+	// The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page comes back pending, and indexed or failed once it has been read. A read that fails is tried again a few times first. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
 	// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -12958,8 +13143,8 @@ type ClientWithResponsesInterface interface {
 
 	// AddKnowledgeUrlWithResponse Keep a knowledge base filled from a page
 	//
-	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
-	// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+	// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+	// The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page comes back pending, and indexed or failed once it has been read. A read that fails is tried again a few times first. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
 	// Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -12987,7 +13172,7 @@ type ClientWithResponsesInterface interface {
 
 	// IndexKnowledgeUrlWithResponse Read a page again
 	//
-	// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+	// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. The read is queued, the same as adding the page; last_indexed_at moves once it has happened. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -13377,6 +13562,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -13388,6 +13574,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
 	// agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+	// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -15608,6 +15795,130 @@ func (r IngestKnowledgeResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r IngestKnowledgeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListKnowledgeDocumentsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]IndexedKnowledgeDocument
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListKnowledgeDocumentsResponse) GetJSON200() *[]IndexedKnowledgeDocument {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListKnowledgeDocumentsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListKnowledgeDocumentsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListKnowledgeDocumentsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r ListKnowledgeDocumentsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListKnowledgeDocumentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListKnowledgeDocumentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListKnowledgeDocumentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteKnowledgeDocumentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteKnowledgeDocumentResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteKnowledgeDocumentResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteKnowledgeDocumentResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteKnowledgeDocumentResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteKnowledgeDocumentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteKnowledgeDocumentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteKnowledgeDocumentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteKnowledgeDocumentResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -20845,6 +21156,37 @@ func (c *ClientWithResponses) IngestKnowledgeWithResponse(ctx context.Context, b
 	return ParseIngestKnowledgeResponse(rsp)
 }
 
+// ListKnowledgeDocumentsWithResponse The documents a knowledge base was filled with
+//
+// What was posted to /v1/agents/knowledge or synced from an agent directory's knowledge folder, one entry per source. Pages are listed at /v1/agents/knowledge/urls.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/knowledge/documents (the `ListKnowledgeDocuments` operationId).
+func (c *ClientWithResponses) ListKnowledgeDocumentsWithResponse(ctx context.Context, params *ListKnowledgeDocumentsParams, reqEditors ...RequestEditorFn) (*ListKnowledgeDocumentsResponse, error) {
+	rsp, err := c.ListKnowledgeDocuments(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListKnowledgeDocumentsResponse(rsp)
+}
+
+// DeleteKnowledgeDocumentWithResponse Take a document out of a knowledge base
+//
+// The passages it was cut into are removed too, so the agent stops answering out of it.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/knowledge/documents/{id} (the `DeleteKnowledgeDocument` operationId).
+func (c *ClientWithResponses) DeleteKnowledgeDocumentWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteKnowledgeDocumentResponse, error) {
+	rsp, err := c.DeleteKnowledgeDocument(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteKnowledgeDocumentResponse(rsp)
+}
+
 // ListKnowledgeUrlsWithResponse The pages a knowledge base is kept filled from
 //
 // Returns a wrapper object for the known response body format(s).
@@ -20860,8 +21202,8 @@ func (c *ClientWithResponses) ListKnowledgeUrlsWithResponse(ctx context.Context,
 
 // AddKnowledgeUrlWithBodyWithResponse Keep a knowledge base filled from a page
 //
-// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
-// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+// The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page comes back pending, and indexed or failed once it has been read. A read that fails is tried again a few times first. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
 // Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -20878,8 +21220,8 @@ func (c *ClientWithResponses) AddKnowledgeUrlWithBodyWithResponse(ctx context.Co
 
 // AddKnowledgeUrlWithResponse Keep a knowledge base filled from a page
 //
-// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
-// The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+// Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+// The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page comes back pending, and indexed or failed once it has been read. A read that fails is tried again a few times first. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
 // Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -20925,7 +21267,7 @@ func (c *ClientWithResponses) GetKnowledgeUrlWithResponse(ctx context.Context, i
 
 // IndexKnowledgeUrlWithResponse Read a page again
 //
-// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+// Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. The read is queued, the same as adding the page; last_indexed_at moves once it has happened. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -21573,6 +21915,7 @@ func (c *ClientWithResponses) UpdateSkillWithResponse(ctx context.Context, id Re
 //
 // Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -21590,6 +21933,7 @@ func (c *ClientWithResponses) SyncAgentWithBodyWithResponse(ctx context.Context,
 //
 // Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
 // agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+// knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -23725,6 +24069,103 @@ func ParseIngestKnowledgeResponse(rsp *http.Response) (*IngestKnowledgeResponse,
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListKnowledgeDocumentsResponse parses an HTTP response from a ListKnowledgeDocumentsWithResponse call
+func ParseListKnowledgeDocumentsResponse(rsp *http.Response) (*ListKnowledgeDocumentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListKnowledgeDocumentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []IndexedKnowledgeDocument
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteKnowledgeDocumentResponse parses an HTTP response from a DeleteKnowledgeDocumentWithResponse call
+func ParseDeleteKnowledgeDocumentResponse(rsp *http.Response) (*DeleteKnowledgeDocumentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteKnowledgeDocumentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
