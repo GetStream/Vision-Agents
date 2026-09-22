@@ -293,3 +293,16 @@ class TestPhone:
 
         with pytest.raises(RuntimeError, match="administrative_area"):
             await phone.search(country="US", administrative_area="TX")
+
+    def test_public_types_are_the_generated_ones(self):
+        from vision_agents.plugins.stream._generated.models import (
+            AttachedNumber,
+            NumberSearchResult,
+            PhoneNumber,
+            SkippedVendor,
+        )
+
+        assert stream.PhoneNumber is PhoneNumber
+        assert stream.AttachedNumber is AttachedNumber
+        assert stream.NumberSearchResult is NumberSearchResult
+        assert stream.SkippedVendor is SkippedVendor
