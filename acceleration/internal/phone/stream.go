@@ -186,6 +186,30 @@ func (s *Stream) CreateRoute(ctx context.Context, route Route) (string, error) {
 	return response.Data.ID, nil
 }
 
+// DeleteTrunk removes a SIP trunk. An empty id is a no-op, so a caller rolling back a
+// half-finished attach need not check whether a trunk was created before asking.
+func (s *Stream) DeleteTrunk(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	if _, err := s.client.Video().DeleteSIPTrunk(ctx, id, nil); err != nil {
+		return fmt.Errorf("phone: delete sip trunk: %w", err)
+	}
+	return nil
+}
+
+// DeleteRoute removes an inbound routing rule. An empty id is a no-op, for the same
+// reason as DeleteTrunk.
+func (s *Stream) DeleteRoute(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	if _, err := s.client.Video().DeleteSIPInboundRoutingRule(ctx, id, nil); err != nil {
+		return fmt.Errorf("phone: delete sip routing rule: %w", err)
+	}
+	return nil
+}
+
 // Client exposes the Stream client, so a caller can reach the parts of the SIP API this
 // does not wrap without building a second client.
 func (s *Stream) Client() *getstream.Stream { return s.client }
