@@ -754,12 +754,21 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		}
 	}()
 
+	// Resolve the call type the same way CreateRoute does, so the row recorded below
+	// carries the concrete type that session_ended's call_cid will name. A transfer joins
+	// an existing call whose type was fixed at creation; storing the raw empty type would
+	// not match "default" at cleanup and would leak the transfer's trunk.
+	callType := request.CallType
+	if callType == "" {
+		callType = defaultCallType
+	}
+
 	routeID, err = s.stream.CreateRoute(ctx, Route{
 		Name:          "transfer-" + request.CallID,
 		TrunkIDs:      []string{trunkID},
 		CalledNumbers: []string{request.From},
 		CallID:        request.CallID,
-		CallType:      request.CallType,
+		CallType:      callType,
 	})
 	if err != nil {
 		return Dialed{}, err
@@ -776,7 +785,7 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	if err := s.store.RecordCallResource(ctx, &store.CallResource{
 		TrunkID:    trunkID,
 		RouteID:    routeID,
-		CallType:   request.CallType,
+		CallType:   callType,
 		CallID:     request.CallID,
 		CustomerID: request.Owner.CustomerID,
 	}); err != nil {
