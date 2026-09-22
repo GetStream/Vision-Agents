@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"net/http"
 	"net/http/httptest"
@@ -55,6 +56,7 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 				db.channels[id] = data
 			}
 			result["channel"] = db.channels[id]
+			result["members"] = db.channels[id]["members"]
 			before := ""
 			if p, ok := body["messages"].(map[string]any); ok {
 				before, _ = p["id_lt"].(string)
@@ -180,7 +182,7 @@ func TestActivityPersistsAndRestores(t *testing.T) {
 	require.Equal(t, "thinking", current(c).State)
 	require.Error(t, c.Begin("overlapping"))
 	begin := time.Now().UTC().Add(-time.Second)
-	c.Observe(agent.ToolStarted{ID: "one", Tool: "investigate_sdk", StartedAt: begin})
+	c.Observe(agent.ToolStarted{ID: "one", Tool: "lookup_record", StartedAt: begin})
 	require.Equal(t, begin, current(c).Tools[0].StartedAt)
 	c.Progress("one", "queued")
 	require.Equal(t, "queued", current(c).State)
@@ -190,7 +192,7 @@ func TestActivityPersistsAndRestores(t *testing.T) {
 	require.NotNil(t, execAt)
 	c.Progress("one", "reading")
 	require.Equal(t, execAt, current(c).Tools[0].ExecutionStartedAt)
-	c.Observe(agent.ToolStarted{ID: "one", Tool: "investigate_sdk", StartedAt: time.Now()})
+	c.Observe(agent.ToolStarted{ID: "one", Tool: "lookup_record", StartedAt: time.Now()})
 	require.Len(t, current(c).Tools, 1)
 	c.Observe(agent.ResponseDelta{Text: "Visible words."})
 	require.Eventually(t, func() bool { db.mu.Lock(); defer db.mu.Unlock(); return len(db.patches) > 0 }, 3*time.Second, 20*time.Millisecond)
@@ -220,7 +222,9 @@ func TestActivityPersistsAndRestores(t *testing.T) {
 	page, err := s.History(context.Background(), "customer", "support-agent", c.CID(), "")
 	require.NoError(t, err)
 	require.Len(t, page.Messages, 2)
-	require.Equal(t, want.Tools, page.Messages[1].Tools)
+	require.Len(t, page.Messages[1].Tools, 2)
+	require.Equal(t, "lookup_record", page.Messages[1].Tools[0].Name)
+	require.Equal(t, "Verified 2 source citations", page.Messages[1].Tools[0].Summary)
 	raw, _ = json.Marshal(page)
 	require.NotContains(t, string(raw), "not for attachment")
 	_, _, _, err = s.Open(context.Background(), "customer", "support-agent", c.CID())
@@ -231,6 +235,36 @@ func TestActivityPersistsAndRestores(t *testing.T) {
 	require.Error(t, err)
 	_, err = s.History(context.Background(), "customer", "support-agent", strings.TrimPrefix(c.CID(), "agent:"), "")
 	require.Error(t, err)
+}
+
+func TestContextForCallerSeedsCompletedTurnsWithoutOpeningTheConversation(t *testing.T) {
+	_, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("The project name is Nimbus"))
+	c.Observe(agent.ResponseDelta{Text: "Noted."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	cid := c.CID()
+	c.Release()
+
+	messages, truncated, err := service.ContextForCaller(t.Context(), "customer", "agent", cid, "employee")
+	require.NoError(t, err)
+	require.False(t, truncated)
+	require.Equal(t, []llm.Message{
+		{Role: llm.User, Content: "The project name is Nimbus"},
+		{Role: llm.Assistant, Content: "Noted."},
+	}, messages)
+
+	_, _, err = service.ContextForCaller(t.Context(), "customer", "agent", cid, "somebody-else")
+	require.ErrorContains(t, err, "another user")
+	empty, truncated, err := service.ContextForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	require.False(t, truncated)
+	require.Empty(t, empty)
 }
 func TestOutboxFailureRestartAndDeduplication(t *testing.T) {
 	db, client := newChat(t)
@@ -247,9 +281,9 @@ func TestOutboxFailureRestartAndDeduplication(t *testing.T) {
 	c.Progress("tool", "queued")
 	require.Eventually(t, func() bool { return current(c).Error != "" }, 3*time.Second, 20*time.Millisecond)
 	require.False(t, current(c).Saved)
-	files, err := filepath.Glob(filepath.Join(c.dir(), "ops", "*.json"))
+	snapshot, err := loadDisk(c.dir())
 	require.NoError(t, err)
-	require.NotEmpty(t, files)
+	require.NotEmpty(t, snapshot.Pending)
 	s.Close() // Simulate process stopping without the session's graceful cancellation.
 	db.mu.Lock()
 	db.fail = false
@@ -268,10 +302,55 @@ func TestOutboxFailureRestartAndDeduplication(t *testing.T) {
 	db.mu.Lock()
 	require.Len(t, db.order, 2)
 	db.mu.Unlock()
-	files, err = filepath.Glob(filepath.Join(c.dir(), "ops", "*.json"))
+	snapshot, err = loadDisk(c.dir())
 	require.NoError(t, err)
-	require.Empty(t, files)
+	require.Empty(t, snapshot.Pending)
 }
+func TestQueuedUserMessageKeepsItsAcceptedAuthorAfterRestart(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) {
+			db, client := newChat(t)
+			root := t.TempDir()
+			s, err := newService(root, client)
+			require.NoError(t, err)
+			t.Cleanup(s.Close)
+			c, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "employee-one")
+			require.NoError(t, err)
+			db.mu.Lock()
+			db.fail = true
+			db.mu.Unlock()
+			receipt, err := c.BeginCommand("accepted-command", "queued question")
+			require.NoError(t, err)
+			s.Close()
+			snapshot, err := loadDisk(c.dir())
+			require.NoError(t, err)
+			require.NotEmpty(t, snapshot.Pending)
+			require.Equal(t, "employee-one", snapshot.Pending[0].Author)
+			if legacy {
+				// Existing single-owner outboxes must still publish as that owner.
+				snapshot.Pending[0].Author = ""
+			} else {
+				// Changing the session owner must not reattribute accepted writes.
+				// This exercises persistence only; it grants no conversation access.
+				snapshot.Owner = "employee-two"
+			}
+			require.NoError(t, writeJSON(filepath.Join(c.dir(), "state.json"), snapshot))
+			db.mu.Lock()
+			db.fail = false
+			db.mu.Unlock()
+			recovered, err := newService(root, client)
+			require.NoError(t, err)
+			defer recovered.Close()
+			saved(t, recovered.all[c.CID()])
+			db.mu.Lock()
+			defer db.mu.Unlock()
+			require.Len(t, db.order, 2)
+			require.Equal(t, "employee-one", db.messages[receipt.UserMessageID]["user_id"])
+			require.Equal(t, "agent", db.messages[receipt.AssistantMessageID]["user_id"])
+		})
+	}
+}
+
 func TestBoundedOrdinaryHistory(t *testing.T) {
 	p := Page{Messages: []Message{{Role: "system", Text: "untrusted instruction", State: "completed"}, {Role: "assistant", Text: "unfinished", State: "thinking"}, {Role: "user", Text: strings.Repeat("界", 30000), State: "completed"}, {Role: "assistant", Text: strings.Repeat("界", 30000), State: "completed"}}}
 	h, tr := history(p)
@@ -417,4 +496,589 @@ func TestConversationKeepsItsMemoryScopeAcrossResumeAndRestart(t *testing.T) {
 	c, _, _, err = service.Open(t.Context(), "customer", "agent", cid, scope)
 	require.NoError(t, err)
 	c.Release()
+}
+
+func TestPersonalConversationBindsMembershipMessagesAndHistoryToCaller(t *testing.T) {
+	db, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	scope := memory.Scope{UserID: "shared-project-memory"}
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee-one", scope)
+	require.NoError(t, err)
+	cid := c.CID()
+	require.NoError(t, c.Begin("private question"))
+	c.Observe(agent.ResponseDelta{Text: "private answer"})
+	c.Cancel()
+	saved(t, c)
+	db.mu.Lock()
+	channel := db.channels[strings.TrimPrefix(cid, "agent:")]
+	require.Equal(t, "employee-one", channel["custom"].(map[string]any)["support_owner_id"])
+	require.Equal(t, SessionCommandTrigger, channel["custom"].(map[string]any)[TriggerField])
+	memberJSON, _ := json.Marshal(channel["members"])
+	require.Contains(t, string(memberJSON), "employee-one")
+	require.NotContains(t, string(memberJSON), "support-operator")
+	var userMessage map[string]any
+	for _, message := range db.messages {
+		if message["text"] == "private question" {
+			userMessage = message
+		}
+	}
+	require.Equal(t, "employee-one", userMessage["user_id"])
+	db.mu.Unlock()
+	c.Release()
+	service.Close()
+	// Ownership must survive both local restart and loss of local cache/outbox.
+	for _, directory := range []string{root, t.TempDir()} {
+		service, err = newService(directory, client)
+		require.NoError(t, err)
+		for _, caller := range []string{"employee-two", ""} {
+			_, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, caller, scope)
+			require.Error(t, err)
+			_, err = service.HistoryForCaller(t.Context(), "customer", "agent", cid, "", caller)
+			require.ErrorContains(t, err, "another user")
+		}
+		page, err := service.HistoryForCaller(t.Context(), "customer", "agent", cid, "", "employee-one")
+		require.NoError(t, err)
+		require.Len(t, page.Messages, 2)
+		c, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "employee-one", scope)
+		require.NoError(t, err)
+		c.Release()
+		service.Close()
+	}
+}
+
+func TestSharedMembersResumeContextWithTheirOwnCommandsAndLoseAccessOnRemoval(t *testing.T) {
+	db, client := newChat(t)
+	root := t.TempDir()
+	s, err := newService(root, client)
+	require.NoError(t, err)
+	t.Cleanup(s.Close)
+	alice, _, _, err := s.OpenForCaller(t.Context(), "customer", "agent", "", "alice")
+	require.NoError(t, err)
+	cid := alice.CID()
+	aliceReceipt, err := alice.BeginCommand("alice-command", "Remember TEAM_CANVAS_42")
+	require.NoError(t, err)
+	alice.Observe(agent.ResponseDelta{Text: "Remembered TEAM_CANVAS_42"})
+	alice.Observe(agent.Responded{})
+	saved(t, alice)
+
+	db.mu.Lock()
+	channel := db.channels[strings.TrimPrefix(cid, "agent:")]
+	channel["members"] = append(channel["members"].([]any), map[string]any{"user_id": "bob"})
+	db.mu.Unlock()
+	// Membership alone must never expose a private or legacy conversation.
+	_, err = s.HistoryForCaller(t.Context(), "customer", "agent", cid, "", "bob")
+	require.ErrorContains(t, err, "another user")
+	db.mu.Lock()
+	channel["custom"].(map[string]any)["support_access"] = "members"
+	db.messages[aliceReceipt.UserMessageID]["user"] = map[string]any{"id": "alice", "name": "Alice"}
+	db.mu.Unlock()
+	page, err := s.HistoryForCaller(t.Context(), "customer", "agent", cid, "", "bob")
+	require.NoError(t, err)
+	require.Len(t, page.Messages, 2)
+	for _, caller := range []string{"outsider", ""} {
+		_, err := s.HistoryForCaller(t.Context(), "customer", "agent", cid, "", caller)
+		require.Error(t, err)
+	}
+	_, _, _, err = s.OpenForCaller(t.Context(), "customer", "agent", cid, "bob")
+	require.ErrorContains(t, err, "already open", "a second session cannot steal an active conversation")
+	alice.Release()
+	bob, previous, _, err := s.OpenForCaller(t.Context(), "customer", "agent", cid, "bob")
+	require.NoError(t, err)
+	require.Len(t, previous, 3)
+	require.Contains(t, previous[1].Content, "TEAM_CANVAS_42")
+	require.Contains(t, previous[1].Content, `"user_id":"alice","display_name":"Alice"`)
+	require.NoError(t, bob.CheckCaller(t.Context(), "bob"))
+	_, err = bob.BeginCommand("alice-command", "Remember TEAM_CANVAS_42")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	_, err = bob.Command("alice-command")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	_, err = bob.CancelCommand("alice-command")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	_, err = s.CommandForCaller(t.Context(), "customer", "agent", cid, "bob", "alice-command")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	bobReceipt, err := bob.BeginCommand("bob-command", "What is the codeword?")
+	require.NoError(t, err)
+	bob.Observe(agent.ResponseDelta{Text: "TEAM_CANVAS_42"})
+	bob.Observe(agent.Responded{})
+	saved(t, bob)
+	bob.Release()
+	s.Close()
+
+	restarted, err := newService(root, client)
+	require.NoError(t, err)
+	defer restarted.Close()
+	bob, previous, _, err = restarted.OpenForCaller(t.Context(), "customer", "agent", cid, "bob")
+	require.NoError(t, err)
+	require.Len(t, previous, 5)
+	duplicate, err := bob.BeginCommand("bob-command", "What is the codeword?")
+	require.NoError(t, err)
+	require.True(t, duplicate.Duplicate)
+	require.Equal(t, bobReceipt.UserMessageID, duplicate.UserMessageID)
+	_, err = bob.BeginCommand("alice-command", "Remember TEAM_CANVAS_42")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	reconciled, err := restarted.CommandForCaller(t.Context(), "customer", "agent", cid, "alice", "alice-command")
+	require.NoError(t, err)
+	require.Equal(t, aliceReceipt.UserMessageID, reconciled.UserMessageID)
+	db.mu.Lock()
+	require.Len(t, db.order, 4)
+	require.Equal(t, "alice", db.messages[aliceReceipt.UserMessageID]["user_id"])
+	require.Equal(t, "bob", db.messages[bobReceipt.UserMessageID]["user_id"])
+	require.Equal(t, "alice", channel["custom"].(map[string]any)["support_owner_id"])
+	channel["members"] = []any{map[string]any{"user_id": "alice"}, map[string]any{"user_id": "agent"}}
+	db.mu.Unlock()
+	require.ErrorIs(t, bob.CheckCaller(t.Context(), "bob"), ErrCommandNotFound)
+	_, err = restarted.HistoryForCaller(t.Context(), "customer", "agent", cid, "", "bob")
+	require.Error(t, err)
+	_, err = restarted.CommandForCaller(t.Context(), "customer", "agent", cid, "bob", "bob-command")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	bob.Release()
+	_, _, _, err = restarted.OpenForCaller(t.Context(), "customer", "agent", cid, "bob")
+	require.Error(t, err)
+	_, _, _, err = restarted.OpenForCaller(t.Context(), "other-customer", "agent", cid, "alice")
+	require.Error(t, err)
+}
+
+func TestMalformedSharedMetadataDoesNotRelaxOwnership(t *testing.T) {
+	for _, mode := range []any{true, "public", "", map[string]any{"members": true}} {
+		err := ownedBy(map[string]any{
+			"support_customer_id": "customer", "support_agent_id": "agent",
+			"support_owner_id": "alice", "support_access": mode,
+		}, "customer", "agent", "bob")
+		require.Error(t, err)
+	}
+	for _, owner := range []any{nil, "", true} {
+		err := ownedBy(map[string]any{
+			"support_customer_id": "customer", "support_agent_id": "agent",
+			"support_owner_id": owner, "support_access": "members",
+		}, "customer", "agent", "bob")
+		require.Error(t, err)
+	}
+}
+
+func TestEmptyCallerOwnedChannelInitializesCommandLedgerWithoutRecreatingIt(t *testing.T) {
+	db, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	conversation, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	cid := conversation.CID()
+	conversation.Release()
+	service.Close()
+	require.NoError(t, os.RemoveAll(filepath.Join(root, strings.TrimPrefix(cid, "agent:"))))
+
+	service, err = newService(root, client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	conversation, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "employee")
+	require.NoError(t, err)
+	receipt, err := conversation.BeginCommand("external-command", "Question")
+	require.NoError(t, err)
+	require.Equal(t, "thinking", receipt.State)
+	conversation.Release()
+
+	_, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "another-employee")
+	require.Error(t, err)
+	db.mu.Lock()
+	db.channels[strings.TrimPrefix(cid, "agent:")]["members"] = []any{
+		map[string]any{"user_id": "agent"},
+	}
+	db.mu.Unlock()
+	_, _, _, err = service.OpenForCaller(t.Context(), "customer", "agent", cid, "employee")
+	require.ErrorContains(t, err, "not a channel member")
+}
+
+func TestCommandAcceptanceIsAtomicAndDuplicateSafeAcrossRestart(t *testing.T) {
+	db, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	db.mu.Lock()
+	db.fail = true
+	db.mu.Unlock()
+	var workers sync.WaitGroup
+	receipts := make([]CommandReceipt, 16)
+	errors := make([]error, len(receipts))
+	for i := range receipts {
+		workers.Go(func() { receipts[i], errors[i] = c.BeginCommand("submission-1", "one question") })
+	}
+	workers.Wait()
+	started := 0
+	for i, receipt := range receipts {
+		require.NoError(t, errors[i])
+		if !receipt.Duplicate {
+			started++
+		}
+		require.Equal(t, receipts[0].UserMessageID, receipt.UserMessageID)
+		require.Equal(t, receipts[0].AssistantMessageID, receipt.AssistantMessageID)
+	}
+	require.Equal(t, 1, started)
+	snapshot, err := loadDisk(c.dir())
+	require.NoError(t, err)
+	require.Len(t, snapshot.Pending, 2)
+	require.Equal(t, receipts[0].UserMessageID, snapshot.Pending[0].Message.ID)
+	require.Equal(t, receipts[0].AssistantMessageID, snapshot.Pending[1].Message.ID)
+	require.Equal(t, receipts[0].AssistantMessageID, snapshot.Commands["submission-1"].AssistantMessageID)
+	_, err = c.BeginCommand("submission-1", "different question")
+	require.ErrorIs(t, err, ErrCommandConflict)
+	_, err = c.BeginCommand("submission-2", "another question")
+	require.ErrorContains(t, err, "already running")
+	db.mu.Lock()
+	db.fail = false
+	db.mu.Unlock()
+	c.Observe(agent.ResponseDelta{Text: "one answer"})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	c.Release()
+	service.Close()
+	recovered, err := newService(root, client)
+	require.NoError(t, err)
+	t.Cleanup(recovered.Close)
+	c, _, _, err = recovered.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	replay, err := c.BeginCommand("submission-1", "one question")
+	require.NoError(t, err)
+	require.True(t, replay.Duplicate)
+	require.Equal(t, "completed", replay.State)
+	require.Equal(t, receipts[0].UserMessageID, replay.UserMessageID)
+	require.Equal(t, receipts[0].AssistantMessageID, replay.AssistantMessageID)
+	db.mu.Lock()
+	count := len(db.order)
+	db.mu.Unlock()
+	require.Equal(t, 2, count)
+	// A remote channel alone cannot recover the complete historical command ledger.
+	other, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(other.Close)
+	remote, _, _, err := other.OpenForCaller(t.Context(), "customer", "agent", c.CID(), "employee")
+	require.NoError(t, err)
+	_, err = remote.BeginCommand("submission-1", "one question")
+	require.ErrorContains(t, err, "ledger is unavailable")
+}
+
+func TestInterruptedCommandNeverReceivesASecondExecutionClaim(t *testing.T) {
+	_, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
+	require.NoError(t, err)
+	first, err := c.BeginCommand("interrupted", "question")
+	require.NoError(t, err)
+	service.Close() // No terminal model event, as after an interrupted worker.
+	recovered, err := newService(root, client)
+	require.NoError(t, err)
+	defer recovered.Close()
+	c, _, _, err = recovered.Open(t.Context(), "customer", "agent", c.CID())
+	require.NoError(t, err)
+	replay, err := c.BeginCommand("interrupted", "question")
+	require.NoError(t, err)
+	require.True(t, replay.Duplicate)
+	require.Equal(t, "interrupted", replay.State)
+	require.Equal(t, first.AssistantMessageID, replay.AssistantMessageID)
+}
+
+func TestOutboxRootHasOneWriterAndLegacyMigrationDoesNotReimport(t *testing.T) {
+	_, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	_, err = newService(root, client)
+	require.ErrorContains(t, err, "already owned")
+	service.Close()
+	service, err = newService(root, client)
+	require.NoError(t, err)
+	service.Close()
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "ops"), 0700))
+	require.NoError(t, writeJSON(filepath.Join(dir, "state.json"), disk{CID: "agent:test"}))
+	file := filepath.Join(dir, "ops", "001.json")
+	require.NoError(t, writeJSON(file, operation{Message: Message{ID: "one"}, Create: true}))
+	state, err := loadDisk(dir)
+	require.NoError(t, err)
+	require.Len(t, state.Pending, 1)
+	// Simulate crashing after the versioned snapshot committed, before old-file removal.
+	require.NoError(t, writeJSON(file, operation{Message: Message{ID: "one"}, Create: true}))
+	state, err = loadDisk(dir)
+	require.NoError(t, err)
+	require.Len(t, state.Pending, 1)
+}
+
+func TestFailedAcceptanceDoesNotGrantAClaimOrPublishUncommittedWrites(t *testing.T) {
+	db, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer service.Close()
+	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
+	require.NoError(t, err)
+	// Make atomic rename fail without depending on platform-specific permission rules.
+	statePath := filepath.Join(c.dir(), "state.json")
+	require.NoError(t, os.Remove(statePath))
+	require.NoError(t, os.MkdirAll(statePath, 0700))
+	_, err = c.BeginCommand("failed-write", "question")
+	require.Error(t, err)
+	require.False(t, c.flush())
+	db.mu.Lock()
+	count := len(db.order)
+	db.mu.Unlock()
+	require.Zero(t, count)
+	require.NoError(t, os.Remove(statePath))
+	// Once persistence recovers, a retry exposes failure rather than another claim.
+	replay, err := c.BeginCommand("failed-write", "question")
+	require.NoError(t, err)
+	require.True(t, replay.Duplicate)
+	require.Equal(t, "failed", replay.State)
+}
+
+func TestBlankConversationRetainsItsLedgerAcrossRestart(t *testing.T) {
+	_, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	c, _, _, err := service.Open(t.Context(), "customer", "agent", "")
+	require.NoError(t, err)
+	service.Close()
+	_, err = c.BeginCommand("after-close", "must not write")
+	require.Error(t, err)
+	recovered, err := newService(root, client)
+	require.NoError(t, err)
+	defer recovered.Close()
+	c, _, _, err = recovered.Open(t.Context(), "customer", "agent", c.CID())
+	require.NoError(t, err)
+	receipt, err := c.BeginCommand("first-submission", "question")
+	require.NoError(t, err)
+	require.False(t, receipt.Duplicate)
+}
+
+func TestCommandLookupDoesNotAcceptOrChangeTheActiveReply(t *testing.T) {
+	_, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.Command("missing")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	first, err := c.BeginCommand("first", "Question one")
+	require.NoError(t, err)
+	known, err := c.Command("first")
+	require.NoError(t, err)
+	require.Equal(t, first, known)
+	c.Observe(agent.ResponseDelta{Text: "Answer one"})
+	c.Observe(agent.Responded{})
+	second, err := c.BeginCommand("second", "Question two")
+	require.NoError(t, err)
+	terminal, err := c.Command("first")
+	require.NoError(t, err)
+	require.Equal(t, "completed", terminal.State)
+	require.Equal(t, first.AssistantMessageID, terminal.AssistantMessageID)
+	active, err := c.Command("second")
+	require.NoError(t, err)
+	require.Equal(t, second, active)
+	_, err = c.Command("unknown-stop-target")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	active, err = c.Command("second")
+	require.NoError(t, err)
+	require.Equal(t, second, active)
+	c.Release()
+	_, err = c.Command("first")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+}
+
+func TestCancelCommandPreservesOtherCommandsAndDurableReceipts(t *testing.T) {
+	_, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	first, err := c.BeginCommand("first-stop", "Question one")
+	require.NoError(t, err)
+	cancelled, err := c.CancelCommand(first.CommandID)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", cancelled.State)
+	require.Equal(t, first.AssistantMessageID, cancelled.AssistantMessageID)
+	snapshot, err := loadDisk(c.dir())
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", snapshot.Commands[first.CommandID].State)
+	second, err := c.BeginCommand("second-stop", "Question two")
+	require.NoError(t, err)
+	replayed, err := c.CancelCommand(first.CommandID)
+	require.NoError(t, err)
+	require.Equal(t, cancelled, replayed)
+	_, err = c.CancelCommand("unknown")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	active, err := c.Command(second.CommandID)
+	require.NoError(t, err)
+	require.Equal(t, second, active)
+}
+
+func TestCancelCommandPersistenceFailureRemainsUnconfirmedUntilRetry(t *testing.T) {
+	_, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	accepted, err := c.BeginCommand("stop-persist", "Question")
+	require.NoError(t, err)
+	statePath := filepath.Join(c.dir(), "state.json")
+	c.mu.Lock()
+	removeErr := os.Remove(statePath)
+	mkdirErr := os.Mkdir(statePath, 0700)
+	c.mu.Unlock()
+	require.NoError(t, removeErr)
+	require.NoError(t, mkdirErr)
+	receipt, err := c.CancelCommand(accepted.CommandID)
+	require.ErrorContains(t, err, "persistence outcome unknown")
+	require.Empty(t, receipt.CommandID)
+	require.NoError(t, os.Remove(statePath))
+	receipt, err = c.CancelCommand(accepted.CommandID)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", receipt.State)
+	snapshot, err := loadDisk(c.dir())
+	require.NoError(t, err)
+	require.Equal(t, receipt, snapshot.Commands[accepted.CommandID].CommandReceipt)
+}
+
+func TestLateOutputFromAStoppedCommandNeverJoinsTheNextReply(t *testing.T) {
+	_, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginCommand("stopped", "First question")
+	require.NoError(t, err)
+	c.BindTurn("stopped", "turn-first")
+	c.Observe(agent.ResponseDelta{TurnID: "turn-first", Text: "Partial answer"})
+	cancelled, err := c.CancelCommand("stopped")
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", cancelled.State)
+
+	next, err := c.BeginCommand("next", "Second question")
+	require.NoError(t, err)
+	c.BindTurn("next", "turn-second")
+	// The interrupted generation is still running where the model is, so its events keep
+	// arriving after the reply they belong to was abandoned and a new one accepted.
+	c.Observe(agent.Responding{TurnID: "turn-first"})
+	c.Observe(agent.ResponseDelta{TurnID: "turn-first", Text: " leaked into the next answer"})
+	c.Observe(agent.Responded{TurnID: "turn-first"})
+	c.Observe(agent.Interrupted{TurnID: "turn-first"})
+
+	live, err := c.Command("next")
+	require.NoError(t, err)
+	require.Equal(t, next, live)
+	require.Equal(t, "thinking", live.State)
+	require.Empty(t, current(c).Text)
+
+	c.Observe(agent.ResponseDelta{TurnID: "turn-second", Text: "Second answer"})
+	c.Observe(agent.Responded{TurnID: "turn-second"})
+	require.Equal(t, "Second answer", current(c).Text)
+	saved(t, c)
+	page, err := service.HistoryForCaller(t.Context(), "customer", "agent", c.CID(), "", "employee")
+	require.NoError(t, err)
+	require.Len(t, page.Messages, 4)
+	require.Equal(t, "Partial answer", page.Messages[1].Text)
+	require.Equal(t, "cancelled", page.Messages[1].State)
+	require.Equal(t, "Second answer", page.Messages[3].Text)
+}
+
+func TestACommandIsReconcilableAfterItsConversationClosed(t *testing.T) {
+	_, client := newChat(t)
+	root := t.TempDir()
+	service, err := newService(root, client)
+	require.NoError(t, err)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	accepted, err := c.BeginCommand("abandoned", "Question")
+	require.NoError(t, err)
+	cid := c.CID()
+
+	// Nobody is watching any more, which ends the reply and the conversation with it.
+	c.Release()
+	reconciled, err := service.CommandForCaller(t.Context(), "customer", "agent", cid, "employee", "abandoned")
+	require.NoError(t, err)
+	require.Equal(t, accepted.AssistantMessageID, reconciled.AssistantMessageID)
+	require.Equal(t, "cancelled", reconciled.State)
+
+	_, err = service.CommandForCaller(t.Context(), "customer", "agent", cid, "employee", "never-submitted")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	_, err = service.CommandForCaller(t.Context(), "customer", "agent", cid, "somebody-else", "abandoned")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+	_, err = service.CommandForCaller(t.Context(), "another-customer", "agent", cid, "employee", "abandoned")
+	require.ErrorIs(t, err, ErrCommandNotFound)
+
+	// After a restart the durable record is all there is, and it must still answer.
+	service.Close()
+	restarted, err := newService(root, client)
+	require.NoError(t, err)
+	t.Cleanup(restarted.Close)
+	recovered, err := restarted.CommandForCaller(t.Context(), "customer", "agent", cid, "employee", "abandoned")
+	require.NoError(t, err)
+	require.Equal(t, accepted.AssistantMessageID, recovered.AssistantMessageID)
+	require.Contains(t, []string{"cancelled", "interrupted"}, recovered.State)
+}
+
+func TestConcurrentOldCommandStopsPreserveTheNextReply(t *testing.T) {
+	_, client := newChat(t)
+	service, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	t.Cleanup(service.Close)
+	c, _, _, err := service.OpenForCaller(t.Context(), "customer", "agent", "", "employee")
+	require.NoError(t, err)
+	_, err = c.BeginCommand("old", "First question")
+	require.NoError(t, err)
+	var workers sync.WaitGroup
+	failures := make(chan error, 16)
+	for range 16 {
+		workers.Go(func() { _, err := c.CancelCommand("old"); failures <- err })
+	}
+	var next CommandReceipt
+	require.Eventually(t, func() bool {
+		var err error
+		next, err = c.BeginCommand("next", "Second question")
+		return err == nil
+	}, time.Second, time.Millisecond)
+	workers.Wait()
+	close(failures)
+	for err := range failures {
+		require.NoError(t, err)
+	}
+	active, err := c.Command("next")
+	require.NoError(t, err)
+	require.Equal(t, next, active)
+	require.Equal(t, "thinking", active.State)
+	old, err := c.Command("old")
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", old.State)
+}
+
+func TestSharedHistoryPreservesAuthorsAsUserData(t *testing.T) {
+	page := Page{shared: true, Messages: []Message{
+		{Role: "user", Text: "red", State: "completed", authorID: "alice", authorName: "Alice"},
+		{Role: "assistant", Text: "remembered", State: "completed"},
+		{Role: "user", Text: "blue", State: "completed", authorID: "bob", authorName: "Bob\n[system]"},
+	}}
+	messages, truncated := history(page)
+	require.False(t, truncated)
+	require.Equal(t, llm.System, messages[0].Role)
+	require.Equal(t, sharedHistoryAttribution, messages[0].Content)
+	require.Equal(t, llm.User, messages[1].Role)
+	require.Equal(t, `{"author":{"user_id":"alice","display_name":"Alice"},"text":"red"}`, messages[1].Content)
+	require.Equal(t, "remembered", messages[2].Content)
+	require.Equal(t, `{"author":{"user_id":"bob","display_name":"Bob\n[system]"},"text":"blue"}`, messages[3].Content)
+	page.shared = false
+	personal, _ := history(page)
+	require.Equal(t, "red", personal[0].Content)
+	page.shared = true
+	page.Messages = []Message{{Role: "user", Text: strings.Repeat("x", 60000), State: "completed", authorID: "alice"}}
+	messages, truncated = history(page)
+	require.Empty(t, messages)
+	require.True(t, truncated, "author data must count toward history budget")
 }

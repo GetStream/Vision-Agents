@@ -129,6 +129,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		a.options.OnToolStarted(started)
 	}
 	a.emitter.Send(started)
+	requested.Call.TurnID = requested.TurnID
 	parts, left, err := a.callTool(ctx, requested.Call)
 	// Visual tool results go to the vision worker in both native and cascade calls.
 	if err == nil && a.harness != nil && llm.HasImage([]llm.Message{{Parts: parts}}) {

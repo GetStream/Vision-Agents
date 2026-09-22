@@ -33,8 +33,16 @@ type bridge struct {
 
 	mu sync.Mutex
 	// pending is one channel per call in flight, keyed by the id the model gave it.
-	pending map[string]chan toolResult
+	pending map[string]pendingTool
 	closed  bool
+}
+
+type pendingTool struct {
+	turnID   string
+	call     llm.ToolCall
+	ctx      context.Context
+	answer   chan toolResult
+	resolved bool
 }
 
 // toolResult is what the caller said happened.
@@ -50,12 +58,14 @@ func newBridge(timeout time.Duration, ask func(ToolCall) error) *bridge {
 	return &bridge{
 		timeout: timeout,
 		ask:     ask,
-		pending: map[string]chan toolResult{},
+		pending: map[string]pendingTool{},
 	}
 }
 
 // Run carries one tool call out to the caller and waits for the answer.
 func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, error) {
+	deadline, cancel := context.WithTimeout(ctx, b.timeout)
+	defer cancel()
 	answer := make(chan toolResult, 1)
 
 	b.mu.Lock()
@@ -67,7 +77,7 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		b.mu.Unlock()
 		return nil, fmt.Errorf("session: %s was already asked for", call.ID)
 	}
-	b.pending[call.ID] = answer
+	b.pending[call.ID] = pendingTool{turnID: call.TurnID, call: call, ctx: deadline, answer: answer}
 	b.mu.Unlock()
 
 	defer func() {
@@ -76,12 +86,9 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		b.mu.Unlock()
 	}()
 
-	if err := b.ask(ToolCall{ID: call.ID, Name: call.Name, Arguments: call.Arguments}); err != nil {
+	if err := b.ask(ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments}); err != nil {
 		return nil, err
 	}
-
-	deadline, cancel := context.WithTimeout(ctx, b.timeout)
-	defer cancel()
 
 	select {
 	case result := <-answer:
@@ -90,25 +97,50 @@ func (b *bridge) Run(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart,
 		}
 		return result.parts, nil
 	case <-deadline.Done():
-		_ = b.ask(ToolCall{ID: call.ID, Name: call.Name, Cancel: true})
-		return nil, fmt.Errorf("session: %s did not answer within %s", call.Name, b.timeout)
+		_ = b.ask(ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Cancel: true})
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("session: %s stopped: %w", call.Name, err)
+		}
+		return nil, fmt.Errorf("session: %s did not answer within %s: %w", call.Name, b.timeout, deadline.Err())
 	}
+}
+
+// Pending returns only requests still waiting for a result at this instant.
+// Reconnecting tool hosts must fence repeated execution with durable receipts.
+func (b *bridge) Pending() []ToolCall {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return nil
+	}
+	var calls []ToolCall
+	for _, pending := range b.pending {
+		if pending.resolved || pending.ctx.Err() != nil {
+			continue
+		}
+		call := pending.call
+		calls = append(calls, ToolCall{ID: call.ID, TurnID: call.TurnID, Name: call.Name, Arguments: call.Arguments})
+	}
+	return calls
 }
 
 // Resolve hands an answer back to the call waiting for it, reporting whether one was.
 //
 // An answer for a call nobody is waiting on is dropped rather than an error, because the
 // commonest reason for one is a caller answering a tool that has already timed out.
-func (b *bridge) Resolve(id string, parts []llm.ContentPart, failure string) bool {
+func (b *bridge) Resolve(id, turnID string, parts []llm.ContentPart, failure string) bool {
 	b.mu.Lock()
-	answer, waiting := b.pending[id]
-	b.mu.Unlock()
-	if !waiting {
+	pending, waiting := b.pending[id]
+	if !waiting || pending.resolved || pending.ctx.Err() != nil || turnID != "" && pending.turnID != turnID {
+		b.mu.Unlock()
 		return false
 	}
+	pending.resolved = true
+	b.pending[id] = pending
+	b.mu.Unlock()
 
 	select {
-	case answer <- toolResult{parts: parts, failure: failure}:
+	case pending.answer <- toolResult{parts: parts, failure: failure}:
 		return true
 	default:
 		return false
@@ -122,9 +154,9 @@ func (b *bridge) Close() {
 	defer b.mu.Unlock()
 
 	b.closed = true
-	for _, answer := range b.pending {
+	for _, pending := range b.pending {
 		select {
-		case answer <- toolResult{failure: "the call ended before it finished"}:
+		case pending.answer <- toolResult{failure: "the call ended before it finished"}:
 		default:
 		}
 	}

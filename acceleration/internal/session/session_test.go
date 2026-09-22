@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
@@ -291,6 +292,13 @@ type SessionSuite struct {
 	// thinks routes the target a session defaults its thinking model to, for a test that
 	// wants delegation without naming anything.
 	thinks bool
+	// gated answers the conversation model instead of stubLLM, for a test that needs a
+	// reply it can hold open while something else happens to the session.
+	gated *gatedLLM
+	// conversations persists text commands, for a test that submits one, and outbox is
+	// where it writes them.
+	conversations *persistent.Service
+	outbox        string
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -303,6 +311,8 @@ func (s *SessionSuite) SetupTest() {
 	s.remembers = nil
 	s.records = nil
 	s.thinks = false
+	s.gated = nil
+	s.conversations = nil
 }
 
 // thinking is what the LLM router routes. A deployment that routes no high-quality model
@@ -340,6 +350,9 @@ func (s *SessionSuite) manages() {
 	reasoning.Register("stub", func(routing.Spec) (llmrouter.Provider, error) {
 		defer func() { opened++ }()
 		if opened == 0 {
+			if s.gated != nil {
+				return s.gated, nil
+			}
 			return s.model, nil
 		}
 		return &stubLLM{}, nil
@@ -372,12 +385,13 @@ func (s *SessionSuite) manages() {
 	}
 
 	manager, err := NewManager(ManagerOptions{
-		LLM:        reasoner,
-		STT:        transcriber,
-		TTS:        speaker,
-		Memory:     remembering,
-		Transcript: storing,
-		Logger:     logger,
+		LLM:           reasoner,
+		STT:           transcriber,
+		TTS:           speaker,
+		Memory:        remembering,
+		Transcript:    storing,
+		Conversations: s.conversations,
+		Logger:        logger,
 		Edge: func(Spec, *slog.Logger) (agent.Edge, error) {
 			edge := newQuietEdge()
 			s.edges = append(s.edges, edge)
@@ -955,8 +969,19 @@ func (s *SessionSuite) TestAWatcherSeesTheConversationAndStopsWhenItDetaches() {
 	s.Require().NotNil(<-events, "the watcher saw nothing")
 
 	detach()
-	_, open := <-events
-	s.False(open, "detaching left the channel open")
+	// Closing a buffered channel preserves events already queued by Say. Drain
+	// those before checking closure; a queued event is not evidence of an open channel.
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case _, open := <-events:
+			if !open {
+				return
+			}
+		case <-deadline:
+			s.FailNow("detaching left the channel open")
+		}
+	}
 }
 
 func (s *SessionSuite) TestACallersToolIsAskedForAndItsAnswerReachesTheModel() {
@@ -1021,7 +1046,103 @@ func (s *SessionSuite) TestAToolNobodyAnswersGivesUpRatherThanHangingTheTurn() {
 
 	s.Require().Error(err)
 	s.ErrorContains(err, "did not answer")
+	s.ErrorIs(err, context.DeadlineExceeded)
 	s.Require().NotNil(awaitToolCall(events), "the caller was never asked in the first place")
+}
+
+func (s *SessionSuite) TestToolCancellationRetainsTheInterruptedTurn() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(chan ToolCall, 2)
+	tools := newBridge(time.Second, func(call ToolCall) error { events <- call; return nil })
+	finished := make(chan error, 1)
+	go func() {
+		_, err := tools.Run(ctx, llm.ToolCall{ID: "call-one", TurnID: "turn-one", Name: "lookup_order", Arguments: "{}"})
+		finished <- err
+	}()
+	select {
+	case requested := <-events:
+		s.False(requested.Cancel)
+	case <-time.After(time.Second):
+		s.FailNow("tool request was not emitted")
+	}
+	cancel()
+	select {
+	case stopped := <-events:
+		s.True(stopped.Cancel)
+		s.Equal("call-one", stopped.ID)
+		s.Equal("turn-one", stopped.TurnID)
+	case <-time.After(time.Second):
+		s.FailNow("tool cancellation was not emitted")
+	}
+	err := <-finished
+	s.ErrorIs(err, context.Canceled)
+	s.NotContains(err.Error(), "did not answer")
+	s.False(tools.Resolve("call-one", "turn-one", nil, ""), "a cancelled call must not accept a late result")
+}
+
+func (s *SessionSuite) TestReconnectedVoiceToolHostReceivesOnlyPendingRequests() {
+	s.manages()
+	created := s.joins(Spec{Tools: []harness.Tool{{Name: "lookup_order", Description: "find an order"}}})
+	first, detach := created.Watch()
+	finished := make(chan error, 1)
+	go func() {
+		_, err := created.tools.Run(s.ctx, llm.ToolCall{ID: "pending-one", TurnID: "turn-one", Name: "lookup_order", Arguments: `{"order":"12"}`})
+		finished <- err
+	}()
+	request := awaitToolCall(first)
+	s.Require().NotNil(request)
+	detach()
+	// Ordinary status connections must not solicit work from a late client.
+	ordinary, stopOrdinary := created.Watch()
+	defer stopOrdinary()
+	select {
+	case event := <-ordinary:
+		_, tool := event.(ToolCall)
+		s.False(tool)
+	default:
+	}
+	reconnected, stop := created.WatchPendingVoiceTools()
+	defer stop()
+	replayed := awaitToolCall(reconnected)
+	s.Require().NotNil(replayed)
+	s.Equal(*request, *replayed)
+	s.False(created.ResolveTurnTool(replayed.ID, "wrong-turn", llm.TextParts("wrong result"), ""))
+	s.True(created.ResolveTurnTool(replayed.ID, replayed.TurnID, llm.TextParts("saved result"), ""))
+	s.NoError(<-finished)
+	s.Empty(created.tools.Pending(), "resolved operations must not replay")
+	late, stopLate := created.WatchPendingVoiceTools()
+	defer stopLate()
+	select {
+	case event := <-late:
+		_, tool := event.(ToolCall)
+		s.False(tool, "completed request replayed")
+	default:
+	}
+}
+
+func (s *SessionSuite) TestCancelledAndExpiredToolsAreNotPending() {
+	for _, expired := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(context.Background())
+		asked := make(chan ToolCall, 2)
+		timeout := time.Second
+		if expired {
+			timeout = 10 * time.Millisecond
+		}
+		tools := newBridge(timeout, func(call ToolCall) error { asked <- call; return nil })
+		finished := make(chan error, 1)
+		go func() {
+			_, err := tools.Run(ctx, llm.ToolCall{ID: "pending", TurnID: "turn", Name: "lookup_order"})
+			finished <- err
+		}()
+		<-asked
+		if !expired {
+			cancel()
+		}
+		s.Error(<-finished)
+		s.Empty(tools.Pending())
+		cancel()
+	}
 }
 
 func (s *SessionSuite) TestAnAnswerToAToolNobodyIsWaitingOnIsDropped() {

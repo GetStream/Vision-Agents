@@ -1376,3 +1376,32 @@ reject callbacks, transcription URLs, audio over 8 MiB and text over 16,000
 characters; the request's cancellation propagates and execution is bounded to
 90 seconds. Existing asynchronous recording behavior is unchanged. In Go use
 `Recorded{Audio: clip, Inline: true}` or `TTS().InlineRecording(...)`.
+
+## Durable session commands
+
+Personal persistent text sessions require a caller-generated `command_id` when
+responding. Send `{ "command_id": "request-123", "text": "Hello" }` to
+`POST /v1/agents/sessions/{id}/respond`, or include those fields in a WebSocket
+`respond` frame. Retrying the same ID and text returns the existing receipt without
+starting another inference; changing the text returns a conflict. Read receipts at
+`GET /v1/agents/sessions/{id}/commands/{command_id}` or, after the session closes,
+`GET /v1/agents/conversations/{cid}/commands/{command_id}`. These REST operations
+remain server-side and enforce conversation access.
+
+`POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt` stops only the named
+command. A late stop returns its terminal receipt without cancelling a newer turn.
+Receipts and pending Chat writes share atomic local snapshots. One service owns an
+outbox directory at a time; use persistent storage for restart recovery. Interrupted
+work is reported after restart, never automatically executed again. This is not an
+exactly-once guarantee for external tool side effects.
+
+Shared conversation history preserves stored authors and checks current membership.
+The restored author labels are untrusted conversational context, not authorization.
+Session skill entries may carry an optional `revision` selected by the application's
+authorized registry; the runtime does not grant permissions based on that field.
+
+A reconnecting voice tool host may set `replay_pending_tools=true` on the session
+WebSocket. Pending requests retain their tool and turn IDs; replies must echo the
+bindings supplied with the request. Replays can duplicate live delivery, so the host
+must retain execution receipts and avoid repeating uncertain writes. Ordinary event
+watchers should leave replay disabled.

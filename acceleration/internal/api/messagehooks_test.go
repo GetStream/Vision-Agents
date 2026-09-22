@@ -152,6 +152,21 @@ func (s *MessageHookSuite) TestSomethingSomebodyTypedToAnAgentIsAddressedToIt() 
 	s.True(addressed(s.written(typed)))
 }
 
+func (s *MessageHookSuite) TestSessionCommandChannelsNeverTriggerFromChatWebhooks() {
+	const channel = "support-5a99bf2a-5e42-4d07-9891-798744f18a35"
+	body := strings.ReplaceAll(typed, "call-1", channel)
+	// A valid signed delivery without a source marker is still acknowledged but
+	// excluded from routing, whether this is its first delivery or a retry.
+	for range 2 {
+		s.Equal(http.StatusOK, s.deliver(s.handler, body).Code)
+		s.False(addressed(s.written(body)))
+	}
+	for _, custom := range []string{`{"source":""}`, `{"support_trigger":"webhook"}`} {
+		forged := strings.Replace(body, `"id": "message-1",`, `"id": "message-1", "custom": `+custom+`,`, 1)
+		s.False(addressed(s.written(forged)))
+	}
+}
+
 func (s *MessageHookSuite) TestAMessageOutsideAnAgentChannelIsNotAddressedToOne() {
 	// Every message in the app arrives here, and a team's own channel is not a way to
 	// reach an agent.

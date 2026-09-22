@@ -18,6 +18,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -54,21 +56,33 @@ type scriptedLLM struct {
 	calls []llm.ToolCall
 	asked []llm.ResponseParams
 	sees  bool
+	// held, when set, makes each reply wait for the test to let it through, which is what
+	// stopping a command mid-answer needs.
+	held chan struct{}
 }
 
 func (s *scriptedLLM) Start(context.Context) error { return nil }
 
-func (s *scriptedLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
+func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.turns++
 	s.asked = append(s.asked, params)
 	first := s.turns == 1
 	reply := s.reply
+	held := s.held
 	var calls []llm.ToolCall
 	if first {
 		calls = append([]llm.ToolCall(nil), s.calls...)
 	}
 	s.mu.Unlock()
+
+	if held != nil {
+		select {
+		case <-held:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 
 	script := llmtest.New(llm.StreamOptions{
 		ResponseID: params.ID,
@@ -172,10 +186,12 @@ func routableConfig() routing.ModalityConfig {
 type SessionAPISuite struct {
 	suite.Suite
 
-	server *httptest.Server
-	model  *scriptedLLM
-	vision *scriptedLLM
-	voice  *recordingTTS
+	server        *httptest.Server
+	model         *scriptedLLM
+	vision        *scriptedLLM
+	voice         *recordingTTS
+	conversations *conversation.Service
+	outbox        string
 }
 
 func TestSessionAPISuite(t *testing.T) {
@@ -224,11 +240,17 @@ func (s *SessionAPISuite) SetupTest() {
 	s.Require().NoError(err)
 	s.T().Cleanup(speaker.Close)
 
+	s.outbox = s.T().TempDir()
+	s.conversations, err = conversation.NewForChat(s.outbox, chattest.Client(s.T()))
+	s.Require().NoError(err)
+	s.T().Cleanup(s.conversations.Close)
+
 	sessions, err := session.NewManager(session.ManagerOptions{
-		LLM:    reasoner,
-		STT:    transcriber,
-		TTS:    speaker,
-		Logger: logger,
+		LLM:           reasoner,
+		STT:           transcriber,
+		TTS:           speaker,
+		Conversations: s.conversations,
+		Logger:        logger,
 		Edge: func(session.Spec, *slog.Logger) (agent.Edge, error) {
 			return &silentEdge{inbound: make(chan agent.InboundAudio, 4)}, nil
 		},
@@ -512,6 +534,30 @@ func (s *SessionAPISuite) TestTheSocketAsksTheCallerToRunItsOwnToolsAndUsesTheAn
 	s.Empty(ran["error"])
 }
 
+func (s *SessionAPISuite) TestVoiceToolReplayRequiresOptInAndRetainsTheRequest() {
+	s.model.calls = []llm.ToolCall{{ID: "pending-replay", Name: "lookup_order", Arguments: `{"order":"12"}`}}
+	created := s.creates(CreateSessionRequest{CallId: callID("pending-replay"), Tools: &[]SessionTool{{Name: "lookup_order", Description: "find an order"}}})
+	first := s.watches(created.Id, "acme")
+	s.send(http.MethodPost, "/v1/agents/sessions/"+created.Id+"/respond", "acme", SayRequest{Text: "where is my order"})
+	asked := s.await(first, "tool_call")
+	s.Require().NoError(first.Close())
+	address := "ws" + strings.TrimPrefix(s.server.URL, "http") + "/v1/agents/sessions/" + created.Id + "/events?replay_pending_tools=true"
+	_, denied, err := websocket.DefaultDialer.Dial(address, http.Header{CustomerHeader: []string{"another-customer"}})
+	s.Require().Error(err)
+	s.Require().NotNil(denied)
+	s.Equal(http.StatusNotFound, denied.StatusCode)
+	denied.Body.Close()
+	reconnected, _, err := websocket.DefaultDialer.Dial(address, http.Header{CustomerHeader: []string{"acme"}})
+	s.Require().NoError(err)
+	defer reconnected.Close()
+	replayed := s.await(reconnected, "tool_call")
+	s.Equal(asked, replayed)
+	s.Require().NotEmpty(replayed["turn_id"])
+	s.Require().NoError(reconnected.WriteJSON(map[string]any{"type": "tool_result", "tool_call_id": replayed["id"], "turn_id": replayed["turn_id"], "output": "saved receipt"}))
+	ran := s.await(reconnected, "tool_ran")
+	s.Equal("saved receipt", ran["result"])
+}
+
 func (s *SessionAPISuite) TestAToolTheCallerCouldNotRunIsToldToTheModelInWords() {
 	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: "{}"}}
 	created := s.creates(CreateSessionRequest{
@@ -707,6 +753,17 @@ func (s *SessionAPISuite) TestATextSessionTakesItsSkillsAndKnowledgeFromItsConfi
 	s.Equal([]string{"explain"}, spec.SkillNames)
 	s.Equal("docs", spec.KnowledgeNamespace)
 	s.Equal("config-subagent", spec.SubagentTarget, "and there is somebody to hand work to")
+}
+
+func (s *SessionAPISuite) TestACallerSelectedSkillKeepsItsImmutableRevision() {
+	revision := int64(7)
+	selected := []SessionSkill{{Name: "focus", Description: "Focus check", Instructions: "Return the verification codeword.", Revision: &revision}}
+	text := true
+	spec := specOf(CreateSessionRequest{Text: &text, Skills: &selected}, "acme", nil)
+	s.Require().NotNil(spec.Skills)
+	s.Require().Len(spec.Skills.Skills, 1)
+	s.Equal(int64(7), spec.Skills.Skills[0].Revision)
+	s.Equal("focus", spec.Skills.Skills[0].Name)
 }
 
 func (s *SessionAPISuite) TestNamingAConfigWithoutADatabaseIsRefused() {

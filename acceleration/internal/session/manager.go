@@ -91,6 +91,9 @@ type ManagerOptions struct {
 	// already verifies Stream's inbound hooks, so a customer asking to decide for
 	// themselves has the key to check it with and there is no second secret to store.
 	WebhookSecret string
+	// Conversations is optional, and is the persistent text store a caller already holds.
+	// Without one the manager opens its own over the configured outbox directory.
+	Conversations *persistent.Service
 
 	Store  *store.Store
 	Live   *live.Client
@@ -131,9 +134,10 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		options:  options,
-		logger:   options.Logger,
-		sessions: map[string]*Session{},
+		options:       options,
+		logger:        options.Logger,
+		sessions:      map[string]*Session{},
+		conversations: options.Conversations,
 	}
 	if options.Store != nil {
 		manager.logs = newLogRecorder(options.Store, options.Logger)
@@ -198,7 +202,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			return nil, err
 		}
 		var truncated bool
-		conv, previous, truncated, err = service.Open(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
+		conv, previous, truncated, err = service.OpenForCallerWithVoice(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID, memory.Scope{AppID: spec.Memory.AppID, UserID: spec.Memory.UserID, Extra: spec.Memory.Filter})
 		if err != nil {
 			return nil, err
 		}
@@ -211,8 +215,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		// carries on from what was said while the transcripts stay separate. The parent's
 		// half goes first because it happened first.
 		if spec.Recall != nil {
-			recalled, cut, err := service.Recall(ctx, spec.CustomerID,
-				spec.Recall.AgentID, spec.Recall.ConversationID)
+			recalled, cut, err := service.ContextForCaller(ctx, spec.CustomerID,
+				spec.Recall.AgentID, spec.Recall.ConversationID, spec.Caller.UserID)
 			if err != nil {
 				conv.Release()
 				return nil, fmt.Errorf("session: reading the conversation being forked: %w", err)
@@ -225,6 +229,17 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 				conv.Release()
 			}
 		}()
+	} else if spec.ConversationID != "" {
+		service, err := m.Conversations()
+		if err != nil {
+			return nil, err
+		}
+		var truncated bool
+		previous, truncated, err = service.ContextForCaller(ctx, spec.CustomerID, spec.AgentID, spec.ConversationID, spec.Caller.UserID, spec.UserID)
+		if err != nil {
+			return nil, err
+		}
+		spec.ContextTruncated = truncated
 	}
 	m.supersede(spec)
 	m.think(ctx, &spec)
@@ -391,8 +406,13 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}
 
+	if conv == nil && spec.ConversationID != "" {
+		m.logger.Info("restored conversation history into the voice session",
+			"call", spec.CallID, "conversation", spec.ConversationID,
+			"turns", len(previous), "truncated", spec.ContextTruncated)
+	}
+	created.voiceAgent.RestoreHistory(previous)
 	if conv != nil {
-		created.voiceAgent.RestoreHistory(previous)
 		conv.Attach(func(update persistent.Updated) { created.broadcast(update) })
 		created.closers = append(created.closers, conv.Release)
 	}
@@ -821,7 +841,8 @@ func (m *Manager) Shutdown() error {
 		m.records.Close()
 		m.logs.close()
 	}
-	if m.conversations != nil {
+	// A conversation store the caller passed in outlives this manager.
+	if m.conversations != nil && m.options.Conversations == nil {
 		m.conversations.Close()
 	}
 	return errors.Join(failures...)

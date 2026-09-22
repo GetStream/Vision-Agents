@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -8,68 +8,42 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.command_receipt import CommandReceipt
 from ...models.error import Error
-from ...models.respond_request import RespondRequest
 from ...types import Response
 
 
 def _get_kwargs(
     id: str,
-    *,
-    body: RespondRequest,
+    command_id: str,
 ) -> dict[str, Any]:
-    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
-        "method": "post",
-        "url": "/v1/agents/sessions/{id}/respond".format(
+        "method": "get",
+        "url": "/v1/agents/sessions/{id}/commands/{command_id}".format(
             id=quote(str(id), safe=""),
+            command_id=quote(str(command_id), safe=""),
         ),
     }
 
-    _kwargs["json"] = body.to_dict()
-
-    headers["Content-Type"] = "application/json"
-
-    _kwargs["headers"] = headers
     return _kwargs
 
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Any | CommandReceipt | Error | None:
+) -> CommandReceipt | Error | None:
     if response.status_code == 200:
         response_200 = CommandReceipt.from_dict(response.json())
 
         return response_200
-
-    if response.status_code == 204:
-        response_204 = cast(Any, None)
-        return response_204
-
-    if response.status_code == 400:
-        response_400 = Error.from_dict(response.json())
-
-        return response_400
 
     if response.status_code == 401:
         response_401 = Error.from_dict(response.json())
 
         return response_401
 
-    if response.status_code == 403:
-        response_403 = Error.from_dict(response.json())
-
-        return response_403
-
     if response.status_code == 404:
         response_404 = Error.from_dict(response.json())
 
         return response_404
-
-    if response.status_code == 409:
-        response_409 = Error.from_dict(response.json())
-
-        return response_409
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -79,7 +53,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Any | CommandReceipt | Error]:
+) -> Response[CommandReceipt | Error]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -90,27 +64,31 @@ def _build_response(
 
 def sync_detailed(
     id: str,
+    command_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RespondRequest,
-) -> Response[Any | CommandReceipt | Error]:
-    """Answer a piece of text through the model, as though it had been said
+) -> Response[CommandReceipt | Error]:
+    """What is known about one durable command
+
+     Reads a command's receipt without accepting, running or stopping anything. It is how a client whose
+    stop or submission had an unknown outcome reconciles the same command id rather than inventing
+    another one.
 
     Args:
         id (str):
-        body (RespondRequest):
+        command_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | CommandReceipt | Error]
+        Response[CommandReceipt | Error]
     """
 
     kwargs = _get_kwargs(
         id=id,
-        body=body,
+        command_id=command_id,
     )
 
     response = client.get_httpx_client().request(
@@ -122,54 +100,62 @@ def sync_detailed(
 
 def sync(
     id: str,
+    command_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RespondRequest,
-) -> Any | CommandReceipt | Error | None:
-    """Answer a piece of text through the model, as though it had been said
+) -> CommandReceipt | Error | None:
+    """What is known about one durable command
+
+     Reads a command's receipt without accepting, running or stopping anything. It is how a client whose
+    stop or submission had an unknown outcome reconciles the same command id rather than inventing
+    another one.
 
     Args:
         id (str):
-        body (RespondRequest):
+        command_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | CommandReceipt | Error
+        CommandReceipt | Error
     """
 
     return sync_detailed(
         id=id,
+        command_id=command_id,
         client=client,
-        body=body,
     ).parsed
 
 
 async def asyncio_detailed(
     id: str,
+    command_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RespondRequest,
-) -> Response[Any | CommandReceipt | Error]:
-    """Answer a piece of text through the model, as though it had been said
+) -> Response[CommandReceipt | Error]:
+    """What is known about one durable command
+
+     Reads a command's receipt without accepting, running or stopping anything. It is how a client whose
+    stop or submission had an unknown outcome reconciles the same command id rather than inventing
+    another one.
 
     Args:
         id (str):
-        body (RespondRequest):
+        command_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Any | CommandReceipt | Error]
+        Response[CommandReceipt | Error]
     """
 
     kwargs = _get_kwargs(
         id=id,
-        body=body,
+        command_id=command_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -179,28 +165,32 @@ async def asyncio_detailed(
 
 async def asyncio(
     id: str,
+    command_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: RespondRequest,
-) -> Any | CommandReceipt | Error | None:
-    """Answer a piece of text through the model, as though it had been said
+) -> CommandReceipt | Error | None:
+    """What is known about one durable command
+
+     Reads a command's receipt without accepting, running or stopping anything. It is how a client whose
+    stop or submission had an unknown outcome reconciles the same command id rather than inventing
+    another one.
 
     Args:
         id (str):
-        body (RespondRequest):
+        command_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Any | CommandReceipt | Error
+        CommandReceipt | Error
     """
 
     return (
         await asyncio_detailed(
             id=id,
+            command_id=command_id,
             client=client,
-            body=body,
         )
     ).parsed

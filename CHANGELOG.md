@@ -2,6 +2,8 @@
 
 ## Breaking Changes
 
+- Personal persistent text sessions now require a caller-generated `command_id` for responses, enabling safe retries and named cancellation.
+
 ### `ROUTER_AUTH_MODE` defaults to `api_key`, and `noauth` has been split in two
 
 The old `noauth` did two unrelated jobs: it trusted the headers a proxy set, and it was
@@ -276,6 +278,9 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 `description`.
 
 ## New Features
+
+- Persistent session commands expose durable receipts, duplicate detection, named cancellation and restart reconciliation. Shared history retains author identity and enforces current membership.
+- Voice tool hosts can opt into replaying pending requests with turn-bound results. Session skills accept application-selected revision metadata.
 
 - Optional Meta Muse Spark provider using the shared OpenAI-compatible transport.
   Direct DeepSeek routes can configure thinking and reasoning effort per model,

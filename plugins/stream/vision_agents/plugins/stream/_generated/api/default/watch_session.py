@@ -15,6 +15,7 @@ def _get_kwargs(
     *,
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
+    replay_pending_tools: bool | Unset = False,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -22,6 +23,8 @@ def _get_kwargs(
     params["interim"] = interim
 
     params["decisions"] = decisions
+
+    params["replay_pending_tools"] = replay_pending_tools
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -76,6 +79,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
+    replay_pending_tools: bool | Unset = False,
 ) -> Response[Any | Error]:
     """Watch the conversation and answer the model's tool calls
 
@@ -87,21 +91,38 @@ def sync_detailed(
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
     `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
-    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
-    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
-    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
-    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
-    includes tool_call_id.
+    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
+    tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
+    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
+    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
+    started_at; tool_ran also includes tool_call_id.
+    A respond command carrying command_id emits command_accepted with a nested command receipt
+    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
+    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
+    After restart an interrupted command is reported, not rerun.
+    An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its
+    terminal receipt. A stop arriving after its command finished replays that command's receipt and
+    leaves the command running now alone; an unknown command is reported as an error. Without
+    `command_id` the frame stops whichever reply is current, which is what a caller with no command to
+    name means by it.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
     Two frames are only sent when asked for, because they are far more frequent than the rest and most
     consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives
     rather than a settled turn. `decisions=false` drops `decision`.
-    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
-    `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
-    answered: everything else is a report.
+    `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still
+    awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded
+    at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host
+    must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
+    should leave this disabled. Persistent text command recovery is unchanged.
+    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
+    (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call`
+    is the only frame that must be answered: everything else is a report. Tool calls made by durable
+    personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
+    cannot be adopted by another command or turn.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -114,6 +135,7 @@ def sync_detailed(
         id (str):
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
+        replay_pending_tools (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -127,6 +149,7 @@ def sync_detailed(
         id=id,
         interim=interim,
         decisions=decisions,
+        replay_pending_tools=replay_pending_tools,
     )
 
     response = client.get_httpx_client().request(
@@ -142,6 +165,7 @@ def sync(
     client: AuthenticatedClient | Client,
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
+    replay_pending_tools: bool | Unset = False,
 ) -> Any | Error | None:
     """Watch the conversation and answer the model's tool calls
 
@@ -153,21 +177,38 @@ def sync(
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
     `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
-    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
-    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
-    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
-    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
-    includes tool_call_id.
+    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
+    tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
+    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
+    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
+    started_at; tool_ran also includes tool_call_id.
+    A respond command carrying command_id emits command_accepted with a nested command receipt
+    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
+    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
+    After restart an interrupted command is reported, not rerun.
+    An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its
+    terminal receipt. A stop arriving after its command finished replays that command's receipt and
+    leaves the command running now alone; an unknown command is reported as an error. Without
+    `command_id` the frame stops whichever reply is current, which is what a caller with no command to
+    name means by it.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
     Two frames are only sent when asked for, because they are far more frequent than the rest and most
     consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives
     rather than a settled turn. `decisions=false` drops `decision`.
-    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
-    `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
-    answered: everything else is a report.
+    `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still
+    awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded
+    at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host
+    must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
+    should leave this disabled. Persistent text command recovery is unchanged.
+    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
+    (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call`
+    is the only frame that must be answered: everything else is a report. Tool calls made by durable
+    personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
+    cannot be adopted by another command or turn.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -180,6 +221,7 @@ def sync(
         id (str):
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
+        replay_pending_tools (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,6 +236,7 @@ def sync(
         client=client,
         interim=interim,
         decisions=decisions,
+        replay_pending_tools=replay_pending_tools,
     ).parsed
 
 
@@ -203,6 +246,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
+    replay_pending_tools: bool | Unset = False,
 ) -> Response[Any | Error]:
     """Watch the conversation and answer the model's tool calls
 
@@ -214,21 +258,38 @@ async def asyncio_detailed(
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
     `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
-    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
-    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
-    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
-    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
-    includes tool_call_id.
+    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
+    tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
+    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
+    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
+    started_at; tool_ran also includes tool_call_id.
+    A respond command carrying command_id emits command_accepted with a nested command receipt
+    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
+    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
+    After restart an interrupted command is reported, not rerun.
+    An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its
+    terminal receipt. A stop arriving after its command finished replays that command's receipt and
+    leaves the command running now alone; an unknown command is reported as an error. Without
+    `command_id` the frame stops whichever reply is current, which is what a caller with no command to
+    name means by it.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
     Two frames are only sent when asked for, because they are far more frequent than the rest and most
     consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives
     rather than a settled turn. `decisions=false` drops `decision`.
-    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
-    `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
-    answered: everything else is a report.
+    `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still
+    awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded
+    at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host
+    must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
+    should leave this disabled. Persistent text command recovery is unchanged.
+    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
+    (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call`
+    is the only frame that must be answered: everything else is a report. Tool calls made by durable
+    personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
+    cannot be adopted by another command or turn.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -241,6 +302,7 @@ async def asyncio_detailed(
         id (str):
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
+        replay_pending_tools (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -254,6 +316,7 @@ async def asyncio_detailed(
         id=id,
         interim=interim,
         decisions=decisions,
+        replay_pending_tools=replay_pending_tools,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -267,6 +330,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     interim: bool | Unset = False,
     decisions: bool | Unset = True,
+    replay_pending_tools: bool | Unset = False,
 ) -> Any | Error | None:
     """Watch the conversation and answer the model's tool calls
 
@@ -278,21 +342,38 @@ async def asyncio(
     `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`,
     `conversation_compacted`, `error` and `left`.
     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete
-    message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at,
-    duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has
-    tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at,
-    finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed
-    and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also
-    includes tool_call_id.
+    message snapshot: id, command_id, question_id, role, text, state, response_started_at,
+    state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each
+    tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at,
+    execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools,
+    writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and
+    started_at; tool_ran also includes tool_call_id.
+    A respond command carrying command_id emits command_accepted with a nested command receipt
+    (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text
+    sessions require this ID. A retry with the same text returns the existing IDs without invoking the
+    model again; reuse with different text emits an error. Commands with IDs currently accept text only.
+    After restart an interrupted command is reported, not rerun.
+    An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its
+    terminal receipt. A stop arriving after its command finished replays that command's receipt and
+    leaves the command running now alone; an unknown command is reported as an error. Without
+    `command_id` the frame stops whichever reply is current, which is what a caller with no command to
+    name means by it.
     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent.
     Together they are why the call went the way it did, and they are also written down, so a finished
     call replays them from `/v1/agents/calls/{id}/events`.
     Two frames are only sent when asked for, because they are far more frequent than the rest and most
     consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives
     rather than a settled turn. `decisions=false` drops `decision`.
-    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`,
-    `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be
-    answered: everything else is a report.
+    `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still
+    awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded
+    at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host
+    must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers
+    should leave this disabled. Persistent text command recovery is unchanged.
+    The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`
+    (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call`
+    is the only frame that must be answered: everything else is a report. Tool calls made by durable
+    personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result
+    cannot be adopted by another command or turn.
     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has
     an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`,
     `low` or `high`. One socket message is at most 5 MB.
@@ -305,6 +386,7 @@ async def asyncio(
         id (str):
         interim (bool | Unset):  Default: False.
         decisions (bool | Unset):  Default: True.
+        replay_pending_tools (bool | Unset):  Default: False.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -320,5 +402,6 @@ async def asyncio(
             client=client,
             interim=interim,
             decisions=decisions,
+            replay_pending_tools=replay_pending_tools,
         )
     ).parsed
