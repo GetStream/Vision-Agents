@@ -158,7 +158,7 @@ func (s *CallHookSuite) TestAVideoCallIsNotTreatedAsAnArrivingPhoneCall() {
 	s.Equal(http.StatusOK, recorder.Code)
 }
 
-func (s *CallHookSuite) TestAnEventTheHookDoesNotActOnIsAccepted() {
+func (s *CallHookSuite) TestASessionEndedEventWithoutPhoneWiredIsAccepted() {
 	ended := `{"type":"call.session_ended","call_cid":"default:phone-+15125551234",` +
 		`"session_id":"session-1","created_at":"2026-08-27T12:05:00Z",` +
 		`"call":{"cid":"default:phone-+15125551234","id":"phone-+15125551234","type":"default","custom":{}}}`

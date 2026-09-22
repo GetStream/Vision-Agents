@@ -271,6 +271,21 @@ type CallBridge struct {
 	ExpiresAt time.Time `bun:"expires_at,notnull"`
 }
 
+// CallResource is the Stream SIP trunk and routing rule one outbound leg was given, kept so
+// the call.session_ended hook knows what to delete once the call ends.
+type CallResource struct {
+	bun.BaseModel `bun:"table:call_resources,alias:cr"`
+
+	// TrunkID is the Stream SIP trunk this call leg was given, and the row's identity: a
+	// call may own several, its own plus one per transfer into it.
+	TrunkID    string    `bun:"trunk_id,pk"`
+	RouteID    string    `bun:"route_id,notnull"`
+	CallType   string    `bun:"call_type,notnull"`
+	CallID     string    `bun:"call_id,notnull"`
+	CustomerID string    `bun:"customer_id,notnull"`
+	CreatedAt  time.Time `bun:"created_at,notnull"`
+}
+
 // AgentConfig is a named set of the decisions a session is created with.
 //
 // It holds only what a caller would otherwise repeat on every call. Everything that is
