@@ -1033,6 +1033,10 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- LLM WebSockets preserve tool-call IDs, arguments, provider signatures and correlated
+  tool results when replaying conversation history. Completion frames retain the
+  incomplete reason, and malformed tool history is rejected before reaching the model.
+
 - Chat readers are explicitly added to existing agent channels before their token is
   issued, so opening a members-only transcript no longer fails with `ReadChannel`.
 

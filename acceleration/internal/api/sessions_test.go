@@ -720,7 +720,61 @@ func (s *SessionAPISuite) streamLLM() *websocket.Conn {
 	var started map[string]any
 	s.Require().NoError(connection.ReadJSON(&started))
 	s.Equal("started", started["type"])
+	s.Equal(true, started["tool_history"])
 	return connection
+}
+
+func (s *SessionAPISuite) TestToolCallHistoryRoundTripsOnTheStream() {
+	s.model.calls = []llm.ToolCall{
+		{ID: "call-1", Name: "read", Arguments: `{"path":"report.txt"}`, Signature: "opaque"},
+		{ID: "call-2", Name: "read", Arguments: `{"path":"notes.txt"}`},
+	}
+	connection := s.streamLLM()
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "respond", "id": "r1",
+		"messages": []map[string]any{{"role": "user", "content": "Read the report and notes."}},
+	}))
+	complete := s.await(connection, "complete")
+	calls, ok := complete["tool_calls"].([]any)
+	s.Require().True(ok)
+	s.Require().Len(calls, 2)
+	s.Equal("opaque", calls[0].(map[string]any)["signature"])
+
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "respond", "id": "r2",
+		"messages": []map[string]any{
+			{"role": "user", "content": "Read the report and notes."},
+			{"role": "assistant", "content": nil, "tool_calls": calls},
+			{"role": "tool", "tool_call_id": "call-1", "content": "Report contents."},
+			{"role": "tool", "tool_call_id": "call-2", "content": "Notes contents."},
+		},
+	}))
+	s.Equal("r2", s.await(connection, "complete")["id"])
+	requests := s.model.requests()
+	s.Require().Len(requests, 2)
+	s.Equal([]llm.Message{
+		{Role: llm.User, Content: "Read the report and notes."},
+		{Role: llm.Assistant, ToolCalls: s.model.calls},
+		{Role: llm.ToolResult, ToolCallID: "call-1", Content: "Report contents."},
+		{Role: llm.ToolResult, ToolCallID: "call-2", Content: "Notes contents."},
+	}, requests[1].Input)
+}
+
+func (s *SessionAPISuite) TestMalformedToolHistoryDoesNotBreakTheStream() {
+	connection := s.streamLLM()
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "respond", "id": "invalid",
+		"messages": []map[string]any{{"role": "tool", "content": "Missing a call ID."}},
+	}))
+	s.Contains(fmtString(s.await(connection, "error")["error"]), "tool_call_id")
+	s.Empty(s.model.requests())
+
+	s.Require().NoError(connection.WriteJSON(map[string]any{
+		"type": "respond", "id": "valid",
+		"messages": []map[string]any{{"role": "user", "content": "Hello."}},
+	}))
+	s.Equal("valid", s.await(connection, "complete")["id"])
+	s.Len(s.model.requests(), 1)
 }
 
 func (s *SessionAPISuite) TestAPlainStringContentStillRoundTripsOnTheStream() {

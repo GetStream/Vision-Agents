@@ -1237,6 +1237,20 @@ off it. Those, and the three agent-log handlers excluded for the same reason, ar
 that list and this map disagree, because an operation the spec cannot see is the one place a
 default that refuses by default could fail open.
 
+## Tool history on the LLM socket
+
+`/v1/llm/stream` advertises `tool_history: true` in its `started` frame. To continue
+after a tool call, replay the assistant message with `tool_calls: [{id, name,
+arguments, signature}]`, followed by `role: tool` messages whose `tool_call_id`
+matches the call they answer. `arguments` is a JSON-encoded string; `signature` is
+optional opaque provider state and must be preserved when present. An assistant
+message containing only tool calls may omit `content` or set it to `null`.
+
+The `complete` frame returns the same tool-call fields for replay and includes
+`incomplete_reason` when the model could not finish, such as `max_output_tokens`.
+Malformed tool history produces an `error` frame; the socket remains available for
+a corrected request.
+
 ## Design notes
 
 - **The core knows nothing about modalities.** `routing.Router[P]` resolves a target, ranks
