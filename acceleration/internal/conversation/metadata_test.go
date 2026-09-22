@@ -230,3 +230,20 @@ func TestStoredArtifactReceiptsPublishNativeChatAttachments(t *testing.T) {
 	require.Contains(t, string(encoded), `"type":"athena_canvas"`)
 	require.NotContains(t, string(encoded), "sha256")
 }
+
+func TestImageActivityExposesOnlySafeStatus(t *testing.T) {
+	for _, status := range []string{"running", "completed", "failed", "cancelled"} {
+		metadata, err := metadataOf(Message{State: "tools", Sequence: 1, Tools: []Tool{{ID: "image-call", Name: "athena_save_image", Status: status, Summary: "private image prompt and credentials"}}})
+		require.NoError(t, err)
+		require.Len(t, metadata.Tools, 1)
+		encoded, err := json.Marshal(metadata)
+		require.NoError(t, err)
+		require.NotContains(t, string(encoded), "private")
+		decoded, err := decodeMetadata(metadata)
+		require.NoError(t, err)
+		require.Equal(t, metadata.Tools, decoded.Tools)
+		metadata.Tools[0].Summary = "private image prompt"
+		_, err = decodeMetadata(metadata)
+		require.Error(t, err)
+	}
+}

@@ -127,12 +127,8 @@ func decodeMetadata(raw any) (supportMessage, error) {
 	}
 	seenTools := map[string]struct{}{}
 	for _, tool := range metadata.Tools {
-		if !displayID.MatchString(tool.ID) || tool.Name != "athena_resource_metadata" ||
-			tool.Status == "running" && tool.Summary != "" ||
-			tool.Status == "completed" && tool.Summary != "Conversation metadata checked." ||
-			tool.Status == "failed" && tool.Summary != "Conversation metadata unavailable." &&
-				tool.Summary != "Stopped before completion." ||
-			tool.Status != "running" && tool.Status != "completed" && tool.Status != "failed" {
+		expected, ok := displayToolOf(Tool{ID: tool.ID, Name: tool.Name, Status: tool.Status})
+		if !ok || tool != expected && !(tool.Status == "failed" && tool.Summary == "Stopped before completion.") {
 			return supportMessage{}, errors.New("invalid observable message metadata")
 		}
 		if _, exists := seenTools[tool.ID]; exists {
@@ -205,8 +201,12 @@ func messageFromWire(id, text string, custom map[string]any) (Message, error) {
 }
 
 func displayToolOf(tool Tool) (displayTool, bool) {
-	if tool.Name != "athena_resource_metadata" || !displayID.MatchString(tool.ID) {
+	if (tool.Name != "athena_resource_metadata" && tool.Name != "athena_save_image") || !displayID.MatchString(tool.ID) {
 		return displayTool{}, false
+	}
+	completed, failed := "Conversation metadata checked.", "Conversation metadata unavailable."
+	if tool.Name == "athena_save_image" {
+		completed, failed = "Image created.", "Image generation unavailable."
 	}
 	display := displayTool{ID: tool.ID, Name: tool.Name}
 	switch tool.Status {
@@ -214,10 +214,10 @@ func displayToolOf(tool Tool) (displayTool, bool) {
 		display.Status = "running"
 	case "completed":
 		display.Status = "completed"
-		display.Summary = "Conversation metadata checked."
+		display.Summary = completed
 	case "failed":
 		display.Status = "failed"
-		display.Summary = "Conversation metadata unavailable."
+		display.Summary = failed
 	case "cancelled":
 		display.Status = "failed"
 		display.Summary = "Stopped before completion."
