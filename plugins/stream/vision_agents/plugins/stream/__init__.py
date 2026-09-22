@@ -9,7 +9,9 @@ from ._generated.models import (
     ModelOverwritesThinking,
     ModelOverwritesVerbosity,
     NumberSearchResult,
+    PhoneCapability,
     PhoneNumber,
+    PhoneNumberType,
     SkippedVendor,
 )
 from .accelerated import Accelerated
@@ -60,7 +62,9 @@ __all__ = [
     "NumberSearchResult",
     "Participant",
     "Phone",
+    "PhoneCapability",
     "PhoneNumber",
+    "PhoneNumberType",
     "Query",
     "Responses",
     "Router",
