@@ -208,7 +208,6 @@ func (Delegated) isAgentEvent() {}
 // owed, the agent has started a turn to say so.
 type TaskSettled struct {
 	Evidence []string
-	Worker   string
 	TaskID   string
 	Skill    string
 	// Text is the answer, when there is one.

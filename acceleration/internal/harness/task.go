@@ -36,7 +36,6 @@ const (
 
 // Result is a finished task.
 type Result struct {
-	Worker   string
 	Evidence []string
 	TaskID   string
 	Skill    string

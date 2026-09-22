@@ -23,7 +23,7 @@ and the knowledge base it may read. This script writes that config, then talks t
 
 Needs a router and a knowledge base filled from the docs:
 
-    cd acceleration && go run ./cmd/knowledge -namespace docs ../docs ../README.md
+    cd acceleration && go run ./cmd/knowledge -customer examples -namespace docs ../docs ../README.md
     uv run docs_agent.py
 """
 

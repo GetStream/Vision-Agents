@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 from typing_extensions import Self
 
 from ..models.tier import Tier
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.provider_health import ProviderHealth
@@ -26,6 +27,11 @@ class Provider:
         realtime (bool):
         tier (Tier): What the model optimises for.
         health (ProviderHealth):
+        description (str | Unset): What the model is good at, and what that costs in speed or money. Empty if the
+            deployment wrote none.
+        usage_share (float | Unset): This model's share of the modality's requests over the last seven days, across
+            every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment
+            keeps no statistics.
     """
 
     provider: str
@@ -34,6 +40,8 @@ class Provider:
     realtime: bool
     tier: Tier
     health: ProviderHealth
+    description: str | Unset = UNSET
+    usage_share: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,6 +57,10 @@ class Provider:
 
         health = self.health.to_dict()
 
+        description = self.description
+
+        usage_share = self.usage_share
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -61,6 +73,10 @@ class Provider:
                 "health": health,
             }
         )
+        if description is not UNSET:
+            field_dict["description"] = description
+        if usage_share is not UNSET:
+            field_dict["usage_share"] = usage_share
 
         return field_dict
 
@@ -81,6 +97,10 @@ class Provider:
 
         health = ProviderHealth.from_dict(d.pop("health"))
 
+        description = d.pop("description", UNSET)
+
+        usage_share = d.pop("usage_share", UNSET)
+
         provider = cls(
             provider=provider,
             model=model,
@@ -88,6 +108,8 @@ class Provider:
             realtime=realtime,
             tier=tier,
             health=health,
+            description=description,
+            usage_share=usage_share,
         )
 
         provider.additional_properties = d

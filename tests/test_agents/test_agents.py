@@ -1326,7 +1326,7 @@ class TestAgent:
             edge=DummyEdge(),
             agent_user=User(name="test"),
         )
-        with pytest.raises(ValueError, match="vision worker"):
+        with pytest.raises(ValueError, match="vision skill"):
             await agent.responses.create(
                 "describe", images=[ImageContent(data=b"image")]
             )

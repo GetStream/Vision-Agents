@@ -24,7 +24,6 @@ class Skill:
         instructions (str):
         created_at (datetime.datetime):
         updated_at (datetime.datetime):
-        subagent (str | Unset): Named worker binding; omitted uses default.
         capture_video (bool | Unset): Capture task-scoped visual evidence before reasoning.
         deadline_ms (int | Unset):
     """
@@ -36,7 +35,6 @@ class Skill:
     instructions: str
     created_at: datetime.datetime
     updated_at: datetime.datetime
-    subagent: str | Unset = UNSET
     capture_video: bool | Unset = UNSET
     deadline_ms: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -56,8 +54,6 @@ class Skill:
 
         updated_at = self.updated_at.isoformat()
 
-        subagent = self.subagent
-
         capture_video = self.capture_video
 
         deadline_ms = self.deadline_ms
@@ -75,8 +71,6 @@ class Skill:
                 "updated_at": updated_at,
             }
         )
-        if subagent is not UNSET:
-            field_dict["subagent"] = subagent
         if capture_video is not UNSET:
             field_dict["capture_video"] = capture_video
         if deadline_ms is not UNSET:
@@ -101,8 +95,6 @@ class Skill:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
-        subagent = d.pop("subagent", UNSET)
-
         capture_video = d.pop("capture_video", UNSET)
 
         deadline_ms = d.pop("deadline_ms", UNSET)
@@ -115,7 +107,6 @@ class Skill:
             instructions=instructions,
             created_at=created_at,
             updated_at=updated_at,
-            subagent=subagent,
             capture_video=capture_video,
             deadline_ms=deadline_ms,
         )

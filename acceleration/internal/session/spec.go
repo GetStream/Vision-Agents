@@ -3,7 +3,6 @@ package session
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"strings"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -130,7 +129,6 @@ type Spec struct {
 	// conversation model or voice, so the three targets above are left as they are.
 	STSTarget      string
 	SubagentTarget string
-	Subagents      map[string]string
 	// ControllerTarget routes the flow controller. Internal rather than customer-facing:
 	// a caller configures the conversation's model, not the classifier that decides who
 	// holds the floor, so it is defaulted here rather than read from a config.
@@ -232,7 +230,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Voice:          config.Voice,
 		LLMTarget:      config.LLM,
 		SubagentTarget: config.Subagent,
-		Subagents:      maps.Clone(config.Subagents), VideoSource: config.VideoSource, VideoMaxFrames: config.VideoMaxFrames,
+		VideoSource:    config.VideoSource, VideoMaxFrames: config.VideoMaxFrames,
 		SearchTarget:       config.Search,
 		Instructions:       config.Instructions,
 		Greeting:           config.Greeting,
@@ -299,8 +297,11 @@ func (s *Spec) Normalize() error {
 		s.UserName = defaultUserName
 	}
 	// The agent id keys the transcript and the timings, so a text session is given one of
-	// its own rather than the call id it does not have.
-	if s.AgentID == "" {
+	// its own rather than the call id it does not have. A session resuming a conversation
+	// is given none: the transcript it rejoins was keyed under whichever session opened
+	// it, and a second id minted here would not match, so the conversation is asked for
+	// the one it was written under instead.
+	if s.AgentID == "" && !(s.Text && s.PersistConversation && s.ConversationID != "") {
 		s.AgentID = s.CallID
 		if s.Text {
 			s.AgentID = newID()
@@ -376,10 +377,6 @@ func (s *Spec) applyOverwrites() {
 	}
 	if over.Subagent != "" {
 		s.SubagentTarget = over.Subagent
-		// Naming one subagent replaces the default of a config that named several, the same
-		// way the request's own subagent field does: otherwise the map would keep answering
-		// for the target the caller just overrode.
-		delete(s.Subagents, "default")
 	}
 	if over.Search != "" {
 		s.SearchTarget = over.Search

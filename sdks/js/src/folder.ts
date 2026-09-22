@@ -79,7 +79,7 @@ async function loadSkills(path: string): Promise<Skill[]> {
 /**
  * Reads a skill file: frontmatter between `---` lines, then the instructions.
  *
- * The recognised keys are name, description, subagent, capture_video and deadline. A
+ * The recognised keys are name, description, capture_video and deadline. A
  * deadline is a Go duration, so `30s` and `2m` both read the way they look, and a bare
  * number is seconds.
  */
@@ -105,9 +105,6 @@ export function parseSkill(name: string, content: string, where = name): Skill {
         break;
       case "description":
         skill.description = value;
-        break;
-      case "subagent":
-        skill.subagent = value;
         break;
       case "capture_video":
         if (value !== "true" && value !== "false") {

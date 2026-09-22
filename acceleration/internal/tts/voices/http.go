@@ -2,6 +2,8 @@ package voices
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -61,6 +63,45 @@ func client(timeout time.Duration) *http.Client {
 		timeout = defaultTimeout
 	}
 	return &http.Client{Timeout: timeout}
+}
+
+// speak posts a JSON synthesis request and reads the audio it answers with. The content
+// type is the one that was asked for, since not every provider labels what it sends back.
+func speak(
+	ctx context.Context,
+	httpClient *http.Client,
+	provider, url, contentType string,
+	header http.Header,
+	payload any,
+) (Speech, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return Speech{}, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return Speech{}, err
+	}
+	request.Header = header
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return Speech{}, fmt.Errorf("voices: %s speak: %w", provider, err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return Speech{}, refused(provider, response)
+	}
+	audio, err := io.ReadAll(response.Body)
+	if err != nil {
+		return Speech{}, fmt.Errorf("voices: %s speak: %w", provider, err)
+	}
+	if len(audio) == 0 {
+		return Speech{}, fmt.Errorf("voices: %s answered with no audio", provider)
+	}
+	return Speech{Audio: audio, ContentType: contentType}, nil
 }
 
 // refused turns a non-2xx response into an error that says what the provider said, which

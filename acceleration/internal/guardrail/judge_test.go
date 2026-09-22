@@ -102,7 +102,7 @@ func (s *JudgeSuite) guardrail(stub *stubModel, threshold float64) Guardrail {
 
 func (s *JudgeSuite) TestTheThresholdMeansTheSameThingItMeansToAClassifier() {
 	// A judge is asked for a probability rather than a verdict so that a policy can be
-	// moved between llm and llm_classifier without the number in the file changing what
+	// moved between llm and lcm without the number in the file changing what
 	// it means. These are the classifier's own cases, answered by a model instead.
 	tests := []struct {
 		name      string

@@ -14,6 +14,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/getsentry/sentry-go"
+	"github.com/hibiken/asynq"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
@@ -22,11 +25,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/environment"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifierrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
@@ -47,6 +51,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts/voices"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
+
+// release is the version this binary was built from, set with -X main.release
+// at link time by the workflow that publishes it. Empty in a local build, which
+// Sentry reads as "no release" rather than as an error.
+var release string
 
 const (
 	addressEnvVar     = "ROUTER_ADDR"
@@ -111,16 +120,48 @@ const (
 	// request would double the writes of a busy key, and recording nothing means nobody
 	// can answer whether a key is still in use, so nobody ever revokes one.
 	lastUsedInterval = time.Minute
+	// sentryFlushTimeout bounds how long the process spends delivering buffered
+	// events on the way out. Short, because this runs while the orchestrator is
+	// already counting down the termination grace period.
+	sentryFlushTimeout = 2 * time.Second
 )
 
 func main() {
+	env, envErr := environment.Apply()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
 	slog.SetDefault(logger)
+	if envErr != nil {
+		logger.Error("router stopped", "error", envErr)
+		os.Exit(1)
+	}
+	logger.Info("loaded environment", "env", env)
+
+	// Dsn is deliberately not set. The SDK reads SENTRY_DSN and
+	// SENTRY_ENVIRONMENT itself, so the DSN stays out of this repository and an
+	// unset one disables reporting -- which is what a local run and the tests
+	// want, and what self-hosting this service wants too.
+	//
+	// A failed Init is logged, not fatal: a malformed DSN is a configuration
+	// mistake, but it is a bad reason to refuse to serve calls.
+	if err := sentry.Init(sentry.ClientOptions{
+		Release:          release,
+		ServerName:       "acceleration-router",
+		AttachStacktrace: true,
+	}); err != nil {
+		logger.Error("sentry is disabled", "error", err)
+	}
 
 	if err := run(logger); err != nil {
 		logger.Error("router stopped", "error", err)
+		// Reported here because a startup failure never reaches an HTTP handler,
+		// so the middleware in internal/api would never see it.
+		sentry.CaptureException(err)
+		sentry.Flush(sentryFlushTimeout)
 		os.Exit(1)
 	}
+	// Not deferred: os.Exit above skips defers, so a single deferred flush would
+	// cover only the path that does not need it.
+	sentry.Flush(sentryFlushTimeout)
 }
 
 // logLevel reads ROUTER_LOG_LEVEL. Debug is where the turn-taking decisions are: what was
@@ -328,7 +369,7 @@ func run(logger *slog.Logger) error {
 		resolver = voices.NewResolver(pgStore)
 	}
 
-	bucket, err := blob.Open(ctx, os.Getenv(blob.EnvURL))
+	bucket, err := blob.Open(ctx, os.Getenv(voices.EnvBucketURL))
 	if err != nil {
 		return err
 	}
@@ -459,11 +500,11 @@ func run(logger *slog.Logger) error {
 	// The classifier is routed for the same reason search is, and is absent for the same
 	// reason: a deployment that declares no section for it runs agents that cannot be
 	// given a guardrail, and says so when one is asked for rather than ignoring it.
-	var judging *llmclassifierrouter.Router
-	if section, ok := config[routing.LLMClassifier]; ok {
-		judging, err = llmclassifierrouter.New(llmclassifierrouter.Options{
+	var judging *lcmrouter.Router
+	if section, ok := config[routing.LCM]; ok {
+		judging, err = lcmrouter.New(lcmrouter.Options{
 			Config:   section,
-			Registry: llmclassifierrouter.DefaultRegistry(),
+			Registry: lcmrouter.DefaultRegistry(),
 			Store:    pgStore,
 			Live:     liveClient,
 			Logger:   logger,
@@ -472,7 +513,7 @@ func run(logger *slog.Logger) error {
 			return err
 		}
 		defer judging.Close()
-		routers[routing.LLMClassifier] = judging
+		routers[routing.LCM] = judging
 	}
 
 	telephony, err := buildPhone(pgStore, liveClient, logger)
@@ -564,9 +605,15 @@ func run(logger *slog.Logger) error {
 	// Keeping a knowledge base filled from a url needs a row, a base and a crawler.
 	// Missing any of those, the url paths say so rather than storing a subscription
 	// nothing would ever honour.
-	pages, err := buildKnowledgeURLs(pgStore, base, logger)
+	pages, err := buildKnowledgeURLs(pgStore, os.Getenv(redisEnvVar), base, logger)
 	if err != nil {
 		return err
+	}
+	if pages != nil {
+		if err := pages.Start(); err != nil {
+			return err
+		}
+		defer pages.Close()
 	}
 
 	// Inbound calls are answered by whoever is connected to the dispatch socket, so the
@@ -680,7 +727,7 @@ func buildSessions(
 	telephony *phone.Service,
 	base *turbopuffer.Store,
 	finding *searchrouter.Router,
-	judging *llmclassifierrouter.Router,
+	judging *lcmrouter.Router,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
 	if streams.STT == nil || streams.TTS == nil || streams.LLM == nil {
@@ -742,21 +789,23 @@ func buildSessions(
 // buildKnowledgeURLs wires the control plane for pages a knowledge base is kept filled
 // from.
 //
-// It returns nil unless there is a database to remember a subscription, a knowledge base to
-// write the passages into and a key for something that can read a page, since a url that is
-// recorded and never fetched is a promise nothing keeps. The url paths report the absence.
+// It returns nil unless there is a database to remember a subscription, a Redis to queue the
+// reads on, a knowledge base to write the passages into and a key for something that can
+// read a page, since a url that is recorded and never fetched is a promise nothing keeps.
+// The url paths report the absence.
 //
 // Exa is built here rather than taken from the search router because the two want opposite
 // timeouts: a search happens while somebody waits on the phone, and a live crawl of a page
 // nobody is listening to can take as long as it takes.
 func buildKnowledgeURLs(
 	pgStore *store.Store,
+	redisAddress string,
 	base *turbopuffer.Store,
 	logger *slog.Logger,
 ) (*urls.Service, error) {
-	if pgStore == nil || base == nil {
+	if pgStore == nil || redisAddress == "" || base == nil {
 		logger.Debug("not serving knowledge urls",
-			"database", pgStore != nil, "knowledge", base != nil)
+			"database", pgStore != nil, "redis", redisAddress != "", "knowledge", base != nil)
 		return nil, nil
 	}
 
@@ -768,6 +817,7 @@ func buildKnowledgeURLs(
 
 	return urls.New(urls.Options{
 		Store:  pgStore,
+		Redis:  asynq.RedisClientOpt{Addr: redisAddress},
 		Reader: reader,
 		Writer: base,
 		Logger: logger,

@@ -1,4 +1,4 @@
-// Package llmclassifier is what a routed classifier can be asked and what it answers.
+// Package lcm is what a routed classifier can be asked and what it answers.
 //
 // A classifier is not a language model with a narrow prompt. It is asked named questions
 // about a piece of state and answers each with a typed value and the distribution behind
@@ -10,7 +10,7 @@
 // That is why this is a modality of its own rather than a corner of internal/llm. What a
 // caller wants from it - a threshold it can act on - is not what a caller wants from a
 // model that writes prose, and a request shaped for one is the wrong shape for the other.
-package llmclassifier
+package lcm
 
 import (
 	"context"
@@ -123,16 +123,16 @@ type Request struct {
 // Validate reports what would make a request meaningless, so a provider does not have to.
 func (r Request) Validate() error {
 	if len(r.Questions) == 0 {
-		return errors.New("llmclassifier: at least one question is required")
+		return errors.New("lcm: at least one question is required")
 	}
 	for id, question := range r.Questions {
 		if strings.TrimSpace(question.Instructions) == "" {
-			return fmt.Errorf("llmclassifier: question %q has no instructions", id)
+			return fmt.Errorf("lcm: question %q has no instructions", id)
 		}
 		switch question.Type {
 		case TypeChoice, TypeScore, TypeNoul:
 		default:
-			return fmt.Errorf("llmclassifier: question %q asks for %q, which is not a question type",
+			return fmt.Errorf("lcm: question %q asks for %q, which is not a question type",
 				id, question.Type)
 		}
 	}

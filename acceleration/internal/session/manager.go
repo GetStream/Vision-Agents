@@ -18,9 +18,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifierrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -83,7 +83,7 @@ type ManagerOptions struct {
 	// Classifier is optional, and is what a session with a guardrail asks whether a turn
 	// may be answered. Without it a session declaring a guardrail that needs one is
 	// refused rather than held unguarded.
-	Classifier *llmclassifierrouter.Router
+	Classifier *lcmrouter.Router
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// WebhookSecret signs a guardrail's outbound webhook. It is the app secret that
@@ -196,6 +196,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			return nil, err
 		}
 		spec.ConversationID = conv.CID()
+		// A resume was deliberately not given an agent id, because only the conversation
+		// knows the one its transcript was written under.
+		spec.AgentID = conv.Agent()
 		spec.ContextTruncated = truncated
 		// A fork opens an empty channel of its own and then reads the parent's, so the model
 		// carries on from what was said while the transcripts stay separate. The parent's
@@ -328,7 +331,6 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		STS:                conversing,
 		STSTarget:          spec.STSTarget,
 		SubagentTarget:     spec.SubagentTarget,
-		Subagents:          spec.Subagents,
 		ControllerTarget:   spec.ControllerTarget,
 		Skills:             skills,
 		Telephony:          line,

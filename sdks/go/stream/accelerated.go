@@ -47,9 +47,8 @@ type Config struct {
 	TTS string
 	// Subagent is the model that does the thinking a harness delegates. Overridden by the
 	// harness when it names one.
-	Subagent  string
-	Subagents map[string]string
-	Video     *acceleration.SessionVideo
+	Subagent string
+	Video    *acceleration.SessionVideo
 	// Voice is a provider-specific voice id.
 	Voice string
 	// Language is a hint, which narrows the candidates in every modality.
@@ -120,9 +119,8 @@ type Call struct {
 	Memory *acceleration.SessionMemory
 
 	// Subagent is the model that runs delegated work, from the agent's harness.
-	Subagent  string
-	Subagents map[string]string
-	Video     *acceleration.SessionVideo
+	Subagent string
+	Video    *acceleration.SessionVideo
 	// Tasks is how much delegated work may run at once.
 	Tasks int
 	// Sandbox is where the subagent may run code it writes.
@@ -477,16 +475,6 @@ func (p *Pipeline) request(call Call) acceleration.CreateSessionRequest {
 		subagent = p.config.Subagent
 	}
 	setString(&request.Subagent, subagent)
-	workers := map[string]string{}
-	for name, target := range p.config.Subagents {
-		workers[name] = target
-	}
-	for name, target := range call.Subagents {
-		workers[name] = target
-	}
-	if len(workers) > 0 {
-		request.Subagents = &workers
-	}
 	request.Video = p.config.Video
 	if call.Video != nil {
 		request.Video = call.Video

@@ -427,15 +427,15 @@ func (e LlmOptionsVerbosity) Valid() bool {
 
 // Defines values for Modality.
 const (
-	Knowledge     Modality = "knowledge"
-	Llm           Modality = "llm"
-	LlmClassifier Modality = "llm_classifier"
-	Memory        Modality = "memory"
-	Phone         Modality = "phone"
-	Search        Modality = "search"
-	Sts           Modality = "sts"
-	Stt           Modality = "stt"
-	Tts           Modality = "tts"
+	Knowledge Modality = "knowledge"
+	Lcm       Modality = "lcm"
+	Llm       Modality = "llm"
+	Memory    Modality = "memory"
+	Phone     Modality = "phone"
+	Search    Modality = "search"
+	Sts       Modality = "sts"
+	Stt       Modality = "stt"
+	Tts       Modality = "tts"
 )
 
 // Valid indicates whether the value is a known member of the Modality enum.
@@ -443,9 +443,9 @@ func (e Modality) Valid() bool {
 	switch e {
 	case Knowledge:
 		return true
-	case Llm:
+	case Lcm:
 		return true
-	case LlmClassifier:
+	case Llm:
 		return true
 	case Memory:
 		return true
@@ -1144,9 +1144,6 @@ type AgentConfig struct {
 	Stt      *string `json:"stt,omitempty"`
 	Subagent *string `json:"subagent,omitempty"`
 
-	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
-	Subagents *map[string]string `json:"subagents,omitempty"`
-
 	// SyncHash Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory.
 	SyncHash  *string            `json:"sync_hash,omitempty"`
 	Tags      *map[string]string `json:"tags,omitempty"`
@@ -1160,7 +1157,7 @@ type AgentConfig struct {
 type AgentConfigRequest struct {
 	Greeting *string `json:"greeting,omitempty"`
 
-	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - llm_classifier, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
+	// Guardrail A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
 	Guardrail    *string `json:"guardrail,omitempty"`
 	Instructions *string `json:"instructions,omitempty"`
 
@@ -1199,9 +1196,6 @@ type AgentConfigRequest struct {
 
 	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
 	Subagent *string `json:"subagent,omitempty"`
-
-	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
-	Subagents *map[string]string `json:"subagents,omitempty"`
 
 	// Tags Cost labels, carried onto every request a session using it makes.
 	Tags  *map[string]string `json:"tags,omitempty"`
@@ -1679,9 +1673,6 @@ type CreateSessionRequest struct {
 	// Subagent The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
 	Subagent *string `json:"subagent,omitempty"`
 
-	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
-	Subagents *map[string]string `json:"subagents,omitempty"`
-
 	// Tags Cost labels, carried onto every request the session makes.
 	Tags *map[string]string `json:"tags,omitempty"`
 
@@ -1965,7 +1956,7 @@ type MessageContent0 = string
 // MessageContent1 defines model for MessageContent.1.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first six are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. llm_classifier answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first six are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 //
 // Example: tts
 type Modality string
@@ -1984,7 +1975,7 @@ type ModelOverwrites struct {
 	Sts *string `json:"sts,omitempty"`
 	Stt *string `json:"stt,omitempty"`
 
-	// Subagent The model delegated work runs on. Naming one replaces a config's default worker, so the config cannot keep answering for the target just overwritten.
+	// Subagent The model delegated work runs on, in place of the config's.
 	Subagent *string `json:"subagent,omitempty"`
 
 	// Temperature How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
@@ -2147,8 +2138,10 @@ type PressDigitsRequest struct {
 
 // Provider defines model for Provider.
 type Provider struct {
-	Health    ProviderHealth `json:"health"`
-	Languages []string       `json:"languages"`
+	// Description What the model is good at, and what that costs in speed or money. Empty if the deployment wrote none.
+	Description *string        `json:"description,omitempty"`
+	Health      ProviderHealth `json:"health"`
+	Languages   []string       `json:"languages"`
 
 	// Model Example: eleven_flash_v2_5
 	Model string `json:"model"`
@@ -2159,6 +2152,9 @@ type Provider struct {
 
 	// Tier What the model optimises for.
 	Tier Tier `json:"tier"`
+
+	// UsageShare This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment keeps no statistics.
+	UsageShare *float64 `json:"usage_share,omitempty"`
 }
 
 // ProviderHealth defines model for ProviderHealth.
@@ -2196,6 +2192,21 @@ type RollupRequest struct {
 type RollupResult struct {
 	BucketsWritten int64       `json:"buckets_written"`
 	Granularity    Granularity `json:"granularity"`
+}
+
+// Route defines model for Route.
+type Route struct {
+	// Candidates The models the shortcut resolves to right now, best first.
+	Candidates  []Candidate `json:"candidates"`
+	Description string      `json:"description"`
+
+	// Id The shortcut, which is what a config or request names as its target.
+	//
+	// Example: llm-fast
+	Id string `json:"id"`
+
+	// Title Example: Fast conversational
+	Title string `json:"title"`
 }
 
 // RouterConfig defines model for RouterConfig.
@@ -2389,9 +2400,6 @@ type Session struct {
 	// Subagent The provider and model delegated work runs on.
 	Subagent *string `json:"subagent,omitempty"`
 
-	// Subagents Configured worker targets, prepared asynchronously.
-	Subagents *map[string]string `json:"subagents,omitempty"`
-
 	// Text The conversation is held in writing rather than on a call.
 	Text  *bool   `json:"text,omitempty"`
 	Title *string `json:"title,omitempty"`
@@ -2450,9 +2458,6 @@ type SessionSkill struct {
 	// Instructions The full prompt, which only the subagent sees.
 	Instructions string `json:"instructions"`
 	Name         string `json:"name"`
-
-	// Subagent Named worker binding; omitted uses default.
-	Subagent *string `json:"subagent,omitempty"`
 }
 
 // SessionState Whether the agent is still in the call.
@@ -2559,7 +2564,7 @@ type SimulationRequest struct {
 	// CallerStt How the caller hears the agent. Audio simulations only.
 	CallerStt *string `json:"caller_stt,omitempty"`
 
-	// CallerTarget The model that plays the caller. Empty takes a fast tier.
+	// CallerTarget The model that plays the caller. Empty takes llm-scenario-runner, the deployment's fast-tier default.
 	CallerTarget *string `json:"caller_target,omitempty"`
 
 	// CallerTts How the caller speaks. Audio simulations only.
@@ -2571,10 +2576,10 @@ type SimulationRequest struct {
 	// ConfigId The agent being tested.
 	ConfigId string `json:"config_id"`
 
-	// JudgeTarget The model that rules on the conversations, named the way any other routing target is. Empty takes a quality tier, since nobody is waiting for it.
+	// JudgeTarget The model that rules on the conversations, named the way any other routing target is. Empty takes llm-judge, the deployment's quality-tier default, since nobody is waiting for it.
 	JudgeTarget *string `json:"judge_target,omitempty"`
 
-	// MaxTurns How many times the caller may speak, up to thirty. It is what stops a caller that never decides it is finished. Twelve when left out.
+	// MaxTurns How many times the caller may speak, up to two hundred. It is what stops a caller that never decides it is finished. Twelve when left out.
 	MaxTurns *int `json:"max_turns,omitempty"`
 
 	// Mode Text hands the agent the words, which tests everything between hearing and answering. Audio generates speech and runs the whole pipeline, so what is judged is what a caller would actually have heard. Text when left out.
@@ -2635,10 +2640,7 @@ type Skill struct {
 	Id           string    `json:"id"`
 	Instructions string    `json:"instructions"`
 	Name         string    `json:"name"`
-
-	// Subagent Named worker binding; omitted uses default.
-	Subagent  *string   `json:"subagent,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // SkillRequest defines model for SkillRequest.
@@ -2660,9 +2662,6 @@ type SkillRequest struct {
 
 	// Name How the config names it, which is unique among that config's own skills.
 	Name string `json:"name"`
-
-	// Subagent Named worker binding; omitted uses default.
-	Subagent *string `json:"subagent,omitempty"`
 }
 
 // SkippedVendor defines model for SkippedVendor.
@@ -2932,16 +2931,13 @@ type SyncAgentRequest struct {
 	Skills  *[]SkillRequest `json:"skills,omitempty"`
 
 	// Sts A speech-to-speech target: one native audio model that hears the caller and speaks back. Naming one makes the agent native, and stt, tts and llm are then not used. Empty means the cascade.
-	Sts      *string `json:"sts,omitempty"`
-	Stt      *string `json:"stt,omitempty"`
-	Subagent *string `json:"subagent,omitempty"`
-
-	// Subagents Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
-	Subagents *map[string]string `json:"subagents,omitempty"`
-	Tags      *map[string]string `json:"tags,omitempty"`
-	Tts       *string            `json:"tts,omitempty"`
-	Video     *SessionVideo      `json:"video,omitempty"`
-	Voice     *string            `json:"voice,omitempty"`
+	Sts      *string            `json:"sts,omitempty"`
+	Stt      *string            `json:"stt,omitempty"`
+	Subagent *string            `json:"subagent,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+	Tts      *string            `json:"tts,omitempty"`
+	Video    *SessionVideo      `json:"video,omitempty"`
+	Voice    *string            `json:"voice,omitempty"`
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -3242,6 +3238,30 @@ type VoiceBinding struct {
 
 // VoiceBindingState defines model for VoiceBinding.State.
 type VoiceBindingState string
+
+// VoicePreview defines model for VoicePreview.
+type VoicePreview struct {
+	// Audio The spoken line, base64 encoded.
+	Audio []byte `json:"audio"`
+
+	// ContentType Example: audio/mpeg
+	ContentType string `json:"content_type"`
+	Provider    string `json:"provider"`
+}
+
+// VoicePreviewRequest defines model for VoicePreviewRequest.
+type VoicePreviewRequest struct {
+	// Provider Which provider's copy of the voice to hear.
+	Provider string `json:"provider"`
+
+	// Text What to say. Omitted says a short greeting.
+	Text *string `json:"text,omitempty"`
+}
+
+// VoiceProviders defines model for VoiceProviders.
+type VoiceProviders struct {
+	Providers []string `json:"providers"`
+}
 
 // VoiceRequest defines model for VoiceRequest.
 type VoiceRequest struct {
@@ -3673,6 +3693,9 @@ type UpdateVoiceJSONRequestBody = VoiceRequest
 
 // PrepareVoiceJSONRequestBody defines body for PrepareVoice for application/json ContentType.
 type PrepareVoiceJSONRequestBody = PrepareVoiceRequest
+
+// PreviewVoiceJSONRequestBody defines body for PreviewVoice for application/json ContentType.
+type PreviewVoiceJSONRequestBody = VoicePreviewRequest
 
 // AddVoiceSampleJSONRequestBody defines body for AddVoiceSample for application/json ContentType.
 type AddVoiceSampleJSONRequestBody = VoiceSampleRequest
@@ -4648,6 +4671,13 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
 	CreateVoice(ctx context.Context, body CreateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListVoiceProviders The providers a voice can be prepared with
+	//
+	// Only the providers this deployment holds a key for and knows how to clone with. A voice with no binding for one of them has not been prepared there yet.
+	//
+	// Corresponds with GET /v1/agents/voices/providers (the `ListVoiceProviders` operationId).
+	ListVoiceProviders(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteVoice Delete a voice
 	//
 	// The voice is taken off every provider it was prepared with, so a deleted voice stops being billed for as well as stops being usable. Calls that spoke in it keep naming it.
@@ -4700,6 +4730,26 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
 	PrepareVoice(ctx context.Context, id ResourceID, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreviewVoiceWithBody Hear a voice through one provider
+	//
+	// Says a short line in the voice with the provider's own copy of it, so what a caller will hear can be checked before an agent speaks in it. The provider must have the voice ready.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
+	PreviewVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreviewVoice Hear a voice through one provider
+	//
+	// Says a short line in the voice with the provider's own copy of it, so what a caller will hear can be checked before an agent speaks in it. The provider must have the voice ready.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
+	PreviewVoice(ctx context.Context, id ResourceID, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AddVoiceSampleWithBody Add a recording to a voice
 	//
@@ -4986,6 +5036,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/{modality}/providers (the `ListProviders` operationId).
 	ListProviders(ctx context.Context, modality Modality, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListRoutes List the capability shortcuts offered as a choice, each with the models it resolves to
+	//
+	// The shortcuts a person picking a model is shown, in the order the deployment offers them, so the first is the one a conversation gets by default. Shortcuts that exist only for the router's own use are left out, though they can still be named as a target.
+	//
+	// Corresponds with GET /v1/{modality}/routes (the `ListRoutes` operationId).
+	ListRoutes(ctx context.Context, modality Modality, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ResolveTarget Resolve a provider name or capability shortcut to a ranked candidate list
 	//
@@ -6645,6 +6702,23 @@ func (c *Client) CreateVoice(ctx context.Context, body CreateVoiceJSONRequestBod
 	return c.Client.Do(req)
 }
 
+// ListVoiceProviders The providers a voice can be prepared with
+//
+// Only the providers this deployment holds a key for and knows how to clone with. A voice with no binding for one of them has not been prepared there yet.
+//
+// Corresponds with GET /v1/agents/voices/providers (the `ListVoiceProviders` operationId).
+func (c *Client) ListVoiceProviders(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListVoiceProvidersRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // DeleteVoice Delete a voice
 //
 // The voice is taken off every provider it was prepared with, so a deleted voice stops being billed for as well as stops being usable. Calls that spoke in it keep naming it.
@@ -6748,6 +6822,46 @@ func (c *Client) PrepareVoiceWithBody(ctx context.Context, id ResourceID, conten
 // Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
 func (c *Client) PrepareVoice(ctx context.Context, id ResourceID, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPrepareVoiceRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreviewVoiceWithBody Hear a voice through one provider
+//
+// Says a short line in the voice with the provider's own copy of it, so what a caller will hear can be checked before an agent speaks in it. The provider must have the voice ready.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
+func (c *Client) PreviewVoiceWithBody(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreviewVoiceRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreviewVoice Hear a voice through one provider
+//
+// Says a short line in the voice with the provider's own copy of it, so what a caller will hear can be checked before an agent speaks in it. The provider must have the voice ready.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
+func (c *Client) PreviewVoice(ctx context.Context, id ResourceID, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreviewVoiceRequest(c.Server, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7384,6 +7498,23 @@ func (c *Client) GetTurnStats(ctx context.Context, params *GetTurnStatsParams, r
 // Corresponds with GET /v1/{modality}/providers (the `ListProviders` operationId).
 func (c *Client) ListProviders(ctx context.Context, modality Modality, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListProvidersRequest(c.Server, modality)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListRoutes List the capability shortcuts offered as a choice, each with the models it resolves to
+//
+// The shortcuts a person picking a model is shown, in the order the deployment offers them, so the first is the one a conversation gets by default. Shortcuts that exist only for the router's own use are left out, though they can still be named as a target.
+//
+// Corresponds with GET /v1/{modality}/routes (the `ListRoutes` operationId).
+func (c *Client) ListRoutes(ctx context.Context, modality Modality, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRoutesRequest(c.Server, modality)
 	if err != nil {
 		return nil, err
 	}
@@ -10847,6 +10978,33 @@ func NewCreateVoiceRequestWithBody(server string, contentType string, body io.Re
 	return req, nil
 }
 
+// NewListVoiceProvidersRequest constructs an http.Request for the ListVoiceProviders method
+func NewListVoiceProvidersRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/voices/providers")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDeleteVoiceRequest constructs an http.Request for the DeleteVoice method
 func NewDeleteVoiceRequest(server string, id ResourceID) (*http.Request, error) {
 	var err error
@@ -10990,6 +11148,53 @@ func NewPrepareVoiceRequestWithBody(server string, id ResourceID, contentType st
 	}
 
 	operationPath := fmt.Sprintf("/v1/agents/voices/%s/prepare", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPreviewVoiceRequest calls the generic PreviewVoice builder with application/json body
+func NewPreviewVoiceRequest(server string, id ResourceID, body PreviewVoiceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPreviewVoiceRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewPreviewVoiceRequestWithBody constructs an http.Request for the PreviewVoice method, with any body, and a specified content type
+func NewPreviewVoiceRequestWithBody(server string, id ResourceID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/voices/%s/preview", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -12052,6 +12257,40 @@ func NewListProvidersRequest(server string, modality Modality) (*http.Request, e
 	}
 
 	operationPath := fmt.Sprintf("/v1/%s/providers", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListRoutesRequest constructs an http.Request for the ListRoutes method
+func NewListRoutesRequest(server string, modality Modality) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "modality", modality, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/%s/routes", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -13183,6 +13422,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
 	CreateVoiceWithResponse(ctx context.Context, body CreateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVoiceResponse, error)
 
+	// ListVoiceProvidersWithResponse The providers a voice can be prepared with
+	//
+	// Only the providers this deployment holds a key for and knows how to clone with. A voice with no binding for one of them has not been prepared there yet.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/voices/providers (the `ListVoiceProviders` operationId).
+	ListVoiceProvidersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVoiceProvidersResponse, error)
+
 	// DeleteVoiceWithResponse Delete a voice
 	//
 	// The voice is taken off every provider it was prepared with, so a deleted voice stops being billed for as well as stops being usable. Calls that spoke in it keep naming it.
@@ -13239,6 +13487,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices/{id}/prepare (the `PrepareVoice` operationId).
 	PrepareVoiceWithResponse(ctx context.Context, id ResourceID, body PrepareVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareVoiceResponse, error)
+
+	// PreviewVoiceWithBodyWithResponse Hear a voice through one provider
+	//
+	// Says a short line in the voice with the provider's own copy of it, so what a caller will hear can be checked before an agent speaks in it. The provider must have the voice ready.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
+	PreviewVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error)
+
+	// PreviewVoiceWithResponse Hear a voice through one provider
+	//
+	// Says a short line in the voice with the provider's own copy of it, so what a caller will hear can be checked before an agent speaks in it. The provider must have the voice ready.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
+	PreviewVoiceWithResponse(ctx context.Context, id ResourceID, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error)
 
 	// AddVoiceSampleWithBodyWithResponse Add a recording to a voice
 	//
@@ -13547,6 +13815,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/{modality}/providers (the `ListProviders` operationId).
 	ListProvidersWithResponse(ctx context.Context, modality Modality, reqEditors ...RequestEditorFn) (*ListProvidersResponse, error)
+
+	// ListRoutesWithResponse List the capability shortcuts offered as a choice, each with the models it resolves to
+	//
+	// The shortcuts a person picking a model is shown, in the order the deployment offers them, so the first is the one a conversation gets by default. Shortcuts that exist only for the router's own use are left out, though they can still be named as a target.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/{modality}/routes (the `ListRoutes` operationId).
+	ListRoutesWithResponse(ctx context.Context, modality Modality, reqEditors ...RequestEditorFn) (*ListRoutesResponse, error)
 
 	// ResolveTargetWithResponse Resolve a provider name or capability shortcut to a ranked candidate list
 	//
@@ -17838,6 +18115,68 @@ func (r CreateVoiceResponse) ContentType() string {
 	return ""
 }
 
+type ListVoiceProvidersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VoiceProviders
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListVoiceProvidersResponse) GetJSON200() *VoiceProviders {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListVoiceProvidersResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListVoiceProvidersResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListVoiceProvidersResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r ListVoiceProvidersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListVoiceProvidersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListVoiceProvidersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListVoiceProvidersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type DeleteVoiceResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -18101,6 +18440,75 @@ func (r PrepareVoiceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PrepareVoiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PreviewVoiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VoicePreview
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PreviewVoiceResponse) GetJSON200() *VoicePreview {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PreviewVoiceResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PreviewVoiceResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PreviewVoiceResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PreviewVoiceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r PreviewVoiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PreviewVoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PreviewVoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PreviewVoiceResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -19604,6 +20012,68 @@ func (r ListProvidersResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListProvidersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListRoutesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]Route
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListRoutesResponse) GetJSON200() *[]Route {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListRoutesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListRoutesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListRoutesResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r ListRoutesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListRoutesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListRoutesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListRoutesResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -21178,6 +21648,21 @@ func (c *ClientWithResponses) CreateVoiceWithResponse(ctx context.Context, body 
 	return ParseCreateVoiceResponse(rsp)
 }
 
+// ListVoiceProvidersWithResponse The providers a voice can be prepared with
+//
+// Only the providers this deployment holds a key for and knows how to clone with. A voice with no binding for one of them has not been prepared there yet.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/voices/providers (the `ListVoiceProviders` operationId).
+func (c *ClientWithResponses) ListVoiceProvidersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListVoiceProvidersResponse, error) {
+	rsp, err := c.ListVoiceProviders(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListVoiceProvidersResponse(rsp)
+}
+
 // DeleteVoiceWithResponse Delete a voice
 //
 // The voice is taken off every provider it was prepared with, so a deleted voice stops being billed for as well as stops being usable. Calls that spoke in it keep naming it.
@@ -21269,6 +21754,38 @@ func (c *ClientWithResponses) PrepareVoiceWithResponse(ctx context.Context, id R
 		return nil, err
 	}
 	return ParsePrepareVoiceResponse(rsp)
+}
+
+// PreviewVoiceWithBodyWithResponse Hear a voice through one provider
+//
+// Says a short line in the voice with the provider's own copy of it, so what a caller will hear can be checked before an agent speaks in it. The provider must have the voice ready.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
+func (c *ClientWithResponses) PreviewVoiceWithBodyWithResponse(ctx context.Context, id ResourceID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error) {
+	rsp, err := c.PreviewVoiceWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreviewVoiceResponse(rsp)
+}
+
+// PreviewVoiceWithResponse Hear a voice through one provider
+//
+// Says a short line in the voice with the provider's own copy of it, so what a caller will hear can be checked before an agent speaks in it. The provider must have the voice ready.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/voices/{id}/preview (the `PreviewVoice` operationId).
+func (c *ClientWithResponses) PreviewVoiceWithResponse(ctx context.Context, id ResourceID, body PreviewVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*PreviewVoiceResponse, error) {
+	rsp, err := c.PreviewVoice(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreviewVoiceResponse(rsp)
 }
 
 // AddVoiceSampleWithBodyWithResponse Add a recording to a voice
@@ -21787,6 +22304,21 @@ func (c *ClientWithResponses) ListProvidersWithResponse(ctx context.Context, mod
 		return nil, err
 	}
 	return ParseListProvidersResponse(rsp)
+}
+
+// ListRoutesWithResponse List the capability shortcuts offered as a choice, each with the models it resolves to
+//
+// The shortcuts a person picking a model is shown, in the order the deployment offers them, so the first is the one a conversation gets by default. Shortcuts that exist only for the router's own use are left out, though they can still be named as a target.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/{modality}/routes (the `ListRoutes` operationId).
+func (c *ClientWithResponses) ListRoutesWithResponse(ctx context.Context, modality Modality, reqEditors ...RequestEditorFn) (*ListRoutesResponse, error) {
+	rsp, err := c.ListRoutes(ctx, modality, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListRoutesResponse(rsp)
 }
 
 // ResolveTargetWithResponse Resolve a provider name or capability shortcut to a ranked candidate list
@@ -25121,6 +25653,53 @@ func ParseCreateVoiceResponse(rsp *http.Response) (*CreateVoiceResponse, error) 
 	return response, nil
 }
 
+// ParseListVoiceProvidersResponse parses an HTTP response from a ListVoiceProvidersWithResponse call
+func ParseListVoiceProvidersResponse(rsp *http.Response) (*ListVoiceProvidersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListVoiceProvidersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VoiceProviders
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseDeleteVoiceResponse parses an HTTP response from a DeleteVoiceWithResponse call
 func ParseDeleteVoiceResponse(rsp *http.Response) (*DeleteVoiceResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -25295,6 +25874,60 @@ func ParsePrepareVoiceResponse(rsp *http.Response) (*PrepareVoiceResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Voice
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePreviewVoiceResponse parses an HTTP response from a PreviewVoiceWithResponse call
+func ParsePreviewVoiceResponse(rsp *http.Response) (*PreviewVoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PreviewVoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VoicePreview
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -26469,6 +27102,53 @@ func ParseListProvidersResponse(rsp *http.Response) (*ListProvidersResponse, err
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest []Provider
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListRoutesResponse parses an HTTP response from a ListRoutesWithResponse call
+func ParseListRoutesResponse(rsp *http.Response) (*ListRoutesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListRoutesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []Route
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

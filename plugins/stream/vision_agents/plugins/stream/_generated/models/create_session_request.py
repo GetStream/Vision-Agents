@@ -12,7 +12,6 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.create_session_request_custom import CreateSessionRequestCustom
-    from ..models.create_session_request_subagents import CreateSessionRequestSubagents
     from ..models.create_session_request_tags import CreateSessionRequestTags
     from ..models.model_overwrites import ModelOverwrites
     from ..models.session_memory import SessionMemory
@@ -80,8 +79,6 @@ class CreateSessionRequest:
         tts (str | Unset): Omit it and the config decides, or en-low-latency when there is no config.
         sts (str | Unset): A speech-to-speech target. Naming one makes this a native session: the model hears and speaks
             for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
-        subagents (CreateSessionRequestSubagents | Unset): Named worker targets. Entries merge over stored
-            configuration; an empty target removes that worker. Singular subagent is shorthand for default.
         subagent (str | Unset): The model that does the thinking. Empty means the voice model answers everything itself,
             and skills mean nothing.
         search (str | Unset): Omit it and the config decides, or search-fast when there is no config.
@@ -134,7 +131,6 @@ class CreateSessionRequest:
     stt: str | Unset = UNSET
     tts: str | Unset = UNSET
     sts: str | Unset = UNSET
-    subagents: CreateSessionRequestSubagents | Unset = UNSET
     subagent: str | Unset = UNSET
     search: str | Unset = UNSET
     voice: str | Unset = UNSET
@@ -207,10 +203,6 @@ class CreateSessionRequest:
         tts = self.tts
 
         sts = self.sts
-
-        subagents: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.subagents, Unset):
-            subagents = self.subagents.to_dict()
 
         subagent = self.subagent
 
@@ -325,8 +317,6 @@ class CreateSessionRequest:
             field_dict["tts"] = tts
         if sts is not UNSET:
             field_dict["sts"] = sts
-        if subagents is not UNSET:
-            field_dict["subagents"] = subagents
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
         if search is not UNSET:
@@ -370,9 +360,6 @@ class CreateSessionRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.create_session_request_custom import (
             CreateSessionRequestCustom,
-        )
-        from ..models.create_session_request_subagents import (
-            CreateSessionRequestSubagents,
         )
         from ..models.create_session_request_tags import (
             CreateSessionRequestTags,
@@ -442,13 +429,6 @@ class CreateSessionRequest:
         tts = d.pop("tts", UNSET)
 
         sts = d.pop("sts", UNSET)
-
-        _subagents = d.pop("subagents", UNSET)
-        subagents: CreateSessionRequestSubagents | Unset
-        if isinstance(_subagents, Unset):
-            subagents = UNSET
-        else:
-            subagents = CreateSessionRequestSubagents.from_dict(_subagents)
 
         subagent = d.pop("subagent", UNSET)
 
@@ -550,7 +530,6 @@ class CreateSessionRequest:
             stt=stt,
             tts=tts,
             sts=sts,
-            subagents=subagents,
             subagent=subagent,
             search=search,
             voice=voice,

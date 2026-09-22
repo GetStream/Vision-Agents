@@ -54,9 +54,12 @@ type Message struct {
 }
 type Page struct {
 	memoryScope memory.Scope
-	Messages    []Message `json:"messages"`
-	Before      string    `json:"before,omitempty"`
-	Truncated   bool      `json:"context_truncated"`
+	// agent is who the channel says owns it, which is what a resume that was not told
+	// the id reads back rather than inventing a second one.
+	agent     string
+	Messages  []Message `json:"messages"`
+	Before    string    `json:"before,omitempty"`
+	Truncated bool      `json:"context_truncated"`
 }
 type Updated struct {
 	CID     string  `json:"conversation_id"`
@@ -175,9 +178,10 @@ func (s *Service) Open(ctx context.Context, customer, agentID, cid string, scope
 	if c := s.all[cid]; c != nil {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if c.data.Customer != customer || c.data.Agent != agentID {
+		if c.data.Customer != customer || (agentID != "" && c.data.Agent != agentID) {
 			return nil, nil, false, errors.New("conversation belongs to another customer or agent")
 		}
+		agentID = c.data.Agent
 		if c.active {
 			return nil, nil, false, errors.New("conversation is already open")
 		}
@@ -208,6 +212,9 @@ func (s *Service) Open(ctx context.Context, customer, agentID, cid string, scope
 	}
 	if !sameMemoryScope(page.memoryScope, scope) {
 		return nil, nil, false, errors.New("conversation belongs to another memory scope; reopen with its original organization")
+	}
+	if agentID == "" {
+		agentID = page.agent
 	}
 	c := s.make(disk{CID: cid, Customer: customer, Agent: agentID})
 	c.active = true
@@ -249,10 +256,18 @@ func (s *Service) history(ctx context.Context, customer, agentID, cid, before st
 	if err != nil {
 		return Page{}, err
 	}
-	if r.Data.Channel.Custom["support_customer_id"] != customer || r.Data.Channel.Custom["support_agent_id"] != agentID {
+	// The customer is the boundary and is always checked. The agent id is the key the
+	// transcript was written under rather than a permission, and a caller resuming a
+	// conversation has no way to know it, so an empty one reads whatever the channel says
+	// instead of being refused for not having guessed it.
+	if r.Data.Channel.Custom["support_customer_id"] != customer {
 		return Page{}, errors.New("conversation belongs to another customer or agent")
 	}
-	p := Page{Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
+	stored, _ := r.Data.Channel.Custom["support_agent_id"].(string)
+	if agentID != "" && stored != agentID {
+		return Page{}, errors.New("conversation belongs to another customer or agent")
+	}
+	p := Page{Messages: []Message{}, Truncated: len(r.Data.Messages) == limit, agent: stored}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
 		b, err := json.Marshal(raw)
 		if err != nil {
@@ -347,6 +362,7 @@ func history(p Page) ([]llm.Message, bool) {
 	return out, tr
 }
 func (c *Conversation) CID() string               { return c.data.CID }
+func (c *Conversation) Agent() string             { return c.data.Agent }
 func (c *Conversation) Attach(emit func(Updated)) { c.mu.Lock(); defer c.mu.Unlock(); c.emit = emit }
 func (c *Conversation) Release() {
 	c.mu.Lock()

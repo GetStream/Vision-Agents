@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifierrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -33,9 +33,9 @@ import (
 type Kind string
 
 const (
-	// KindClassifier asks the llm_classifier router for the probability that a turn
-	// violates the policy.
-	KindClassifier Kind = "llm_classifier"
+	// KindClassifier asks the lcm router for the probability that a turn violates the
+	// policy.
+	KindClassifier Kind = "lcm"
 	// KindWebhook asks the customer's own server.
 	KindWebhook Kind = "webhook"
 	// KindLLM asks a language model to read the policy and judge the turn.
@@ -122,7 +122,7 @@ type Deps struct {
 	// Owner is who a routed check is billed to.
 	Owner routing.Owner
 	// Classifier routes a KindClassifier check.
-	Classifier *llmclassifierrouter.Router
+	Classifier *lcmrouter.Router
 	// LLM routes a KindLLM check.
 	LLM *llmrouter.Router
 	// Secret signs a webhook, so the customer's server can tell our request from anyone

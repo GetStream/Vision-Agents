@@ -1164,6 +1164,23 @@ func (s *SessionSuite) TestNamingNoSkillsTakesTheBuiltInSet() {
 
 	s.Require().NoError(err)
 	s.Greater(len(skills.Skills), 1)
+	_, offered := skills.Lookup("vision")
+	s.False(offered, "the built-in set runs on a subagent that may not see")
+}
+
+func (s *SessionSuite) TestNamingVisionOffersIt() {
+	s.manages()
+
+	skills, err := s.manager.skills(s.ctx, Spec{
+		CustomerID:     "acme",
+		SubagentTarget: "vlm",
+		SkillNames:     []string{"vision"},
+	})
+
+	s.Require().NoError(err)
+	vision, offered := skills.Lookup("vision")
+	s.Require().True(offered)
+	s.True(vision.CaptureVideo)
 }
 
 func (s *SessionSuite) TestSkillsMeanNothingWithoutASubagentToRunThem() {

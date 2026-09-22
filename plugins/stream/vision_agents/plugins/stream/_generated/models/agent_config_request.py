@@ -12,7 +12,6 @@ from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.agent_config_request_subagents import AgentConfigRequestSubagents
     from ..models.agent_config_request_tags import AgentConfigRequestTags
     from ..models.session_video import SessionVideo
 
@@ -36,17 +35,15 @@ class AgentConfigRequest:
         voice (str | Unset): Provider-specific voice id.
         llm (str | Unset): The model holding the conversation.
         video (SessionVideo | Unset):
-        subagents (AgentConfigRequestSubagents | Unset): Named worker targets. Entries merge over stored configuration;
-            an empty target removes that worker. Singular subagent is shorthand for default.
         subagent (str | Unset): The model that does the thinking. Empty means the voice model answers everything itself,
             and skills mean nothing.
         search (str | Unset): What the agent finds out today's answers with, as a provider/model or a capability
             shortcut. Empty leaves the default, and a deployment that routes no search offers the tool to nobody either way.
         instructions (str | Unset):
         greeting (str | Unset):
-        guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - llm_classifier, webhook or
-            llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
-            model. Empty means every turn is answered.
+        guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then
+            the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty
+            means every turn is answered.
         skills (list[str] | Unset): Skill names, either the customer's own or one of the built-in think, recall and
             explain. Omit for the built-in set.
         plugins (list[str] | Unset): Hosted MCP servers this agent may reach, named from the built-in catalog.
@@ -68,7 +65,6 @@ class AgentConfigRequest:
     voice: str | Unset = UNSET
     llm: str | Unset = UNSET
     video: SessionVideo | Unset = UNSET
-    subagents: AgentConfigRequestSubagents | Unset = UNSET
     subagent: str | Unset = UNSET
     search: str | Unset = UNSET
     instructions: str | Unset = UNSET
@@ -102,10 +98,6 @@ class AgentConfigRequest:
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
             video = self.video.to_dict()
-
-        subagents: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.subagents, Unset):
-            subagents = self.subagents.to_dict()
 
         subagent = self.subagent
 
@@ -160,8 +152,6 @@ class AgentConfigRequest:
             field_dict["llm"] = llm
         if video is not UNSET:
             field_dict["video"] = video
-        if subagents is not UNSET:
-            field_dict["subagents"] = subagents
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
         if search is not UNSET:
@@ -189,9 +179,6 @@ class AgentConfigRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.agent_config_request_subagents import (
-            AgentConfigRequestSubagents,
-        )
         from ..models.agent_config_request_tags import (
             AgentConfigRequestTags,
         )
@@ -223,13 +210,6 @@ class AgentConfigRequest:
             video = UNSET
         else:
             video = SessionVideo.from_dict(_video)
-
-        _subagents = d.pop("subagents", UNSET)
-        subagents: AgentConfigRequestSubagents | Unset
-        if isinstance(_subagents, Unset):
-            subagents = UNSET
-        else:
-            subagents = AgentConfigRequestSubagents.from_dict(_subagents)
 
         subagent = d.pop("subagent", UNSET)
 
@@ -272,7 +252,6 @@ class AgentConfigRequest:
             voice=voice,
             llm=llm,
             video=video,
-            subagents=subagents,
             subagent=subagent,
             search=search,
             instructions=instructions,

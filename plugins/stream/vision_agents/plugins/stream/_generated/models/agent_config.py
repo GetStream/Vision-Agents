@@ -13,7 +13,6 @@ from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.agent_config_subagents import AgentConfigSubagents
     from ..models.agent_config_tags import AgentConfigTags
     from ..models.session_video import SessionVideo
 
@@ -39,8 +38,6 @@ class AgentConfig:
         voice (str | Unset):
         llm (str | Unset):
         video (SessionVideo | Unset):
-        subagents (AgentConfigSubagents | Unset): Named worker targets. Entries merge over stored configuration; an
-            empty target removes that worker. Singular subagent is shorthand for default.
         subagent (str | Unset):
         search (str | Unset):
         instructions (str | Unset):
@@ -69,7 +66,6 @@ class AgentConfig:
     voice: str | Unset = UNSET
     llm: str | Unset = UNSET
     video: SessionVideo | Unset = UNSET
-    subagents: AgentConfigSubagents | Unset = UNSET
     subagent: str | Unset = UNSET
     search: str | Unset = UNSET
     instructions: str | Unset = UNSET
@@ -108,10 +104,6 @@ class AgentConfig:
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
             video = self.video.to_dict()
-
-        subagents: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.subagents, Unset):
-            subagents = self.subagents.to_dict()
 
         subagent = self.subagent
 
@@ -170,8 +162,6 @@ class AgentConfig:
             field_dict["llm"] = llm
         if video is not UNSET:
             field_dict["video"] = video
-        if subagents is not UNSET:
-            field_dict["subagents"] = subagents
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
         if search is not UNSET:
@@ -201,9 +191,6 @@ class AgentConfig:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.agent_config_subagents import (
-            AgentConfigSubagents,
-        )
         from ..models.agent_config_tags import AgentConfigTags
         from ..models.session_video import SessionVideo
 
@@ -234,13 +221,6 @@ class AgentConfig:
             video = UNSET
         else:
             video = SessionVideo.from_dict(_video)
-
-        _subagents = d.pop("subagents", UNSET)
-        subagents: AgentConfigSubagents | Unset
-        if isinstance(_subagents, Unset):
-            subagents = UNSET
-        else:
-            subagents = AgentConfigSubagents.from_dict(_subagents)
 
         subagent = d.pop("subagent", UNSET)
 
@@ -288,7 +268,6 @@ class AgentConfig:
             voice=voice,
             llm=llm,
             video=video,
-            subagents=subagents,
             subagent=subagent,
             search=search,
             instructions=instructions,

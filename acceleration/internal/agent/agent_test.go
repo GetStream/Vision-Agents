@@ -2227,6 +2227,29 @@ func (s *AgentSuite) TestAnAnswerInWritingIsReportedRatherThanSpoken() {
 	s.Zero(countOf[Spoke](s.reported()), "there is no voice in a conversation held in writing")
 }
 
+// TestAnAnswerInWritingKeepsItsBrackets guards the reader against the voice's stripper.
+//
+// Square brackets are a stage direction only to a voice. To a reader they are a markdown
+// link or an array literal, and a documentation agent writes both in almost every answer:
+// stripped, every citation it gives becomes a bare URL in parentheses and every code
+// sample loses its destructuring.
+func (s *AgentSuite) TestAnAnswerInWritingKeepsItsBrackets() {
+	s.joinText()
+	s.model.reply = []string{
+		"See [the channel guide](https://getstream.io/chat/docs/) ",
+		"and hold them with useState([]).",
+	}
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "how do I list channels"))
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal(
+		"See [the channel guide](https://getstream.io/chat/docs/) and hold them with useState([]).",
+		responded.Text,
+	)
+}
+
 func (s *AgentSuite) TestAGreetingInWritingIsReportedAsSaid() {
 	s.joinText()
 

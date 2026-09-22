@@ -383,8 +383,8 @@ func frameOf(event session.Event) (frame, bool) {
 
 	case agent.TaskSettled:
 		return frame{
-			"type":     "task_settled",
-			"evidence": typed.Evidence, "worker": typed.Worker,
+			"type":       "task_settled",
+			"evidence":   typed.Evidence,
 			"task_id":    typed.TaskID,
 			"skill":      typed.Skill,
 			"text":       typed.Text,

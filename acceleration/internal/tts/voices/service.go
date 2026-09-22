@@ -14,6 +14,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
+// EnvBucketURL is the environment variable naming the bucket voice recordings live in,
+// for example s3://voices?region=eu-west-1, gs://voices, or file:///var/lib/router/voices.
+const EnvBucketURL = "ROUTER_VOICES_BUCKET_URL"
+
 // Service is the control plane for a customer's own voices: it holds the rows, the
 // recordings behind them and the ids each provider gave them back.
 type Service struct {
@@ -38,7 +42,7 @@ func NewService(options Options) (*Service, error) {
 		return nil, errors.New("voices: a database is required")
 	}
 	if options.Bucket == nil {
-		return nil, fmt.Errorf("voices: an object bucket is required (set %s)", blob.EnvURL)
+		return nil, fmt.Errorf("voices: an object bucket is required (set %s)", EnvBucketURL)
 	}
 	if options.Cloners == nil {
 		return nil, errors.New("voices: at least one provider must be able to clone")
@@ -172,6 +176,29 @@ func (s *Service) Delete(ctx context.Context, customerID, voiceID string) error 
 	return s.store.DeleteVoice(ctx, customerID, voice.ID)
 }
 
+// Providers reports which providers a voice can be prepared with, sorted by name.
+func (s *Service) Providers() []string {
+	providers := s.cloners.Providers()
+	sort.Strings(providers)
+	return providers
+}
+
+// Speak says a line in the voice through one provider it is ready with.
+func (s *Service) Speak(ctx context.Context, customerID, voiceID, provider, text string) (Speech, error) {
+	if strings.TrimSpace(text) == "" {
+		return Speech{}, errors.New("voices: there is nothing to say")
+	}
+	cloner, err := s.cloners.Cloner(provider)
+	if err != nil {
+		return Speech{}, err
+	}
+	externalID, err := s.store.ReadyVoiceBinding(ctx, customerID, voiceID, provider)
+	if err != nil {
+		return Speech{}, err
+	}
+	return cloner.Speak(ctx, externalID, text)
+}
+
 // Samples returns a voice's recordings, oldest first.
 func (s *Service) Samples(ctx context.Context, voiceID string) ([]store.VoiceSample, error) {
 	return s.store.VoiceSamples(ctx, voiceID)
@@ -185,17 +212,30 @@ func (s *Service) Bindings(ctx context.Context, voiceID string) ([]store.VoiceBi
 // prepareOne sends the recordings to one provider and writes down what came back. It marks
 // the binding pending first, so a clone that is still running is distinguishable from one
 // that was never asked for.
+//
+// A provider that already had the voice keeps its previous id on the binding until a new
+// clone replaces it, and the replaced clone is then taken off the provider. Otherwise every
+// re-preparation would leave one more voice upstream that nothing here knows to delete.
 func (s *Service) prepareOne(
 	ctx context.Context, voice store.Voice, provider string, cloner Cloner, request Request,
 ) {
-	pending := store.VoiceBinding{VoiceID: voice.ID, Provider: provider, State: store.VoicePending}
+	previous, err := s.externalID(ctx, voice.ID, provider)
+	if err != nil {
+		s.logger.Warn("could not read what a provider already had of a voice",
+			"voice", voice.ID, "provider", provider, "error", err)
+		return
+	}
+
+	pending := store.VoiceBinding{
+		VoiceID: voice.ID, Provider: provider, State: store.VoicePending, ExternalID: previous,
+	}
 	if err := s.store.SaveVoiceBinding(ctx, &pending); err != nil {
 		s.logger.Warn("could not record that a voice is being prepared",
 			"voice", voice.ID, "provider", provider, "error", err)
 		return
 	}
 
-	binding := store.VoiceBinding{VoiceID: voice.ID, Provider: provider}
+	binding := store.VoiceBinding{VoiceID: voice.ID, Provider: provider, ExternalID: previous}
 	externalID, err := cloner.Prepare(ctx, request)
 	if err != nil {
 		binding.State = store.VoiceFailed
@@ -210,7 +250,28 @@ func (s *Service) prepareOne(
 	if err := s.store.SaveVoiceBinding(ctx, &binding); err != nil {
 		s.logger.Warn("could not record what a provider made of a voice",
 			"voice", voice.ID, "provider", provider, "error", err)
+		return
 	}
+	if binding.State == store.VoiceReady && previous != "" && previous != externalID {
+		if err := cloner.Delete(ctx, previous); err != nil {
+			s.logger.Warn("a provider still holds a voice that has been replaced here",
+				"voice", voice.ID, "provider", provider, "external_id", previous, "error", err)
+		}
+	}
+}
+
+// externalID is the id a provider last gave the voice, or empty when it never had it.
+func (s *Service) externalID(ctx context.Context, voiceID, provider string) (string, error) {
+	bindings, err := s.store.VoiceBindings(ctx, voiceID)
+	if err != nil {
+		return "", err
+	}
+	for _, binding := range bindings {
+		if binding.Provider == provider {
+			return binding.ExternalID, nil
+		}
+	}
+	return "", nil
 }
 
 // request reads the recordings back out of the bucket, which is what every cloner is given.

@@ -78,12 +78,13 @@ def sync_detailed(
     """Keep a knowledge base filled from a page
 
      Posting a document is a thing that happens once; a url is a subscription, because the page behind it
-    changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages
-    the same way a document is, and written under the url so a later read replaces it rather than adding
-    a second copy.
-    The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
-    endpoints around it. A page that could not be read is still stored, in the failed state with the
-    reason on it, rather than refused and forgotten.
+    changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the
+    same way a document is, and written under the url so a later read replaces it rather than adding a
+    second copy.
+    The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page
+    comes back pending, and indexed or failed once it has been read. A read that fails is tried again a
+    few times first. A page that could not be read is still stored, in the failed state with the reason
+    on it, rather than refused and forgotten.
     Adding a page a knowledge base already has is a re-read of it rather than a second copy: the
     subscription is the url, so a declaration of what an agent reads can be applied again without being
     diffed first.
@@ -119,12 +120,13 @@ def sync(
     """Keep a knowledge base filled from a page
 
      Posting a document is a thing that happens once; a url is a subscription, because the page behind it
-    changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages
-    the same way a document is, and written under the url so a later read replaces it rather than adding
-    a second copy.
-    The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
-    endpoints around it. A page that could not be read is still stored, in the failed state with the
-    reason on it, rather than refused and forgotten.
+    changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the
+    same way a document is, and written under the url so a later read replaces it rather than adding a
+    second copy.
+    The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page
+    comes back pending, and indexed or failed once it has been read. A read that fails is tried again a
+    few times first. A page that could not be read is still stored, in the failed state with the reason
+    on it, rather than refused and forgotten.
     Adding a page a knowledge base already has is a re-read of it rather than a second copy: the
     subscription is the url, so a declaration of what an agent reads can be applied again without being
     diffed first.
@@ -155,12 +157,13 @@ async def asyncio_detailed(
     """Keep a knowledge base filled from a page
 
      Posting a document is a thing that happens once; a url is a subscription, because the page behind it
-    changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages
-    the same way a document is, and written under the url so a later read replaces it rather than adding
-    a second copy.
-    The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
-    endpoints around it. A page that could not be read is still stored, in the failed state with the
-    reason on it, rather than refused and forgotten.
+    changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the
+    same way a document is, and written under the url so a later read replaces it rather than adding a
+    second copy.
+    The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page
+    comes back pending, and indexed or failed once it has been read. A read that fails is tried again a
+    few times first. A page that could not be read is still stored, in the failed state with the reason
+    on it, rather than refused and forgotten.
     Adding a page a knowledge base already has is a re-read of it rather than a second copy: the
     subscription is the url, so a declaration of what an agent reads can be applied again without being
     diffed first.
@@ -194,12 +197,13 @@ async def asyncio(
     """Keep a knowledge base filled from a page
 
      Posting a document is a thing that happens once; a url is a subscription, because the page behind it
-    changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages
-    the same way a document is, and written under the url so a later read replaces it rather than adding
-    a second copy.
-    The fetch happens before this answers and a live crawl takes seconds, so this is slower than the
-    endpoints around it. A page that could not be read is still stored, in the failed state with the
-    reason on it, rather than refused and forgotten.
+    changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the
+    same way a document is, and written under the url so a later read replaces it rather than adding a
+    second copy.
+    The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page
+    comes back pending, and indexed or failed once it has been read. A read that fails is tried again a
+    few times first. A page that could not be read is still stored, in the failed state with the reason
+    on it, rather than refused and forgotten.
     Adding a page a knowledge base already has is a re-read of it rather than a second copy: the
     subscription is the url, so a declaration of what an agent reads can be applied again without being
     diffed first.

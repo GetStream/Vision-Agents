@@ -34,16 +34,16 @@ const (
 	// question, they differ in what they cost and how long they take, and which one is
 	// worth asking changes with their health.
 	Search Modality = "search"
-	// LLMClassifier answers a question about a piece of text with a typed value and the
-	// probability behind it, rather than with prose. It is routed rather than called
-	// directly for the same reasons the others are: it is on the live path, so which
-	// provider is worth asking changes with their health, and what each judgement cost is
-	// worth reporting beside what the conversation cost.
+	// LCM is a large classifier model: it answers a question about a piece of text with a
+	// typed value and the probability behind it, rather than with prose. It is routed
+	// rather than called directly for the same reasons the others are: it is on the live
+	// path, so which provider is worth asking changes with their health, and what each
+	// judgement cost is worth reporting beside what the conversation cost.
 	//
 	// It is its own modality rather than a mode of LLM because nothing about it is a
 	// language model's shape: there is no stream, no generated text and no token budget,
 	// and a caller asks for named questions instead of a prompt.
-	LLMClassifier Modality = "llm_classifier"
+	LCM Modality = "lcm"
 	// STS is speech-to-speech: one native audio model that hears the caller and speaks
 	// back, in place of the three above. It is its own modality rather than a flag on a
 	// language model because it is served over a different protocol, billed in different
@@ -168,6 +168,9 @@ func (t Tags) Validate() error {
 type ProviderConfig struct {
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
+	// Description is one sentence for someone choosing a model: what it is good at, and
+	// what it costs them in speed or money to get it.
+	Description string `yaml:"description"`
 	// Languages are the ISO codes the model handles.
 	Languages []string `yaml:"languages"`
 	// Realtime is false for models that only make sense off the live path.
@@ -245,6 +248,12 @@ func (p ProviderConfig) tier() Tier {
 // provider must meet, so the candidate list follows from the config rather than from a
 // hand-maintained list of names.
 type Alias struct {
+	// Title is what the shortcut is called where someone picks one, and Description says
+	// what it is for. A shortcut with no title is plumbing, such as the one the flow
+	// controller runs on, and is not offered as a choice.
+	Title       string `yaml:"title"`
+	Description string `yaml:"description"`
+
 	RequireInputModalities []string `yaml:"require_input_modalities"`
 	// Only names the candidates outright, for the shortcut whose members have nothing
 	// declarable in common. It is the exception to everything above: a name here is a
@@ -294,6 +303,43 @@ func (a Alias) matches(provider ProviderConfig) bool {
 type ModalityConfig struct {
 	Providers []ProviderConfig `yaml:"providers"`
 	Aliases   map[string]Alias `yaml:"aliases"`
+	// aliasOrder is the order the aliases were written in, which a map forgets.
+	aliasOrder []string
+}
+
+// UnmarshalYAML decodes the section and keeps the order its aliases were written in.
+func (c *ModalityConfig) UnmarshalYAML(node *yaml.Node) error {
+	type plain ModalityConfig
+	if err := node.Decode((*plain)(c)); err != nil {
+		return err
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value != "aliases" {
+			continue
+		}
+		aliases := node.Content[i+1].Content
+		for j := 0; j < len(aliases); j += 2 {
+			c.aliasOrder = append(c.aliasOrder, aliases[j].Value)
+		}
+	}
+	return nil
+}
+
+// Offered returns the shortcuts that carry a title, in the order the config wrote them.
+// Those are the ones someone picking a model is shown.
+func (c ModalityConfig) Offered() []string {
+	order := c.aliasOrder
+	// A config built in code has no written order, so it is offered alphabetically.
+	if len(order) == 0 {
+		order = slices.Sorted(maps.Keys(c.Aliases))
+	}
+	var offered []string
+	for _, name := range order {
+		if c.Aliases[name].Title != "" {
+			offered = append(offered, name)
+		}
+	}
+	return offered
 }
 
 // Provider returns the declaration for a "provider/model" name.

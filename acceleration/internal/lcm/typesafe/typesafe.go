@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifier"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
 )
 
 // ProviderName is how this is named in stats and configuration.
@@ -190,10 +190,10 @@ type wireResponse struct {
 // irrelevant close to free, and it is why a caller should ask everything it might need and
 // let its own code decide what applies.
 func (c *Client) Classify(
-	ctx context.Context, asked llmclassifier.Request,
-) (llmclassifier.Result, error) {
+	ctx context.Context, asked lcm.Request,
+) (lcm.Result, error) {
 	if err := asked.Validate(); err != nil {
-		return llmclassifier.Result{}, err
+		return lcm.Result{}, err
 	}
 
 	questions := make(map[string]wireQuestion, len(asked.Questions))
@@ -207,26 +207,26 @@ func (c *Client) Classify(
 
 	payload, err := json.Marshal(request{State: asked.State, Model: c.model, Questions: questions})
 	if err != nil {
-		return llmclassifier.Result{}, fmt.Errorf("typesafe: encode questions: %w", err)
+		return lcm.Result{}, fmt.Errorf("typesafe: encode questions: %w", err)
 	}
 
 	httpRequest, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, c.baseURL+"/v1/systemone", bytes.NewReader(payload))
 	if err != nil {
-		return llmclassifier.Result{}, fmt.Errorf("typesafe: build request: %w", err)
+		return lcm.Result{}, fmt.Errorf("typesafe: build request: %w", err)
 	}
 	httpRequest.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpRequest.Header.Set("Content-Type", "application/json")
 
 	httpResponse, err := c.client.Do(httpRequest)
 	if err != nil {
-		return llmclassifier.Result{}, fmt.Errorf("typesafe: classify: %w", err)
+		return lcm.Result{}, fmt.Errorf("typesafe: classify: %w", err)
 	}
 	defer httpResponse.Body.Close()
 
 	if httpResponse.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(httpResponse.Body, errorBodyLimit))
-		return llmclassifier.Result{}, &StatusError{
+		return lcm.Result{}, &StatusError{
 			StatusCode: httpResponse.StatusCode,
 			Body:       strings.TrimSpace(string(body)),
 		}
@@ -234,13 +234,13 @@ func (c *Client) Classify(
 
 	var decoded wireResponse
 	if err := json.NewDecoder(httpResponse.Body).Decode(&decoded); err != nil {
-		return llmclassifier.Result{}, fmt.Errorf("typesafe: decode answers: %w", err)
+		return lcm.Result{}, fmt.Errorf("typesafe: decode answers: %w", err)
 	}
 
-	result := llmclassifier.Result{
+	result := lcm.Result{
 		Model:   decoded.Model,
-		Answers: make(map[string]llmclassifier.Answer, len(asked.Questions)),
-		Usage: llmclassifier.Usage{
+		Answers: make(map[string]lcm.Answer, len(asked.Questions)),
+		Usage: lcm.Usage{
 			InputTokens:  decoded.Usage.InputTokens,
 			OutputTokens: decoded.Usage.OutputTokens,
 		},
@@ -248,10 +248,10 @@ func (c *Client) Classify(
 	for id := range asked.Questions {
 		answer, answered := decoded.Answers[id]
 		if !answered {
-			return llmclassifier.Result{}, fmt.Errorf("typesafe: %q was not answered", id)
+			return lcm.Result{}, fmt.Errorf("typesafe: %q was not answered", id)
 		}
-		result.Answers[id] = llmclassifier.Answer{
-			Type:          llmclassifier.QuestionType(answer.Type),
+		result.Answers[id] = lcm.Answer{
+			Type:          lcm.QuestionType(answer.Type),
 			Chosen:        answer.Chosen,
 			Yes:           answer.Yes,
 			Level:         answer.Level,

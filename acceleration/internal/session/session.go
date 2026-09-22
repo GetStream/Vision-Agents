@@ -687,10 +687,6 @@ func (s *Session) askTool(call ToolCall) error {
 // deployment cannot route is a refusal, but a deployment routing no thinking model should
 // still take calls: that agent answers everything itself, the way it goes without search.
 func (m *Manager) think(ctx context.Context, spec *Spec) {
-	if target, exists := spec.Subagents["default"]; exists {
-		spec.SubagentTarget = target
-		return
-	}
 	if spec.Text || spec.SubagentTarget != "" {
 		return
 	}
@@ -708,9 +704,10 @@ func (m *Manager) think(ctx context.Context, spec *Spec) {
 //
 // A spec may spell its skills out, name them, or say nothing and take the built-in set.
 // Naming them is what an agent config does, so that editing what a skill means changes
-// every agent that uses it rather than every request that mentions it.
+// every agent that uses it rather than every request that mentions it. The built-in set
+// leaves out skills that capture video, since those need a subagent that can see.
 func (m *Manager) skills(ctx context.Context, spec Spec) (harness.Skills, error) {
-	if spec.SubagentTarget == "" && len(spec.Subagents) == 0 {
+	if spec.SubagentTarget == "" {
 		return harness.Skills{}, nil
 	}
 	if spec.Skills != nil {
@@ -728,15 +725,7 @@ func (m *Manager) skills(ctx context.Context, spec Spec) (harness.Skills, error)
 		}
 		var available []harness.Skill
 		for _, skill := range builtins.Skills {
-			binding := skill.Subagent
-			if binding == "" {
-				binding = "default"
-			}
-			target, declared := spec.Subagents[binding]
-			if !declared && binding == "default" {
-				target = spec.SubagentTarget
-			}
-			if target != "" {
+			if !skill.CaptureVideo {
 				available = append(available, skill)
 			}
 		}
@@ -769,7 +758,7 @@ func (m *Manager) namedSkills(ctx context.Context, customerID, configID string, 
 				Description:  skill.Description,
 				Instructions: skill.Instructions,
 				Deadline:     time.Duration(skill.DeadlineMs) * time.Millisecond,
-				Subagent:     skill.Subagent, CaptureVideo: skill.CaptureVideo,
+				CaptureVideo: skill.CaptureVideo,
 			}
 		}
 	}

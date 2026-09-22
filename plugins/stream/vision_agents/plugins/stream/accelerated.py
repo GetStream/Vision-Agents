@@ -35,7 +35,6 @@ from ._generated.models import (
     SessionTool,
     SessionToolParameters,
     SessionVideo,
-    CreateSessionRequestSubagents,
 )
 from ._socket import Socket
 from .config import ensure_agent
@@ -83,7 +82,6 @@ class Accelerated(OmniLLM):
         url: Optional[str] = None,
         customer_id: Optional[str] = None,
         keyterms: Optional[list[str]] = None,
-        subagents: Optional[dict[str, str]] = None,
         video_source: str = "",
         video_max_frames: int = 0,
     ):
@@ -114,7 +112,6 @@ class Accelerated(OmniLLM):
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
             keyterms: Words the transcriber would otherwise get wrong, such as names and
                 member IDs. Empty leaves whatever the stored config named.
-            subagents: Named worker targets, selected by skill bindings.
             video_source: Camera or processor source for delegated capture.
             video_max_frames: Recent frames per task (1–8); zero uses configuration.
         """
@@ -132,7 +129,6 @@ class Accelerated(OmniLLM):
         self.max_tokens = max_tokens
         self.tool_timeout = tool_timeout
         self.keyterms = keyterms or []
-        self.subagents = subagents or {}
         self.video_source = video_source
         self.video_max_frames = video_max_frames
 
@@ -390,20 +386,13 @@ class Accelerated(OmniLLM):
         self, request: CreateSessionRequest, harness: Optional[Harness]
     ) -> None:
         """Fold the agent's harness into the session it is configuring."""
-        if self.subagent:
-            request.subagent = self.subagent
-        if self.subagents:
-            request.subagents = CreateSessionRequestSubagents.from_dict(self.subagents)
         if harness is None:
             if self.subagent:
                 request.subagent = self.subagent
             return
 
         spec = harness.spec()
-        if "subagents" in spec:
-            request.subagents = CreateSessionRequestSubagents.from_dict(
-                {**self.subagents, **spec["subagents"]}
-            )
+        request.subagent = spec.get("subagent", self.subagent)
         if spec["tasks"]:
             request.tasks = spec["tasks"]
         if "sandbox" in spec:
@@ -412,7 +401,6 @@ class Accelerated(OmniLLM):
             request.skills = [
                 SessionSkill(
                     name=skill["name"],
-                    subagent=skill["subagent"],
                     capture_video=skill["capture_video"],
                     description=skill["description"],
                     instructions=skill["instructions"],

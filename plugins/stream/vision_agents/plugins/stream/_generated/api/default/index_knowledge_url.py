@@ -77,8 +77,9 @@ def sync_detailed(
 ) -> Response[Error | KnowledgeUrl]:
     """Read a page again
 
-     Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages
-    past the end of the new version are removed, so a page that got shorter does not leave its old tail
+     Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. The read
+    is queued, the same as adding the page; last_indexed_at moves once it has happened. Passages past
+    the end of the new version are removed, so a page that got shorter does not leave its old tail
     behind.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -111,8 +112,9 @@ def sync(
 ) -> Error | KnowledgeUrl | None:
     """Read a page again
 
-     Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages
-    past the end of the new version are removed, so a page that got shorter does not leave its old tail
+     Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. The read
+    is queued, the same as adding the page; last_indexed_at moves once it has happened. Passages past
+    the end of the new version are removed, so a page that got shorter does not leave its old tail
     behind.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -140,8 +142,9 @@ async def asyncio_detailed(
 ) -> Response[Error | KnowledgeUrl]:
     """Read a page again
 
-     Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages
-    past the end of the new version are removed, so a page that got shorter does not leave its old tail
+     Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. The read
+    is queued, the same as adding the page; last_indexed_at moves once it has happened. Passages past
+    the end of the new version are removed, so a page that got shorter does not leave its old tail
     behind.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -172,8 +175,9 @@ async def asyncio(
 ) -> Error | KnowledgeUrl | None:
     """Read a page again
 
-     Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages
-    past the end of the new version are removed, so a page that got shorter does not leave its old tail
+     Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. The read
+    is queued, the same as adding the page; last_indexed_at moves once it has happened. Passages past
+    the end of the new version are removed, so a page that got shorter does not leave its old tail
     behind.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

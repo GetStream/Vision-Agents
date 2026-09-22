@@ -91,7 +91,6 @@ func (s *SpecSuite) TestNativeSessionsKeepDelegatedWork() {
 		{SkillNames: []string{"think"}},
 		{Skills: &harness.Skills{Skills: []harness.Skill{{Name: "think"}}}},
 		{SubagentTarget: "llm-thinking"},
-		{Subagents: map[string]string{"vision": "vlm"}},
 	} {
 		spec.STSTarget = "openai/gpt-realtime-2"
 		spec.CallID = "call-1"
@@ -135,19 +134,14 @@ func (s *SpecSuite) TestThinkingBecomesTheReasoningEffort() {
 	s.Equal("high", spec.LLMOverwrites().ReasoningEffort)
 }
 
-func (s *SpecSuite) TestOverwritingOneSubagentDropsTheConfigsDefault() {
-	spec := FromConfig(store.AgentConfig{
-		CustomerID: "acme",
-		Subagents:  map[string]string{"default": "llm-flow", "vision": "vlm"},
-	})
+func (s *SpecSuite) TestOverwritingTheSubagentBeatsTheConfigs() {
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Subagent: "llm-flow"})
 	spec.CallID = "call-1"
 	spec.ModelOverwrites = store.ModelOverwrites{Subagent: "llm-thinking"}
 
 	s.Require().NoError(spec.Normalize())
 
 	s.Equal("llm-thinking", spec.SubagentTarget)
-	s.NotContains(spec.Subagents, "default", "the map must not answer for the target just overwritten")
-	s.Equal("vlm", spec.Subagents["vision"], "the workers nobody overwrote are left alone")
 }
 
 func (s *SpecSuite) TestIncognitoRecordsNothing() {

@@ -66,7 +66,6 @@ class Settings:
     plugins: list[str] = field(default_factory=list)
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
-    subagents: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
     video_max_frames: int = 0
 
@@ -117,7 +116,6 @@ class Folder:
             hasher.update(skill.description.encode())
             hasher.update(b"\n")
             hasher.update(skill.instructions.encode())
-            hasher.update(skill.subagent.encode())
             hasher.update(str(skill.capture_video).encode())
             hasher.update(b"\n")
             if skill.deadline_seconds:
@@ -256,8 +254,6 @@ def _declare(path: Path) -> Settings:
             settings.llm = _word(value)
         elif field_name == "subagent":
             settings.subagent = _word(value)
-        elif field_name == "subagents":
-            settings.subagents = _tags(path, value)
         elif field_name == "search":
             settings.search = _word(value)
         elif field_name == "greeting":
@@ -276,12 +272,6 @@ def _declare(path: Path) -> Settings:
             raise ValueError(
                 f"{path} declares {field_name!r}, which is not something an agent has"
             )
-    if (
-        settings.subagent
-        and "default" in settings.subagents
-        and settings.subagents["default"] != settings.subagent
-    ):
-        raise ValueError("subagent conflicts with subagents.default")
     return settings
 
 
@@ -354,8 +344,6 @@ def _parse_skill(name: str, content: str) -> Skill:
                 skill.name = value
             elif key.strip() == "description":
                 skill.description = value
-            elif key.strip() == "subagent":
-                skill.subagent = value
             elif key.strip() == "capture_video":
                 if value not in ("true", "false"):
                     raise ValueError("capture_video must be true or false")

@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.session_video import SessionVideo
     from ..models.skill_request import SkillRequest
-    from ..models.sync_agent_request_subagents import SyncAgentRequestSubagents
     from ..models.sync_agent_request_tags import SyncAgentRequestTags
 
 
@@ -46,8 +45,6 @@ class SyncAgentRequest:
             voice (str | Unset):
             llm (str | Unset):
             video (SessionVideo | Unset):
-            subagents (SyncAgentRequestSubagents | Unset): Named worker targets. Entries merge over stored configuration; an
-                empty target removes that worker. Singular subagent is shorthand for default.
             subagent (str | Unset):
             search (str | Unset):
             greeting (str | Unset):
@@ -72,7 +69,6 @@ class SyncAgentRequest:
     voice: str | Unset = UNSET
     llm: str | Unset = UNSET
     video: SessionVideo | Unset = UNSET
-    subagents: SyncAgentRequestSubagents | Unset = UNSET
     subagent: str | Unset = UNSET
     search: str | Unset = UNSET
     greeting: str | Unset = UNSET
@@ -122,10 +118,6 @@ class SyncAgentRequest:
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
             video = self.video.to_dict()
-
-        subagents: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.subagents, Unset):
-            subagents = self.subagents.to_dict()
 
         subagent = self.subagent
 
@@ -179,8 +171,6 @@ class SyncAgentRequest:
             field_dict["llm"] = llm
         if video is not UNSET:
             field_dict["video"] = video
-        if subagents is not UNSET:
-            field_dict["subagents"] = subagents
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
         if search is not UNSET:
@@ -203,9 +193,6 @@ class SyncAgentRequest:
         from ..models.knowledge_document import KnowledgeDocument
         from ..models.session_video import SessionVideo
         from ..models.skill_request import SkillRequest
-        from ..models.sync_agent_request_subagents import (
-            SyncAgentRequestSubagents,
-        )
         from ..models.sync_agent_request_tags import (
             SyncAgentRequestTags,
         )
@@ -261,13 +248,6 @@ class SyncAgentRequest:
         else:
             video = SessionVideo.from_dict(_video)
 
-        _subagents = d.pop("subagents", UNSET)
-        subagents: SyncAgentRequestSubagents | Unset
-        if isinstance(_subagents, Unset):
-            subagents = UNSET
-        else:
-            subagents = SyncAgentRequestSubagents.from_dict(_subagents)
-
         subagent = d.pop("subagent", UNSET)
 
         search = d.pop("search", UNSET)
@@ -306,7 +286,6 @@ class SyncAgentRequest:
             voice=voice,
             llm=llm,
             video=video,
-            subagents=subagents,
             subagent=subagent,
             search=search,
             greeting=greeting,

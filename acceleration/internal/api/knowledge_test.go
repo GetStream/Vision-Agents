@@ -112,7 +112,7 @@ func (s *ServerSuite) TestADocumentIsCutIntoPassagesAndWritten() {
 	s.Equal(2, result.Passages, "the document is cut at its headings")
 
 	namespace, passages := written.stored()
-	s.Equal("docs", namespace)
+	s.Equal("acme__docs", namespace, "a knowledge base belongs to the customer that wrote it")
 	s.Len(passages, 2)
 	s.Contains(passages, "pricing.md#0", "a passage is keyed by where it came from")
 	s.Equal("pricing.md > Pricing", passages["pricing.md#0"].Source)
@@ -132,6 +132,18 @@ func (s *ServerSuite) TestPostingADocumentAgainReplacesWhatItWroteBefore() {
 	_, passages := written.stored()
 	s.Len(passages, 1, "editing a document does not leave two versions of it to be found")
 	s.Contains(passages["pricing.md#0"].Text, "tuppence")
+}
+
+func (s *ServerSuite) TestTwoCustomersNamingTheSameBaseWriteToDifferentOnes() {
+	written := s.withKnowledge()
+	body := `{"namespace":"default","documents":[{"source":"a.md","text":"# A\n\nsomething"}]}`
+
+	s.Require().Equal(http.StatusOK, s.post("/v1/agents/knowledge", "acme", body).Code)
+	first, _ := written.stored()
+	s.Require().Equal(http.StatusOK, s.post("/v1/agents/knowledge", "globex", body).Code)
+	second, _ := written.stored()
+
+	s.NotEqual(first, second)
 }
 
 func (s *ServerSuite) TestKnowledgeIsNeverSharedSoANamespaceIsRequired() {
@@ -220,6 +232,18 @@ func (s *ServerSuite) TestListingKnowledgeUrlsSaysWhatTheDeploymentIsMissing() {
 	var failure Error
 	s.decode(recorder, &failure)
 	s.Contains(failure.Error, "no database or no way to read a page")
+}
+
+func (s *ServerSuite) TestListingKnowledgeDocumentsSaysWhatTheDeploymentIsMissing() {
+	s.withKnowledge()
+
+	recorder := s.get("/v1/agents/knowledge/documents", "acme")
+
+	s.Equal(http.StatusBadRequest, recorder.Code)
+
+	var failure Error
+	s.decode(recorder, &failure)
+	s.Contains(failure.Error, "no database")
 }
 
 // quote renders a string as a JSON one, for building a body by hand.

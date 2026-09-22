@@ -16,7 +16,7 @@ is three things:
 | Part      | What it holds                                                              |
 | --------- | -------------------------------------------------------------------------- |
 | `Voice`   | A name of the customer's choosing, and a description                        |
-| `VoiceSample` | A recording. The audio is in the bucket at `ROUTER_BLOB_URL`; Postgres keeps the metadata |
+| `VoiceSample` | A recording. The audio is in the bucket at `ROUTER_VOICES_BUCKET_URL`; Postgres keeps the metadata |
 | `VoiceBinding` | What one provider calls this voice, and whether it is `pending`, `ready` or `failed` |
 
 ```
@@ -50,5 +50,5 @@ recording was accepted is worse served than one who waits.
 
 - No endpoint deletes a single sample; a voice is deleted whole.
 - Adding a sample does not invalidate a `ready` binding. Prepare again to pick it up.
-- A deployment with Postgres but no `ROUTER_BLOB_URL` can speak voices that were already
+- A deployment with Postgres but no `ROUTER_VOICES_BUCKET_URL` can speak voices that were already
   prepared and cannot make new ones.

@@ -2,9 +2,7 @@
 
 from .agent_config import AgentConfig
 from .agent_config_request import AgentConfigRequest
-from .agent_config_request_subagents import AgentConfigRequestSubagents
 from .agent_config_request_tags import AgentConfigRequestTags
-from .agent_config_subagents import AgentConfigSubagents
 from .agent_config_tags import AgentConfigTags
 from .agent_log import AgentLog
 from .agent_log_details import AgentLogDetails
@@ -46,7 +44,6 @@ from .contacts_request_contacts_item import ContactsRequestContactsItem
 from .create_response_request import CreateResponseRequest
 from .create_session_request import CreateSessionRequest
 from .create_session_request_custom import CreateSessionRequestCustom
-from .create_session_request_subagents import CreateSessionRequestSubagents
 from .create_session_request_tags import CreateSessionRequestTags
 from .data_policy import DataPolicy
 from .decision_kind import DecisionKind
@@ -67,6 +64,7 @@ from .image_content_part import ImageContentPart
 from .image_content_part_type import ImageContentPartType
 from .image_source import ImageSource
 from .image_source_detail import ImageSourceDetail
+from .indexed_knowledge_document import IndexedKnowledgeDocument
 from .ingest_knowledge_request import IngestKnowledgeRequest
 from .ingested_knowledge import IngestedKnowledge
 from .instructions_request import InstructionsRequest
@@ -110,6 +108,7 @@ from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
 from .rollup_request import RollupRequest
 from .rollup_result import RollupResult
+from .route import Route
 from .router_config import RouterConfig
 from .router_config_request import RouterConfigRequest
 from .router_config_request_tags import RouterConfigRequestTags
@@ -134,7 +133,6 @@ from .session_respond_command import SessionRespondCommand
 from .session_respond_command_type import SessionRespondCommandType
 from .session_skill import SessionSkill
 from .session_state import SessionState
-from .session_subagents import SessionSubagents
 from .session_tool import SessionTool
 from .session_tool_parameters import SessionToolParameters
 from .session_video import SessionVideo
@@ -164,7 +162,6 @@ from .sts_options_turn_detection import StsOptionsTurnDetection
 from .stt_options import SttOptions
 from .stt_options_overwrites import SttOptionsOverwrites
 from .sync_agent_request import SyncAgentRequest
-from .sync_agent_request_subagents import SyncAgentRequestSubagents
 from .sync_agent_request_tags import SyncAgentRequestTags
 from .sync_agent_result import SyncAgentResult
 from .tag_stats_bucket import TagStatsBucket
@@ -191,6 +188,9 @@ from .turn_stats_bucket import TurnStatsBucket
 from .voice import Voice
 from .voice_binding import VoiceBinding
 from .voice_binding_state import VoiceBindingState
+from .voice_preview import VoicePreview
+from .voice_preview_request import VoicePreviewRequest
+from .voice_providers import VoiceProviders
 from .voice_request import VoiceRequest
 from .voice_sample import VoiceSample
 from .voice_sample_request import VoiceSampleRequest
@@ -198,9 +198,7 @@ from .voice_sample_request import VoiceSampleRequest
 __all__ = (
     "AgentConfig",
     "AgentConfigRequest",
-    "AgentConfigRequestSubagents",
     "AgentConfigRequestTags",
-    "AgentConfigSubagents",
     "AgentConfigTags",
     "AgentLog",
     "AgentLogDetails",
@@ -242,7 +240,6 @@ __all__ = (
     "CreateResponseRequest",
     "CreateSessionRequest",
     "CreateSessionRequestCustom",
-    "CreateSessionRequestSubagents",
     "CreateSessionRequestTags",
     "DataPolicy",
     "DecisionKind",
@@ -263,6 +260,7 @@ __all__ = (
     "ImageContentPartType",
     "ImageSource",
     "ImageSourceDetail",
+    "IndexedKnowledgeDocument",
     "IngestKnowledgeRequest",
     "IngestedKnowledge",
     "InstructionsRequest",
@@ -306,6 +304,7 @@ __all__ = (
     "RecordingStatus",
     "RollupRequest",
     "RollupResult",
+    "Route",
     "RouterConfig",
     "RouterConfigRequest",
     "RouterConfigRequestTags",
@@ -330,7 +329,6 @@ __all__ = (
     "SessionRespondCommandType",
     "SessionSkill",
     "SessionState",
-    "SessionSubagents",
     "SessionTool",
     "SessionToolParameters",
     "SessionVideo",
@@ -360,7 +358,6 @@ __all__ = (
     "SttOptions",
     "SttOptionsOverwrites",
     "SyncAgentRequest",
-    "SyncAgentRequestSubagents",
     "SyncAgentRequestTags",
     "SyncAgentResult",
     "TagStatsBucket",
@@ -387,6 +384,9 @@ __all__ = (
     "Voice",
     "VoiceBinding",
     "VoiceBindingState",
+    "VoicePreview",
+    "VoicePreviewRequest",
+    "VoiceProviders",
     "VoiceRequest",
     "VoiceSample",
     "VoiceSampleRequest",

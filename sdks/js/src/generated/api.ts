@@ -44,6 +44,26 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/{modality}/routes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List the capability shortcuts offered as a choice, each with the models it resolves to
+         * @description The shortcuts a person picking a model is shown, in the order the deployment offers them, so the first is the one a conversation gets by default. Shortcuts that exist only for the router's own use are left out, though they can still be named as a target.
+         */
+        readonly get: operations["listRoutes"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/{modality}/routes/{target}": {
         readonly parameters: {
             readonly query?: never;
@@ -556,6 +576,47 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/knowledge/documents": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The documents a knowledge base was filled with
+         * @description What was posted to /v1/agents/knowledge or synced from an agent directory's knowledge folder, one entry per source. Pages are listed at /v1/agents/knowledge/urls.
+         */
+        readonly get: operations["listKnowledgeDocuments"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/knowledge/documents/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Take a document out of a knowledge base
+         * @description The passages it was cut into are removed too, so the agent stops answering out of it.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly delete: operations["deleteKnowledgeDocument"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/knowledge/urls": {
         readonly parameters: {
             readonly query?: never;
@@ -568,8 +629,8 @@ export type paths = {
         readonly put?: never;
         /**
          * Keep a knowledge base filled from a page
-         * @description Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched here, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
-         *     The fetch happens before this answers and a live crawl takes seconds, so this is slower than the endpoints around it. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
+         * @description Posting a document is a thing that happens once; a url is a subscription, because the page behind it changes and nobody re-posts it. The page is fetched, turned into markdown, cut into passages the same way a document is, and written under the url so a later read replaces it rather than adding a second copy.
+         *     The fetch is queued rather than done before this answers, since a live crawl takes seconds: the page comes back pending, and indexed or failed once it has been read. A read that fails is tried again a few times first. A page that could not be read is still stored, in the failed state with the reason on it, rather than refused and forgotten.
          *     Adding a page a knowledge base already has is a re-read of it rather than a second copy: the subscription is the url, so a declaration of what an agent reads can be applied again without being diffed first.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -613,7 +674,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Read a page again
-         * @description Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
+         * @description Nothing re-reads a page on its own, so this is what a caller with its own schedule calls. The read is queued, the same as adding the page; last_indexed_at moves once it has happened. Passages past the end of the new version are removed, so a page that got shorter does not leave its old tail behind.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["indexKnowledgeUrl"];
@@ -1146,6 +1207,7 @@ export type paths = {
          * Store an agent directory's instructions, skills, knowledge and settings
          * @description Reads as "this is what the agent is", from a directory of agent.yaml, instructions.md, skills/ and knowledge/. The hash is a fingerprint of that directory: a second call with the same hash does nothing, so a process that syncs on startup is cheap when nothing has changed.
          *     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+         *     knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the directory is taken out of the base on the next sync.
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["syncAgent"];
@@ -1225,6 +1287,27 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/voices/{id}/preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Hear a voice through one provider
+         * @description Says a short line in the voice with the provider's own copy of it, so what a caller will hear can be checked before an agent speaks in it. The provider must have the voice ready.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly post: operations["previewVoice"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/voices/{id}/samples": {
         readonly parameters: {
             readonly query?: never;
@@ -1240,6 +1323,26 @@ export type paths = {
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["addVoiceSample"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/voices/providers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The providers a voice can be prepared with
+         * @description Only the providers this deployment holds a key for and knows how to clone with. A voice with no binding for one of them has not been prepared there yet.
+         */
+        readonly get: operations["listVoiceProviders"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1634,10 +1737,6 @@ export type components = {
             readonly sts?: string;
             readonly stt?: string;
             readonly subagent?: string;
-            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
-            readonly subagents?: {
-                readonly [key: string]: string;
-            };
             /** @description Fingerprint of the last directory synced onto this config. Empty if it was never synced from a directory. */
             readonly sync_hash?: string;
             readonly tags?: {
@@ -1651,7 +1750,7 @@ export type components = {
         };
         readonly AgentConfigRequest: {
             readonly greeting?: string;
-            /** @description A guardrail.md: frontmatter saying how a turn is screened - llm_classifier, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
+            /** @description A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
             readonly guardrail?: string;
             readonly instructions?: string;
             /** @description Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them. */
@@ -1676,10 +1775,6 @@ export type components = {
             readonly stt?: string;
             /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
             readonly subagent?: string;
-            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
-            readonly subagents?: {
-                readonly [key: string]: string;
-            };
             /** @description Cost labels, carried onto every request a session using it makes. */
             readonly tags?: {
                 readonly [key: string]: string;
@@ -2065,10 +2160,6 @@ export type components = {
             readonly stt?: string;
             /** @description The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing. */
             readonly subagent?: string;
-            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
-            readonly subagents?: {
-                readonly [key: string]: string;
-            };
             /** @description Cost labels, carried onto every request the session makes. */
             readonly tags?: {
                 readonly [key: string]: string;
@@ -2196,6 +2287,24 @@ export type components = {
             /** @description Absolute HTTP(S) URL or base64 image data URI. */
             readonly url: string;
         };
+        readonly IndexedKnowledgeDocument: {
+            /** Format: date-time */
+            readonly created_at: string;
+            readonly id: string;
+            readonly namespace: string;
+            /** @description How many passages it was last cut into. */
+            readonly passages: number;
+            /**
+             * @description What the document was posted as, and what its passages are keyed by.
+             * @example pricing.md
+             */
+            readonly source: string;
+            /**
+             * Format: date-time
+             * @description When it was last written.
+             */
+            readonly updated_at: string;
+        };
         readonly IngestedKnowledge: {
             /** @description How many documents were read. */
             readonly documents: number;
@@ -2271,7 +2380,7 @@ export type components = {
             readonly url: string;
         };
         /**
-         * @description Where the page has got to. Pending means it has been added but not yet read, which is also what a read that died halfway through leaves behind.
+         * @description Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
          * @enum {string}
          */
         readonly KnowledgeUrlState: "pending" | "indexed" | "failed";
@@ -2312,11 +2421,11 @@ export type components = {
         };
         readonly MessageContent: string | readonly components["schemas"]["ContentPart"][];
         /**
-         * @description What kind of work was done. The first six are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. llm_classifier answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+         * @description What kind of work was done. The first six are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. lcm is a large classifier model: it answers a question about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
          * @example tts
          * @enum {string}
          */
-        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "llm_classifier" | "memory" | "knowledge" | "phone";
+        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "lcm" | "memory" | "knowledge" | "phone";
         /**
          * @description What to change about the models for one session, over whatever its agent config decided.
          *     It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
@@ -2330,7 +2439,7 @@ export type components = {
             /** @description A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened. */
             readonly sts?: string;
             readonly stt?: string;
-            /** @description The model delegated work runs on. Naming one replaces a config's default worker, so the config cannot keep answering for the target just overwritten. */
+            /** @description The model delegated work runs on, in place of the config's. */
             readonly subagent?: string;
             /**
              * Format: double
@@ -2468,6 +2577,8 @@ export type components = {
             readonly vendor: string;
         };
         readonly Provider: {
+            /** @description What the model is good at, and what that costs in speed or money. Empty if the deployment wrote none. */
+            readonly description?: string;
             readonly health: components["schemas"]["ProviderHealth"];
             readonly languages: readonly string[];
             /** @example eleven_flash_v2_5 */
@@ -2476,6 +2587,11 @@ export type components = {
             readonly provider: string;
             readonly realtime: boolean;
             readonly tier: components["schemas"]["Tier"];
+            /**
+             * Format: double
+             * @description This model's share of the modality's requests over the last seven days, across every customer, from 0 to 1. It is how popular the model is, and is 0 when nothing was served or the deployment keeps no statistics.
+             */
+            readonly usage_share?: number;
         };
         readonly ProviderHealth: {
             /** @description False once the error rate crosses the configured threshold. */
@@ -2518,6 +2634,18 @@ export type components = {
             /** Format: int64 */
             readonly buckets_written: number;
             readonly granularity: components["schemas"]["Granularity"];
+        };
+        readonly Route: {
+            /** @description The models the shortcut resolves to right now, best first. */
+            readonly candidates: readonly components["schemas"]["Candidate"][];
+            readonly description: string;
+            /**
+             * @description The shortcut, which is what a config or request names as its target.
+             * @example llm-fast
+             */
+            readonly id: string;
+            /** @example Fast conversational */
+            readonly title: string;
         };
         readonly RouterConfig: {
             /** Format: date-time */
@@ -2667,10 +2795,6 @@ export type components = {
             readonly stt?: string;
             /** @description The provider and model delegated work runs on. */
             readonly subagent?: string;
-            /** @description Configured worker targets, prepared asynchronously. */
-            readonly subagents?: {
-                readonly [key: string]: string;
-            };
             /** @description The conversation is held in writing rather than on a call. */
             readonly text?: boolean;
             readonly title?: string;
@@ -2719,8 +2843,6 @@ export type components = {
             /** @description The full prompt, which only the subagent sees. */
             readonly instructions: string;
             readonly name: string;
-            /** @description Named worker binding; omitted uses default. */
-            readonly subagent?: string;
         };
         /**
          * @description Whether the agent is still in the call.
@@ -2810,7 +2932,7 @@ export type components = {
             readonly assertion: string;
             /** @description How the caller hears the agent. Audio simulations only. */
             readonly caller_stt?: string;
-            /** @description The model that plays the caller. Empty takes a fast tier. */
+            /** @description The model that plays the caller. Empty takes llm-scenario-runner, the deployment's fast-tier default. */
             readonly caller_target?: string;
             /** @description How the caller speaks. Audio simulations only. */
             readonly caller_tts?: string;
@@ -2818,9 +2940,9 @@ export type components = {
             readonly caller_voice?: string;
             /** @description The agent being tested. */
             readonly config_id: string;
-            /** @description The model that rules on the conversations, named the way any other routing target is. Empty takes a quality tier, since nobody is waiting for it. */
+            /** @description The model that rules on the conversations, named the way any other routing target is. Empty takes llm-judge, the deployment's quality-tier default, since nobody is waiting for it. */
             readonly judge_target?: string;
-            /** @description How many times the caller may speak, up to thirty. It is what stops a caller that never decides it is finished. Twelve when left out. */
+            /** @description How many times the caller may speak, up to two hundred. It is what stops a caller that never decides it is finished. Twelve when left out. */
             readonly max_turns?: number;
             /**
              * @description Text hands the agent the words, which tests everything between hearing and answering. Audio generates speech and runs the whole pipeline, so what is judged is what a caller would actually have heard. Text when left out.
@@ -2875,8 +2997,6 @@ export type components = {
             readonly id: string;
             readonly instructions: string;
             readonly name: string;
-            /** @description Named worker binding; omitted uses default. */
-            readonly subagent?: string;
             /** Format: date-time */
             readonly updated_at: string;
         };
@@ -2896,8 +3016,6 @@ export type components = {
             readonly instructions: string;
             /** @description How the config names it, which is unique among that config's own skills. */
             readonly name: string;
-            /** @description Named worker binding; omitted uses default. */
-            readonly subagent?: string;
         };
         readonly SkippedVendor: {
             /** @example cannot search by administrative_area */
@@ -3158,10 +3276,6 @@ export type components = {
             readonly sts?: string;
             readonly stt?: string;
             readonly subagent?: string;
-            /** @description Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default. */
-            readonly subagents?: {
-                readonly [key: string]: string;
-            };
             readonly tags?: {
                 readonly [key: string]: string;
             };
@@ -3479,6 +3593,25 @@ export type components = {
             /** Format: date-time */
             readonly updated_at?: string;
         };
+        readonly VoicePreview: {
+            /**
+             * Format: byte
+             * @description The spoken line, base64 encoded.
+             */
+            readonly audio: string;
+            /** @example audio/mpeg */
+            readonly content_type: string;
+            readonly provider: string;
+        };
+        readonly VoicePreviewRequest: {
+            /** @description Which provider's copy of the voice to hear. */
+            readonly provider: string;
+            /** @description What to say. Omitted says a short greeting. */
+            readonly text?: string;
+        };
+        readonly VoiceProviders: {
+            readonly providers: readonly string[];
+        };
         readonly VoiceRequest: {
             /** @description A note for whoever reads the voice back, and for the provider's dashboard. */
             readonly description?: string;
@@ -3636,6 +3769,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["Provider"][];
+                };
+            };
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly listRoutes: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description Which kind of model to route. */
+                readonly modality: components["parameters"]["Modality"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The offered shortcuts, default first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["Route"][];
                 };
             };
             readonly 401: components["responses"]["Unauthorized"];
@@ -4528,6 +4687,57 @@ export interface operations {
             readonly 403: components["responses"]["Forbidden"];
         };
     };
+    readonly listKnowledgeDocuments: {
+        readonly parameters: {
+            readonly query?: {
+                /** @description One knowledge base. Omit to list every document the customer has. */
+                readonly namespace?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The customer's documents, most recently written first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["IndexedKnowledgeDocument"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly deleteKnowledgeDocument: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: components["parameters"]["ResourceID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The document and its passages are gone */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
     readonly listKnowledgeUrls: {
         readonly parameters: {
             readonly query?: {
@@ -4567,7 +4777,7 @@ export interface operations {
             };
         };
         readonly responses: {
-            /** @description The page was stored, read or not */
+            /** @description The page was stored and its read queued */
             readonly 201: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -4645,7 +4855,7 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description The page as it now is */
+            /** @description The page as it is while the read is queued */
             readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -5821,6 +6031,37 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
+    readonly previewVoice: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: components["parameters"]["ResourceID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VoicePreviewRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description The line, spoken */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VoicePreview"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
     readonly addVoiceSample: {
         readonly parameters: {
             readonly query?: never;
@@ -5850,6 +6091,29 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly listVoiceProviders: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The providers, sorted by name */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VoiceProviders"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
         };
     };
     readonly dispatchCalls: {

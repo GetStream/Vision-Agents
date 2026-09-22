@@ -39,7 +39,7 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 // A field added to AgentConfig and forgotten here is stored on create and silently
 // dropped on every update after, which reads as a setting that will not save.
 var configColumns = []string{
-	"name", "mode", "stt", "tts", "sts", "voice", "llm", "subagent", "subagents",
+	"name", "mode", "stt", "tts", "sts", "voice", "llm", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "guardrail",
 	"skills", "plugins", "keyterms", "knowledge_namespace", "sandbox", "tags",
 	"sync_hash", "updated_at",
@@ -228,7 +228,7 @@ func (s *Store) UpdateSkill(ctx context.Context, skill *Skill) error {
 	skill.UpdatedAt = time.Now().UTC()
 
 	result, err := s.db.NewUpdate().Model(skill).
-		Column("config_id", "name", "description", "instructions", "subagent", "capture_video", "deadline_ms", "updated_at").
+		Column("config_id", "name", "description", "instructions", "capture_video", "deadline_ms", "updated_at").
 		Where("id = ?", skill.ID).
 		Where("customer_id = ?", skill.CustomerID).
 		Where("deleted_at IS NULL").
@@ -343,9 +343,6 @@ func (s *Store) SkillsNamed(ctx context.Context, customerID, configID string, na
 func normalizeConfig(config *AgentConfig) {
 	if config.VideoMaxFrames == 0 {
 		config.VideoMaxFrames = 1
-	}
-	if config.Subagents == nil {
-		config.Subagents = map[string]string{}
 	}
 	if config.Mode == "" {
 		config.Mode = AgentModeVoice

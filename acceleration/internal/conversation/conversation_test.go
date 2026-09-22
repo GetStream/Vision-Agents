@@ -122,6 +122,51 @@ func saved(t *testing.T, c *Conversation) {
 	require.Eventually(t, func() bool { return current(c).Saved }, 8*time.Second, 20*time.Millisecond)
 }
 
+// TestAConversationIsResumedWithoutKnowingWhichAgentOpenedIt covers the resume a page does.
+//
+// A text session is given a fresh agent id on every open, so somebody coming back to a
+// conversation cannot present the one its transcript was written under: they never saw it,
+// and the id they arrive with is a different one. Presenting none reads the owner off the
+// conversation rather than refusing the resume for failing to guess it.
+func TestAConversationIsResumedWithoutKnowingWhichAgentOpenedIt(t *testing.T) {
+	_, client := newChat(t)
+	s, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer s.Close()
+
+	c, _, _, err := s.Open(context.Background(), "customer", "session-one", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("question"))
+	c.Observe(agent.ResponseDelta{Text: "An answer."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	cid := c.CID()
+	c.Release()
+
+	// The replica that served the first open still holds it.
+	again, history, _, err := s.Open(context.Background(), "customer", "", cid)
+	require.NoError(t, err)
+	require.Equal(t, "session-one", again.Agent())
+	require.Equal(t, []llm.Message{
+		{Role: llm.User, Content: "question"},
+		{Role: llm.Assistant, Content: "An answer."},
+	}, history)
+	again.Release()
+
+	// And one that has never seen it, which is every other replica: the owner is read
+	// back off the channel instead of out of memory.
+	cold, err := newService(t.TempDir(), client)
+	require.NoError(t, err)
+	defer cold.Close()
+	resumed, _, _, err := cold.Open(context.Background(), "customer", "", cid)
+	require.NoError(t, err)
+	require.Equal(t, "session-one", resumed.Agent())
+
+	// The customer is still the boundary, with or without an agent id to check.
+	_, _, _, err = cold.Open(context.Background(), "another", "", cid)
+	require.ErrorContains(t, err, "another customer")
+}
+
 func TestActivityPersistsAndRestores(t *testing.T) {
 	db, client := newChat(t)
 	s, err := newService(t.TempDir(), client)

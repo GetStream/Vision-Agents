@@ -450,6 +450,38 @@ func (s *Store) CustomerTagStats(
 	return buckets, nil
 }
 
+// ModelRequests returns how many requests each "provider/model" served for a modality
+// since a time, across every customer. It is what makes a model popular, so it counts
+// calls rather than spend, and is read from the raw requests so it needs no rollup.
+func (s *Store) ModelRequests(ctx context.Context, modality string, since time.Time) (map[string]int64, error) {
+	if modality == "" {
+		return nil, errors.New("store: modality is required")
+	}
+
+	var rows []struct {
+		Provider string `bun:"provider"`
+		Model    string `bun:"model"`
+		Requests int64  `bun:"requests"`
+	}
+	err := s.db.NewSelect().
+		Table("requests").
+		Column("provider", "model").
+		ColumnExpr("COUNT(*) AS requests").
+		Where("modality = ?", modality).
+		Where("started_at >= ?", since).
+		Group("provider", "model").
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("store: model requests: %w", err)
+	}
+
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[row.Provider+"/"+row.Model] = row.Requests
+	}
+	return counts, nil
+}
+
 // RecordNumber stores a number a customer now holds.
 func (s *Store) RecordNumber(ctx context.Context, number *PhoneNumber) error {
 	if number.E164 == "" {

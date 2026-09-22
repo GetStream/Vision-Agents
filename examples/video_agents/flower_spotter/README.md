@@ -7,17 +7,18 @@ boxes drawn on.
 
 The phone shows its own camera with the annotated track inset. The conversation
 uses `get_video_state` for detection labels and counts. Visual questions are
-delegated to a separate `vision` worker, which receives retained raw frames and
-returns findings while the conversation stays responsive. Predictions carry
-separate timestamps; the displayed boxes may lag the current camera frame.
+delegated to the `vision` skill, which runs on the subagent with retained raw
+frames and returns findings while the conversation stays responsive. Predictions
+carry separate timestamps; the displayed boxes may lag the current camera frame.
 
-`agent.yaml` keeps `llm: llm-fast`, binds `subagents.vision: vlm`, and selects
-`video.source: roboflow_streaming` with one frame per analysis. Set `max_frames`
-to 2–8 to supply a recent sequence instead.
+`agent.yaml` keeps `llm: llm-fast`, puts the subagent on `vlm` so it can see,
+and selects `video.source: roboflow_streaming` with one frame per analysis. Set
+`max_frames` to 2–8 to supply a recent sequence instead.
 
 ```
 agent.yaml           models and video selection; synced to the router on join
 instructions.md      what the agent is told
+skills/vision.md     the skill that captures frames for the subagent
 flower_spotter.py    joins as the video worker
 app/                 iOS: lists the live call, camera on, annotated video
 ```
@@ -40,7 +41,7 @@ docker compose up --build
 ```
 
 That serves the router on `:8080`. Router startup applies migrations, including
-the new named-worker/video configuration columns. Applying this migration was verified
+the video configuration columns. Applying this migration was verified
 locally; rollback has not been tested. See [acceleration/README.md](../../../acceleration/README.md).
 
 Credentials live in the repo-root `.env`. This example needs:

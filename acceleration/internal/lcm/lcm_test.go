@@ -1,4 +1,4 @@
-package llmclassifier
+package lcm
 
 import (
 	"testing"

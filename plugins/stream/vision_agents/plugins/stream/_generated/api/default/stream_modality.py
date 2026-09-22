@@ -112,11 +112,11 @@ def sync_detailed(
     Args:
         modality (Modality): What kind of work was done. The first six are routed across
             providers; sts is speech to speech, one native audio model in place of a transcriber, a
-            text model and a voice. llm_classifier answers a question about a piece of text with a
-            typed value and the probability behind it rather than with prose, which is what a
-            guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not
-            routed, since there is one memory store, one knowledge base and one vendor per number, so
-            the provider paths do not serve them while the statistics paths do.
+            text model and a voice. lcm is a large classifier model: it answers a question about a
+            piece of text with a typed value and the probability behind it rather than with prose,
+            which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are
+            recorded but not routed, since there is one memory store, one knowledge base and one
+            vendor per number, so the provider paths do not serve them while the statistics paths do.
              Example: tts.
 
     Raises:
@@ -186,11 +186,11 @@ def sync(
     Args:
         modality (Modality): What kind of work was done. The first six are routed across
             providers; sts is speech to speech, one native audio model in place of a transcriber, a
-            text model and a voice. llm_classifier answers a question about a piece of text with a
-            typed value and the probability behind it rather than with prose, which is what a
-            guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not
-            routed, since there is one memory store, one knowledge base and one vendor per number, so
-            the provider paths do not serve them while the statistics paths do.
+            text model and a voice. lcm is a large classifier model: it answers a question about a
+            piece of text with a typed value and the probability behind it rather than with prose,
+            which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are
+            recorded but not routed, since there is one memory store, one knowledge base and one
+            vendor per number, so the provider paths do not serve them while the statistics paths do.
              Example: tts.
 
     Raises:
@@ -255,11 +255,11 @@ async def asyncio_detailed(
     Args:
         modality (Modality): What kind of work was done. The first six are routed across
             providers; sts is speech to speech, one native audio model in place of a transcriber, a
-            text model and a voice. llm_classifier answers a question about a piece of text with a
-            typed value and the probability behind it rather than with prose, which is what a
-            guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not
-            routed, since there is one memory store, one knowledge base and one vendor per number, so
-            the provider paths do not serve them while the statistics paths do.
+            text model and a voice. lcm is a large classifier model: it answers a question about a
+            piece of text with a typed value and the probability behind it rather than with prose,
+            which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are
+            recorded but not routed, since there is one memory store, one knowledge base and one
+            vendor per number, so the provider paths do not serve them while the statistics paths do.
              Example: tts.
 
     Raises:
@@ -327,11 +327,11 @@ async def asyncio(
     Args:
         modality (Modality): What kind of work was done. The first six are routed across
             providers; sts is speech to speech, one native audio model in place of a transcriber, a
-            text model and a voice. llm_classifier answers a question about a piece of text with a
-            typed value and the probability behind it rather than with prose, which is what a
-            guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded but not
-            routed, since there is one memory store, one knowledge base and one vendor per number, so
-            the provider paths do not serve them while the statistics paths do.
+            text model and a voice. lcm is a large classifier model: it answers a question about a
+            piece of text with a typed value and the probability behind it rather than with prose,
+            which is what a guardrail asks before a reply is spoken. Memory, knowledge and phone are
+            recorded but not routed, since there is one memory store, one knowledge base and one
+            vendor per number, so the provider paths do not serve them while the statistics paths do.
              Example: tts.
 
     Raises:

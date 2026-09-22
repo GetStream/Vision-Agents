@@ -18,7 +18,7 @@ const defaultMaxTurns = 12
 // maxTurns and maxVariations bound what a customer may ask for, since every turn is a
 // model call and every variation is a whole conversation.
 const (
-	maxTurns      = 30
+	maxTurns      = 200
 	maxVariations = 10
 )
 

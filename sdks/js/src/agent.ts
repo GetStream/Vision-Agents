@@ -31,8 +31,6 @@ export interface Skill {
   description: string;
   /** The full prompt, which only the subagent sees. */
   instructions: string;
-  /** Which named worker runs it. Empty uses the default. */
-  subagent?: string;
   captureVideo?: boolean;
   /** How long the work may run before it is abandoned. Zero leaves the backend's default. */
   deadlineMs?: number;
@@ -47,7 +45,7 @@ export interface Skill {
 export interface Harness {
   /** Offer the backend's built-in skills. Naming skills of your own replaces them. */
   useSkills?: boolean;
-  /** Model targets for the work handed over, keyed by name. `default` runs unbound skills. */
+  /** Model targets for the work handed over. The one under `default` runs the skills. */
   subagents?: Record<string, string>;
   /** Where delegated code runs. */
   vm?: Sandbox;
@@ -371,6 +369,7 @@ export class Agent {
   async sync(): Promise<Schemas["SyncAgentResult"]> {
     const pipeline = this.options.pipeline ?? {};
     const skills = this.harness?.skills ?? this.folder?.skills ?? [];
+    const subagent = this.harness?.subagents?.["default"] ?? pipeline.subagent;
 
     const body: Omit<Schemas["SyncAgentRequest"], "hash"> = {
       name: this.name,
@@ -389,8 +388,7 @@ export class Agent {
       ...(pipeline.voice ? { voice: pipeline.voice } : {}),
       ...(pipeline.greeting ? { greeting: pipeline.greeting } : {}),
       ...(pipeline.video ? { video: pipeline.video } : {}),
-      ...(this.harness?.subagents ? { subagents: this.harness.subagents } : {}),
-      ...(pipeline.subagent ? { subagent: pipeline.subagent } : {}),
+      ...(subagent ? { subagent } : {}),
       ...(this.harness?.vm ? { sandbox: this.harness.vm.provider } : {}),
       ...(this.options.costTracking ? { tags: this.options.costTracking } : {}),
     };
@@ -469,7 +467,6 @@ export class Agent {
 
     return {
       ...(subagent ? { subagent } : {}),
-      ...(harness.subagents ? { subagents: harness.subagents } : {}),
       ...(harness.tasks ? { tasks: harness.tasks } : {}),
       ...(harness.vm ? { sandbox: harness.vm.provider } : {}),
       ...(replaces ? { skills: (harness.skills ?? []).map(skillRequest) } : {}),
@@ -528,7 +525,6 @@ function skillRequest(skill: Skill): Schemas["SessionSkill"] {
     name: skill.name,
     description: skill.description,
     instructions: skill.instructions,
-    ...(skill.subagent ? { subagent: skill.subagent } : {}),
     ...(skill.captureVideo === undefined ? {} : { capture_video: skill.captureVideo }),
     ...(skill.deadlineMs ? { deadline_ms: skill.deadlineMs } : {}),
   };

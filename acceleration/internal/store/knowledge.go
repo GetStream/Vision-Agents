@@ -160,6 +160,110 @@ func (s *Store) CustomerKnowledgeURLs(ctx context.Context, customerID, namespace
 	return pages, nil
 }
 
+// ErrNoKnowledgeURL is what asking for a page that is not there returns, which is what
+// tells a subscription removed since from a database that did not answer.
+var ErrNoKnowledgeURL = errors.New("store: no such knowledge url")
+
 func unknownKnowledgeURL(id string) error {
-	return fmt.Errorf("store: there is no knowledge url %s", id)
+	return fmt.Errorf("%w: %s", ErrNoKnowledgeURL, id)
+}
+
+// SaveKnowledgeDocument records how many passages a document was cut into. A source the
+// knowledge base already has is updated in place and keeps its id, since posting it again
+// replaced the same passages rather than adding a second copy.
+func (s *Store) SaveKnowledgeDocument(ctx context.Context, document *KnowledgeDocument) error {
+	if document.CustomerID == "" {
+		return errors.New("store: customer id is required")
+	}
+	if document.Namespace == "" {
+		return errors.New("store: a namespace is required, knowledge is never shared")
+	}
+	if document.Source == "" {
+		return errors.New("store: a knowledge document needs a source")
+	}
+
+	document.ID = newID()
+	now := time.Now().UTC()
+	document.CreatedAt = now
+	document.UpdatedAt = now
+
+	_, err := s.db.NewInsert().Model(document).
+		On("CONFLICT (customer_id, namespace, source) DO UPDATE").
+		Set("passages = EXCLUDED.passages").
+		Set("updated_at = EXCLUDED.updated_at").
+		Returning("id, created_at").
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: save knowledge document: %w", err)
+	}
+	return nil
+}
+
+// KnowledgeDocument returns one document a customer filled a knowledge base with.
+func (s *Store) KnowledgeDocument(ctx context.Context, customerID, id string) (KnowledgeDocument, error) {
+	if customerID == "" || id == "" {
+		return KnowledgeDocument{}, errors.New("store: a customer and a knowledge document id are required")
+	}
+
+	var document KnowledgeDocument
+	err := s.db.NewSelect().Model(&document).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Limit(1).
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return KnowledgeDocument{}, unknownKnowledgeDocument(id)
+	}
+	if err != nil {
+		return KnowledgeDocument{}, fmt.Errorf("store: knowledge document: %w", err)
+	}
+	return document, nil
+}
+
+// CustomerKnowledgeDocuments returns the documents a customer filled its knowledge bases
+// with, most recently written first. An empty namespace returns every one of them.
+func (s *Store) CustomerKnowledgeDocuments(
+	ctx context.Context, customerID, namespace string,
+) ([]KnowledgeDocument, error) {
+	if customerID == "" {
+		return nil, errors.New("store: customer id is required")
+	}
+
+	var documents []KnowledgeDocument
+	query := s.db.NewSelect().Model(&documents).Where("customer_id = ?", customerID)
+	if namespace != "" {
+		query = query.Where("namespace = ?", namespace)
+	}
+	if err := query.Order("updated_at DESC").Scan(ctx); err != nil {
+		return nil, fmt.Errorf("store: customer knowledge documents: %w", err)
+	}
+	return documents, nil
+}
+
+// DeleteKnowledgeDocument forgets a document. Its passages are the caller's to remove,
+// since they are not in this database.
+func (s *Store) DeleteKnowledgeDocument(ctx context.Context, customerID, id string) error {
+	if customerID == "" || id == "" {
+		return errors.New("store: a customer and a knowledge document id are required")
+	}
+
+	result, err := s.db.NewDelete().Model((*KnowledgeDocument)(nil)).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("store: delete knowledge document: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: delete knowledge document: %w", err)
+	}
+	if affected == 0 {
+		return unknownKnowledgeDocument(id)
+	}
+	return nil
+}
+
+func unknownKnowledgeDocument(id string) error {
+	return fmt.Errorf("store: there is no knowledge document %s", id)
 }

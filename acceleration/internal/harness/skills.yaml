@@ -46,7 +46,6 @@ skills:
       NEED: followed by the single question the agent should ask them.
 
   - name: vision
-    subagent: vision
     capture_video: true
     description: inspect images or the camera, compare visual evidence, or reason about what a video processor sees
     deadline: 20s

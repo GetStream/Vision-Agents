@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/gorilla/websocket"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -179,6 +180,7 @@ type Server struct {
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
 	serverSide *http.ServeMux
 	upgrader   websocket.Upgrader
+	popularity *popularity
 	logger     *slog.Logger
 }
 
@@ -259,7 +261,8 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 			PublicURL:    options.PublicURL,
 			DashboardURL: options.DashboardURL,
 		},
-		logger: logger,
+		popularity: newPopularity(options.Store, logger),
+		logger:     logger,
 	}, nil
 }
 
@@ -285,8 +288,24 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	handler := HandlerFromMux(NewStrictHandler(s, nil), mux)
-	return withCORS(s.corsOrigins,
-		s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler)))))
+	// Sentry is outermost so it sees panics from every middleware below it, not
+	// only from the route handlers.
+	//
+	// Repanic is false, which is a change in behaviour worth knowing about: this
+	// service had no recovery anywhere, so a panic in one request used to take
+	// the process down, and the router runs as a single pod -- every call it was
+	// carrying went with it. Answering that one request with a 500 and leaving
+	// the rest connected is the better trade.
+	//
+	// WaitForDelivery is false because most of what is served here is a long-
+	// lived socket; blocking the handler's return on event delivery would hold
+	// the connection open past its use. The flush in cmd/router covers shutdown.
+	instrumented := sentryhttp.New(sentryhttp.Options{
+		Repanic:         false,
+		WaitForDelivery: false,
+	})
+	return instrumented.Handle(withCORS(s.corsOrigins,
+		s.withCustomer(s.withRequestLog(s.withQuota(s.withServerSide(handler))))))
 }
 
 // withRequestLog records one line per request served.
@@ -672,18 +691,59 @@ func (s *Server) ListProviders(ctx context.Context, request ListProvidersRequest
 	}
 
 	candidates := router.Providers(ctx)
+	shares := s.popularity.shares(ctx, string(request.Modality))
 	providers := make([]Provider, 0, len(candidates))
 	for _, candidate := range candidates {
+		share := shares[candidate.Config.Name()]
 		providers = append(providers, Provider{
-			Provider:  candidate.Config.Provider,
-			Model:     candidate.Config.Model,
-			Languages: candidate.Config.Languages,
-			Realtime:  candidate.Config.Realtime,
-			Tier:      tierOf(candidate.Config),
-			Health:    providerHealth(candidate.Health),
+			Provider:    candidate.Config.Provider,
+			Model:       candidate.Config.Model,
+			Description: &candidate.Config.Description,
+			Languages:   candidate.Config.Languages,
+			Realtime:    candidate.Config.Realtime,
+			Tier:        tierOf(candidate.Config),
+			Health:      providerHealth(candidate.Health),
+			UsageShare:  &share,
 		})
 	}
 	return ListProviders200JSONResponse(providers), nil
+}
+
+// ListRoutes returns the shortcuts offered as a choice and what each resolves to now.
+func (s *Server) ListRoutes(ctx context.Context, request ListRoutesRequestObject) (ListRoutesResponseObject, error) {
+	if _, ok := CustomerFrom(ctx); !ok {
+		return ListRoutes401JSONResponse{missingCustomer()}, nil
+	}
+	router, ok := s.routerFor(request.Modality)
+	if !ok {
+		return ListRoutes404JSONResponse{unknownModality(request.Modality)}, nil
+	}
+
+	config := router.Config()
+	offered := config.Offered()
+	routes := make([]Route, 0, len(offered))
+	for _, name := range offered {
+		candidates, err := router.Resolve(ctx, name, nil)
+		if err != nil {
+			return nil, err
+		}
+		resolved := make([]Candidate, 0, len(candidates))
+		for _, candidate := range candidates {
+			resolved = append(resolved, Candidate{
+				Provider: candidate.Config.Provider,
+				Model:    candidate.Config.Model,
+				Health:   providerHealth(candidate.Health),
+			})
+		}
+		alias := config.Aliases[name]
+		routes = append(routes, Route{
+			Id:          name,
+			Title:       alias.Title,
+			Description: alias.Description,
+			Candidates:  resolved,
+		})
+	}
+	return ListRoutes200JSONResponse(routes), nil
 }
 
 // ResolveTarget explains which providers would serve a target, best first.

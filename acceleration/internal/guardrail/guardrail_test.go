@@ -16,7 +16,7 @@ func TestPolicySuite(t *testing.T) {
 
 func (s *PolicySuite) TestFrontmatterSaysHowToCheckAndTheBodyIsThePolicy() {
 	policy, err := Parse(`---
-type: llm_classifier
+type: lcm
 mode: blocking
 threshold: 0.8
 target: typesafe/jev-latest
@@ -51,7 +51,7 @@ func (s *PolicySuite) TestProseOnItsOwnIsAGuardrail() {
 }
 
 func (s *PolicySuite) TestAPolicyWithNothingToJudgeAgainstIsRefused() {
-	_, err := Parse("---\ntype: llm_classifier\n---\n")
+	_, err := Parse("---\ntype: lcm\n---\n")
 
 	s.ErrorContains(err, "no policy")
 }
@@ -89,7 +89,7 @@ func (s *PolicySuite) TestAWebhookNeedsSomewhereToAsk() {
 func (s *PolicySuite) TestAUrlOnAPolicyThatCallsNothingIsRefused() {
 	// A setting that is present and does nothing is worse than one that is absent: the
 	// file says a server decides, and no server is ever asked.
-	_, err := Parse("---\ntype: llm_classifier\nurl: https://example.test/check\n---\nOnly Stream questions.")
+	_, err := Parse("---\ntype: lcm\nurl: https://example.test/check\n---\nOnly Stream questions.")
 
 	s.ErrorContains(err, "ignored")
 }

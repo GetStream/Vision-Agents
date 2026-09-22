@@ -14,7 +14,6 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.model_overwrites import ModelOverwrites
     from ..models.session_custom import SessionCustom
-    from ..models.session_subagents import SessionSubagents
     from ..models.session_video import SessionVideo
 
 
@@ -42,7 +41,6 @@ class Session:
         sts (str | Unset): The provider and model holding a native conversation, once routing has picked one.
         stt (str | Unset): The provider and model transcribing, once somebody has been heard.
         subagent (str | Unset): The provider and model delegated work runs on.
-        subagents (SessionSubagents | Unset): Configured worker targets, prepared asynchronously.
         video (SessionVideo | Unset):
         instructions (str | Unset):
         agent (str | Unset): The name the agent was addressed as. Recorded on the session as well as the config id, so
@@ -83,7 +81,6 @@ class Session:
     sts: str | Unset = UNSET
     stt: str | Unset = UNSET
     subagent: str | Unset = UNSET
-    subagents: SessionSubagents | Unset = UNSET
     video: SessionVideo | Unset = UNSET
     instructions: str | Unset = UNSET
     agent: str | Unset = UNSET
@@ -131,10 +128,6 @@ class Session:
         stt = self.stt
 
         subagent = self.subagent
-
-        subagents: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.subagents, Unset):
-            subagents = self.subagents.to_dict()
 
         video: dict[str, Any] | Unset = UNSET
         if not isinstance(self.video, Unset):
@@ -203,8 +196,6 @@ class Session:
             field_dict["stt"] = stt
         if subagent is not UNSET:
             field_dict["subagent"] = subagent
-        if subagents is not UNSET:
-            field_dict["subagents"] = subagents
         if video is not UNSET:
             field_dict["video"] = video
         if instructions is not UNSET:
@@ -238,7 +229,6 @@ class Session:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.model_overwrites import ModelOverwrites
         from ..models.session_custom import SessionCustom
-        from ..models.session_subagents import SessionSubagents
         from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
@@ -273,13 +263,6 @@ class Session:
         stt = d.pop("stt", UNSET)
 
         subagent = d.pop("subagent", UNSET)
-
-        _subagents = d.pop("subagents", UNSET)
-        subagents: SessionSubagents | Unset
-        if isinstance(_subagents, Unset):
-            subagents = UNSET
-        else:
-            subagents = SessionSubagents.from_dict(_subagents)
 
         _video = d.pop("video", UNSET)
         video: SessionVideo | Unset
@@ -349,7 +332,6 @@ class Session:
             sts=sts,
             stt=stt,
             subagent=subagent,
-            subagents=subagents,
             video=video,
             instructions=instructions,
             agent=agent,

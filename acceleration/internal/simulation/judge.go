@@ -15,7 +15,7 @@ import (
 // defaultJudgeTarget is what rules on a conversation when the simulation did not name a
 // model. It is a quality tier rather than a fast one, for the same reason a review is:
 // nobody is waiting for it, and the point of it is the judgement.
-const defaultJudgeTarget = "multilingual-high-accuracy"
+const defaultJudgeTarget = "llm-judge"
 
 // judgeTimeout bounds the ruling, and judgeTokens bounds what it may write.
 const (

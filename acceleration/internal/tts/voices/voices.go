@@ -33,14 +33,22 @@ type Request struct {
 	Samples     []Sample
 }
 
+// Speech is a short piece of audio spoken in a prepared voice.
+type Speech struct {
+	Audio       []byte
+	ContentType string
+}
+
 // Cloner prepares a voice with one provider.
 //
 // Prepare returns the id the provider's sessions ask for, which is what gets stored as the
 // binding. Delete takes the voice back off the provider, so deleting ours does not leave
-// the customer paying for voices nobody can reach.
+// the customer paying for voices nobody can reach. Speak says a line in the prepared
+// voice, so a customer can hear what the provider made of it before a caller does.
 type Cloner interface {
 	Prepare(ctx context.Context, request Request) (string, error)
 	Delete(ctx context.Context, externalID string) error
+	Speak(ctx context.Context, externalID, text string) (Speech, error)
 }
 
 // Registry holds one cloner per provider name.

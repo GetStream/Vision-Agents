@@ -46,13 +46,10 @@ func (a *Agent) joinNative() error {
 	// Searching is routed before the tools are worked out, because whether the model is
 	// offered one depends on whether a provider answered.
 	a.startSearching(a.ctx)
-	workers, err := a.workers()
-	if err != nil {
-		return err
-	}
-	if len(workers) > 0 {
+	if subagent := a.openSubagent(); subagent != nil {
+		var err error
 		a.harness, err = harness.New(harness.Options{
-			Workers: workers, Capture: a.captureVideo, Skills: a.options.Skills,
+			OpenSubagent: subagent, Capture: a.captureVideo, Skills: a.options.Skills,
 			Sandbox: a.options.Sandbox, Tasks: a.options.Tasks, Logger: a.logger,
 		})
 		if err != nil {
@@ -574,7 +571,7 @@ func (a *Agent) nativeDelegate(call llm.ToolCall) ([]llm.ContentPart, bool, erro
 		return nil, false, err
 	}
 	if a.harness == nil {
-		return nil, false, errors.New("agent: no subagents configured")
+		return nil, false, errors.New("agent: no subagent configured")
 	}
 	if call.Name == cancelSkill {
 		err := a.harness.CancelSkill(arguments.Skill)

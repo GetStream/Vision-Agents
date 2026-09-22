@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,6 +40,10 @@ func (s *StoreSuite) SetupSuite() {
 	s.store = store
 	s.ctx = context.Background()
 	s.Require().NoError(store.Ping(s.ctx))
+
+	var database string
+	s.Require().NoError(store.DB().QueryRowContext(s.ctx, "SELECT current_database()").Scan(&database))
+	s.Require().True(strings.HasSuffix(database, "_test"), "refusing to drop the schema of %s, which is not a test database", database)
 
 	// Start from an empty schema so the embedded migrations are what create the tables.
 	_, err = store.DB().ExecContext(s.ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -273,6 +278,19 @@ func (s *StoreSuite) TestCustomerStatsAreIsolatedPerCustomer() {
 	s.Require().NoError(err)
 	s.Require().Len(globex, 1)
 	s.EqualValues(5000, globex[0].AudioMsTotal)
+}
+
+func (s *StoreSuite) TestModelRequestsCountEveryCustomerSinceTheWindowOpened() {
+	s.record("acme", s.base.Add(1*time.Minute), 1000, 100, true)
+	s.record("globex", s.base.Add(2*time.Minute), 1000, 100, false)
+	s.record("acme", s.base.Add(-time.Hour), 1000, 100, true)
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &Request{
+		Modality: "llm", CustomerID: "acme", Provider: "openai", Model: "gpt-5.6-sol", StartedAt: s.base, Success: true,
+	}))
+
+	counts, err := s.store.ModelRequests(s.ctx, "stt", s.base)
+	s.Require().NoError(err)
+	s.Equal(map[string]int64{"deepgram/flux-general-en": 2}, counts)
 }
 
 func (s *StoreSuite) TestCustomerStatsIsEmptyForAnUnknownCustomer() {

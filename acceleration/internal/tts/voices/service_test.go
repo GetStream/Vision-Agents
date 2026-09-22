@@ -33,6 +33,8 @@ type ServiceSuite struct {
 	// reply is what the fake provider hands back when asked to clone.
 	reply  string
 	status int
+	// requests is every method and path the fake provider was sent, in order.
+	requests []string
 }
 
 func TestServiceSuite(t *testing.T) {
@@ -66,8 +68,10 @@ func (s *ServiceSuite) SetupTest() {
 
 	s.status = http.StatusOK
 	s.reply = `{"voice_id":"el-1"}`
+	s.requests = nil
 
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.requests = append(s.requests, r.Method+" "+r.URL.Path)
 		w.WriteHeader(s.status)
 		_, _ = w.Write([]byte(s.reply))
 	}))
@@ -221,6 +225,54 @@ func (s *ServiceSuite) TestABindingRecordsWhenTheProviderLastHadTheVoice() {
 	s.Require().NotNil(bindings[0].SyncedAt)
 	s.WithinDuration(prepared, *bindings[0].SyncedAt, time.Millisecond,
 		"a failed attempt is not a sync, and updated_at is what moved")
+}
+
+func (s *ServiceSuite) TestPreparingAgainReplacesTheProvidersPreviousCopy() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	s.reply = `{"voice_id":"el-2"}`
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	external, err := s.resolver.ResolveVoice(s.ctx, "acme", "elevenlabs", "founder")
+	s.Require().NoError(err)
+	s.Equal("el-2", external)
+	s.Contains(s.requests, "DELETE /v1/voices/el-1",
+		"a replaced clone left on the provider is one nobody here can delete")
+}
+
+func (s *ServiceSuite) TestAFailedReprepareStillKnowsWhatToDelete() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	s.status = http.StatusUnprocessableEntity
+	s.reply = `{"detail":"too quiet"}`
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	s.status = http.StatusOK
+	s.Require().NoError(s.service.Delete(s.ctx, "acme", voice.ID))
+	s.Contains(s.requests, "DELETE /v1/voices/el-1")
+}
+
+func (s *ServiceSuite) TestAPreparedVoiceCanBeHeard() {
+	voice := s.recorded()
+	s.Require().NoError(s.service.Prepare(s.ctx, "acme", voice.ID, nil))
+
+	s.reply = "mp3"
+	speech, err := s.service.Speak(s.ctx, "acme", voice.ID, "elevenlabs", "hello")
+	s.Require().NoError(err)
+
+	s.Equal([]byte("mp3"), speech.Audio)
+	s.Contains(s.requests, "POST /v1/text-to-speech/el-1")
+}
+
+func (s *ServiceSuite) TestAVoiceIsNotHeardThroughAProviderThatNeverHadIt() {
+	voice := s.recorded()
+
+	_, err := s.service.Speak(s.ctx, "acme", voice.ID, "elevenlabs", "hello")
+
+	s.ErrorIs(err, store.ErrNoVoice)
+	s.Empty(s.requests, "a provider that was never given the voice has nothing to say in it")
 }
 
 func (s *ServiceSuite) TestABindingThatWasNeverReadyWasNeverSynced() {

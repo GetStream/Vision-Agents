@@ -29,7 +29,6 @@ const defaultDeadline = 30 * time.Second
 type Skill struct {
 	VideoSource  string `yaml:"-"`
 	VideoFrames  int    `yaml:"-"`
-	Subagent     string `yaml:"subagent"`
 	CaptureVideo bool   `yaml:"capture_video"`
 	// Name is how the fast model asks for it.
 	Name string `yaml:"name"`

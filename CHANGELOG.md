@@ -285,9 +285,9 @@ refusal line instead of the model's reply.
 
 ```markdown
 ---
-type: llm_classifier      # llm_classifier | webhook | llm
+type: lcm                 # lcm | webhook | llm
 mode: parallel            # parallel | blocking
-threshold: 0.6            # llm_classifier and llm: refuse at or above
+threshold: 0.6            # lcm and llm: refuse at or above
 refusal: I can only help with questions about Stream.
 ---
 Only answer questions about Stream's SDKs, products and development. Refuse anything
@@ -299,7 +299,7 @@ something a human reads and edits. There are three ways to check:
 
 | `type` | Who decides |
 | --- | --- |
-| `llm_classifier` | The new `llm_classifier` router, which returns a calibrated probability. The default |
+| `lcm` | The new `lcm` router, which returns a calibrated probability. The default |
 | `webhook` | Your own server, at `url`, over a signed POST |
 | `llm` | A model from the `llm` router, asked to read the policy and put a number on the turn |
 
@@ -336,11 +336,12 @@ A speech-to-speech agent cannot be given a guardrail. A native model hears the c
 answers directly, so nothing sees the words before they are spoken and there is no reply to
 hold. Declaring one refuses the session rather than leaving it unguarded.
 
-### A new routed modality: `llm_classifier`
+### A new routed modality: `lcm`
 
 Typed judgements about a piece of text — the probability that a condition holds, one option
 out of a named set, a position on a described scale — routed and costed like every other
-modality, and visible at `/v1/llm_classifier/providers` and in stats.
+modality, and visible at `/v1/lcm/providers` and in stats. `lcm` is a large classifier
+model.
 
 It is not a mode of `llm`. There is no stream, no generated text and no token budget: a
 caller asks named questions and gets values with the probabilities behind them. TypeSafe's
@@ -658,7 +659,7 @@ saved conversation links remain readable after the session ends.
 - Added `vlm` for image-capable routing; `llm-fast` keeps its existing policy.
 - LLM messages and tool results accept ordered `text` and `image_url` parts, including bytes and HTTP URLs.
 - Direct VLM conversations retain image attachments on their original turns for follow-up questions.
-- Named `subagents` and per-skill bindings keep visual reasoning off the live conversation loop.
+- Skills with `capture_video` hand camera evidence to the subagent, off the live conversation loop. The built-in `vision` skill is offered only to an agent that names it, since its subagent has to accept images.
 - Camera and processor observations use bounded history, frame IDs, capture times and task-scoped selection. Uncorrelated Roboflow predictions are labelled explicitly.
 - `agent.responses.create(text, images=[...])` delegates attachments to the configured vision skill. Unsupported local flows reject images clearly.
 - Swift session observers answer only locally registered tools, so an attached iPhone cannot reject frame-capture requests owned by the Python video worker.

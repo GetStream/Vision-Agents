@@ -245,18 +245,17 @@ type AgentConfig struct {
 	// STT, TTS, LLM, Subagent and Search are routing targets. Empty leaves the session
 	// default. STS names one native audio model that hears and speaks for itself; naming
 	// one makes the agent native, and the three cascade targets are then not used.
-	STT            string            `bun:"stt,notnull"`
-	TTS            string            `bun:"tts,notnull"`
-	STS            string            `bun:"sts,notnull"`
-	Voice          string            `bun:"voice,notnull"`
-	LLM            string            `bun:"llm,notnull"`
-	Subagent       string            `bun:"subagent,notnull"`
-	Subagents      map[string]string `bun:"subagents,type:jsonb,notnull"`
-	VideoSource    string            `bun:"video_source,notnull"`
-	VideoMaxFrames int               `bun:"video_max_frames,notnull"`
-	Search         string            `bun:"search,notnull"`
-	Instructions   string            `bun:"instructions,notnull"`
-	Greeting       string            `bun:"greeting,notnull"`
+	STT            string `bun:"stt,notnull"`
+	TTS            string `bun:"tts,notnull"`
+	STS            string `bun:"sts,notnull"`
+	Voice          string `bun:"voice,notnull"`
+	LLM            string `bun:"llm,notnull"`
+	Subagent       string `bun:"subagent,notnull"`
+	VideoSource    string `bun:"video_source,notnull"`
+	VideoMaxFrames int    `bun:"video_max_frames,notnull"`
+	Search         string `bun:"search,notnull"`
+	Instructions   string `bun:"instructions,notnull"`
+	Greeting       string `bun:"greeting,notnull"`
 	// Guardrail is a guardrail.md: frontmatter saying how to screen a turn, then the
 	// policy in prose. Empty, which most configs are, means every turn is answered.
 	Guardrail string `bun:"guardrail,notnull"`
@@ -377,8 +376,7 @@ const (
 // A skill belongs to one config rather than to the customer: two agents that both need
 // the same kind of work have one each, so editing either leaves the other alone.
 type Skill struct {
-	Subagent      string `bun:"subagent,notnull"`
-	CaptureVideo  bool   `bun:"capture_video,notnull"`
+	CaptureVideo  bool `bun:"capture_video,notnull"`
 	bun.BaseModel `bun:"table:skills,alias:sk"`
 
 	ID         string `bun:"id,pk"`
@@ -474,6 +472,22 @@ type KnowledgeURL struct {
 	CreatedAt     time.Time  `bun:"created_at,notnull"`
 	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
 	DeletedAt     *time.Time `bun:"deleted_at"`
+}
+
+// KnowledgeDocument is a document a knowledge base was filled with, posted or synced
+// rather than read from a page. Like a KnowledgeURL it carries how many passages it was
+// cut into, so removing it, or what a shorter version no longer covers, is exact.
+type KnowledgeDocument struct {
+	bun.BaseModel `bun:"table:knowledge_documents,alias:kd"`
+
+	ID         string `bun:"id,pk"`
+	CustomerID string `bun:"customer_id,notnull"`
+	Namespace  string `bun:"namespace,notnull"`
+	// Source is what the passages are keyed by, and what a reader would call the document.
+	Source    string    `bun:"source,notnull"`
+	Passages  int       `bun:"passages,notnull"`
+	CreatedAt time.Time `bun:"created_at,notnull"`
+	UpdatedAt time.Time `bun:"updated_at,notnull"`
 }
 
 // What a provider has made of a voice's samples.

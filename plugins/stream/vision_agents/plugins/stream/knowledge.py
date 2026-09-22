@@ -1,12 +1,24 @@
+import asyncio
 import logging
+import time
 
 from vision_agents.core.llm.remote import KnowledgePage
 
 from ._backend import Backend
-from ._generated.api.default import add_knowledge_url
-from ._generated.models import Error, KnowledgeUrlRequest
+from ._generated.api.default import add_knowledge_url, get_knowledge_url
+from ._generated.models import (
+    Error,
+    KnowledgeUrl,
+    KnowledgeUrlRequest,
+    KnowledgeUrlState,
+)
 
 logger = logging.getLogger(__name__)
+
+# The router queues the read and retries one that fails, so a page can take a while to
+# settle. Past this it is returned still pending rather than waited on forever.
+READ_TIMEOUT = 180.0
+POLL_INTERVAL = 0.25
 
 
 class Knowledge:
@@ -32,10 +44,10 @@ class Knowledge:
     ) -> KnowledgePage:
         """Keep the knowledge base filled from a page published elsewhere.
 
-        The page is read straight away and cut into passages the same way a document is,
-        so what comes back already says whether it worked. It stays a subscription rather
-        than a one-off: the passages are keyed by the url, and reading it again replaces
-        them.
+        The router queues the read and cuts the page into passages the same way a
+        document is; this waits for it, so what comes back already says whether it
+        worked. It stays a subscription rather than a one-off: the passages are keyed by
+        the url, and reading it again replaces them.
 
         Args:
             url: The http or https address to read.
@@ -44,7 +56,7 @@ class Knowledge:
 
         Returns:
             The page as stored, including how many passages it became and why it failed if
-            it did.
+            it did. Still pending if it was not read within READ_TIMEOUT seconds.
         """
         if not self.namespace:
             raise ValueError(
@@ -59,17 +71,36 @@ class Knowledge:
             body.description = description
 
         added = await add_knowledge_url.asyncio(client=self.backend.client(), body=body)
-        if isinstance(added, Error):
-            raise RuntimeError(added.error)
-        if added is None:
-            raise RuntimeError("the router did not answer with a page")
+        page = await self._settled(self._page(added))
 
         logger.info(
-            "read %s into %s as %d passages", url, self.namespace, added.passages
+            "%s is %s in %s as %d passages",
+            url,
+            page.state.value,
+            self.namespace,
+            page.passages,
         )
         return KnowledgePage(
-            url=added.url,
-            state=added.state.value,
-            passages=added.passages,
-            error=added.error if isinstance(added.error, str) else "",
+            url=page.url,
+            state=page.state.value,
+            passages=page.passages,
+            error=page.error if isinstance(page.error, str) else "",
         )
+
+    async def _settled(self, page: KnowledgeUrl) -> KnowledgeUrl:
+        """Wait for the router to have read a page, or for READ_TIMEOUT to pass."""
+        deadline = time.monotonic() + READ_TIMEOUT
+        while page.state == KnowledgeUrlState.PENDING and time.monotonic() < deadline:
+            await asyncio.sleep(POLL_INTERVAL)
+            page = self._page(
+                await get_knowledge_url.asyncio(page.id, client=self.backend.client())
+            )
+        return page
+
+    @staticmethod
+    def _page(answer: KnowledgeUrl | Error | None) -> KnowledgeUrl:
+        if isinstance(answer, Error):
+            raise RuntimeError(answer.error)
+        if answer is None:
+            raise RuntimeError("the router did not answer with a page")
+        return answer

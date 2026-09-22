@@ -1,13 +1,13 @@
 ---
-name: router-llm-classifier
-description: What the classifier router can be asked for, why it is not the LLM router, and what it refuses to fake. Read before adding a classifier provider or a guardrail backend.
+name: router-lcm
+description: What the lcm (large classifier model) router can be asked for, why it is not the LLM router, and what it refuses to fake. Read before adding a classifier provider or a guardrail backend.
 ---
 
 # Routing classification
 
 The per-modality half of [router-interface](../router-interface/SKILL.md). The contract is
-[`internal/llmclassifier`](../../../acceleration/internal/llmclassifier/llmclassifier.go), the
-providers sit under it, and they are declared in the `llm_classifier` section of
+[`internal/lcm`](../../../acceleration/internal/lcm/lcm.go), the
+providers sit under it, and they are declared in the `lcm` section of
 [`router.yaml`](../../../acceleration/internal/routing/router.yaml).
 
 A classifier answers a question about a piece of text with a typed value and the probability
@@ -98,18 +98,18 @@ guardrail that allows everything, and nothing about the turn would say so.
 
 ## Adding a provider
 
-1. A package under `internal/llmclassifier/<vendor>/` implementing `llmclassifier.Provider`:
+1. A package under `internal/lcm/<vendor>/` implementing `lcm.Provider`:
    `Classify`, `Start`, `Close`, `Provider`, `Model`. Translate the neutral request into the
    vendor's wire shape in that package — the contract carries no vendor's JSON tags, and
    keeping it that way is what makes the second provider cheap.
 2. Register it in
-   [`registry.go`](../../../acceleration/internal/llmclassifierrouter/registry.go).
+   [`registry.go`](../../../acceleration/internal/lcmrouter/registry.go).
 3. Declare it in `router.yaml` with `languages`, `tier`, `data_policy` and a price. Bill
    `per_million_input_tokens` unless the vendor bills otherwise; the session reports usage and
    lets the configured rates price it.
 4. An httptest wire test, and an `//go:build integration` test that asserts the model answers
    an obvious yes and an obvious no in opposite directions. The registry-covers-the-yaml test in
-   `llmclassifierrouter_test.go` will start failing until step 2 is done, which is the point.
+   `lcmrouter_test.go` will start failing until step 2 is done, which is the point.
 
 ## Adding a question type
 

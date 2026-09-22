@@ -11,21 +11,21 @@ def write(root: Path, name: str, content: str) -> None:
 
 
 class TestFolder:
-    def test_named_workers_and_skill_binding_round_trip(self, tmp_path):
-        write(
-            tmp_path,
-            "agent.yaml",
-            "name: vision\nsubagents:\n  default: llm-thinking\n  vision: vlm\n",
-        )
+    def test_a_skill_that_captures_video_round_trips(self, tmp_path):
+        write(tmp_path, "agent.yaml", "name: vision\nsubagent: vlm\n")
         write(
             tmp_path,
             "skills/vision.md",
-            "---\nname: vision\nsubagent: vision\ncapture_video: true\ndescription: inspect images\n---\nDescribe the evidence.",
+            "---\nname: vision\ncapture_video: true\ndescription: inspect images\n---\nDescribe the evidence.",
         )
         folder = load(tmp_path)
-        assert folder.settings.subagents == {"default": "llm-thinking", "vision": "vlm"}
-        assert folder.skills[0].subagent == "vision"
+        assert folder.settings.subagent == "vlm"
         assert folder.skills[0].capture_video
+
+    def test_named_subagents_are_refused(self, tmp_path):
+        write(tmp_path, "agent.yaml", "name: vision\nsubagents:\n  vision: vlm\n")
+        with pytest.raises(ValueError, match="subagents"):
+            load(tmp_path)
 
     def test_a_directory_is_read_as_instructions_skills_and_knowledge(
         self, tmp_path: Path

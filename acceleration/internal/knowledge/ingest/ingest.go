@@ -114,6 +114,18 @@ func Split(name, content string, size int) []knowledge.Document {
 	return documents
 }
 
+// IDs are what Split keyed the passages of a document in [from, to) by.
+func IDs(name string, from, to int) []string {
+	if to <= from {
+		return nil
+	}
+	ids := make([]string, 0, to-from)
+	for index := from; index < to; index++ {
+		ids = append(ids, fmt.Sprintf("%s%s%d", name, IDSeparator, index))
+	}
+	return ids
+}
+
 // Files is how many documents a set of passages came from.
 func Files(documents []knowledge.Document) int {
 	seen := map[string]struct{}{}

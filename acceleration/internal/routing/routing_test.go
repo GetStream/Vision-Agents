@@ -198,6 +198,39 @@ func (s *RoutingSuite) TestDefaultConfigDeclaresTheSameShortcutsForEveryModality
 	}
 }
 
+func (s *RoutingSuite) TestOfferedShortcutsAreTheTitledOnesInTheOrderWritten() {
+	config, err := parseConfig([]byte(`
+llm:
+  providers:
+    - provider: a
+      model: fast
+      languages: [en]
+  aliases:
+    zeta:
+      title: Zeta
+    plumbing: {}
+    alpha:
+      title: Alpha
+`))
+	s.Require().NoError(err)
+
+	s.Equal([]string{"zeta", "alpha"}, config[LLM].Offered())
+}
+
+func (s *RoutingSuite) TestTheShippedConversationShortcutComesFirst() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+
+	s.Equal("llm-fast", config[LLM].Offered()[0])
+	s.Equal("sts-fast", config[STS].Offered()[0])
+	s.Equal("en-low-latency", config[STT].Offered()[0])
+	s.Equal("en-low-latency", config[TTS].Offered()[0])
+	s.Equal("search-fast", config[Search].Offered()[0])
+	s.NotContains(config[LLM].Offered(), "llm-flow", "the flow controller's shortcut is not a choice")
+	s.NotContains(config[LLM].Offered(), "llm-judge", "a simulation's default is not a choice for a conversation")
+	s.NotContains(config[LLM].Offered(), "llm-scenario-runner", "a simulation's default is not a choice for a conversation")
+}
+
 // shippedSTT is a router over the configuration the binary ships, for the shortcuts whose
 // membership is the thing being tested rather than the mechanism behind it. Every provider
 // builds, since what a base group resolves to is a question about the config and not about

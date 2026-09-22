@@ -97,7 +97,7 @@ processor draws them on the frames it publishes back to the call and keeps the
 latest labels in `state()` for the LLM's `get_video_state` tool. Published overlays are
 approximate: the latest prediction can belong to an earlier input frame.
 
-For visual reasoning, configure `subagents.vision: vlm` and
+For visual reasoning, configure `subagent: vlm`, the `vision` skill, and
 `video: {source: roboflow_streaming, max_frames: 1}`. The vision skill receives
 raw frames from bounded observation history plus separately timestamped predictions.
 The streaming provider does not currently expose reliable frame correlation here,

@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -100,7 +99,7 @@ type Options struct {
 	// of the three above. When it is set the agent is native: it opens that model and no
 	// transcriber, conversation model or voice, so LLM, STT and TTS may all be nil. The
 	// model owns endpointing, transcription, synthesis and barge-in, and nothing here acts
-	// as any of them. LLM is still used for configured subagents.
+	// as any of them. LLM is still used for the subagent.
 	STS       *stsrouter.Router
 	STSTarget string
 
@@ -109,7 +108,6 @@ type Options struct {
 	// difference between them is which model, not which service. Empty means the agent
 	// answers everything itself.
 	SubagentTarget string
-	Subagents      map[string]string
 	// ControllerTarget routes the flow controller, a fast non-thinking classifier that
 	// only ever returns one small JSON object about who holds the floor. It is a target on
 	// the same router as LLMTarget. Empty falls back to LLMTarget, so a caller who names no
@@ -369,8 +367,8 @@ func New(options Options) (*Agent, error) {
 	if options.Text && options.STS != nil {
 		return nil, errors.New("agent: a text agent has no voice, so it cannot run a speech-to-speech model")
 	}
-	if options.LLM == nil && (options.SubagentTarget != "" || len(options.Subagents) > 0) {
-		return nil, errors.New("agent: subagents require an llm router")
+	if options.LLM == nil && options.SubagentTarget != "" {
+		return nil, errors.New("agent: a subagent requires an llm router")
 	}
 	// A conversation in writing has nowhere to listen and nothing to speak with, so the
 	// three that carry a voice are only required when there is one. A native agent's one
@@ -464,7 +462,7 @@ func New(options Options) (*Agent, error) {
 	if options.Knowledge != nil && options.KnowledgeNamespace != "" {
 		agent.knowledge = newKnowledgeReader(
 			options.Knowledge,
-			options.KnowledgeNamespace,
+			knowledge.Scoped(options.CustomerID, options.KnowledgeNamespace),
 			options.KnowledgeLimit,
 			owner,
 			routing.NewRecorder(routing.Knowledge, options.Store, options.Live, logger),
@@ -544,29 +542,24 @@ func (a *Agent) Join(ctx context.Context) error {
 		return fmt.Errorf("agent: start flow controller: %w", err)
 	}
 
-	workers, err := a.workers()
-	if err != nil {
-		return err
-	}
-
 	// Searching is routed before the tools are worked out, because whether the model is
 	// offered one depends on whether a provider answered.
 	a.startSearching(a.ctx)
 
 	a.harness, err = harness.New(harness.Options{
-		Text:       a.options.Text,
-		Model:      model,
-		Controller: controller,
-		Workers:    workers,
-		Capture:    a.captureVideo,
-		Skills:     a.options.Skills,
-		Tools:      a.availableTools(),
-		Sandbox:    a.options.Sandbox,
-		Tasks:      a.options.Tasks,
-		MaxTokens:  a.options.MaxTokens,
-		Overwrites: a.options.Overwrites,
-		CacheKey:   a.options.ConfigID,
-		Logger:     a.logger,
+		Text:         a.options.Text,
+		Model:        model,
+		Controller:   controller,
+		OpenSubagent: a.openSubagent(),
+		Capture:      a.captureVideo,
+		Skills:       a.options.Skills,
+		Tools:        a.availableTools(),
+		Sandbox:      a.options.Sandbox,
+		Tasks:        a.options.Tasks,
+		MaxTokens:    a.options.MaxTokens,
+		Overwrites:   a.options.Overwrites,
+		CacheKey:     a.options.ConfigID,
+		Logger:       a.logger,
 	})
 	if err != nil {
 		return err
@@ -1834,8 +1827,13 @@ func (a *Agent) say(turnID, delta string) {
 	a.replying = turnID
 
 	// A stage direction is addressed to the voice, not to the caller: it is taken out of
-	// what is read and remembered, and left in only for a voice that can act it.
-	plain := a.directions.Add(speech)
+	// what is read and remembered, and left in only for a voice that can act it. A
+	// conversation in writing has no voice to address, so a bracket there is only ever
+	// text -- a markdown link, an array literal -- and taking it out corrupts the reply.
+	plain := speech
+	if !a.options.Text {
+		plain = a.directions.Add(speech)
+	}
 	if plain != "" {
 		a.spoken.WriteString(plain)
 		a.mu.Lock()
@@ -1868,8 +1866,11 @@ func (a *Agent) finish(response llm.Response) {
 	// ever text, so it is spoken.
 	tail := a.harness.Flush()
 	// A direction the stripper was still holding is released the same way: unfinished, it
-	// was only ever text.
-	plain := a.directions.Add(tail) + a.directions.Flush()
+	// was only ever text. In writing the stripper never ran, so there is nothing held.
+	plain := tail
+	if !a.options.Text {
+		plain = a.directions.Add(tail) + a.directions.Flush()
+	}
 	a.spoken.WriteString(plain)
 	if !a.performs {
 		tail = plain
@@ -2110,7 +2111,7 @@ func (a *Agent) consumeHarness() {
 				})
 			} else {
 				a.emitter.Send(TaskSettled{
-					Evidence: typed.Evidence, Worker: typed.Worker,
+					Evidence:  typed.Evidence,
 					TaskID:    typed.TaskID,
 					Skill:     typed.Skill,
 					Text:      typed.Text,
@@ -2524,52 +2525,25 @@ func (a *Agent) RestoreHistory(history []llm.Message) {
 	a.history = append([]llm.Message(nil), history...)
 }
 
-// workers opens the named subagents shared by cascade and native conversations.
-func (a *Agent) workers() (map[string]func(context.Context) (*llmrouter.Session, error), error) {
-	workers := map[string]func(context.Context) (*llmrouter.Session, error){}
-	targets := map[string]string{}
-	if a.options.SubagentTarget != "" {
-		targets["default"] = a.options.SubagentTarget
+// openSubagent starts the subagent shared by cascade and native conversations, or is nil
+// when there is none. It is routed like anything else, so the work it does is failed over
+// and billed the same way a turn is. A skill that captures video needs it to see.
+func (a *Agent) openSubagent() func(context.Context) (*llmrouter.Session, error) {
+	if a.options.SubagentTarget == "" {
+		return nil
 	}
-	for name, target := range a.options.Subagents {
-		targets[name] = target
-	}
-	for name, target := range targets {
-		if target == "" {
-			continue
-		}
-		var modalities []string
-		for _, skill := range a.options.Skills.Skills {
-			binding := skill.Subagent
-			if binding == "" {
-				binding = "default"
-			}
-			if binding == name && skill.CaptureVideo {
-				modalities = []string{llm.ModalityImage}
-			}
-		}
-		workers[name] = func(ctx context.Context) (*llmrouter.Session, error) {
-			tags := maps.Clone(a.options.Tags)
-			if tags == nil {
-				tags = routing.Tags{}
-			}
-			tags["worker"] = name
-			return a.options.LLM.Start(ctx, llmrouter.Request{
-				CustomerID: a.options.CustomerID, Caller: a.options.Caller,
-				AgentID: a.options.AgentID, CallID: a.options.CallID,
-				Tags: tags, Target: target, LanguageHints: a.options.LanguageHints, InputModalities: modalities,
-			})
-		}
-	}
+	var modalities []string
 	for _, skill := range a.options.Skills.Skills {
-		binding := skill.Subagent
-		if binding == "" {
-			binding = "default"
-		}
-		if _, ok := workers[binding]; !ok {
-			return nil, fmt.Errorf("agent: skill %s names unknown worker %s", skill.Name, binding)
+		if skill.CaptureVideo {
+			modalities = []string{llm.ModalityImage}
 		}
 	}
-
-	return workers, nil
+	return func(ctx context.Context) (*llmrouter.Session, error) {
+		return a.options.LLM.Start(ctx, llmrouter.Request{
+			CustomerID: a.options.CustomerID, Caller: a.options.Caller,
+			AgentID: a.options.AgentID, CallID: a.options.CallID,
+			Tags: a.options.Tags, Target: a.options.SubagentTarget,
+			LanguageHints: a.options.LanguageHints, InputModalities: modalities,
+		})
+	}
 }

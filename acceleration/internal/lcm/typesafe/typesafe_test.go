@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifier"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
 )
 
 // web stands in for the System One endpoint, so the wire contract can be tested without a key.
@@ -65,9 +65,9 @@ func (s *TypeSafeSuite) question(id string) map[string]any {
 
 // ask puts a state and its questions to the client, which every test here does.
 func (s *TypeSafeSuite) ask(
-	state any, questions map[string]llmclassifier.Question,
-) (llmclassifier.Result, error) {
-	return s.client.Classify(s.ctx, llmclassifier.Request{State: state, Questions: questions})
+	state any, questions map[string]lcm.Question,
+) (lcm.Result, error) {
+	return s.client.Classify(s.ctx, lcm.Request{State: state, Questions: questions})
 }
 
 type TypeSafeSuite struct {
@@ -106,8 +106,8 @@ func (s *TypeSafeSuite) TestAKeyIsRequired() {
 func (s *TypeSafeSuite) TestTheNewestStableModelIsAskedWhenNoneIsNamed() {
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"heard":{"type":"noul","noul":0.8}}}`
 
-	_, err := s.ask("anything", map[string]llmclassifier.Question{
-		"heard": llmclassifier.Noul("Did anyone speak?", "", ""),
+	_, err := s.ask("anything", map[string]lcm.Question{
+		"heard": lcm.Noul("Did anyone speak?", "", ""),
 	})
 	s.Require().NoError(err)
 
@@ -132,16 +132,16 @@ func (s *TypeSafeSuite) TestEveryQuestionGoesInOneRequest() {
 	}}`
 
 	answers, err := s.ask(map[string]any{"heard": "book a table for four"},
-		map[string]llmclassifier.Question{
-			"disposition": llmclassifier.Choice("What should happen to these words?", map[string]string{
+		map[string]lcm.Question{
+			"disposition": lcm.Choice("What should happen to these words?", map[string]string{
 				"respond": "A complete thought addressed to the agent.",
 				"wait":    "Probably unfinished.",
 			}),
-			"floor": llmclassifier.Choice("Who should hold the floor?", map[string]string{
+			"floor": lcm.Choice("Who should hold the floor?", map[string]string{
 				"continue": "",
 				"stop":     "",
 			}),
-			"addressed": llmclassifier.Noul("Were these words meant for the agent?", "", ""),
+			"addressed": lcm.Noul("Were these words meant for the agent?", "", ""),
 		})
 	s.Require().NoError(err)
 
@@ -159,8 +159,8 @@ func (s *TypeSafeSuite) TestAChoiceSendsItsOptionsAndTheirDescriptions() {
 	// the whole of what it may say.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"floor":{"type":"choice","choice":"stop"}}}`
 
-	_, err := s.ask("wait, make it six", map[string]llmclassifier.Question{
-		"floor": llmclassifier.Choice("Who should hold the floor?", map[string]string{
+	_, err := s.ask("wait, make it six", map[string]lcm.Question{
+		"floor": lcm.Choice("Who should hold the floor?", map[string]string{
 			"stop":     "A correction or a direct interruption.",
 			"shorten":  "A related addition.",
 			"continue": "",
@@ -184,8 +184,8 @@ func (s *TypeSafeSuite) TestAScoreSendsItsLevelsInOrder() {
 		"legend":{"0":"Mid-word","1":"Mid-sentence","2":"Finished"},
 		"probabilities":{"0":0.1,"1":0.4,"2":0.5},"confidence":0.55}}}`
 
-	answers, err := s.ask("my member id is four four", map[string]llmclassifier.Question{
-		"finished": llmclassifier.Score("How finished is this?",
+	answers, err := s.ask("my member id is four four", map[string]lcm.Question{
+		"finished": lcm.Score("How finished is this?",
 			[]string{"Mid-word", "Mid-sentence", "Finished"}),
 	})
 	s.Require().NoError(err)
@@ -201,10 +201,10 @@ func (s *TypeSafeSuite) TestANoulSaysWhatYesAndNoMeanOnlyWhenTold() {
 	s.web.respond = `{"model":"jev-1.13.0","answers":{
 		"menu":{"type":"noul","noul":0.7},"plain":{"type":"noul","noul":0.2}}}`
 
-	_, err := s.ask("press one for billing", map[string]llmclassifier.Question{
-		"menu": llmclassifier.Noul("Is this a recorded menu?",
+	_, err := s.ask("press one for billing", map[string]lcm.Question{
+		"menu": lcm.Noul("Is this a recorded menu?",
 			"A recording listing options.", "A person talking."),
-		"plain": llmclassifier.Noul("Is anyone shouting?", "", ""),
+		"plain": lcm.Noul("Is anyone shouting?", "", ""),
 	})
 	s.Require().NoError(err)
 
@@ -223,8 +223,8 @@ func (s *TypeSafeSuite) TestTheStateReachesTheWireWithItsPartsNamed() {
 	_, err := s.ask(map[string]any{
 		"agent_speaking": true,
 		"heard":          "hang on",
-	}, map[string]llmclassifier.Question{
-		"heard": llmclassifier.Noul("Is `heard` an interruption?", "", ""),
+	}, map[string]lcm.Question{
+		"heard": lcm.Noul("Is `heard` an interruption?", "", ""),
 	})
 	s.Require().NoError(err)
 
@@ -235,15 +235,15 @@ func (s *TypeSafeSuite) TestTheStateReachesTheWireWithItsPartsNamed() {
 }
 
 func (s *TypeSafeSuite) TestARequestWithNoQuestionsIsNotSent() {
-	_, err := s.ask("anything", map[string]llmclassifier.Question{})
+	_, err := s.ask("anything", map[string]lcm.Question{})
 
 	s.ErrorContains(err, "at least one question")
 	s.Zero(s.web.calls)
 }
 
 func (s *TypeSafeSuite) TestAQuestionWithNothingAskedIsNotSent() {
-	_, err := s.ask("anything", map[string]llmclassifier.Question{
-		"floor": {Type: llmclassifier.TypeChoice, Instructions: "  "},
+	_, err := s.ask("anything", map[string]lcm.Question{
+		"floor": {Type: lcm.TypeChoice, Instructions: "  "},
 	})
 
 	s.ErrorContains(err, "floor")
@@ -253,7 +253,7 @@ func (s *TypeSafeSuite) TestAQuestionWithNothingAskedIsNotSent() {
 func (s *TypeSafeSuite) TestAQuestionOfNoKnownTypeIsNotSent() {
 	// A type the API does not know comes back as a 422, which is a round trip spent finding
 	// out something the question itself says.
-	_, err := s.ask("anything", map[string]llmclassifier.Question{
+	_, err := s.ask("anything", map[string]lcm.Question{
 		"floor": {Type: "vibes", Instructions: "Who has the floor?"},
 	})
 
@@ -266,9 +266,9 @@ func (s *TypeSafeSuite) TestAnUnansweredQuestionIsAFailureRatherThanAZero() {
 	// nothing about a caller talking over it, which is worse than the error.
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"disposition":{"type":"choice","choice":"respond"}}}`
 
-	_, err := s.ask("make it six", map[string]llmclassifier.Question{
-		"disposition": llmclassifier.Choice("What now?", map[string]string{"respond": "", "wait": ""}),
-		"floor":       llmclassifier.Choice("Who has the floor?", map[string]string{"stop": "", "continue": ""}),
+	_, err := s.ask("make it six", map[string]lcm.Question{
+		"disposition": lcm.Choice("What now?", map[string]string{"respond": "", "wait": ""}),
+		"floor":       lcm.Choice("Who has the floor?", map[string]string{"stop": "", "continue": ""}),
 	})
 
 	s.ErrorContains(err, "floor")
@@ -278,8 +278,8 @@ func (s *TypeSafeSuite) TestARateLimitIsWorthAskingAgainAndABadQuestionIsNot() {
 	s.web.status = http.StatusTooManyRequests
 	s.web.respond = `{"detail":"slow down"}`
 
-	_, err := s.ask("anything", map[string]llmclassifier.Question{
-		"heard": llmclassifier.Noul("Did anyone speak?", "", ""),
+	_, err := s.ask("anything", map[string]lcm.Question{
+		"heard": lcm.Noul("Did anyone speak?", "", ""),
 	})
 
 	var refused *StatusError
@@ -292,16 +292,16 @@ func (s *TypeSafeSuite) TestARateLimitIsWorthAskingAgainAndABadQuestionIsNot() {
 	s.web.status = http.StatusServiceUnavailable
 	s.web.respond = `{"detail":{"error_type":"model_unavailable","message":"The model is unavailable."}}`
 
-	_, err = s.ask("anything", map[string]llmclassifier.Question{
-		"heard": llmclassifier.Noul("Did anyone speak?", "", ""),
+	_, err = s.ask("anything", map[string]lcm.Question{
+		"heard": lcm.Noul("Did anyone speak?", "", ""),
 	})
 
 	s.Require().ErrorAs(err, &refused)
 	s.True(refused.Retryable())
 
 	s.web.status = http.StatusUnprocessableEntity
-	_, err = s.ask("anything", map[string]llmclassifier.Question{
-		"heard": llmclassifier.Noul("Did anyone speak?", "", ""),
+	_, err = s.ask("anything", map[string]lcm.Question{
+		"heard": lcm.Noul("Did anyone speak?", "", ""),
 	})
 
 	s.Require().ErrorAs(err, &refused)
@@ -313,8 +313,8 @@ func (s *TypeSafeSuite) TestTheModelThatAnsweredIsReportedRatherThanTheAliasThat
 	s.web.respond = `{"model":"jev-1.13.0","answers":{"heard":{"type":"noul","noul":0.5}},
 		"usage":{"input_tokens":312,"output_tokens":48}}`
 
-	answers, err := s.ask("anything", map[string]llmclassifier.Question{
-		"heard": llmclassifier.Noul("Did anyone speak?", "", ""),
+	answers, err := s.ask("anything", map[string]lcm.Question{
+		"heard": lcm.Noul("Did anyone speak?", "", ""),
 	})
 	s.Require().NoError(err)
 

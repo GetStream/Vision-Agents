@@ -3,7 +3,6 @@ package harness
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -39,8 +38,7 @@ const codeDeadline = 60 * time.Second
 // answer arrives on Results whenever it arrives, which may be several turns of conversation
 // later.
 type manager struct {
-	subagent *llmrouter.Session
-	workers  map[string]*worker
+	subagent *opening
 	capture  func(context.Context, CaptureRequest) ([]llm.ContentPart, error)
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -78,7 +76,6 @@ type manager struct {
 type task struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
-	worker    string
 	capture   bool
 	selection CaptureRequest
 	evidence  []string
@@ -119,8 +116,7 @@ func newManager(
 ) *manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &manager{
-		ctx: ctx, cancel: cancel, workers: map[string]*worker{},
-		subagent:   subagent,
+		ctx: ctx, cancel: cancel,
 		limit:      limit,
 		box:        box,
 		overwrites: overwrites,
@@ -132,7 +128,7 @@ func newManager(
 	if subagent != nil {
 		ready := make(chan struct{})
 		close(ready)
-		m.workers["default"] = &worker{ready: ready, session: subagent}
+		m.subagent = &opening{ready: ready, session: subagent}
 	}
 	return m
 }
@@ -154,14 +150,6 @@ func (m *manager) Create(
 		m.mu.Unlock()
 		return "", fmt.Errorf("harness: the conversation has ended")
 	}
-	binding := skill.Subagent
-	if binding == "" {
-		binding = "default"
-	}
-	if _, exists := m.workers[binding]; !exists {
-		m.mu.Unlock()
-		return "", fmt.Errorf("harness: no worker called %q", binding)
-	}
 	var superseded string
 	if existing, ok := m.bySkill[skill.Name]; ok && m.cancelLocked(existing, ReasonSuperseded) {
 		superseded = existing
@@ -175,7 +163,7 @@ func (m *manager) Create(
 	messages := append(append([]llm.Message(nil), history...), llm.Message{Role: llm.User, Content: prompt})
 	ctx, cancel := context.WithCancel(m.ctx)
 	created := &task{
-		ctx: ctx, cancel: cancel, worker: binding, capture: skill.CaptureVideo,
+		ctx: ctx, cancel: cancel, capture: skill.CaptureVideo,
 		id:           fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), m.sequence.Add(1)),
 		skill:        skill.Name,
 		turnID:       turnID,
@@ -245,7 +233,7 @@ func (m *manager) start(created *task) {
 }
 
 func (m *manager) ask(running *task, messages []llm.Message) (*llm.Stream, error) {
-	model, err := m.model(running.ctx, running.worker)
+	model, err := m.model(running.ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -381,10 +369,8 @@ func (m *manager) Close() error {
 		m.CancelAll(ReasonClosed)
 		m.cancel()
 		m.warming.Wait()
-		for _, w := range m.workers {
-			if w.session != nil {
-				err = errors.Join(err, w.session.Close())
-			}
+		if m.subagent != nil && m.subagent.session != nil {
+			err = m.subagent.session.Close()
 		}
 		m.drainers.Wait()
 		m.results.Close()
@@ -537,7 +523,6 @@ func (m *manager) report(finished *task, result Result) {
 	}
 	m.mu.Unlock()
 
-	result.Worker = finished.worker
 	result.Evidence = finished.evidence
 	result.TaskID = finished.id
 	result.Skill = finished.skill

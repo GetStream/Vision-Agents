@@ -44,6 +44,7 @@ class Router:
         app.router.add_put("/v1/agents/skills/{id}", self._update_skill)
         app.router.add_post("/v1/agents/sync", self._sync)
         app.router.add_post("/v1/agents/knowledge/urls", self._add_page)
+        app.router.add_get("/v1/agents/knowledge/urls/{id}", self._get_page)
         return app
 
     async def _list_configs(self, request: web.Request) -> web.Response:
@@ -120,22 +121,30 @@ class Router:
         return web.json_response({"unchanged": False, "config": stored})
 
     async def _add_page(self, request: web.Request) -> web.Response:
-        """Read a page into a namespace, which a router does before it answers."""
+        """Queue a page to be read, which a router answers before reading it."""
         body = await request.json()
         self.pages.append(body)
-        when = "2026-01-01T00:00:00Z"
         return web.json_response(
-            status=201,
-            data={
-                "id": f"page-{len(self.pages)}",
-                "namespace": body["namespace"],
-                "url": body["url"],
-                "state": "indexed",
-                "passages": 4,
-                "created_at": when,
-                "updated_at": when,
-            },
+            status=201, data=self._page(len(self.pages), "pending")
         )
+
+    async def _get_page(self, request: web.Request) -> web.Response:
+        """The page once the router has read it."""
+        number = int(request.match_info["id"].removeprefix("page-"))
+        return web.json_response(self._page(number, "indexed"))
+
+    def _page(self, number: int, state: str) -> dict[str, Any]:
+        body = self.pages[number - 1]
+        when = "2026-01-01T00:00:00Z"
+        return {
+            "id": f"page-{number}",
+            "namespace": body["namespace"],
+            "url": body["url"],
+            "state": state,
+            "passages": 4 if state == "indexed" else 0,
+            "created_at": when,
+            "updated_at": when,
+        }
 
     async def _config(self, request: web.Request) -> dict[str, Any]:
         """What was asked for, as a config the router would answer with.
@@ -200,12 +209,12 @@ class TestDefineAgent:
         assert stored["instructions"] == EXPLAIN.instructions
         assert stored["deadline_ms"] == 25_000
 
-    async def test_named_vision_worker_and_capture_settings_are_stored(
+    async def test_a_vision_skill_and_capture_settings_are_stored(
         self, router: Router
     ) -> None:
         config = await stream.define_agent(
             name="visual-agent",
-            subagents={"default": "llm-thinking", "vision": "vlm"},
+            subagent="vlm",
             video_source="roboflow_streaming",
             video_max_frames=2,
             skills=[
@@ -213,7 +222,6 @@ class TestDefineAgent:
                     name="vision",
                     description="Inspect visual evidence",
                     instructions="Answer from the supplied images.",
-                    subagent="vision",
                     capture_video=True,
                 )
             ],
@@ -221,16 +229,12 @@ class TestDefineAgent:
             customer_id="acme",
         )
 
-        assert config.subagents.to_dict() == {
-            "default": "llm-thinking",
-            "vision": "vlm",
-        }
+        assert config.subagent == "vlm"
         assert config.video.to_dict() == {
             "source": "roboflow_streaming",
             "max_frames": 2,
         }
         [skill] = list(router.skills.values())
-        assert skill["subagent"] == "vision"
         assert skill["capture_video"] is True
 
     async def test_defining_the_same_agent_twice_edits_it(self, router: Router):
@@ -291,7 +295,7 @@ class TestKnowledge:
             "docs", stream.Backend(url=router.url, customer_id="acme")
         )
 
-    async def test_a_page_is_read_into_the_agents_own_namespace(
+    async def test_a_page_comes_back_once_the_router_has_read_it(
         self, router: Router, knowledge: stream.Knowledge
     ):
         page = await knowledge.add_url("https://example.com/handbook")

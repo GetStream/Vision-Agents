@@ -307,7 +307,7 @@ func TestAHarnessRendersIntoTheCallItConfigures(t *testing.T) {
 	var call stream.Call
 	harness.apply(&call)
 
-	if call.Subagents["default"] != "openai/gpt-5.6-sol" || call.Tasks != 3 || call.Sandbox != "daytona" {
+	if call.Subagent != "openai/gpt-5.6-sol" || call.Tasks != 3 || call.Sandbox != "daytona" {
 		t.Errorf("the call was configured as %+v", call)
 	}
 	if call.Skills == nil || len(*call.Skills) != 1 {
@@ -337,12 +337,10 @@ func TestAHarnessAskingForNoSkillsTurnsDelegationOff(t *testing.T) {
 	}
 }
 
-func TestNamedSubagentsNeedNoDefault(t *testing.T) {
-	h := &Harness{Subagents: map[string]string{"vision": "vlm", "research": "llm-thinking"}}
-	if err := h.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	if h.Subagent() != "" {
-		t.Fatal("a named worker became the default")
+func TestSeveralSubagentsWithNoDefaultIsRefused(t *testing.T) {
+	harness := &Harness{Subagents: map[string]string{"fast": "a", "slow": "b"}}
+
+	if err := harness.Validate(); err == nil {
+		t.Fatal("which one runs skills would be decided by map iteration order")
 	}
 }

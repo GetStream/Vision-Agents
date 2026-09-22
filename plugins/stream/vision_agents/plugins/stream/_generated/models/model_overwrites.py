@@ -28,8 +28,7 @@ class ModelOverwrites:
             tts (str | Unset):
             sts (str | Unset): A speech-to-speech target. Naming one here makes the session native even if the config did
                 not, which means no transcriber, model or voice is opened.
-            subagent (str | Unset): The model delegated work runs on. Naming one replaces a config's default worker, so the
-                config cannot keep answering for the target just overwritten.
+            subagent (str | Unset): The model delegated work runs on, in place of the config's.
             search (str | Unset):
             thinking (ModelOverwritesThinking | Unset): How hard to reason before answering. It becomes the reasoning effort
                 on the request, which is the vocabulary the providers that support one already speak, and means nothing to a

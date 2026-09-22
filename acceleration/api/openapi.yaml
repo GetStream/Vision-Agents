@@ -184,6 +184,33 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/{modality}/routes:
+    get:
+      operationId: listRoutes
+      summary: List the capability shortcuts offered as a choice, each with the models it resolves to
+      description: >
+        The shortcuts a person picking a model is shown, in the order the deployment
+        offers them, so the first is the one a conversation gets by default. Shortcuts
+        that exist only for the router's own use are left out, though they can still be
+        named as a target.
+      parameters:
+        - $ref: "#/components/parameters/Modality"
+      responses:
+        "200":
+          description: The offered shortcuts, default first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Route"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/{modality}/routes/{target}:
     get:
       operationId: resolveTarget
@@ -857,6 +884,9 @@ paths:
         kept in a repository needs nothing written by hand. A setting it leaves out is
         left alone rather than blanked.
 
+        knowledge/ is the whole of the knowledge base named after the agent: a file taken
+        out of the directory is taken out of the base on the next sync.
+
         Server-side only: it needs a server-side token, so it cannot be reached from an
         end user's device.
       requestBody:
@@ -1353,6 +1383,62 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/voices/{id}/preview:
+    post:
+      operationId: previewVoice
+      summary: Hear a voice through one provider
+      description: >
+        Says a short line in the voice with the provider's own copy of it, so what a caller
+        will hear can be checked before an agent speaks in it. The provider must have the
+        voice ready.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an
+        end user's device.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoicePreviewRequest"
+      responses:
+        "200":
+          description: The line, spoken
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoicePreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/voices/providers:
+    get:
+      operationId: listVoiceProviders
+      summary: The providers a voice can be prepared with
+      description: >
+        Only the providers this deployment holds a key for and knows how to clone with. A
+        voice with no binding for one of them has not been prepared there yet.
+      responses:
+        "200":
+          description: The providers, sorted by name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceProviders"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/agents/skills:
     get:
       operationId: listSkills
@@ -1519,6 +1605,59 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /v1/agents/knowledge/documents:
+    get:
+      operationId: listKnowledgeDocuments
+      summary: The documents a knowledge base was filled with
+      description: >
+        What was posted to /v1/agents/knowledge or synced from an agent directory's
+        knowledge folder, one entry per source. Pages are listed at /v1/agents/knowledge/urls.
+      parameters:
+        - name: namespace
+          in: query
+          required: false
+          description: One knowledge base. Omit to list every document the customer has.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The customer's documents, most recently written first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IndexedKnowledgeDocument"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/agents/knowledge/documents/{id}:
+    delete:
+      operationId: deleteKnowledgeDocument
+      summary: Take a document out of a knowledge base
+      description: >
+        The passages it was cut into are removed too, so the agent stops answering out of it.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an
+        end user's device.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "204":
+          description: The document and its passages are gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/knowledge/urls:
     get:
       operationId: listKnowledgeUrls
@@ -1550,13 +1689,15 @@ paths:
       summary: Keep a knowledge base filled from a page
       description: >
         Posting a document is a thing that happens once; a url is a subscription, because
-        the page behind it changes and nobody re-posts it. The page is fetched here, turned
+        the page behind it changes and nobody re-posts it. The page is fetched, turned
         into markdown, cut into passages the same way a document is, and written under the
         url so a later read replaces it rather than adding a second copy.
 
-        The fetch happens before this answers and a live crawl takes seconds, so this is
-        slower than the endpoints around it. A page that could not be read is still stored,
-        in the failed state with the reason on it, rather than refused and forgotten.
+        The fetch is queued rather than done before this answers, since a live crawl takes
+        seconds: the page comes back pending, and indexed or failed once it has been read.
+        A read that fails is tried again a few times first. A page that could not be read
+        is still stored, in the failed state with the reason on it, rather than refused
+        and forgotten.
 
         Adding a page a knowledge base already has is a re-read of it rather than a second
         copy: the subscription is the url, so a declaration of what an agent reads can be
@@ -1572,7 +1713,7 @@ paths:
               $ref: "#/components/schemas/KnowledgeUrlRequest"
       responses:
         "201":
-          description: The page was stored, read or not
+          description: The page was stored and its read queued
           content:
             application/json:
               schema:
@@ -1635,8 +1776,9 @@ paths:
       summary: Read a page again
       description: >
         Nothing re-reads a page on its own, so this is what a caller with its own schedule
-        calls. Passages past the end of the new version are removed, so a page that got
-        shorter does not leave its old tail behind.
+        calls. The read is queued, the same as adding the page; last_indexed_at moves once
+        it has happened. Passages past the end of the new version are removed, so a page
+        that got shorter does not leave its old tail behind.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an
         end user's device.
@@ -1644,7 +1786,7 @@ paths:
         - $ref: "#/components/parameters/ResourceID"
       responses:
         "200":
-          description: The page as it now is
+          description: The page as it is while the read is queued
           content:
             application/json:
               schema:
@@ -3472,9 +3614,6 @@ components:
         description:
           type: string
           description: The one line the fast model sees.
-        subagent:
-          type: string
-          description: Named worker binding; omitted uses default.
         capture_video:
           type: boolean
           description: Capture task-scoped visual evidence before reasoning.
@@ -3571,11 +3710,6 @@ components:
           description: The model holding the conversation.
         video:
           $ref: "#/components/schemas/SessionVideo"
-        subagents:
-          type: object
-          additionalProperties:
-            type: string
-          description: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
         subagent:
           type: string
           description: >
@@ -3594,10 +3728,9 @@ components:
         guardrail:
           type: string
           description: >
-            A guardrail.md: frontmatter saying how a turn is screened - llm_classifier,
-            webhook or llm - then the policy in prose. A turn the policy refuses is
-            answered with the refusal and never reaches the model. Empty means every turn
-            is answered.
+            A guardrail.md: frontmatter saying how a turn is screened - lcm, webhook or
+            llm - then the policy in prose. A turn the policy refuses is answered with the
+            refusal and never reaches the model. Empty means every turn is answered.
         skills:
           type: array
           items:
@@ -3658,11 +3791,6 @@ components:
           type: string
         video:
           $ref: "#/components/schemas/SessionVideo"
-        subagents:
-          type: object
-          additionalProperties:
-            type: string
-          description: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
         subagent:
           type: string
         search:
@@ -4582,11 +4710,6 @@ components:
           type: string
         video:
           $ref: "#/components/schemas/SessionVideo"
-        subagents:
-          type: object
-          additionalProperties:
-            type: string
-          description: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
         subagent:
           type: string
         search:
@@ -4664,6 +4787,40 @@ components:
           description: >
             Which providers to teach the voice to. Empty means every provider this
             deployment can clone with.
+
+    VoicePreviewRequest:
+      type: object
+      required: [provider]
+      properties:
+        provider:
+          type: string
+          description: Which provider's copy of the voice to hear.
+        text:
+          type: string
+          description: What to say. Omitted says a short greeting.
+
+    VoicePreview:
+      type: object
+      required: [provider, content_type, audio]
+      properties:
+        provider:
+          type: string
+        content_type:
+          type: string
+          example: audio/mpeg
+        audio:
+          type: string
+          format: byte
+          description: The spoken line, base64 encoded.
+
+    VoiceProviders:
+      type: object
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          items:
+            type: string
 
     VoiceSample:
       type: object
@@ -4751,9 +4908,6 @@ components:
         description:
           type: string
           description: The one line the fast model sees.
-        subagent:
-          type: string
-          description: Named worker binding; omitted uses default.
         capture_video:
           type: boolean
           description: Capture task-scoped visual evidence before reasoning.
@@ -4777,9 +4931,6 @@ components:
           type: string
         description:
           type: string
-        subagent:
-          type: string
-          description: Named worker binding; omitted uses default.
         capture_video:
           type: boolean
           description: Capture task-scoped visual evidence before reasoning.
@@ -4844,6 +4995,29 @@ components:
           type: integer
           description: How many passages they were cut into and written as.
 
+    IndexedKnowledgeDocument:
+      type: object
+      required: [id, namespace, source, passages, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        namespace:
+          type: string
+        source:
+          type: string
+          description: What the document was posted as, and what its passages are keyed by.
+          example: pricing.md
+        passages:
+          type: integer
+          description: How many passages it was last cut into.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+          description: When it was last written.
+
     KnowledgeUrlRequest:
       type: object
       required: [namespace, url]
@@ -4876,8 +5050,8 @@ components:
       type: string
       enum: [pending, indexed, failed]
       description: >
-        Where the page has got to. Pending means it has been added but not yet read, which
-        is also what a read that died halfway through leaves behind.
+        Where the page has got to. Pending means it has been added and its first read is
+        queued or being retried; failed means every attempt failed.
 
     KnowledgeUrl:
       type: object
@@ -5046,10 +5220,13 @@ components:
           type: string
           description: >
             The model that rules on the conversations, named the way any other routing
-            target is. Empty takes a quality tier, since nobody is waiting for it.
+            target is. Empty takes llm-judge, the deployment's quality-tier default, since
+            nobody is waiting for it.
         caller_target:
           type: string
-          description: The model that plays the caller. Empty takes a fast tier.
+          description: >
+            The model that plays the caller. Empty takes llm-scenario-runner, the
+            deployment's fast-tier default.
         caller_tts:
           type: string
           description: How the caller speaks. Audio simulations only.
@@ -5062,7 +5239,7 @@ components:
         max_turns:
           type: integer
           description: >
-            How many times the caller may speak, up to thirty. It is what stops a caller
+            How many times the caller may speak, up to two hundred. It is what stops a caller
             that never decides it is finished. Twelve when left out.
         tags:
           type: object
@@ -5615,11 +5792,6 @@ components:
             A speech-to-speech target. Naming one makes this a native session: the model
             hears and speaks for itself, so no transcriber, conversation model or voice is
             opened. Omit it and the config decides.
-        subagents:
-          type: object
-          additionalProperties:
-            type: string
-          description: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
         subagent:
           type: string
           description: >
@@ -5721,8 +5893,7 @@ components:
         subagent:
           type: string
           description: >
-            The model delegated work runs on. Naming one replaces a config's default
-            worker, so the config cannot keep answering for the target just overwritten.
+            The model delegated work runs on, in place of the config's.
         search:
           type: string
         thinking:
@@ -5870,11 +6041,6 @@ components:
         subagent:
           type: string
           description: The provider and model delegated work runs on.
-        subagents:
-          type: object
-          additionalProperties:
-            type: string
-          description: Configured worker targets, prepared asynchronously.
         video:
           $ref: "#/components/schemas/SessionVideo"
         instructions:
@@ -6122,15 +6288,16 @@ components:
 
     Modality:
       type: string
-      enum: [stt, tts, llm, sts, search, llm_classifier, memory, knowledge, phone]
+      enum: [stt, tts, llm, sts, search, lcm, memory, knowledge, phone]
       description: >
         What kind of work was done. The first six are routed across providers; sts is
         speech to speech, one native audio model in place of a transcriber, a text model
-        and a voice. llm_classifier answers a question about a piece of text with a typed
-        value and the probability behind it rather than with prose, which is what a
-        guardrail asks before a reply is spoken. Memory, knowledge and phone are recorded
-        but not routed, since there is one memory store, one knowledge base and one vendor
-        per number, so the provider paths do not serve them while the statistics paths do.
+        and a voice. lcm is a large classifier model: it answers a question about a piece
+        of text with a typed value and the probability behind it rather than with prose,
+        which is what a guardrail asks before a reply is spoken. Memory, knowledge and
+        phone are recorded but not routed, since there is one memory store, one knowledge
+        base and one vendor per number, so the provider paths do not serve them while the
+        statistics paths do.
       example: tts
 
     Granularity:
@@ -6153,6 +6320,9 @@ components:
         model:
           type: string
           example: eleven_flash_v2_5
+        description:
+          type: string
+          description: What the model is good at, and what that costs in speed or money. Empty if the deployment wrote none.
         languages:
           type: array
           items:
@@ -6163,6 +6333,32 @@ components:
           $ref: "#/components/schemas/Tier"
         health:
           $ref: "#/components/schemas/ProviderHealth"
+        usage_share:
+          type: number
+          format: double
+          description: >
+            This model's share of the modality's requests over the last seven days, across
+            every customer, from 0 to 1. It is how popular the model is, and is 0 when
+            nothing was served or the deployment keeps no statistics.
+
+    Route:
+      type: object
+      required: [id, title, description, candidates]
+      properties:
+        id:
+          type: string
+          description: The shortcut, which is what a config or request names as its target.
+          example: llm-fast
+        title:
+          type: string
+          example: Fast conversational
+        description:
+          type: string
+        candidates:
+          type: array
+          description: The models the shortcut resolves to right now, best first.
+          items:
+            $ref: "#/components/schemas/Candidate"
 
     ProviderHealth:
       type: object

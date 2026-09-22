@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifier"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
@@ -49,15 +49,15 @@ func (s *TypeSafeIntegrationSuite) TestANoulAnswersBothWaysOnTheSameQuestion() {
 	policy := "Only questions about Stream's chat, video and feeds SDKs, their APIs, " +
 		"and software development using them."
 
-	question := map[string]llmclassifier.Question{
-		"violates": llmclassifier.Noul(
+	question := map[string]lcm.Question{
+		"violates": lcm.Noul(
 			"Is `message` a request that falls outside what `policy` permits?",
 			"It is about something the policy does not cover.",
 			"It is a request the policy permits.",
 		),
 	}
 
-	onTopic, err := s.client.Classify(s.ctx, llmclassifier.Request{
+	onTopic, err := s.client.Classify(s.ctx, lcm.Request{
 		State: map[string]string{
 			"policy":  policy,
 			"message": "How do I render a message list with stream-chat-react?",
@@ -66,7 +66,7 @@ func (s *TypeSafeIntegrationSuite) TestANoulAnswersBothWaysOnTheSameQuestion() {
 	})
 	s.Require().NoError(err)
 
-	offTopic, err := s.client.Classify(s.ctx, llmclassifier.Request{
+	offTopic, err := s.client.Classify(s.ctx, lcm.Request{
 		State: map[string]string{
 			"policy":  policy,
 			"message": "How do I make a pizza from scratch?",
@@ -84,10 +84,10 @@ func (s *TypeSafeIntegrationSuite) TestANoulAnswersBothWaysOnTheSameQuestion() {
 func (s *TypeSafeIntegrationSuite) TestTheAnswerSaysWhichVersionMadeItAndWhatItRead() {
 	// An alias moves when a release ships, so a threshold tuned against one version needs
 	// the version that answered rather than the name that was asked.
-	answered, err := s.client.Classify(s.ctx, llmclassifier.Request{
+	answered, err := s.client.Classify(s.ctx, lcm.Request{
 		State: "the payouts have been failing for three days",
-		Questions: map[string]llmclassifier.Question{
-			"urgent": llmclassifier.Noul("Does this convey urgency?", "", ""),
+		Questions: map[string]lcm.Question{
+			"urgent": lcm.Noul("Does this convey urgency?", "", ""),
 		},
 	})
 	s.Require().NoError(err)

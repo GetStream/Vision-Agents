@@ -99,6 +99,16 @@ func (e *ElevenLabs) Prepare(ctx context.Context, request Request) (string, erro
 	return created.VoiceID, nil
 }
 
+// Speak says a line in the voice with the model a call would use.
+func (e *ElevenLabs) Speak(ctx context.Context, externalID, text string) (Speech, error) {
+	url := strings.TrimSuffix(e.options.BaseURL, "/") + "/v1/text-to-speech/" + externalID +
+		"?output_format=" + elevenlabs.DefaultRecordingFormat
+	header := http.Header{}
+	header.Set("xi-api-key", e.options.APIKey)
+	payload := map[string]string{"text": text, "model_id": elevenlabs.DefaultModel}
+	return speak(ctx, e.client, elevenlabs.ProviderName, url, "audio/mpeg", header, payload)
+}
+
 // Delete takes the voice back off ElevenLabs.
 func (e *ElevenLabs) Delete(ctx context.Context, externalID string) error {
 	if externalID == "" {

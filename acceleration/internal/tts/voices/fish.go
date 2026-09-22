@@ -143,6 +143,16 @@ func (f *Fish) Delete(ctx context.Context, externalID string) error {
 	return nil
 }
 
+// Speak says a line in the voice with the model a call would use.
+func (f *Fish) Speak(ctx context.Context, externalID, text string) (Speech, error) {
+	url := strings.TrimSuffix(f.options.BaseURL, "/") + "/v1/tts"
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+f.options.APIKey)
+	header.Set("model", fish.DefaultModel)
+	payload := map[string]string{"text": text, "reference_id": externalID, "format": "mp3"}
+	return speak(ctx, f.client, fish.ProviderName, url, "audio/mpeg", header, payload)
+}
+
 // transcript writes a texts part, which has to be sent even when empty so the transcripts
 // line up with the recordings they belong to.
 func (f *Fish) transcript(body *form, text string) error {

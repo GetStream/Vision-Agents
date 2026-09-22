@@ -90,7 +90,7 @@ type nativePeer struct {
 	frames chan map[string]json.RawMessage
 }
 
-func (s *AgentSuite) joinNativeWorker() *nativePeer {
+func (s *AgentSuite) joinNativeDelegating() *nativePeer {
 	connections := make(chan *websocket.Conn, 1)
 	frames := make(chan map[string]json.RawMessage, 32)
 	upgrader := websocket.Upgrader{}
@@ -142,8 +142,8 @@ func (s *AgentSuite) joinNativeWorker() *nativePeer {
 	s.edge = newLoopbackEdge()
 	s.agent, err = New(Options{
 		CustomerID: "acme", Edge: s.edge, STS: router, STSTarget: "openai/gpt-realtime-2",
-		LLM: reasoner, Subagents: map[string]string{"research": "stub/stub-model"},
-		Skills: harness.Skills{Skills: []harness.Skill{{Name: "think", Subagent: "research", Description: "reason carefully", Instructions: "Solve it", Deadline: time.Minute}}},
+		LLM: reasoner, SubagentTarget: "stub/stub-model",
+		Skills: harness.Skills{Skills: []harness.Skill{{Name: "think", Description: "reason carefully", Instructions: "Solve it", Deadline: time.Minute}}},
 	})
 	s.Require().NoError(err)
 	s.events = collect(s.agent)
@@ -171,7 +171,7 @@ func (s *AgentSuite) nativeSend(peer *nativePeer, frame string) {
 }
 
 func (s *AgentSuite) TestNativeDelegationKeepsTalkingAndDeliversTheResultWhenIdle() {
-	peer := s.joinNativeWorker()
+	peer := s.joinNativeDelegating()
 	setup := s.nativeFrame(peer, "session.update")
 	s.Contains(string(setup["session"]), "delegate_skill")
 	s.Contains(string(setup["session"]), "cancel_skill")
@@ -210,13 +210,11 @@ func (s *AgentSuite) TestNativeDelegationKeepsTalkingAndDeliversTheResultWhenIdl
 	s.Contains(string(delivery["response"]), "The total is 42 dollars.")
 	s.False(s.agent.harness.Pending())
 	s.Eventually(func() bool { return countOf[TaskSettled](s.reported()) == 1 }, time.Second, time.Millisecond)
-	settled, _ := firstOf[TaskSettled](s.reported())
-	s.Equal("research", settled.Worker)
 	s.Equal(1, countOf[Delegated](s.reported()), "a duplicated tool call must not restart the task")
 }
 
 func (s *AgentSuite) TestNativeDelegationCancelsWorkWithoutEndingTheCall() {
-	peer := s.joinNativeWorker()
+	peer := s.joinNativeDelegating()
 	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
 	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
 	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
@@ -234,7 +232,7 @@ func (s *AgentSuite) TestNativeDelegationCancelsWorkWithoutEndingTheCall() {
 }
 
 func (s *AgentSuite) TestNativeDelegationSupersedesOldWorkAndStopsOnClose() {
-	peer := s.joinNativeWorker()
+	peer := s.joinNativeDelegating()
 	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
 	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Price six seats\"}"}`)
 	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
@@ -254,7 +252,7 @@ func (s *AgentSuite) TestNativeDelegationSupersedesOldWorkAndStopsOnClose() {
 }
 
 func (s *AgentSuite) TestNativeToolCancellationBeforeExecution() {
-	s.joinNativeWorker()
+	s.joinNativeDelegating()
 	requested := harness.ToolRequested{TurnID: "r1", Call: llm.ToolCall{ID: "cancel-before-run", Name: delegateSkill, Arguments: `{"skill":"think","prompt":"Work out the booking total"}`}}
 	ctx, cancel := s.agent.prepareTool(requested)
 	source := make(chan sts.Event, 1)

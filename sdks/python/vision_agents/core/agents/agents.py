@@ -138,8 +138,8 @@ class Responses:
                 Defaults to the agent itself when not supplied.
             interrupt: If True (default), preempt any in-flight LLM turn. If
                 False, drop silently when a turn is already in flight.
-            images: Frames attached to this turn. Accelerated sessions send
-                them to the vision worker; unsupported local flows reject them.
+            images: Frames attached to this turn. Accelerated sessions hand
+                them to the vision skill; unsupported local flows reject them.
         """
         agent = self._agent
         with agent.tracer.start_as_current_span("agent.responses.create"):
@@ -149,7 +149,7 @@ class Responses:
 
             if images:
                 raise ValueError(
-                    'image attachments require a delegated vision worker; use stream.LLM(target="vlm") for direct inference'
+                    'image attachments require a delegated vision skill; use stream.LLM(target="vlm") for direct inference'
                 )
             if participant is None:
                 participant = Participant(

@@ -15,6 +15,9 @@ const noVoices = "voices of your own are not available: this deployment has no o
 // unknownVoice is what a caller is told about a voice that is not theirs, or not there.
 const unknownVoice = "there is no such voice"
 
+// previewLine is what a voice says when the caller did not choose a line.
+const previewLine = "Hi there! This is how I will sound when I answer your calls."
+
 // ListVoices returns the calling customer's own voices, newest first.
 func (s *Server) ListVoices(ctx context.Context, _ ListVoicesRequestObject) (ListVoicesResponseObject, error) {
 	customerID, ok := CustomerFrom(ctx)
@@ -214,6 +217,52 @@ func (s *Server) PrepareVoice(ctx context.Context, request PrepareVoiceRequestOb
 		return nil, err
 	}
 	return PrepareVoice200JSONResponse(described), nil
+}
+
+// ListVoiceProviders reports which providers a voice can be prepared with.
+func (s *Server) ListVoiceProviders(ctx context.Context, _ ListVoiceProvidersRequestObject) (ListVoiceProvidersResponseObject, error) {
+	if _, ok := CustomerFrom(ctx); !ok {
+		return ListVoiceProviders401JSONResponse{missingCustomer()}, nil
+	}
+	if s.voices == nil {
+		return ListVoiceProviders400JSONResponse{badRequest(noVoices)}, nil
+	}
+	return ListVoiceProviders200JSONResponse{Providers: s.voices.Providers()}, nil
+}
+
+// PreviewVoice says a short line in the voice through one provider.
+func (s *Server) PreviewVoice(ctx context.Context, request PreviewVoiceRequestObject) (PreviewVoiceResponseObject, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return PreviewVoice401JSONResponse{missingCustomer()}, nil
+	}
+	if s.voices == nil {
+		return PreviewVoice400JSONResponse{badRequest(noVoices)}, nil
+	}
+	if request.Body == nil || strings.TrimSpace(request.Body.Provider) == "" {
+		return PreviewVoice400JSONResponse{badRequest("name the provider to hear the voice through")}, nil
+	}
+	if _, err := s.store.Voice(ctx, customerID, request.Id); err != nil {
+		return PreviewVoice404JSONResponse{NotFoundJSONResponse{Error: unknownVoice}}, nil
+	}
+
+	provider := request.Body.Provider
+	line := text(request.Body.Text)
+	if strings.TrimSpace(line) == "" {
+		line = previewLine
+	}
+	speech, err := s.voices.Speak(ctx, customerID, request.Id, provider, line)
+	if errors.Is(err, store.ErrNoVoice) {
+		return PreviewVoice400JSONResponse{badRequest("the voice is not ready with " + provider + " yet")}, nil
+	}
+	if err != nil {
+		return PreviewVoice400JSONResponse{badRequest(err.Error())}, nil
+	}
+	return PreviewVoice200JSONResponse{
+		Provider:    provider,
+		ContentType: speech.ContentType,
+		Audio:       speech.Audio,
+	}, nil
 }
 
 // describeVoice reads a voice back with its recordings and bindings, which is what every

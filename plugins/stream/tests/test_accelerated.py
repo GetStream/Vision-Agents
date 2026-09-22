@@ -162,7 +162,7 @@ class TestAccelerated:
             self, router: Router, joined: stream.Accelerated
         ):
             assert router.created is not None
-            assert router.created["subagents"] == {"default": "llm-smart"}
+            assert router.created["subagent"] == "llm-smart"
             assert router.created["sandbox"] == "daytona"
 
     async def test_named_keyterms_reach_the_session(

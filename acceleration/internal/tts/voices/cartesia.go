@@ -137,6 +137,26 @@ func (c *Cartesia) Delete(ctx context.Context, externalID string) error {
 	return nil
 }
 
+// Speak says a line in the voice with the model a call would use.
+func (c *Cartesia) Speak(ctx context.Context, externalID, text string) (Speech, error) {
+	url := strings.TrimSuffix(c.options.BaseURL, "/") + "/tts/bytes"
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+c.options.APIKey)
+	header.Set("Cartesia-Version", cartesiaAPIVersion)
+	payload := map[string]any{
+		"model_id":   cartesia.DefaultModel,
+		"transcript": text,
+		"voice":      map[string]string{"id": externalID},
+		"language":   c.options.Language,
+		"output_format": map[string]any{
+			"container":   "wav",
+			"encoding":    "pcm_s16le",
+			"sample_rate": cartesia.DefaultSampleRate,
+		},
+	}
+	return speak(ctx, c.client, cartesia.ProviderName, url, "audio/wav", header, payload)
+}
+
 func (c *Cartesia) authorize(request *http.Request) {
 	request.Header.Set("Authorization", "Bearer "+c.options.APIKey)
 	request.Header.Set("Cartesia-Version", cartesiaAPIVersion)

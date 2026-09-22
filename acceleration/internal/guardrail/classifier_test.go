@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifier"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/llmclassifierrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/lcmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
 
@@ -19,22 +19,22 @@ type stubClassifier struct {
 	probability float64
 	err         error
 
-	asked []llmclassifier.Request
+	asked []lcm.Request
 }
 
 func (s *stubClassifier) Classify(
-	_ context.Context, request llmclassifier.Request,
-) (llmclassifier.Result, error) {
+	_ context.Context, request lcm.Request,
+) (lcm.Result, error) {
 	s.asked = append(s.asked, request)
 	if s.err != nil {
-		return llmclassifier.Result{}, s.err
+		return lcm.Result{}, s.err
 	}
-	return llmclassifier.Result{
+	return lcm.Result{
 		Model: "stub-1.0",
-		Answers: map[string]llmclassifier.Answer{
-			violates: {Type: llmclassifier.TypeNoul, Yes: s.probability},
+		Answers: map[string]lcm.Answer{
+			violates: {Type: lcm.TypeNoul, Yes: s.probability},
 		},
-		Usage: llmclassifier.Usage{InputTokens: 120},
+		Usage: lcm.Usage{InputTokens: 120},
 	}, nil
 }
 
@@ -57,13 +57,13 @@ func (s *ClassifierSuite) SetupTest() {
 }
 
 // router routes every check to one stub.
-func (s *ClassifierSuite) router(stub *stubClassifier) *llmclassifierrouter.Router {
-	registry := llmclassifierrouter.NewRegistry()
-	registry.Register("stub", func(routing.Spec) (llmclassifier.Provider, error) {
+func (s *ClassifierSuite) router(stub *stubClassifier) *lcmrouter.Router {
+	registry := lcmrouter.NewRegistry()
+	registry.Register("stub", func(routing.Spec) (lcm.Provider, error) {
 		return stub, nil
 	})
 
-	router, err := llmclassifierrouter.New(llmclassifierrouter.Options{
+	router, err := lcmrouter.New(lcmrouter.Options{
 		Config: routing.ModalityConfig{
 			Providers: []routing.ProviderConfig{{
 				Provider: "stub", Model: "judge", Languages: []string{"en"},
@@ -145,7 +145,7 @@ func (s *ClassifierSuite) TestThePolicyAndTheMessageAreAskedAboutAsTwoThings() {
 	s.Equal("how do I install stream-chat-react", state["message"])
 
 	asked := stub.asked[0].Questions[violates]
-	s.Equal(llmclassifier.TypeNoul, asked.Type)
+	s.Equal(lcm.TypeNoul, asked.Type)
 	s.Contains(asked.Instructions, "`policy`")
 	s.Contains(asked.Instructions, "`message`")
 }
@@ -184,5 +184,5 @@ func (s *ClassifierSuite) TestAPolicyWithNothingToRouteItIsRefusedWhenBuilt() {
 		Refusal: "No.", Text: "Only Stream questions.",
 	}, Deps{Owner: routing.Owner{CustomerID: "acme"}, Logger: slog.New(slog.DiscardHandler)})
 
-	s.ErrorContains(err, "llm_classifier")
+	s.ErrorContains(err, "lcm")
 }

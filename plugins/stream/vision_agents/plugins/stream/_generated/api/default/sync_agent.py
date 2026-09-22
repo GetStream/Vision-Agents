@@ -82,6 +82,8 @@ def sync_detailed(
     nothing, so a process that syncs on startup is cheap when nothing has changed.
     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
     needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+    knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the
+    directory is taken out of the base on the next sync.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -121,6 +123,8 @@ def sync(
     nothing, so a process that syncs on startup is cheap when nothing has changed.
     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
     needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+    knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the
+    directory is taken out of the base on the next sync.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -155,6 +159,8 @@ async def asyncio_detailed(
     nothing, so a process that syncs on startup is cheap when nothing has changed.
     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
     needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+    knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the
+    directory is taken out of the base on the next sync.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -192,6 +198,8 @@ async def asyncio(
     nothing, so a process that syncs on startup is cheap when nothing has changed.
     agent.yaml decides the models, the voice and the rest of a config, so an agent kept in a repository
     needs nothing written by hand. A setting it leaves out is left alone rather than blanked.
+    knowledge/ is the whole of the knowledge base named after the agent: a file taken out of the
+    directory is taken out of the base on the next sync.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:

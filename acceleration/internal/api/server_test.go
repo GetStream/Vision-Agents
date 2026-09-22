@@ -346,6 +346,33 @@ func (s *ServerSuite) TestAModalityTheRouterHasNeverHeardOfIsNotFound() {
 	s.Contains(failure.Error, "does not route llm")
 }
 
+func (s *ServerSuite) TestRoutesOfferTheTitledShortcutsWithTheModelsTheyResolveTo() {
+	recorder := s.get("/v1/stt/routes", "acme")
+
+	s.Equal(http.StatusOK, recorder.Code)
+	var routes []Route
+	s.decode(recorder, &routes)
+	s.Require().NotEmpty(routes)
+	s.Equal("en-low-latency", routes[0].Id, "the default comes first")
+	s.Equal("Fast English", routes[0].Title)
+	s.NotEmpty(routes[0].Description)
+	s.Require().NotEmpty(routes[0].Candidates)
+	s.Equal("deepgram", routes[0].Candidates[0].Provider)
+	for _, route := range routes {
+		s.NotEqual("en-recorded", route.Id, "an untitled shortcut is not offered")
+	}
+}
+
+func (s *ServerSuite) TestProvidersHaveNoShareWithoutStatistics() {
+	recorder := s.get("/v1/stt/providers", "acme")
+
+	var providers []Provider
+	s.decode(recorder, &providers)
+	s.Require().NotEmpty(providers)
+	s.Require().NotNil(providers[0].UsageShare)
+	s.Zero(*providers[0].UsageShare)
+}
+
 func (s *ServerSuite) TestResolveReturnsCandidatesBestFirst() {
 	recorder := s.get("/v1/stt/routes/en-low-latency", "acme")
 

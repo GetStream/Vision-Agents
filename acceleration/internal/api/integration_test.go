@@ -15,9 +15,11 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -38,6 +40,7 @@ type APIIntegrationSuite struct {
 	server     *httptest.Server
 	customerID string
 	base       time.Time
+	knowledge  *base
 }
 
 func TestAPIIntegrationSuite(t *testing.T) {
@@ -112,6 +115,7 @@ func (s *APIIntegrationSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.T().Cleanup(recordings.Close)
 
+	s.knowledge = newBase()
 	server, err := NewServer(Options{
 		Routers: map[routing.Modality]routing.Inspector{
 			routing.STT: speech,
@@ -126,7 +130,8 @@ func (s *APIIntegrationSuite) SetupSuite() {
 		Store:         pgStore,
 		Live:          liveClient,
 		Voices:        s.voiceService(pgStore),
-		KnowledgeURLs: s.knowledgeURLs(pgStore),
+		Knowledge:     s.knowledge,
+		KnowledgeURLs: s.knowledgeURLs(pgStore, address),
 		// Minting a token signs one rather than fetching it, so a made-up app is enough
 		// to exercise the join path without a real Stream account behind it.
 		StreamKey:    testStreamKey,
@@ -142,6 +147,10 @@ func (s *APIIntegrationSuite) SetupSuite() {
 // the recordings, so the HTTP surface can be exercised without cloning anything for real.
 func (s *APIIntegrationSuite) voiceService(pgStore *store.Store) *voices.Service {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/text-to-speech/el-cloned" {
+			_, _ = w.Write([]byte("spoken"))
+			return
+		}
 		_, _ = w.Write([]byte(`{"voice_id":"el-cloned"}`))
 	}))
 	s.T().Cleanup(provider.Close)
@@ -162,14 +171,33 @@ func (s *APIIntegrationSuite) voiceService(pgStore *store.Store) *voices.Service
 
 // knowledgeURLs wires the url paths against a crawler that always answers and a knowledge
 // base in memory, so the HTTP surface can be exercised without fetching anything for real.
-func (s *APIIntegrationSuite) knowledgeURLs(pgStore *store.Store) *urls.Service {
+//
+// Its queue is in a Redis database of its own, so a router running against the same Redis
+// does not take the reads for itself.
+func (s *APIIntegrationSuite) knowledgeURLs(pgStore *store.Store, address string) *urls.Service {
 	service, err := urls.New(urls.Options{
-		Store:  pgStore,
-		Reader: pageReader{},
-		Writer: newBase(),
+		Store:         pgStore,
+		Redis:         asynq.RedisClientOpt{Addr: address, DB: 14},
+		Reader:        pageReader{},
+		Writer:        newBase(),
+		CheckInterval: 10 * time.Millisecond,
 	})
 	s.Require().NoError(err)
+	s.Require().NoError(service.Start())
+	s.T().Cleanup(func() { s.Require().NoError(service.Close()) })
 	return service
+}
+
+// read waits for the worker to have read a page, and returns it as the API then describes it.
+func (s *APIIntegrationSuite) read(id string, after *time.Time) KnowledgeUrl {
+	var page KnowledgeUrl
+	s.Require().Eventually(func() bool {
+		response, payload := s.do(http.MethodGet, "/v1/agents/knowledge/urls/"+id, "")
+		s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+		s.Require().NoError(json.Unmarshal(payload, &page))
+		return page.LastIndexedAt != nil && (after == nil || page.LastIndexedAt.After(*after))
+	}, 10*time.Second, 10*time.Millisecond)
+	return page
 }
 
 // pageReader answers every url with the same page, which is enough for the endpoints to be
@@ -246,6 +274,9 @@ func (s *APIIntegrationSuite) TearDownSuite() {
 
 func (s *APIIntegrationSuite) SetupTest() {
 	s.customerID = "customer-" + time.Now().Format("150405.000000000")
+	s.knowledge.mu.Lock()
+	s.knowledge.passages = map[string]knowledge.Document{}
+	s.knowledge.mu.Unlock()
 }
 
 // do issues a request against the live test server with the customer header set.
@@ -488,6 +519,47 @@ func (s *APIIntegrationSuite) TestProvidersReportLiveHealth() {
 	s.True(english.Health.Available)
 }
 
+func (s *APIIntegrationSuite) TestAModelThatServedRequestsHasAShareOfThem() {
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &store.Request{
+		Modality: "stt", CustomerID: "someone-else",
+		Provider: "parakeet", Model: "parakeet-tdt-0.6b-v3",
+		StartedAt: time.Now(), Success: true,
+	}))
+
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	speech, err := sttrouter.New(sttrouter.Options{Config: config[routing.STT], Registry: sttrouter.DefaultRegistry()})
+	s.Require().NoError(err)
+	s.T().Cleanup(speech.Close)
+	// A server of its own, so the popularity it reports was counted after the request above.
+	server, err := NewServer(Options{
+		Routers: map[routing.Modality]routing.Inspector{routing.STT: speech},
+		Store:   s.store,
+	})
+	s.Require().NoError(err)
+	fresh := httptest.NewServer(server.Handler())
+	s.T().Cleanup(fresh.Close)
+
+	request, err := http.NewRequestWithContext(s.ctx, http.MethodGet, fresh.URL+"/v1/stt/providers", nil)
+	s.Require().NoError(err)
+	request.Header.Set(CustomerHeader, s.customerID)
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+
+	var providers []Provider
+	s.Require().NoError(json.NewDecoder(response.Body).Decode(&providers))
+	for _, provider := range providers {
+		s.Require().NotNil(provider.UsageShare)
+		s.GreaterOrEqual(*provider.UsageShare, 0.0)
+		s.LessOrEqual(*provider.UsageShare, 1.0)
+		if provider.Model == "parakeet-tdt-0.6b-v3" && provider.Provider == "parakeet" {
+			s.Positive(*provider.UsageShare, "another customer's requests count towards popularity")
+		}
+	}
+}
+
 func (s *APIIntegrationSuite) TestAnAgentConfigSurvivesBeingStoredAndReadBack() {
 	response, payload := s.do(http.MethodPost, "/v1/agents/configs", `{
 		"name":"support","llm":"llm-fast","tts":"en-low-latency","voice":"aurora",
@@ -624,11 +696,13 @@ func (s *APIIntegrationSuite) TestAKnowledgeUrlIsReadStoredAndListed() {
 
 	var created KnowledgeUrl
 	s.Require().NoError(json.Unmarshal(payload, &created))
-	s.Equal(KnowledgeUrlStateIndexed, created.State)
-	s.Equal(1, created.Passages)
-	s.Require().NotNil(created.LastIndexedAt)
-	s.Require().NotNil(created.Title)
-	s.Equal("Pricing", *created.Title)
+	s.Equal(KnowledgeUrlStatePending, created.State, "the page is read after the request, not during it")
+
+	read := s.read(created.Id, nil)
+	s.Equal(KnowledgeUrlStateIndexed, read.State)
+	s.Equal(1, read.Passages)
+	s.Require().NotNil(read.Title)
+	s.Equal("Pricing", *read.Title)
 
 	response, payload = s.do(http.MethodGet, "/v1/agents/knowledge/urls?namespace=docs", "")
 	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
@@ -686,16 +760,14 @@ func (s *APIIntegrationSuite) TestReadingAPageAgainMovesWhenItWasLastIndexed() {
 		`{"namespace":"docs","url":"https://example.com/pricing"}`)
 	var created KnowledgeUrl
 	s.Require().NoError(json.Unmarshal(payload, &created))
+	first := s.read(created.Id, nil)
 
 	response, payload := s.do(http.MethodPost,
 		"/v1/agents/knowledge/urls/"+created.Id+"/index", "")
 	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
 
-	var reindexed KnowledgeUrl
-	s.Require().NoError(json.Unmarshal(payload, &reindexed))
+	reindexed := s.read(created.Id, first.LastIndexedAt)
 	s.Equal(created.Id, reindexed.Id)
-	s.Require().NotNil(reindexed.LastIndexedAt)
-	s.False(reindexed.LastIndexedAt.Before(*created.LastIndexedAt))
 }
 
 func (s *APIIntegrationSuite) TestSomethingThatIsNotAFetchablePageIsRefused() {
@@ -725,6 +797,104 @@ func (s *APIIntegrationSuite) TestAnotherCustomersKnowledgeUrlIsNotFound() {
 	defer response.Body.Close()
 
 	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+// documents lists the calling customer's documents in one knowledge base.
+func (s *APIIntegrationSuite) documents(namespace string) []IndexedKnowledgeDocument {
+	response, payload := s.do(http.MethodGet, "/v1/agents/knowledge/documents?namespace="+namespace, "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var listed []IndexedKnowledgeDocument
+	s.Require().NoError(json.Unmarshal(payload, &listed))
+	return listed
+}
+
+func (s *APIIntegrationSuite) TestAPostedDocumentIsListed() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/knowledge",
+		`{"namespace":"`+s.customerID+`","documents":[{"source":"pricing.md","text":"# Pricing\n\nA penny.\n\n# Support\n\nA day."}]}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	listed := s.documents(s.customerID)
+	s.Require().Len(listed, 1)
+	s.Equal("pricing.md", listed[0].Source)
+	s.Equal(2, listed[0].Passages)
+}
+
+func (s *APIIntegrationSuite) TestADocumentPostedShorterLeavesNoOldTailBehind() {
+	namespace := s.customerID
+	s.do(http.MethodPost, "/v1/agents/knowledge",
+		`{"namespace":"`+namespace+`","documents":[{"source":"pricing.md","text":"# Pricing\n\nA penny.\n\n# Support\n\nA day."}]}`)
+	response, payload := s.do(http.MethodPost, "/v1/agents/knowledge",
+		`{"namespace":"`+namespace+`","documents":[{"source":"pricing.md","text":"# Pricing\n\nTuppence."}]}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	listed := s.documents(namespace)
+	s.Require().Len(listed, 1, "posting the same source again is an edit")
+	s.Equal(1, listed[0].Passages)
+
+	_, passages := s.knowledge.stored()
+	s.Contains(passages, "pricing.md#0")
+	s.NotContains(passages, "pricing.md#1")
+}
+
+func (s *APIIntegrationSuite) TestADeletedDocumentIsNoLongerListedOrFound() {
+	namespace := s.customerID
+	s.do(http.MethodPost, "/v1/agents/knowledge",
+		`{"namespace":"`+namespace+`","documents":[{"source":"refunds.md","text":"# Refunds\n\nThirty days."}]}`)
+	listed := s.documents(namespace)
+	s.Require().Len(listed, 1)
+
+	response, _ := s.do(http.MethodDelete, "/v1/agents/knowledge/documents/"+listed[0].Id, "")
+	s.Require().Equal(http.StatusNoContent, response.StatusCode)
+
+	s.Empty(s.documents(namespace))
+	_, passages := s.knowledge.stored()
+	s.NotContains(passages, "refunds.md#0")
+
+	response, _ = s.do(http.MethodDelete, "/v1/agents/knowledge/documents/"+listed[0].Id, "")
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+func (s *APIIntegrationSuite) TestAnotherCustomersDocumentCannotBeDeleted() {
+	s.do(http.MethodPost, "/v1/agents/knowledge",
+		`{"namespace":"docs","documents":[{"source":"refunds.md","text":"# Refunds\n\nThirty days."}]}`)
+	listed := s.documents("docs")
+	s.Require().Len(listed, 1)
+
+	s.customerID = "somebody-else"
+	response, _ := s.do(http.MethodDelete, "/v1/agents/knowledge/documents/"+listed[0].Id, "")
+
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
+func (s *APIIntegrationSuite) TestASyncedDirectoryListsItsFilesAndForgetsTheOnesTakenOut() {
+	response, payload := s.do(http.MethodPost, "/v1/agents/sync", `{
+		"name":"librarian","hash":"v1",
+		"knowledge":[
+			{"source":"pricing.md","text":"# Pricing\n\nA penny."},
+			{"source":"refunds.md","text":"# Refunds\n\nThirty days."}
+		]
+	}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var synced SyncAgentResult
+	s.Require().NoError(json.Unmarshal(payload, &synced))
+	s.Require().NotNil(synced.Config.KnowledgeNamespace)
+	s.Len(s.documents(*synced.Config.KnowledgeNamespace), 2)
+
+	response, payload = s.do(http.MethodPost, "/v1/agents/sync", `{
+		"name":"librarian","hash":"v2",
+		"knowledge":[{"source":"pricing.md","text":"# Pricing\n\nA penny."}]
+	}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	listed := s.documents("librarian")
+	s.Require().Len(listed, 1)
+	s.Equal("pricing.md", listed[0].Source)
+
+	response, payload = s.do(http.MethodPost, "/v1/agents/sync", `{"name":"librarian","hash":"v3"}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+	s.Empty(s.documents("librarian"), "a directory with no knowledge left holds none")
 }
 
 func (s *APIIntegrationSuite) TestAConfigRemembersWhichSearchItRoutesTo() {
@@ -1589,6 +1759,47 @@ func (s *APIIntegrationSuite) TestAVoiceIsRecordedPreparedAndReadBack() {
 	s.Equal(VoiceBindingStateReady, (*prepared.Bindings)[0].State)
 	s.Equal("el-cloned", *(*prepared.Bindings)[0].ExternalId,
 		"a session names the voice, and the provider is asked for its own id")
+}
+
+func (s *APIIntegrationSuite) TestVoiceProvidersAreTheOnesThisDeploymentCanCloneWith() {
+	response, payload := s.do(http.MethodGet, "/v1/agents/voices/providers", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var listed VoiceProviders
+	s.Require().NoError(json.Unmarshal(payload, &listed))
+	s.Equal([]string{"elevenlabs"}, listed.Providers)
+}
+
+func (s *APIIntegrationSuite) TestAPreparedVoiceCanBeHeardThroughItsProvider() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/voices", `{"name":"founder"}`)
+	var created Voice
+	s.Require().NoError(json.Unmarshal(payload, &created))
+	audio := base64.StdEncoding.EncodeToString([]byte("pretend this is speech"))
+	s.do(http.MethodPost, "/v1/agents/voices/"+created.Id+"/samples",
+		fmt.Sprintf(`{"audio":%q,"filename":"clip.wav"}`, audio))
+	s.do(http.MethodPost, "/v1/agents/voices/"+created.Id+"/prepare", `{}`)
+
+	response, payload := s.do(http.MethodPost, "/v1/agents/voices/"+created.Id+"/preview",
+		`{"provider":"elevenlabs"}`)
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var preview VoicePreview
+	s.Require().NoError(json.Unmarshal(payload, &preview))
+	s.Equal("elevenlabs", preview.Provider)
+	s.Equal("audio/mpeg", preview.ContentType)
+	s.Equal([]byte("spoken"), preview.Audio)
+}
+
+func (s *APIIntegrationSuite) TestAVoiceCannotBeHeardThroughAProviderThatDoesNotHaveIt() {
+	_, payload := s.do(http.MethodPost, "/v1/agents/voices", `{"name":"founder"}`)
+	var created Voice
+	s.Require().NoError(json.Unmarshal(payload, &created))
+
+	response, payload := s.do(http.MethodPost, "/v1/agents/voices/"+created.Id+"/preview",
+		`{"provider":"elevenlabs"}`)
+
+	s.Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+	s.Contains(string(payload), "not ready with elevenlabs")
 }
 
 func (s *APIIntegrationSuite) TestAVoiceWithNothingRecordedCannotBePrepared() {

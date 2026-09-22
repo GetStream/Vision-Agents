@@ -102,10 +102,6 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/SessionSkill/description`.
             internal var description: Swift.String
-            /// Named worker binding; omitted uses default.
-            ///
-            /// - Remark: Generated from `#/components/schemas/SessionSkill/subagent`.
-            internal var subagent: Swift.String?
             /// Capture task-scoped visual evidence before reasoning.
             ///
             /// - Remark: Generated from `#/components/schemas/SessionSkill/capture_video`.
@@ -123,21 +119,18 @@ extension Components {
             /// - Parameters:
             ///   - name:
             ///   - description: The one line the fast model sees.
-            ///   - subagent: Named worker binding; omitted uses default.
             ///   - captureVideo: Capture task-scoped visual evidence before reasoning.
             ///   - instructions: The full prompt, which only the subagent sees.
             ///   - deadlineMs: How long the work may run before it is abandoned. Zero is the default.
             internal init(
                 name: Swift.String,
                 description: Swift.String,
-                subagent: Swift.String? = nil,
                 captureVideo: Swift.Bool? = nil,
                 instructions: Swift.String,
                 deadlineMs: Swift.Int64? = nil
             ) {
                 self.name = name
                 self.description = description
-                self.subagent = subagent
                 self.captureVideo = captureVideo
                 self.instructions = instructions
                 self.deadlineMs = deadlineMs
@@ -145,7 +138,6 @@ extension Components {
             internal enum CodingKeys: String, CodingKey {
                 case name
                 case description
-                case subagent
                 case captureVideo = "capture_video"
                 case instructions
                 case deadlineMs = "deadline_ms"
@@ -554,6 +546,58 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/config_id`.
             internal var configId: Swift.String?
+            /// The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/agent`.
+            internal var agent: Swift.String?
+            /// Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/incognito`.
+            internal var incognito: Swift.Bool?
+            /// What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/title`.
+            internal var title: Swift.String?
+            /// A longer note about the conversation, searched alongside the title.
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/description`.
+            internal var description: Swift.String?
+            /// What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/project`.
+            internal var project: Swift.String?
+            /// Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/custom`.
+            internal struct CustomPayload: Codable, Hashable, Sendable {
+                /// A container of undocumented properties.
+                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                /// Creates a new `CustomPayload`.
+                ///
+                /// - Parameters:
+                ///   - additionalProperties: A container of undocumented properties.
+                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
+                    self.additionalProperties = additionalProperties
+                }
+                internal init(from decoder: any Swift.Decoder) throws {
+                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
+                }
+                internal func encode(to encoder: any Swift.Encoder) throws {
+                    try encoder.encodeAdditionalProperties(additionalProperties)
+                }
+            }
+            /// Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/custom`.
+            internal var custom: Components.Schemas.CreateSessionRequest.CustomPayload?
+            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/model_overwrites`.
+            internal var modelOverwrites: Components.Schemas.ModelOverwrites?
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/call_type`.
             internal var callType: Swift.String?
             /// Who the agent joins the call as.
@@ -598,30 +642,6 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/sts`.
             internal var sts: Swift.String?
-            /// Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
-            ///
-            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/subagents`.
-            internal struct SubagentsPayload: Codable, Hashable, Sendable {
-                /// A container of undocumented properties.
-                internal var additionalProperties: [String: Swift.String]
-                /// Creates a new `SubagentsPayload`.
-                ///
-                /// - Parameters:
-                ///   - additionalProperties: A container of undocumented properties.
-                internal init(additionalProperties: [String: Swift.String] = .init()) {
-                    self.additionalProperties = additionalProperties
-                }
-                internal init(from decoder: any Swift.Decoder) throws {
-                    additionalProperties = try decoder.decodeAdditionalProperties(knownKeys: [])
-                }
-                internal func encode(to encoder: any Swift.Encoder) throws {
-                    try encoder.encodeAdditionalProperties(additionalProperties)
-                }
-            }
-            /// Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
-            ///
-            /// - Remark: Generated from `#/components/schemas/CreateSessionRequest/subagents`.
-            internal var subagents: Components.Schemas.CreateSessionRequest.SubagentsPayload?
             /// The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
             ///
             ///
@@ -716,6 +736,13 @@ extension Components {
             ///   - callId: The call to join. Required unless the session is text.
             ///   - text: Hold the conversation in writing rather than on a call. Nothing is transcribed and nothing is spoken, so no call is joined and neither speech target is used. Everything between hearing and answering is unchanged: a text session has the same skills, knowledge and tools a call would have had, and its replies arrive as response_delta and responded events on the session's socket.
             ///   - configId: An agent config to start from. Everything else in this request overrides what the config says, so a caller can reuse a configuration and still change one thing about this call.
+            ///   - agent: The name of an agent config to start from, as an alternative to config_id. It is what a caller actually knows the agent as: "docs" rather than an id they never chose. A name matching nothing is refused rather than silently starting an unconfigured agent, and naming both this and config_id is refused too, since there is no sensible answer when they disagree.
+            ///   - incognito: Hold the conversation and record nothing about it: no session row, no turns, no transcript, and no Stream Chat channel whatever persist_conversation says. The session still works exactly as any other while it is running; it simply cannot be found afterwards, which is the point. Forking one is refused, because there is nothing to fork from.
+            ///   - title: What to call the conversation, for a list a person reads. Never shown to the model: what a conversation is called is a label on it rather than part of it.
+            ///   - description: A longer note about the conversation, searched alongside the title.
+            ///   - project: What the conversation belongs to. Also recorded as the "project" cost tag, so spend breaks down by project without the caller labelling it twice. A tag spelled out in tags wins.
+            ///   - custom: Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
+            ///   - modelOverwrites:
             ///   - callType:
             ///   - userId: Who the agent joins the call as.
             ///   - userName:
@@ -727,7 +754,6 @@ extension Components {
             ///   - stt: Omit it and the config decides, or en-low-latency when there is no config.
             ///   - tts: Omit it and the config decides, or en-low-latency when there is no config.
             ///   - sts: A speech-to-speech target. Naming one makes this a native session: the model hears and speaks for itself, so no transcriber, conversation model or voice is opened. Omit it and the config decides.
-            ///   - subagents: Named worker targets. Entries merge over stored configuration; an empty target removes that worker. Singular subagent is shorthand for default.
             ///   - subagent: The model that does the thinking. Empty means the voice model answers everything itself, and skills mean nothing.
             ///   - search: Omit it and the config decides, or search-fast when there is no config.
             ///   - voice: Provider-specific voice id.
@@ -753,6 +779,13 @@ extension Components {
                 callId: Swift.String? = nil,
                 text: Swift.Bool? = nil,
                 configId: Swift.String? = nil,
+                agent: Swift.String? = nil,
+                incognito: Swift.Bool? = nil,
+                title: Swift.String? = nil,
+                description: Swift.String? = nil,
+                project: Swift.String? = nil,
+                custom: Components.Schemas.CreateSessionRequest.CustomPayload? = nil,
+                modelOverwrites: Components.Schemas.ModelOverwrites? = nil,
                 callType: Swift.String? = nil,
                 userId: Swift.String? = nil,
                 userName: Swift.String? = nil,
@@ -764,7 +797,6 @@ extension Components {
                 stt: Swift.String? = nil,
                 tts: Swift.String? = nil,
                 sts: Swift.String? = nil,
-                subagents: Components.Schemas.CreateSessionRequest.SubagentsPayload? = nil,
                 subagent: Swift.String? = nil,
                 search: Swift.String? = nil,
                 voice: Swift.String? = nil,
@@ -790,6 +822,13 @@ extension Components {
                 self.callId = callId
                 self.text = text
                 self.configId = configId
+                self.agent = agent
+                self.incognito = incognito
+                self.title = title
+                self.description = description
+                self.project = project
+                self.custom = custom
+                self.modelOverwrites = modelOverwrites
                 self.callType = callType
                 self.userId = userId
                 self.userName = userName
@@ -801,7 +840,6 @@ extension Components {
                 self.stt = stt
                 self.tts = tts
                 self.sts = sts
-                self.subagents = subagents
                 self.subagent = subagent
                 self.search = search
                 self.voice = voice
@@ -828,6 +866,13 @@ extension Components {
                 case callId = "call_id"
                 case text
                 case configId = "config_id"
+                case agent
+                case incognito
+                case title
+                case description
+                case project
+                case custom
+                case modelOverwrites = "model_overwrites"
                 case callType = "call_type"
                 case userId = "user_id"
                 case userName = "user_name"
@@ -839,7 +884,6 @@ extension Components {
                 case stt
                 case tts
                 case sts
-                case subagents
                 case subagent
                 case search
                 case voice
@@ -858,6 +902,118 @@ extension Components {
                 case memory
                 case phone
                 case video
+            }
+        }
+        /// What to change about the models for one session, over whatever its agent config decided.
+        /// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/schemas/ModelOverwrites`.
+        internal struct ModelOverwrites: Codable, Hashable, Sendable {
+            /// A provider/model or a capability shortcut, in place of the config's.
+            ///
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/llm`.
+            internal var llm: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/stt`.
+            internal var stt: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/tts`.
+            internal var tts: Swift.String?
+            /// A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/sts`.
+            internal var sts: Swift.String?
+            /// The model delegated work runs on, in place of the config's.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/subagent`.
+            internal var subagent: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/search`.
+            internal var search: Swift.String?
+            /// How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/thinking`.
+            internal enum ThinkingPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case none = "none"
+                case minimal = "minimal"
+                case low = "low"
+                case medium = "medium"
+                case high = "high"
+            }
+            /// How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/thinking`.
+            internal var thinking: Components.Schemas.ModelOverwrites.ThinkingPayload?
+            /// How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/temperature`.
+            internal var temperature: Swift.Double?
+            /// Caps the reply, reasoning included. Omitted leaves the provider's default.
+            ///
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/max_output_tokens`.
+            internal var maxOutputTokens: Swift.Int?
+            /// How much detail to give. Dropped for models that do not take it.
+            ///
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/verbosity`.
+            internal enum VerbosityPayload: String, Codable, Hashable, Sendable, CaseIterable {
+                case low = "low"
+                case medium = "medium"
+                case high = "high"
+            }
+            /// How much detail to give. Dropped for models that do not take it.
+            ///
+            /// - Remark: Generated from `#/components/schemas/ModelOverwrites/verbosity`.
+            internal var verbosity: Components.Schemas.ModelOverwrites.VerbosityPayload?
+            /// Creates a new `ModelOverwrites`.
+            ///
+            /// - Parameters:
+            ///   - llm: A provider/model or a capability shortcut, in place of the config's.
+            ///   - stt:
+            ///   - tts:
+            ///   - sts: A speech-to-speech target. Naming one here makes the session native even if the config did not, which means no transcriber, model or voice is opened.
+            ///   - subagent: The model delegated work runs on, in place of the config's.
+            ///   - search:
+            ///   - thinking: How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.
+            ///   - temperature: How random the answer is. Omitted leaves the provider's own default, which is not the same as zero: zero is a real request for a deterministic model.
+            ///   - maxOutputTokens: Caps the reply, reasoning included. Omitted leaves the provider's default.
+            ///   - verbosity: How much detail to give. Dropped for models that do not take it.
+            internal init(
+                llm: Swift.String? = nil,
+                stt: Swift.String? = nil,
+                tts: Swift.String? = nil,
+                sts: Swift.String? = nil,
+                subagent: Swift.String? = nil,
+                search: Swift.String? = nil,
+                thinking: Components.Schemas.ModelOverwrites.ThinkingPayload? = nil,
+                temperature: Swift.Double? = nil,
+                maxOutputTokens: Swift.Int? = nil,
+                verbosity: Components.Schemas.ModelOverwrites.VerbosityPayload? = nil
+            ) {
+                self.llm = llm
+                self.stt = stt
+                self.tts = tts
+                self.sts = sts
+                self.subagent = subagent
+                self.search = search
+                self.thinking = thinking
+                self.temperature = temperature
+                self.maxOutputTokens = maxOutputTokens
+                self.verbosity = verbosity
+            }
+            internal enum CodingKeys: String, CodingKey {
+                case llm
+                case stt
+                case tts
+                case sts
+                case subagent
+                case search
+                case thinking
+                case temperature
+                case maxOutputTokens = "max_output_tokens"
+                case verbosity
             }
         }
         /// - Remark: Generated from `#/components/schemas/SessionVideo`.
@@ -941,17 +1097,39 @@ extension Components {
             ///
             /// - Remark: Generated from `#/components/schemas/Session/subagent`.
             internal var subagent: Swift.String?
-            /// Configured worker targets, prepared asynchronously.
+            /// - Remark: Generated from `#/components/schemas/Session/video`.
+            internal var video: Components.Schemas.SessionVideo?
+            /// - Remark: Generated from `#/components/schemas/Session/instructions`.
+            internal var instructions: Swift.String?
+            /// The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against.
             ///
-            /// - Remark: Generated from `#/components/schemas/Session/subagents`.
-            internal struct SubagentsPayload: Codable, Hashable, Sendable {
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/agent`.
+            internal var agent: Swift.String?
+            /// The agent config the session ran under, empty for one that spelled itself out.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/config_id`.
+            internal var configId: Swift.String?
+            /// Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/incognito`.
+            internal var incognito: Swift.Bool?
+            /// - Remark: Generated from `#/components/schemas/Session/title`.
+            internal var title: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Session/description`.
+            internal var description: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Session/project`.
+            internal var project: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Session/custom`.
+            internal struct CustomPayload: Codable, Hashable, Sendable {
                 /// A container of undocumented properties.
-                internal var additionalProperties: [String: Swift.String]
-                /// Creates a new `SubagentsPayload`.
+                internal var additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer
+                /// Creates a new `CustomPayload`.
                 ///
                 /// - Parameters:
                 ///   - additionalProperties: A container of undocumented properties.
-                internal init(additionalProperties: [String: Swift.String] = .init()) {
+                internal init(additionalProperties: OpenAPIRuntime.OpenAPIObjectContainer = .init()) {
                     self.additionalProperties = additionalProperties
                 }
                 internal init(from decoder: any Swift.Decoder) throws {
@@ -961,14 +1139,23 @@ extension Components {
                     try encoder.encodeAdditionalProperties(additionalProperties)
                 }
             }
-            /// Configured worker targets, prepared asynchronously.
+            /// - Remark: Generated from `#/components/schemas/Session/custom`.
+            internal var custom: Components.Schemas.Session.CustomPayload?
+            /// - Remark: Generated from `#/components/schemas/Session/model_overwrites`.
+            internal var modelOverwrites: Components.Schemas.ModelOverwrites?
+            /// The session this one continued from, empty for one opened fresh.
             ///
-            /// - Remark: Generated from `#/components/schemas/Session/subagents`.
-            internal var subagents: Components.Schemas.Session.SubagentsPayload?
-            /// - Remark: Generated from `#/components/schemas/Session/video`.
-            internal var video: Components.Schemas.SessionVideo?
-            /// - Remark: Generated from `#/components/schemas/Session/instructions`.
-            internal var instructions: Swift.String?
+            /// - Remark: Generated from `#/components/schemas/Session/forked_from`.
+            internal var forkedFrom: Swift.String?
+            /// When the session ended. Absent while it is still running.
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/closed_at`.
+            internal var closedAt: Foundation.Date?
+            /// When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
+            ///
+            ///
+            /// - Remark: Generated from `#/components/schemas/Session/last_response_at`.
+            internal var lastResponseAt: Foundation.Date?
             /// Creates a new `Session`.
             ///
             /// - Parameters:
@@ -988,9 +1175,19 @@ extension Components {
             ///   - sts: The provider and model holding a native conversation, once routing has picked one.
             ///   - stt: The provider and model transcribing, once somebody has been heard.
             ///   - subagent: The provider and model delegated work runs on.
-            ///   - subagents: Configured worker targets, prepared asynchronously.
             ///   - video:
             ///   - instructions:
+            ///   - agent: The name the agent was addressed as. Recorded on the session as well as the config id, so renaming a config does not rewrite what older sessions were opened against.
+            ///   - configId: The agent config the session ran under, empty for one that spelled itself out.
+            ///   - incognito: Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from.
+            ///   - title:
+            ///   - description:
+            ///   - project:
+            ///   - custom:
+            ///   - modelOverwrites:
+            ///   - forkedFrom: The session this one continued from, empty for one opened fresh.
+            ///   - closedAt: When the session ended. Absent while it is still running.
+            ///   - lastResponseAt: When the agent last answered. This is what a most-recently-used ordering of conversations reads, since a session renamed long after it ended has not become more recent.
             internal init(
                 conversationId: Swift.String? = nil,
                 persistConversation: Swift.Bool? = nil,
@@ -1008,9 +1205,19 @@ extension Components {
                 sts: Swift.String? = nil,
                 stt: Swift.String? = nil,
                 subagent: Swift.String? = nil,
-                subagents: Components.Schemas.Session.SubagentsPayload? = nil,
                 video: Components.Schemas.SessionVideo? = nil,
-                instructions: Swift.String? = nil
+                instructions: Swift.String? = nil,
+                agent: Swift.String? = nil,
+                configId: Swift.String? = nil,
+                incognito: Swift.Bool? = nil,
+                title: Swift.String? = nil,
+                description: Swift.String? = nil,
+                project: Swift.String? = nil,
+                custom: Components.Schemas.Session.CustomPayload? = nil,
+                modelOverwrites: Components.Schemas.ModelOverwrites? = nil,
+                forkedFrom: Swift.String? = nil,
+                closedAt: Foundation.Date? = nil,
+                lastResponseAt: Foundation.Date? = nil
             ) {
                 self.conversationId = conversationId
                 self.persistConversation = persistConversation
@@ -1028,9 +1235,19 @@ extension Components {
                 self.sts = sts
                 self.stt = stt
                 self.subagent = subagent
-                self.subagents = subagents
                 self.video = video
                 self.instructions = instructions
+                self.agent = agent
+                self.configId = configId
+                self.incognito = incognito
+                self.title = title
+                self.description = description
+                self.project = project
+                self.custom = custom
+                self.modelOverwrites = modelOverwrites
+                self.forkedFrom = forkedFrom
+                self.closedAt = closedAt
+                self.lastResponseAt = lastResponseAt
             }
             internal enum CodingKeys: String, CodingKey {
                 case conversationId = "conversation_id"
@@ -1049,9 +1266,19 @@ extension Components {
                 case sts
                 case stt
                 case subagent
-                case subagents
                 case video
                 case instructions
+                case agent
+                case configId = "config_id"
+                case incognito
+                case title
+                case description
+                case project
+                case custom
+                case modelOverwrites = "model_overwrites"
+                case forkedFrom = "forked_from"
+                case closedAt = "closed_at"
+                case lastResponseAt = "last_response_at"
             }
         }
     }

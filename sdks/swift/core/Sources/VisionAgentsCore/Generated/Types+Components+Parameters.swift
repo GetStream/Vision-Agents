@@ -16,5 +16,40 @@ extension Components {
         ///
         /// - Remark: Generated from `#/components/parameters/SessionID`.
         internal typealias SessionID = Swift.String
+        /// The agent name the session was opened against.
+        ///
+        /// - Remark: Generated from `#/components/parameters/SessionAgent`.
+        internal typealias SessionAgent = Swift.String
+        /// - Remark: Generated from `#/components/parameters/SessionConfigID`.
+        internal typealias SessionConfigID = Swift.String
+        /// Whose sessions to list. Only a server-side caller may set it: an end user is narrowed to their own whatever they ask for, because a filter a caller could widen is not a boundary.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/parameters/SessionUserID`.
+        internal typealias SessionUserID = Swift.String
+        /// - Remark: Generated from `#/components/parameters/SessionProject`.
+        internal typealias SessionProject = Swift.String
+        /// Omitted is both.
+        ///
+        /// - Remark: Generated from `#/components/parameters/SessionStateFilter`.
+        internal enum SessionStateFilter: String, Codable, Hashable, Sendable, CaseIterable {
+            case running = "running"
+            case closed = "closed"
+        }
+        /// Match sessions whose custom object contains every one of these pairs, as a JSON object. Containment rather than equality, so a session carrying three labels is found by any two of them. A value that will not parse matches nothing rather than failing the request: it arrives off a query string, and one bad label should not break a conversation list.
+        ///
+        ///
+        /// - Remark: Generated from `#/components/parameters/SessionCustom`.
+        internal typealias SessionCustom = Swift.String
+        /// - Remark: Generated from `#/components/parameters/SessionCreatedAfter`.
+        internal typealias SessionCreatedAfter = Foundation.Date
+        /// - Remark: Generated from `#/components/parameters/SessionCreatedBefore`.
+        internal typealias SessionCreatedBefore = Foundation.Date
+        /// Up to 200. Omitted is 25.
+        ///
+        /// - Remark: Generated from `#/components/parameters/SessionLimit`.
+        internal typealias SessionLimit = Swift.Int
+        /// - Remark: Generated from `#/components/parameters/SessionOffset`.
+        internal typealias SessionOffset = Swift.Int
     }
 }

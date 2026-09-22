@@ -32,13 +32,14 @@ class SimulationRequest:
         variations (int | Unset): How many ways of asking the same thing one run tries, up to ten. The scenario as
             written is always the first of them, and one is what left out means.
         judge_target (str | Unset): The model that rules on the conversations, named the way any other routing target
-            is. Empty takes a quality tier, since nobody is waiting for it.
-        caller_target (str | Unset): The model that plays the caller. Empty takes a fast tier.
+            is. Empty takes llm-judge, the deployment's quality-tier default, since nobody is waiting for it.
+        caller_target (str | Unset): The model that plays the caller. Empty takes llm-scenario-runner, the deployment's
+            fast-tier default.
         caller_tts (str | Unset): How the caller speaks. Audio simulations only.
         caller_stt (str | Unset): How the caller hears the agent. Audio simulations only.
         caller_voice (str | Unset): The voice the caller speaks in. Audio simulations only.
-        max_turns (int | Unset): How many times the caller may speak, up to thirty. It is what stops a caller that never
-            decides it is finished. Twelve when left out.
+        max_turns (int | Unset): How many times the caller may speak, up to two hundred. It is what stops a caller that
+            never decides it is finished. Twelve when left out.
         tags (SimulationRequestTags | Unset):
     """
 

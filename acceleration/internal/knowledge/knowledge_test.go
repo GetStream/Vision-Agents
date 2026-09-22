@@ -25,6 +25,11 @@ func (s *KnowledgeSuite) TestThePromptCarriesThePassagesAndWhereTheyCameFrom() {
 	s.Contains(prompt, "We open at nine.")
 }
 
+func (s *KnowledgeSuite) TestTwoCustomersNamingTheSameBaseDoNotShareIt() {
+	s.NotEqual(Scoped("acme", "default"), Scoped("globex", "default"))
+	s.Equal("acme__default", Scoped("acme", "default"))
+}
+
 func (s *KnowledgeSuite) TestFindingNothingTellsTheModelToSaySo() {
 	// A model handed an empty answer invents one, which on a support line is worse than
 	// admitting the handbook does not cover it.

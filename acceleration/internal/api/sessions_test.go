@@ -782,7 +782,7 @@ func (s *SessionAPISuite) TestAToolResultWithImagesReachesTheModel() {
 		ID: "call-1", Name: "get_video_frame", Arguments: "{}",
 	}}
 	created := s.creates(CreateSessionRequest{
-		CallId: callID("call-1"), Subagents: &map[string]string{"vision": "vlm"},
+		CallId: callID("call-1"), Subagent: callID("vlm"), Skills: visionSkills(),
 		Tools: &[]SessionTool{{Name: "get_video_frame", Description: "photograph"}},
 	})
 	connection := s.watches(created.Id, "acme")
@@ -800,7 +800,7 @@ func (s *SessionAPISuite) TestAToolResultWithImagesReachesTheModel() {
 	}))
 
 	result := s.await(connection, "task_settled")
-	s.Equal("vision", result["worker"])
+	s.Equal("vision", result["skill"])
 	s.True(llm.HasImage(s.vision.requests()[0].Input))
 	for _, request := range s.model.requests() {
 		s.False(llm.HasImage(request.Input))
@@ -872,12 +872,12 @@ func (s *SessionAPISuite) listed(customerID string) []Session {
 	return sessions
 }
 
-func (s *SessionAPISuite) TestAttachmentsReachOnlyTheVisionWorker() {
-	created := s.creates(CreateSessionRequest{CallId: callID("call-1"), Subagents: &map[string]string{"vision": "vlm"}})
+func (s *SessionAPISuite) TestAttachmentsReachOnlyTheSubagent() {
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1"), Subagent: callID("vlm"), Skills: visionSkills()})
 	connection := s.watches(created.Id, "acme")
 	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "respond", "text": "compare these", "images": []map[string]any{{"url": jpegURI([]byte{1})}, {"url": jpegURI([]byte{2})}}}))
 	result := s.await(connection, "task_settled")
-	s.Equal("vision", result["worker"])
+	s.Equal("vision", result["skill"])
 	s.Equal("Two roses.", result["text"])
 	requests := s.vision.requests()
 	s.Require().NotEmpty(requests)
@@ -898,7 +898,7 @@ func (s *SessionAPISuite) TestAttachmentsReachOnlyTheVisionWorker() {
 func (s *SessionAPISuite) TestDelegationCapturesTimestampedEvidenceOverTheSocket() {
 	s.model.reply = `<ask skill="vision" frames="2">inspect the camera</ask>One moment.`
 	frames := 1
-	created := s.creates(CreateSessionRequest{CallId: callID("call-1"), Subagents: &map[string]string{"vision": "vlm"}, Video: &SessionVideo{MaxFrames: &frames}})
+	created := s.creates(CreateSessionRequest{CallId: callID("call-1"), Subagent: callID("vlm"), Skills: visionSkills(), Video: &SessionVideo{MaxFrames: &frames}})
 	connection := s.watches(created.Id, "acme")
 	s.Require().NoError(connection.WriteJSON(map[string]any{"type": "respond", "text": "what changed"}))
 	call := s.await(connection, "tool_call")
@@ -919,13 +919,11 @@ func (s *SessionAPISuite) TestDelegationCapturesTimestampedEvidenceOverTheSocket
 	s.True(llm.HasImage(s.vision.requests()[0].Input))
 }
 
-func (s *SessionAPISuite) TestNamedWorkerOverridesPreserveAndRemoveEntries() {
-	stored := &store.AgentConfig{Subagent: "old", Subagents: map[string]string{"default": "stored", "vision": "vlm"}, VideoMaxFrames: 1}
-	single := "new"
-	spec := specOf(CreateSessionRequest{Subagent: &single, Subagents: &map[string]string{"vision": ""}}, "acme", stored)
-	s.Equal("new", spec.SubagentTarget)
-	s.NotContains(spec.Subagents, "default")
-	s.Equal("", spec.Subagents["vision"])
-	s.Equal("stored", stored.Subagents["default"])
-	s.Error(workerConflict(&single, &map[string]string{"default": "conflict"}))
+// visionSkills spells out the one skill that captures video, which no session is given
+// unless it asks.
+func visionSkills() *[]SessionSkill {
+	return &[]SessionSkill{{
+		Name: "vision", CaptureVideo: boolean(true),
+		Description: "inspect images or the camera", Instructions: "Describe the evidence.",
+	}}
 }

@@ -43,6 +43,7 @@ stt:
     # promise about what the provider package really transmits, so it stays quiet.
     - provider: deepgram
       model: flux-general-en
+      description: "Deepgram's live transcriber with built-in turn detection, the one the others are measured against. English only."
       languages: [en]
       realtime: true
       tier: low-latency
@@ -55,6 +56,7 @@ stt:
 
     - provider: deepgram
       model: flux-general-multi
+      description: "The multilingual Flux: the same turn detection in 12 languages."
       languages: [en, es, fr, de, hi, it, ja, ko, nl, pt, ru, zh]
       realtime: true
       tier: low-latency
@@ -71,6 +73,7 @@ stt:
     # $21.00/1M text out, which Google puts at about $0.009 an audio minute.
     - provider: gemini
       model: gemini-3.5-transcribe-live
+      description: "Detects the language itself and can tidy the transcript as it writes it. About -e.009 an audio minute."
       languages:
         [
           ar,
@@ -131,6 +134,7 @@ stt:
     # the GPU rather than a per-hour-of-audio rate. Measured throughput on one replica.
     - provider: parakeet
       model: parakeet-tdt-0.6b-v3
+      description: "Open weights on our own GPU, in 25 languages. No third party hears the audio."
       languages:
         [
           bg,
@@ -176,6 +180,7 @@ stt:
     # $0.0035 a minute for the streaming variant, which is the rate below.
     - provider: together-parakeet
       model: nvidia/parakeet-tdt-0.6b-v3-realtime
+      description: "The same Parakeet weights on Together's serverless endpoint."
       languages:
         [
           bg,
@@ -228,6 +233,7 @@ stt:
     # English call. Billed at $0.0015 a minute, which is the rate here.
     - provider: together-nemotron
       model: nvidia/nemotron-3-asr-streaming-0.6b
+      description: "NVIDIA's Nemotron 3 on Together. English only, at -e.0015 a minute."
       languages: [en]
       realtime: true
       tier: low-latency
@@ -254,6 +260,7 @@ stt:
     # in at the pricing page's number is one routing already expected.
     - provider: together-nemotron
       model: nvidia/nemotron-3.5-asr-streaming-0.6b
+      description: "Multilingual Nemotron: works out which of 28 languages is being spoken."
       languages:
         [
           ar,
@@ -300,6 +307,7 @@ stt:
     # against $0.10 for the batch endpoint this does not use.
     - provider: grok
       model: grok-stt
+      description: "xAI's transcriber. Tells a bystander's voice from the caller's without being asked."
       languages:
         [
           ar,
@@ -355,6 +363,7 @@ stt:
     # minutes, which is the rate below.
     - provider: muse
       model: muse-voice-transcribe-1.0
+      description: "Meta's transcriber, with speaker labels and endpointing built into the model."
       languages:
         [
           ar,
@@ -408,6 +417,7 @@ stt:
     # self-serve rate of $50 a million credits is the figure below.
     - provider: cartesia
       model: ink-2
+      description: "Cartesia's live transcriber with its own turn detection, much like Flux. English only."
       languages: [en]
       realtime: true
       tier: low-latency
@@ -437,6 +447,7 @@ stt:
     # $0.10 and a deployment on one edits this.
     - provider: inworld
       model: inworld-stt-1
+      description: "Inworld's own streaming transcriber, at -e.15 an audio hour."
       languages:
         [
           ar,
@@ -501,6 +512,7 @@ stt:
     # adds; an annual Business plan brings the base to $0.28.
     - provider: elevenlabs
       model: scribe_v2_realtime
+      description: "ElevenLabs' live Scribe, built for the 150 ms a live call needs."
       languages:
         [
           az,
@@ -587,6 +599,7 @@ stt:
     # which is the rate below.
     - provider: deepgram
       model: nova-3
+      description: "Deepgram's batch model for recordings. Cheaper and more accurate, but not for live calls."
       languages: [de, en, es, fr, hi, it, ja, nl, pt, ru]
       realtime: false
       tier: high-quality
@@ -624,6 +637,8 @@ stt:
     # without being asked, and so the one that can tell a bystander at the caller's
     # microphone from the caller.
     en-low-latency:
+      title: Fast English
+      description: "The transcribers an English call is trusted to, ordered by live health."
       languages: [en]
       require_realtime: true
       tier: low-latency
@@ -634,6 +649,8 @@ stt:
         - muse/muse-voice-transcribe-1.0
 
     multilingual-low-latency:
+      title: Fast multilingual
+      description: "The fastest live transcribers that handle more than one language."
       multilingual: true
       require_realtime: true
       tier: low-latency
@@ -683,6 +700,8 @@ stt:
     # model, then Inworld, then Nemotron on Together, the cheapest of them by a factor of
     # six. Health orders the four behind the pin, which is what naming a group means.
     base/stt-realtime-fast:
+      title: Fast conversational
+      description: "Stream's pick for a live call: Deepgram Flux first, then Ink 2, Inworld and Nemotron as failover."
       require_realtime: true
       tier: low-latency
       prefer: deepgram/flux-general-en
@@ -703,6 +722,8 @@ stt:
     # declaring that would turn replacing one of them with a better, slower model into a
     # config that refuses to load.
     base/stt-realtime-accurate:
+      title: Most accurate
+      description: "Stream's pick for hearing every word: Muse first, which also labels speakers, then Scribe, Ink 2 and Nemotron."
       require_realtime: true
       prefer: muse/muse-voice-transcribe-1.0
       only:
@@ -736,6 +757,7 @@ tts:
     # rate, which larger plans bring down to nearer 37.
     - provider: cartesia
       model: sonic-preview
+      description: "Sonic 3.6 tops both Artificial Analysis speech arenas and is the fastest to first audio."
       languages:
         [
           ar,
@@ -800,6 +822,7 @@ tts:
     # billed at the published $5 per million characters.
     - provider: inworld
       model: inworld-tts-2-flash
+      description: "Inworld's low-latency voice, around 25 ms to first audio on their side."
       languages:
         [
           ar,
@@ -863,6 +886,7 @@ tts:
     # Flash is the low-latency model; the WebSocket streams audio as it is generated.
     - provider: elevenlabs
       model: eleven_flash_v2_5
+      description: "ElevenLabs' low-latency voice, streamed as it is generated."
       languages:
         [
           ar,
@@ -915,6 +939,7 @@ tts:
     # Multilingual v2 is the quality model: better prosody, slower to first audio.
     - provider: elevenlabs
       model: eleven_multilingual_v2
+      description: "ElevenLabs' quality voice. Better prosody, slower to first audio."
       languages:
         [
           ar,
@@ -964,6 +989,7 @@ tts:
     # which is why it sits below flash rather than replacing it.
     - provider: elevenlabs
       model: eleven_v3_conversational
+      description: "Performs audio tags such as [laughs] instead of reading them out. Slower to first audio."
       languages:
         [
           ar,
@@ -1010,6 +1036,7 @@ tts:
     # Fish's hosted S2 Pro. 80+ languages; the common ones are listed.
     - provider: fish
       model: s2-pro
+      description: "Fish's hosted S2 Pro, in more than 80 languages."
       languages:
         [
           ar,
@@ -1047,6 +1074,7 @@ tts:
     # The same weights on our own Baseten deployment, where the price is the GPU.
     - provider: s2pro
       model: s2-pro
+      description: "The same S2 Pro weights on our own GPUs."
       languages:
         [
           ar,
@@ -1090,6 +1118,7 @@ tts:
     # makes optimistic — see deploy/breeze-tts-2/README.md.
     - provider: breeze
       model: breeze-tts-2
+      description: "Expressive and performs vocal events, in two languages. On our own GPUs."
       languages: [en, zh]
       realtime: true
       tier: high-quality
@@ -1106,6 +1135,7 @@ tts:
     # what lets a codec and a bitrate be chosen. Priced as the standard rate.
     - provider: elevenlabs
       model: eleven_v3
+      description: "ElevenLabs v3 as a whole file, for recordings rather than live calls."
       languages:
         [
           ar,
@@ -1152,11 +1182,15 @@ tts:
 
   aliases:
     en-low-latency:
+      title: Fast English
+      description: "The quickest English voices, ordered by live health."
       languages: [en]
       require_realtime: true
       tier: low-latency
 
     multilingual-low-latency:
+      title: Fast multilingual
+      description: "The quickest voices that speak more than one language."
       multilingual: true
       require_realtime: true
       tier: low-latency
@@ -1170,11 +1204,15 @@ tts:
       require_recorded: true
 
     en-high-accuracy:
+      title: Best English voice
+      description: "English voices that sound best, at some cost in time to first audio."
       languages: [en]
       require_realtime: true
       tier: high-quality
 
     multilingual-high-accuracy:
+      title: Best multilingual voice
+      description: "Multilingual voices that sound best, at some cost in time to first audio."
       multilingual: true
       require_realtime: true
       tier: high-quality
@@ -1202,6 +1240,7 @@ sts:
     # zero-retention path on it, so this cannot serve a request naming a retention ceiling.
     - provider: gemini
       model: gemini-3.1-flash-live-preview
+      description: "Under a second to first audio, and what Fast conversational prefers. Tools run synchronously, so a slow tool holds the conversation."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1219,6 +1258,7 @@ sts:
     # and keep it thirty days for abuse monitoring; zero retention is an enterprise setting.
     - provider: openai
       model: gpt-realtime-2
+      description: "The only model here with semantic turn detection. Sees images. The dearest by far."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1238,6 +1278,7 @@ sts:
     # match their transcription ones: no training, thirty days.
     - provider: xai
       model: grok-voice-think-fast-2.0
+      description: "xAI's Grok Voice. Fast, cannot see, and priced by the minute of caller audio."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1254,6 +1295,7 @@ sts:
     # published nothing this deployment can read about training or retention.
     - provider: qwen
       model: qwen3.5-omni-plus-realtime
+      description: "Top of the Artificial Analysis quality board and the cheapest, but it takes no tools and has published no data policy."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1265,7 +1307,34 @@ sts:
       price:
         per_audio_hour: 0.03
 
+  # A title offers a shortcut to someone picking a model, in the order written here, so
+  # the one a conversation gets by default comes first.
   aliases:
+    # The shorthand a conversation gets when nobody said which model they wanted: the one
+    # quickest to answer, pinned to Gemini 3.1 Flash Live for as long as it is up, with the
+    # rest of the tier behind it.
+    sts-fast:
+      title: Fast conversational
+      description: "The quickest realtime voice. Prefers Gemini 3.1 Flash Live and fails over to the rest of the fast tier."
+      require_realtime: true
+      tier: low-latency
+      prefer: gemini/gemini-3.1-flash-live-preview
+
+    # A conversation the model can watch as well as hear. Pinned to GPT-Realtime-2, which
+    # is what vlm pins for the same reason.
+    sts-vision:
+      title: Vision
+      description: "A conversation the model can watch as well as hear. Prefers GPT-Realtime-2."
+      require_input_modalities: [image]
+      prefer: openai/gpt-realtime-2
+
+    multilingual-high-accuracy:
+      title: High quality
+      description: "Realtime voice that sounds and reasons best, whatever it costs in speed."
+      multilingual: true
+      require_realtime: true
+      tier: high-quality
+
     en-low-latency:
       languages: [en]
       require_realtime: true
@@ -1281,25 +1350,6 @@ sts:
       require_realtime: true
       tier: high-quality
 
-    multilingual-high-accuracy:
-      multilingual: true
-      require_realtime: true
-      tier: high-quality
-
-    # The shorthand a conversation gets when nobody said which model they wanted: the one
-    # quickest to answer, pinned to Gemini 3.1 Flash Live for as long as it is up, with the
-    # rest of the tier behind it.
-    sts-fast:
-      require_realtime: true
-      tier: low-latency
-      prefer: gemini/gemini-3.1-flash-live-preview
-
-    # A conversation the model can watch as well as hear. Pinned to GPT-Realtime-2, which
-    # is what vlm pins for the same reason.
-    sts-vision:
-      require_input_modalities: [image]
-      prefer: openai/gpt-realtime-2
-
 llm:
   providers:
     # Flash is a 284B mixture-of-experts model with only 13B active per token, which is why
@@ -1307,6 +1357,7 @@ llm:
     # word of the answer is the first thing that arrives.
     - provider: deepseek
       model: DeepSeek-V4-Flash-0731
+      description: "A 284B mixture-of-experts with 13B active per token, so it answers fast. The cheapest model here."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1317,6 +1368,7 @@ llm:
 
     - provider: openai
       model: gpt-5.6-luna
+      description: "OpenAI's small, fast model. Reads images, and costs little."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1332,6 +1384,7 @@ llm:
     # These are Google's introductory rates and double on 1 January 2027.
     - provider: gemini
       model: gemini-3.8-flash
+      description: "Quick and strong, and what Fast conversational prefers. Reads images. The dearest of the fast tier."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1348,6 +1401,7 @@ llm:
     # Thinking stays off: the live path wants the first word, not a think-then-speak turn.
     - provider: gemma
       model: gemma-4-26B-A4B-it
+      description: "Open weights on our own GPUs: 26B with 4B active, billed by the GPU minute rather than the token."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1359,6 +1413,7 @@ llm:
     # stays off: the live path wants the first word, not a think-then-speak turn.
     - provider: cerebras
       model: gemma-4-31b
+      description: "Gemma 4 31B on Cerebras, at around 1,500 tokens a second."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1370,6 +1425,7 @@ llm:
     # to be off the live path unless the caller asked for quality.
     - provider: deepseek
       model: DeepSeek-V4-Pro-0813
+      description: "A 1.6T-parameter frontier model. Better answers, and too slow for most live turns."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1380,6 +1436,7 @@ llm:
 
     - provider: openai
       model: gpt-5.6-terra
+      description: "OpenAI's middle tier: stronger reasoning than Luna, slower, and ten times the price."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1394,6 +1451,7 @@ llm:
     # the provider also sends explicitly when this concrete model is selected.
     - provider: openai
       model: gpt-5.6-sol
+      description: "OpenAI's frontier model, and what Deep reasoning prefers. The strongest here and the dearest."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1403,13 +1461,32 @@ llm:
         per_million_cached_input_tokens: 0.50
         per_million_output_tokens: 30.00
 
+  # A title offers a shortcut to someone picking a model, in the order written here, so
+  # the one a conversation gets by default comes first.
   aliases:
+    # A fast answer, in whatever language. The shorthand a caller reaches for when the only
+    # thing that matters is that the answer starts arriving.
+    #
+    # Gemini 3.8 Flash is preferred outright rather than left to the ranking, so the model a
+    # conversation gets is the one this deployment chose. The rest of the tier is still here
+    # to catch it being down.
+    llm-fast:
+      title: Fast conversational
+      description: "The quickest answer in any language, for a live conversation. Prefers Gemini 3.8 Flash and fails over to the rest of the fast tier."
+      require_realtime: true
+      tier: low-latency
+      prefer: gemini/gemini-3.8-flash
+
     en-low-latency:
       languages: [en]
       require_realtime: true
       tier: low-latency
 
+    # With no model preferred, the fast tier is ordered on health alone, so this is
+    # whichever of them is answering quickest right now.
     multilingual-low-latency:
+      title: Lowest latency
+      description: "Whichever fast model is answering quickest right now, with no preferred model."
       multilingual: true
       require_realtime: true
       tier: low-latency
@@ -1423,19 +1500,10 @@ llm:
       tier: high-quality
 
     vlm:
+      title: Vision
+      description: "For conversations that include images. Prefers GPT-5.6 Luna."
       require_input_modalities: [image]
       prefer: openai/gpt-5.6-luna
-
-    # A fast answer, in whatever language. The shorthand a caller reaches for when the only
-    # thing that matters is that the answer starts arriving.
-    #
-    # Gemini 3.8 Flash is preferred outright rather than left to the ranking, so the model a
-    # conversation gets is the one this deployment chose. The rest of the tier is still here
-    # to catch it being down.
-    llm-fast:
-      require_realtime: true
-      tier: low-latency
-      prefer: gemini/gemini-3.8-flash
 
     # What the flow controller runs on: it classifies every transcript revision into one
     # small JSON object saying who holds the floor, and it is asked constantly, including
@@ -1457,6 +1525,8 @@ llm:
     # llm-fast pins its own: the model that does the thinking is the one this deployment
     # chose. The rest of the tier is still here to catch it being down.
     llm-thinking:
+      title: Deep reasoning
+      description: "The best answers, for work a caller can wait on. Too slow for most live turns. Prefers GPT-5.6 Sol."
       tier: high-quality
       prefer: openai/gpt-5.6-sol
 
@@ -1473,6 +1543,21 @@ llm:
     llm-analysis:
       tier: high-quality
 
+    # What rules on a simulated conversation when the simulation names no model. Nobody is
+    # waiting for the verdict, and the verdict is the point, so it is the quality tier. It
+    # has no title because it is the simulation's default rather than a choice for a
+    # conversation; a simulation that wants another model names one instead.
+    llm-judge:
+      multilingual: true
+      tier: high-quality
+
+    # What plays the caller in a simulation when the simulation names no model. It holds a
+    # conversation in real time, so it is the fast tier on the same model llm-fast prefers.
+    llm-scenario-runner:
+      require_realtime: true
+      tier: low-latency
+      prefer: gemini/gemini-3.8-flash
+
 # What is true today, which neither a model nor a handbook can answer. These providers all
 # read the same web, so what separates them is whether a model writes the answer before it
 # comes back: the low-latency tier returns pages and lets the conversation's own model read
@@ -1488,6 +1573,7 @@ search:
     # quickest way to put sources in front of a conversation. $5 per 1,000 searches.
     - provider: exa
       model: fast
+      description: "Exa's own index with no crawl and no model. The quickest way to put sources in front of a conversation."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1499,6 +1585,7 @@ search:
     # with nothing written on top. $5 per 1,000 requests, whatever the request found.
     - provider: perplexity
       model: search
+      description: "Perplexity's ranked index, without an answer written on top."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1510,6 +1597,7 @@ search:
     # of one credit a search.
     - provider: tavily
       model: basic
+      description: "Searches and summarises in one round trip, so it answers in a sentence and stays fast."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1520,6 +1608,7 @@ search:
     # question phrased the way somebody speaks, and slower than fast.
     - provider: exa
       model: auto
+      description: "Exa picks neural or keyword search. Better on spoken questions, slower than fast."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1531,6 +1620,7 @@ search:
     # snippet, at two credits a search and roughly double the latency.
     - provider: tavily
       model: advanced
+      description: "Crawls the pages it finds. Two credits a search and about twice the latency."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1543,6 +1633,7 @@ search:
     # question spends, which is what makes it an estimate rather than a published number.
     - provider: perplexity
       model: sonar
+      description: "Reads the pages and writes the answer, so it is timed and priced like a language model."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1552,6 +1643,7 @@ search:
     # Sonar Pro searches more widely before it answers and costs more per request to do it.
     - provider: perplexity
       model: sonar-pro
+      description: "Sonar that searches more widely before it answers, at a higher price."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1559,6 +1651,14 @@ search:
         per_thousand_requests: 12.0
 
   aliases:
+    # Whichever provider answers quickest, in whatever language. The shorthand a session
+    # gets when nobody said which one they wanted.
+    search-fast:
+      title: Fast results
+      description: "Whichever provider answers quickest, in any language. The conversation's own model reads the results."
+      require_realtime: true
+      tier: low-latency
+
     en-low-latency:
       languages: [en]
       require_realtime: true
@@ -1574,19 +1674,15 @@ search:
       tier: high-quality
 
     multilingual-high-accuracy:
+      title: Deeper search
+      description: "Searches wider or reads the pages it finds, and some write the answer too. Better results, slower and dearer."
       multilingual: true
       tier: high-quality
-
-    # Whichever provider answers quickest, in whatever language. The shorthand a session
-    # gets when nobody said which one they wanted.
-    search-fast:
-      require_realtime: true
-      tier: low-latency
 
 # Typed judgements about a piece of text: a probability that a condition holds, one option
 # out of a named set, a position on a described scale. What a guardrail asks before a reply
 # is spoken, and what a flow controller asks about who holds the floor.
-llm_classifier:
+lcm:
   providers:
     # TypeSafe bill input tokens only and publish the rate per million, which is what this
     # is. Output tokens are free because there is no generated text to charge for: the

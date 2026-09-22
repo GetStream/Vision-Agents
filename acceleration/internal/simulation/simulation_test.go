@@ -345,7 +345,9 @@ func scriptedConfig() routing.ModalityConfig {
 			Realtime:  true,
 		}},
 		Aliases: map[string]routing.Alias{
-			"llm-fast": {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-fast":            {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-scenario-runner": {Languages: []string{"en"}, RequireRealtime: true},
+			"llm-judge":           {Languages: []string{"en"}},
 		},
 	}
 }

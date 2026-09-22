@@ -13,7 +13,7 @@ import (
 // defaultCallerTarget is the model that plays the person on the other end. It is a fast
 // tier rather than a quality one: the caller is holding a conversation in real time, and a
 // caller that thinks for four seconds between sentences is not one.
-const defaultCallerTarget = "llm-fast"
+const defaultCallerTarget = "llm-scenario-runner"
 
 // callerTokens bounds one thing said. A turn long enough to need more is a speech.
 const callerTokens = 300

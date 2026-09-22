@@ -21,8 +21,8 @@ class KnowledgeUrl:
         id (str):
         namespace (str):
         url (str):
-        state (KnowledgeUrlState): Where the page has got to. Pending means it has been added but not yet read, which is
-            also what a read that died halfway through leaves behind.
+        state (KnowledgeUrlState): Where the page has got to. Pending means it has been added and its first read is
+            queued or being retried; failed means every attempt failed.
         passages (int): How many passages the page was last cut into.
         created_at (datetime.datetime):
         updated_at (datetime.datetime):

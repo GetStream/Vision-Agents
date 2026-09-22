@@ -212,6 +212,11 @@ type turnRecorder struct {
 	queue chan store.Turn
 	done  chan struct{}
 
+	// closing guards the queue against the one send that cannot be recovered from. A
+	// send on a closed channel panics even from a select with a default, so closing the
+	// queue and sending to it have to be ordered rather than merely non-blocking.
+	closing   sync.RWMutex
+	closed    bool
 	closeOnce sync.Once
 	dropped   atomic.Int64
 }
@@ -247,6 +252,15 @@ func (r *turnRecorder) Record(turn Turn) {
 		Interrupted:        turn.Interrupted,
 	}
 
+	// A turn can finish after the recorder has been closed: interrupting a session closes
+	// it and reports the turn that was cut short, in that order. That is a turn with
+	// nowhere left to go rather than a writer falling behind, so it is let go quietly
+	// instead of taking the process down with the queue.
+	r.closing.RLock()
+	defer r.closing.RUnlock()
+	if r.closed {
+		return
+	}
 	select {
 	case r.queue <- row:
 	default:
@@ -257,7 +271,10 @@ func (r *turnRecorder) Record(turn Turn) {
 // Close drains the queue and stops the writer.
 func (r *turnRecorder) Close() {
 	r.closeOnce.Do(func() {
+		r.closing.Lock()
+		r.closed = true
 		close(r.queue)
+		r.closing.Unlock()
 		<-r.done
 		if dropped := r.dropped.Load(); dropped > 0 {
 			r.logger.Warn("dropped turns because the writer fell behind", "count", dropped)

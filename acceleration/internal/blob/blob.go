@@ -19,10 +19,6 @@ import (
 	"gocloud.dev/gcerrors"
 )
 
-// EnvURL is the environment variable naming the bucket, for example
-// s3://voices?region=eu-west-1, gs://voices, or file:///var/lib/router/voices.
-const EnvURL = "ROUTER_BLOB_URL"
-
 // Bucket is somewhere to put files.
 type Bucket struct {
 	bucket *gcblob.Bucket

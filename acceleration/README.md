@@ -89,10 +89,11 @@ to play audio, or `-out` to write a file instead.
 
 | Variable                | Purpose                                                   |
 | ----------------------- | --------------------------------------------------------- |
+| `ROUTER_ENV`            | `development` (default), `staging` or `testing`. Loads `internal/environment/<env>.yaml`, whose values fill in any variable below that is unset. The integration suites always use `testing`, which has its own `model_router_test` database |
 | `ROUTER_ADDR`           | HTTP listen address, defaults to `:8080`                   |
 | `ROUTER_POSTGRES_DSN`   | Postgres DSN. Without it, nothing is recorded              |
 | `ROUTER_REDIS_ADDR`     | Redis `host:port`. Without it, routing ignores health      |
-| `ROUTER_BLOB_URL`       | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
+| `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
 | `ROUTER_CORS_ORIGINS`   | Browser origins allowed to call the API directly, comma separated. Unset means none, which is right unless a browser app calls this deployment. The same list decides which origins may open a socket. A deployment reached through Stream's proxy needs the proxy to let a preflight through as well, since a browser cannot authenticate one |
@@ -907,8 +908,11 @@ configured for that, and nothing is offered at all without a key for something.
 
 **A knowledge base can also be filled from URLs.** Posting a document happens once; a url is
 a subscription, because the page behind it changes and nobody re-posts it. With
-`EXA_API_KEY` set alongside turbopuffer and a database, `/v1/agents/knowledge/urls` fetches
-the page, turns it into markdown and cuts it into passages the same way a document is:
+`EXA_API_KEY` set alongside turbopuffer, a database and Redis, `/v1/agents/knowledge/urls`
+fetches the page, turns it into markdown and cuts it into passages the same way a document
+is. The read is an [asynq](https://github.com/hibiken/asynq) task on Redis, run by a worker
+inside the router: the request answers with the page `pending`, and a read that fails is
+retried three times before the page is marked `failed`.
 
 ```bash
 curl -X POST localhost:8080/v1/agents/knowledge/urls \
@@ -923,14 +927,18 @@ re-reading a page that got shorter leaves no orphans behind. A page that could n
 fetched is still stored, in the `failed` state with the reason on it, rather than refused
 and forgotten.
 
-Nothing re-crawls on a schedule. `POST /v1/agents/knowledge/urls/{id}/index` reads one
-again, and `last_indexed_at` is what a caller with its own schedule decides from.
+Nothing re-crawls on a schedule. `POST /v1/agents/knowledge/urls/{id}/index` queues one to
+be read again, and `last_indexed_at` is what a caller with its own schedule decides from.
 
 `cmd/knowledge` fills one from files:
 
 ```bash
-go run ./cmd/knowledge -namespace docs ../docs ../README.md
+go run ./cmd/knowledge -customer examples -namespace docs ../docs ../README.md
 ```
+
+A namespace belongs to a customer: turbopuffer stores it as `<customer>__<namespace>`, so two
+apps that both say `default` never read each other's. `-customer` is the app id the agent
+runs under.
 
 `POST /v1/agents/knowledge` fills one from a caller that has no access to this machine's
 disk, which is what an SDK pushing an agent directory needs. Documents are cut into passages
@@ -998,7 +1006,7 @@ means nothing to Cartesia. A provider that was never given the voice, or that re
 recordings, is simply not chosen for a call that asks for it. Deleting a voice takes it off
 every provider first, so a voice nobody can reach stops being billed for.
 
-Recordings live in the bucket `ROUTER_BLOB_URL` names, not in Postgres, so they can be
+Recordings live in the bucket `ROUTER_VOICES_BUCKET_URL` names, not in Postgres, so they can be
 re-sent to a provider added later without asking the customer for them again. Without that
 variable the voice paths say so rather than half-working. Not every provider clones:
 `s2pro` takes reference audio per session rather than registering a voice, so it is not

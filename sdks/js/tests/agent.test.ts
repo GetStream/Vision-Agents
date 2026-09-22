@@ -148,7 +148,6 @@ describe("Agent", () => {
 
     const body = requested();
     assert.equal(body.subagent, "llm-slow");
-    assert.deepEqual(body.subagents, { default: "llm-slow" });
     assert.equal(body.tasks, 2);
     assert.equal(body.sandbox, "daytona");
     assert.deepEqual(body.skills, [

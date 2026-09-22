@@ -256,27 +256,23 @@ than being told. What each provider can express is in the `router-stt`, `router-
 
 ## Images and delegated vision
 
-Keep the conversation on `llm-fast` and bind visual analysis to a separate worker in
+Keep the conversation on `llm-fast` and put the subagent on a model that can see, in
 `agent.yaml`:
 
 ```yaml
 llm: llm-fast
-subagents:
-  default: llm-thinking
-  vision: vlm
+subagent: vlm
 video:
   max_frames: 1
 ```
 
-The built-in `vision` skill captures evidence when asked and runs on the `vision` worker.
-Worker preparation, frame encoding and inference run asynchronously, so the conversation
-can continue. Custom skills opt in with `subagent: vision` and `capture_video: true`.
-`subagent: llm-thinking` remains shorthand for `subagents.default`; declare only one form
-of the default in a configuration layer. Named overrides merge by key; an empty target
-removes that worker. `stream.define_agent` also accepts `subagents`, `video_source` and
-`video_max_frames`.
+A skill with `capture_video: true` captures evidence when asked and hands it to the
+subagent. The built-in `vision` skill is one. It is only offered to an agent that names
+it, since it needs a subagent that can see and the rest of the built-in set does not. Opening the
+subagent, encoding frames and inference run asynchronously, so the conversation can
+continue. `stream.define_agent` also accepts `video_source` and `video_max_frames`.
 
-Explicit attachments use the same worker in an accelerated agent:
+Explicit attachments go to the same skill in an accelerated agent:
 
 ```python
 from vision_agents.core.llm import ImageContent
@@ -288,7 +284,7 @@ await agent.responses.create(
 ```
 
 The main conversation receives the question, pending task and eventual findings. The
-vision worker receives the images. For standalone inference, use
+subagent receives the images. For standalone inference, use
 `stream.LLM(target="vlm").responses.create(...)` and iterate the response stream. The
 standalone API also accepts an ordered list of strings and `ImageContent` as its first
 argument to preserve text/image interleaving. With an attached conversation, images remain
@@ -298,8 +294,8 @@ by the SDK; the wire format is `{"type":"image_url","image_url":{"url":"…","de
 Image detail accepts `auto`, `low` or `high`. `vlm` requires image capability before model
 selection; `llm-fast` retains its existing routing policy.
 
-Camera evidence uses local receive timestamps in Unix milliseconds; backend and video
-worker system clocks must be synchronized. Each observation
+Camera evidence uses local receive timestamps in Unix milliseconds; the backend's clock and
+the clock of the process capturing video must be synchronized. Each observation
 buffer retains at most 64 frames and 32 MiB. Capture selects 1–8 frames at or before task
 acceptance, pins them for that task, and rejects missing or stale evidence. The newest
 selected frame must be no more than five seconds old. Multiple available cameras require

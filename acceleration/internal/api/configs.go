@@ -262,9 +262,6 @@ const (
 // checked here rather than left to the transcriber, because a list nobody can serve is
 // worth hearing about while the config is being written and not once a call is running.
 func configComplaint(request AgentConfigRequest) (string, bool) {
-	if err := workerConflict(request.Subagent, request.Subagents); err != nil {
-		return err.Error(), false
-	}
 	if strings.TrimSpace(request.Name) == "" {
 		return "an agent config needs a name", false
 	}
@@ -383,9 +380,6 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	if request.Tags != nil {
 		config.Tags = *request.Tags
 	}
-	if request.Subagents != nil {
-		config.Subagents = *request.Subagents
-	}
 	if request.Video != nil {
 		config.VideoSource = value(request.Video.Source)
 		config.VideoMaxFrames = value(request.Video.MaxFrames)
@@ -402,7 +396,7 @@ func storedSkill(request SkillRequest, customerID string) store.Skill {
 		Description:  request.Description,
 		Instructions: request.Instructions,
 		DeadlineMs:   value(request.DeadlineMs),
-		Subagent:     value(request.Subagent), CaptureVideo: value(request.CaptureVideo),
+		CaptureVideo: value(request.CaptureVideo),
 	}
 }
 
@@ -422,7 +416,6 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.Voice = optional(config.Voice)
 	rendered.Llm = optional(config.LLM)
 	rendered.Subagent = optional(config.Subagent)
-	rendered.Subagents = &config.Subagents
 	frames := config.VideoMaxFrames
 	if frames == 0 {
 		frames = 1
@@ -468,7 +461,6 @@ func skillOf(skill store.Skill) Skill {
 		CreatedAt:    skill.CreatedAt,
 		UpdatedAt:    skill.UpdatedAt,
 	}
-	rendered.Subagent = optional(skill.Subagent)
 	rendered.CaptureVideo = &skill.CaptureVideo
 	if skill.DeadlineMs > 0 {
 		deadline := skill.DeadlineMs
@@ -484,13 +476,4 @@ func optional(text string) *string {
 		return nil
 	}
 	return &text
-}
-
-func workerConflict(single *string, named *map[string]string) error {
-	if single != nil && named != nil {
-		if target, exists := (*named)["default"]; exists && target != *single {
-			return fmt.Errorf("subagent conflicts with subagents.default")
-		}
-	}
-	return nil
 }

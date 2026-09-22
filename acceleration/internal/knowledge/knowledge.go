@@ -73,6 +73,13 @@ type Writer interface {
 	Delete(ctx context.Context, namespace string, ids []string) error
 }
 
+// Scoped is the provider's name for one customer's knowledge base. A config names its base
+// with a word like "default" that any customer may choose, so every read and write goes
+// through this: without the customer in it, two apps would answer out of one handbook.
+func Scoped(customerID, namespace string) string {
+	return customerID + "__" + namespace
+}
+
 // Prompt renders passages as the answer to a lookup, which is what the model is handed.
 // It says so plainly when there is nothing, because a model given an empty answer invents
 // one.
