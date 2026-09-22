@@ -38,6 +38,22 @@ func (s *PhoneSuite) TestARouteNeedsATrunkAndTheNumbersItAnswersFor() {
 	s.ErrorContains(err, "numbers it answers for")
 }
 
+func (s *PhoneSuite) TestDeletingNoTrunkIsNotAnError() {
+	stream := s.stream()
+
+	err := stream.DeleteTrunk(s.ctx, "")
+
+	s.NoError(err)
+}
+
+func (s *PhoneSuite) TestDeletingNoRouteIsNotAnError() {
+	stream := s.stream()
+
+	err := stream.DeleteRoute(s.ctx, "")
+
+	s.NoError(err)
+}
+
 func (s *PhoneSuite) TestTheTrunkAddressGivenToAVendorIsAlwaysDialable() {
 	// Stream reports the host without a scheme, and a vendor cannot dial a bare host.
 	s.Equal("sip:sip.stream-io-api.com", sipURI("sip.stream-io-api.com"))

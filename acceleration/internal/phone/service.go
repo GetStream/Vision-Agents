@@ -316,6 +316,25 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, err
 	}
 
+	var routeID string
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		// Roll back what this attach created but did not finish wiring up, so a failed
+		// attach does not leave a billable Stream trunk behind. Best-effort: a cleanup
+		// error is logged, never returned, so it cannot mask the real failure.
+		if err := s.stream.DeleteRoute(ctx, routeID); err != nil {
+			s.logger.Error("could not roll back a routing rule after a failed attach",
+				"route", routeID, "error", err)
+		}
+		if err := s.stream.DeleteTrunk(ctx, trunkID); err != nil {
+			s.logger.Error("could not roll back a trunk after a failed attach",
+				"trunk", trunkID, "error", err)
+		}
+	}()
+
 	// The rule serves one number, so the call is named outright rather than through the
 	// handlebars template CreateRoute would otherwise fall back to. The name has to be
 	// recorded, and a template is not a name until Stream renders it.
@@ -328,7 +347,7 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		callID = "phone-" + attachment.E164
 	}
 
-	routeID, err := s.stream.CreateRoute(ctx, Route{
+	routeID, err = s.stream.CreateRoute(ctx, Route{
 		Name:          "phone-" + attachment.E164,
 		TrunkIDs:      []string{trunkID},
 		CalledNumbers: []string{attachment.E164},
@@ -343,10 +362,14 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	if err != nil {
 		return Attached{}, err
 	}
+	// The vendor has already been told to send calls to trunkID. There is no primitive to
+	// un-configure a provider's inbound routing, so a failure here leaves the vendor
+	// pointing at a trunk the defer above is about to delete.
 	if err := s.store.AttachNumber(ctx, attachment.CustomerID, attachment.E164, trunkID, callType, callID); err != nil {
 		return Attached{}, err
 	}
 
+	committed = true
 	return Attached{TrunkID: trunkID, RouteID: routeID, Bridge: bridge, CallID: callID, CallType: callType}, nil
 }
 
