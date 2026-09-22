@@ -16,6 +16,7 @@ class Router:
 
     def __init__(self):
         self.placed: Optional[dict[str, Any]] = None
+        self.transferred: Optional[dict[str, Any]] = None
         self.searched: Optional[dict[str, Any]] = None
         self.bought: Optional[dict[str, Any]] = None
         self.attached: Optional[dict[str, Any]] = None
@@ -27,6 +28,7 @@ class Router:
     def app(self) -> web.Application:
         app = web.Application()
         app.router.add_post("/v1/phone/calls", self._place)
+        app.router.add_post("/v1/phone/calls/transfer", self._transfer)
         app.router.add_get("/v1/phone/numbers/available", self._search)
         app.router.add_post("/v1/phone/numbers", self._buy)
         app.router.add_post("/v1/phone/numbers/{e164}/attach", self._attach)
@@ -45,6 +47,21 @@ class Router:
                 "vendor": "twilio",
                 "call_id": self.placed.get("call_id", "call-made-up"),
                 "call_type": self.placed.get("call_type", "default"),
+            },
+        )
+
+    async def _transfer(self, request: web.Request) -> web.Response:
+        self.transferred = await request.json()
+        if self.refuse:
+            return web.json_response(status=400, data={"error": self.refuse})
+        return web.json_response(
+            status=202,
+            data={
+                "vendor_call_id": "CA456",
+                "status": "queued",
+                "vendor": "twilio",
+                "call_id": self.transferred["call_id"],
+                "call_type": self.transferred.get("call_type", "agent"),
             },
         )
 
@@ -178,6 +195,47 @@ class TestPhone:
         with pytest.raises(RuntimeError, match="ring_timeout"):
             await phone.place(
                 OutboundCall(from_="+17195551234", to="+13035559876", ring_timeout=20.0)
+            )
+
+    async def test_transfer_reaches_the_router(
+        self, router: Router, phone: stream.Phone
+    ):
+        placed = await phone.transfer(
+            from_="+17195551234",
+            to="+13035559876",
+            call_id="support-line",
+            call_type="livestream",
+        )
+
+        assert router.transferred is not None
+        assert router.transferred["from"] == "+17195551234"
+        assert router.transferred["to"] == "+13035559876"
+        assert router.transferred["call_id"] == "support-line"
+        assert router.transferred["call_type"] == "livestream"
+        assert placed.vendor_call_id == "CA456"
+        assert placed.status == "queued"
+        assert placed.vendor == "twilio"
+        assert placed.call_id == "support-line"
+        assert placed.call_type == "livestream"
+
+    async def test_transfer_with_no_call_type_asks_for_none(
+        self, router: Router, phone: stream.Phone
+    ):
+        await phone.transfer(
+            from_="+17195551234", to="+13035559876", call_id="support-line"
+        )
+
+        assert router.transferred is not None
+        assert set(router.transferred) == {"from", "to", "call_id"}
+
+    async def test_a_refused_transfer_says_why(
+        self, router: Router, phone: stream.Phone
+    ):
+        router.refuse = "phone: bird cannot transfer a call"
+
+        with pytest.raises(RuntimeError, match="cannot transfer"):
+            await phone.transfer(
+                from_="+17195551234", to="+13035559876", call_id="support-line"
             )
 
     async def test_search_returns_both_offered_and_skipped_vendors(
