@@ -155,7 +155,7 @@ func (s *LLMRouterSuite) TestLLMFastGoesToTheModelItPins() {
 	candidates, err := router.Resolve(s.ctx, "llm-fast", nil)
 	s.Require().NoError(err)
 
-	s.Equal("gemini/gemini-3.8-flash", candidates[0].Config.Name())
+	s.Equal("deepseek/DeepSeek-V4-Flash-0731", candidates[0].Config.Name())
 	s.Greater(len(candidates), 1, "the rest of the tier has to stay behind it as failover")
 }
 
@@ -165,7 +165,7 @@ func (s *LLMRouterSuite) TestLLMThinkingGoesToTheModelItPins() {
 	candidates, err := router.Resolve(s.ctx, "llm-thinking", nil)
 	s.Require().NoError(err)
 
-	s.Equal("openai/gpt-5.6-sol", candidates[0].Config.Name())
+	s.Equal("deepseek/DeepSeek-V4-Pro-0813", candidates[0].Config.Name())
 	s.Greater(len(candidates), 1, "the rest of the tier has to stay behind it as failover")
 }
 
@@ -180,6 +180,28 @@ func (s *LLMRouterSuite) TestLLMThinkingResolvesToAQualityModel() {
 		s.Equal(routing.HighQuality, candidate.Config.Tier,
 			"what the conversation carries on without should never be picked for speed")
 	}
+}
+
+func (s *LLMRouterSuite) TestDirectModelCarriesExplicitThinkingConfiguration() {
+	var received routing.Spec
+	registry := NewRegistry()
+	registry.Register("stub", func(spec routing.Spec) (Provider, error) {
+		received = spec
+		return Started(newStubLLM(), nil)
+	})
+	router, err := New(Options{
+		Registry: registry,
+		Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{
+			Provider: "stub", Model: "DeepSeek-V4-Pro-0813", Languages: []string{"en"},
+			Thinking: true, ReasoningEffort: "low",
+		}}},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+	_, err = router.Start(s.ctx, Request{CustomerID: "acme", Target: "stub/DeepSeek-V4-Pro-0813", LanguageHints: []string{"en"}})
+	s.Require().NoError(err)
+	s.True(received.Thinking)
+	s.Equal("low", received.ReasoningEffort)
 }
 
 func (s *LLMRouterSuite) TestAnUnknownTargetIsRejected() {

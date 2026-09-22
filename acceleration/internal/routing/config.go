@@ -168,6 +168,10 @@ func (t Tags) Validate() error {
 type ProviderConfig struct {
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
+	// Thinking enables provider-specific reasoning for this concrete model.
+	Thinking bool `yaml:"thinking"`
+	// ReasoningEffort is the provider-specific reasoning budget, when thinking is enabled.
+	ReasoningEffort string `yaml:"reasoning_effort"`
 	// Languages are the ISO codes the model handles.
 	Languages []string `yaml:"languages"`
 	// Realtime is false for models that only make sense off the live path.

@@ -421,17 +421,19 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 	}
 
 	spec := Spec{
-		Model:         candidate.Config.Model,
-		LanguageHints: request.LanguageHints,
-		Voice:         voice,
-		Keyterms:      request.Keyterms,
-		Tools:         request.Tools,
-		STT:           request.STT,
-		TTS:           request.TTS,
-		STS:           request.STS,
-		Search:        request.Search,
-		Overwrites:    r.overwrites(request, candidate.Config.Provider),
-		Logger:        r.logger,
+		Model:           candidate.Config.Model,
+		Thinking:        candidate.Config.Thinking,
+		ReasoningEffort: candidate.Config.ReasoningEffort,
+		LanguageHints:   request.LanguageHints,
+		Voice:           voice,
+		Keyterms:        request.Keyterms,
+		Tools:           request.Tools,
+		STT:             request.STT,
+		TTS:             request.TTS,
+		STS:             request.STS,
+		Search:          request.Search,
+		Overwrites:      r.overwrites(request, candidate.Config.Provider),
+		Logger:          r.logger,
 	}
 
 	provider, err := r.registry.Build(candidate.Config.Provider, spec)

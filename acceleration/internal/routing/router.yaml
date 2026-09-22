@@ -1307,6 +1307,7 @@ llm:
     # word of the answer is the first thing that arrives.
     - provider: deepseek
       model: DeepSeek-V4-Flash-0731
+      thinking: false
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1370,6 +1371,8 @@ llm:
     # to be off the live path unless the caller asked for quality.
     - provider: deepseek
       model: DeepSeek-V4-Pro-0813
+      thinking: true
+      reasoning_effort: low
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
@@ -1429,36 +1432,36 @@ llm:
     # A fast answer, in whatever language. The shorthand a caller reaches for when the only
     # thing that matters is that the answer starts arriving.
     #
-    # Gemini 3.8 Flash is preferred outright rather than left to the ranking, so the model a
+    # DeepSeek V4 Flash is preferred outright rather than left to the ranking, so the model a
     # conversation gets is the one this deployment chose. The rest of the tier is still here
     # to catch it being down.
     llm-fast:
       require_realtime: true
       tier: low-latency
-      prefer: gemini/gemini-3.8-flash
+      prefer: deepseek/DeepSeek-V4-Flash-0731
 
     # What the flow controller runs on: it classifies every transcript revision into one
     # small JSON object saying who holds the floor, and it is asked constantly, including
     # while the caller is still talking. So it is pinned to a model that starts writing at
     # once rather than one that thinks first -- thinking spends the whole tiny token budget
     # before the JSON is closed, and adds a round trip of latency to every decision the
-    # caller waits through. Pinned to Gemini for now so a Cerebras RPM limit does not
-    # swallow barge-in follow-ups; prefer cerebras/gemma-4-31b again when the quota is back.
+    # caller waits through. Pinned to DeepSeek V4 Flash so it stays on the same fast model
+    # as the conversation path.
     llm-flow:
       require_realtime: true
       tier: low-latency
-      prefer: gemini/gemini-3.8-flash
+      prefer: deepseek/DeepSeek-V4-Flash-0731
 
     # What a skill runs on: the model asked the part of a turn the talking model could not
     # answer itself. The conversation carries on while it thinks, so this is the shorthand
     # for quality over speed, and nothing here is chosen for how soon it starts.
     #
-    # GPT-5.6 Sol is preferred outright rather than left to the ranking, for the same reason
+    # DeepSeek V4 Pro is preferred outright rather than left to the ranking, for the same reason
     # llm-fast pins its own: the model that does the thinking is the one this deployment
     # chose. The rest of the tier is still here to catch it being down.
     llm-thinking:
       tier: high-quality
-      prefer: openai/gpt-5.6-sol
+      prefer: deepseek/DeepSeek-V4-Pro-0813
 
     # What product data is analysed on: the model that reads a week of calls, tickets and
     # threads and writes what customers are asking for. That is a different intent from

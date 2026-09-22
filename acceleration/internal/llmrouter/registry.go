@@ -27,7 +27,12 @@ func DefaultRegistry() *Registry {
 	})
 
 	registry.Register(deepseek.ProviderName, func(spec routing.Spec) (Provider, error) {
-		return Started(deepseek.New(deepseek.Options{Model: spec.Model, Logger: spec.Logger}))
+		return Started(deepseek.New(deepseek.Options{
+			Model:           spec.Model,
+			Thinking:        spec.Thinking,
+			ReasoningEffort: spec.ReasoningEffort,
+			Logger:          spec.Logger,
+		}))
 	})
 
 	registry.Register(gemini.ProviderName, func(spec routing.Spec) (Provider, error) {

@@ -3,6 +3,7 @@ package deepseek
 import (
 	"testing"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -59,6 +60,21 @@ func (s *DeepSeekSuite) TestThinkingCanBeTurnedOn() {
 	model := provider.Capabilities()
 	s.True(model.StreamsReasoning)
 	s.Equal("high", model.DefaultEffort)
+}
+
+func (s *DeepSeekSuite) TestFlashUsesChatTemplateThinkingFields() {
+	fields := requestFields("DeepSeek-V4-Flash-0731", false)(llm.ResponseParams{}, "")
+	s.Equal(map[string]any{
+		"chat_template_kwargs": map[string]any{"thinking": false},
+	}, fields)
+}
+
+func (s *DeepSeekSuite) TestProUsesTopLevelThinkingFields() {
+	fields := requestFields("DeepSeek-V4-Pro-0813", true)(llm.ResponseParams{}, "high")
+	s.Equal(map[string]any{
+		"thinking":         map[string]any{"type": "enabled"},
+		"reasoning_effort": "high",
+	}, fields)
 }
 
 func (s *DeepSeekSuite) TestBaseURLCanBeOverriddenForADedicatedDeployment() {
