@@ -1042,6 +1042,9 @@ directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
 
+- Voice interruption cancels pending tool work without blocking floor decisions. Slow overlapping speech decisions yield the floor, while finished turns still receive a fallback reply on classifier failure.
+- Voice transcripts follow the selected conversation and settle replies only after speech completes; interrupted replies are excluded from restored completed history.
+
 - Dispatch ping replies are serialized with call delivery, and disconnected session
   watchers release their handlers immediately. Text sessions work in LLM-only
   deployments, and exhausted generation quota no longer blocks session cleanup.
