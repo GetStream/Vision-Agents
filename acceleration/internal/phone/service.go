@@ -300,11 +300,17 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 	if err != nil {
 		return Attached{}, err
 	}
+	declared, _ := s.registry.Lookup(held.Vendor)
+
+	allowedIPs, err := trunkAllowlist(declared)
+	if err != nil {
+		return Attached{}, err
+	}
 
 	trunkID, bridge, err := s.stream.CreateTrunk(ctx, Trunk{
 		Name:       "phone-" + attachment.E164,
 		Numbers:    []string{attachment.E164},
-		AllowedIPs: attachment.AllowedIPs,
+		AllowedIPs: allowedIPs,
 	})
 	if err != nil {
 		return Attached{}, err
