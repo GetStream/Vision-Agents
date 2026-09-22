@@ -476,14 +476,35 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	if err != nil {
 		return Placed{}, err
 	}
-	if _, err := s.stream.CreateRoute(ctx, Route{
+
+	var routeID string
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		// Roll back what this call created but never placed, so a call that did not
+		// start does not leave a billable Stream trunk behind. Best-effort: a cleanup
+		// error is logged, never returned, so it cannot mask the real failure.
+		if err := s.stream.DeleteRoute(ctx, routeID); err != nil {
+			s.logger.Error("could not roll back a routing rule after a call that did not place",
+				"route", routeID, "error", err)
+		}
+		if err := s.stream.DeleteTrunk(ctx, trunkID); err != nil {
+			s.logger.Error("could not roll back a trunk after a call that did not place",
+				"trunk", trunkID, "error", err)
+		}
+	}()
+
+	routeID, err = s.stream.CreateRoute(ctx, Route{
 		Name:          "call-" + callID,
 		TrunkIDs:      []string{trunkID},
 		CalledNumbers: []string{request.From},
 		CallID:        callID,
 		CallType:      callType,
 		Custom:        request.Custom,
-	}); err != nil {
+	})
+	if err != nil {
 		return Placed{}, err
 	}
 
@@ -505,6 +526,21 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	s.record(held.Vendor, "call", request.Owner, started, 0, err)
 	if err != nil {
 		return Placed{}, err
+	}
+
+	committed = true
+	if err := s.store.RecordCallResource(ctx, &store.CallResource{
+		TrunkID:    trunkID,
+		RouteID:    routeID,
+		CallType:   callType,
+		CallID:     callID,
+		CustomerID: request.Owner.CustomerID,
+	}); err != nil {
+		// The call is placed and connecting; deleting its trunk now would drop a live
+		// call. A logged, rare leak beats that. session_ended cannot clean a trunk it
+		// has no row for, which is the cost of this failing.
+		s.logger.Error("could not record a call's trunk for cleanup; it may leak",
+			"trunk", trunkID, "call", callID, "error", err)
 	}
 	return Placed{
 		VendorCallID: dialed.VendorCallID,
@@ -587,6 +623,31 @@ func (s *Service) SweepBridges(ctx context.Context) (int64, error) {
 		return 0, nil
 	}
 	return s.store.SweepBridges(ctx)
+}
+
+// ReleaseCall deletes the per-call Stream trunks and routes an ended call left behind.
+// It is safe to call for any call: one with no per-call resources (an inbound or video
+// call) releases nothing. Deletes are best-effort so a cleanup failure cannot wedge the
+// event that triggered it.
+func (s *Service) ReleaseCall(ctx context.Context, callType, callID string) error {
+	if s.store == nil || s.stream == nil {
+		return nil
+	}
+	resources, err := s.store.ReleaseCallResources(ctx, callType, callID)
+	if err != nil {
+		return fmt.Errorf("phone: release call resources: %w", err)
+	}
+	for _, resource := range resources {
+		if err := s.stream.DeleteRoute(ctx, resource.RouteID); err != nil {
+			s.logger.Error("could not delete a routing rule for an ended call",
+				"route", resource.RouteID, "call", callID, "error", err)
+		}
+		if err := s.stream.DeleteTrunk(ctx, resource.TrunkID); err != nil {
+			s.logger.Error("could not delete a trunk for an ended call",
+				"trunk", resource.TrunkID, "call", callID, "error", err)
+		}
+	}
+	return nil
 }
 
 // trunkAllowlist is the addresses a vendor's trunk should accept calls from.
@@ -673,20 +734,59 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	if err != nil {
 		return Dialed{}, err
 	}
-	if _, err := s.stream.CreateRoute(ctx, Route{
+
+	var routeID string
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		// Roll back what this transfer created but never placed, so a transfer that did
+		// not start does not leave a billable Stream trunk behind. Best-effort: a cleanup
+		// error is logged, never returned, so it cannot mask the real failure.
+		if err := s.stream.DeleteRoute(ctx, routeID); err != nil {
+			s.logger.Error("could not roll back a routing rule after a transfer that did not place",
+				"route", routeID, "error", err)
+		}
+		if err := s.stream.DeleteTrunk(ctx, trunkID); err != nil {
+			s.logger.Error("could not roll back a trunk after a transfer that did not place",
+				"trunk", trunkID, "error", err)
+		}
+	}()
+
+	routeID, err = s.stream.CreateRoute(ctx, Route{
 		Name:          "transfer-" + request.CallID,
 		TrunkIDs:      []string{trunkID},
 		CalledNumbers: []string{request.From},
 		CallID:        request.CallID,
 		CallType:      request.CallType,
-	}); err != nil {
+	})
+	if err != nil {
 		return Dialed{}, err
 	}
 
 	started := time.Now()
 	placed, err := provider.Dial(ctx, Outbound{From: request.From, To: request.To, Bridge: bridge})
 	s.record(held.Vendor, "transfer", request.Owner, started, 0, err)
-	return placed, err
+	if err != nil {
+		return Dialed{}, err
+	}
+
+	committed = true
+	if err := s.store.RecordCallResource(ctx, &store.CallResource{
+		TrunkID:    trunkID,
+		RouteID:    routeID,
+		CallType:   request.CallType,
+		CallID:     request.CallID,
+		CustomerID: request.Owner.CustomerID,
+	}); err != nil {
+		// The transfer leg is placed and connecting; deleting its trunk now would drop
+		// a live call. A logged, rare leak beats that. session_ended cannot clean a
+		// trunk it has no row for, which is the cost of this failing.
+		s.logger.Error("could not record a transfer's trunk for cleanup; it may leak",
+			"trunk", trunkID, "call", request.CallID, "error", err)
+	}
+	return placed, nil
 }
 
 // SendDigits presses digits on a call this service placed, which is how an agent answers a
