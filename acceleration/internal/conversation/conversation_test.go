@@ -27,6 +27,7 @@ type chatStore struct {
 	messages        map[string]map[string]any
 	order           []string
 	patches         []map[string]any
+	updates         int
 	fail            bool
 	failAfterCreate bool
 }
@@ -95,6 +96,7 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 				id = parts[len(parts)-2]
 				db.patches = append(db.patches, body["set"].(map[string]any))
 			} else if r.Method == "PUT" {
+				db.updates++
 				for k, v := range body["set"].(map[string]any) {
 					if k == "text" || k == "attachments" {
 						db.messages[id][k] = v
@@ -1062,4 +1064,51 @@ func TestSharedHistoryPreservesAuthorsAsUserData(t *testing.T) {
 	messages, truncated = history(page)
 	require.Empty(t, messages)
 	require.True(t, truncated, "author data must count toward history budget")
+}
+
+// TestProgressIsLiveUntilTheReplySettles covers what a watcher sees while a reply works:
+// tool steps and the model's thinking arrive as ephemeral updates, the only stored write
+// is the finished reply, and the thinking is never part of what is stored.
+func TestProgressIsLiveUntilTheReplySettles(t *testing.T) {
+	db, client := newChat(t)
+	root := t.TempDir()
+	s, err := newService(root, client)
+	require.NoError(t, err)
+	c, _, _, err := s.Open(context.Background(), "customer", "support-agent", "")
+	require.NoError(t, err)
+	require.NoError(t, c.Begin("question"))
+	id := current(c).ID
+	require.Eventually(t, func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.created[id] }, 3*time.Second, 20*time.Millisecond)
+
+	c.Observe(agent.ReasoningDelta{Text: "Weighing the two options."})
+	c.Observe(agent.ToolStarted{ID: "one", Tool: "athena_start_task", StartedAt: time.Now().UTC()})
+	c.Progress("one", "searching")
+	c.Observe(agent.ToolRan{ID: "one", Result: `{}`})
+	require.Eventually(t, func() bool {
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		raw, _ := json.Marshal(db.patches)
+		return strings.Contains(string(raw), "Weighing the two options.") && strings.Contains(string(raw), `"status":"completed"`)
+	}, 3*time.Second, 20*time.Millisecond)
+	db.mu.Lock()
+	require.Zero(t, db.updates, "tool progress was stored before the reply settled")
+	db.mu.Unlock()
+
+	// The local ledger still holds the progress a restart recovers from.
+	raw, err := os.ReadFile(filepath.Join(c.dir(), "state.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(raw), "athena_start_task")
+	require.NotContains(t, string(raw), "Weighing the two options.")
+
+	c.Observe(agent.ResponseDelta{Text: "The answer."})
+	c.Observe(agent.Responded{})
+	saved(t, c)
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	require.Equal(t, 1, db.updates)
+	stored, _ := json.Marshal(db.messages[id])
+	require.Contains(t, string(stored), "athena_start_task")
+	require.NotContains(t, string(stored), "Weighing the two options.")
+	c.Release()
+	s.Close()
 }

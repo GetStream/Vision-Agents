@@ -118,7 +118,14 @@ type operation struct {
 	Message Message
 	Create  bool
 	Author  string `json:",omitempty"`
+	// thinking rides only on a live update. It is unexported so it never reaches the
+	// outbox on disk or a stored message.
+	thinking string
 }
+
+// maxThinking bounds the live reasoning sent with each update to its most recent part.
+const maxThinking = 4000
+
 type Service struct {
 	lock   *os.File
 	closed bool
@@ -138,8 +145,11 @@ type Conversation struct {
 	created  map[string]bool
 	emit     func(Updated)
 	dirty    bool
-	stopped  chan struct{}
-	done     chan struct{}
+	// reasoning is the model's thinking for the current reply. It is shown to watchers
+	// through ephemeral updates only and is never persisted.
+	reasoning string
+	stopped   chan struct{}
+	done      chan struct{}
 }
 
 var validID = regexp.MustCompile(`^support-[a-f0-9-]{36}$`)
@@ -767,6 +777,7 @@ func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceip
 	}
 	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner}
 	c.data.Current = &a
+	c.reasoning = ""
 	c.data.Pending = append(c.data.Pending,
 		operation{Message: u, Create: true, Author: c.userAuthor()},
 		operation{Message: a, Create: true})
@@ -886,6 +897,11 @@ func (c *Conversation) Observe(event agent.Event) {
 		c.state("writing")
 		m.Text += e.Text
 		m.Saved = false
+	case agent.ReasoningDelta:
+		if !c.acceptTurn(e.TurnID, false) {
+			return
+		}
+		c.reasoning = tail(c.reasoning+e.Text, maxThinking)
 	case agent.Responded:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -1028,7 +1044,7 @@ func (c *Conversation) Observe(event agent.Event) {
 	m.Sequence++
 	c.dirty = true
 	if persist {
-		c.save()
+		c.checkpoint()
 	}
 	c.publish(*m)
 }
@@ -1082,7 +1098,7 @@ func (c *Conversation) Progress(id, phase string) {
 			if t.ExecutionStartedAt == nil {
 				now := time.Now().UTC()
 				t.ExecutionStartedAt = &now
-				c.save()
+				c.checkpoint()
 			}
 		}
 		changed = true
@@ -1275,6 +1291,30 @@ func (c *Conversation) enqueue(m Message, create bool) error {
 	c.data.Pending = append(c.data.Pending, op)
 	return c.persist()
 }
+
+// checkpoint records a reply's progress in the local ledger, which is what restart
+// recovery reads. Watchers get the progress from the next live (ephemeral) update, so
+// Stream Chat is only written when a reply is created and when it settles.
+func (c *Conversation) checkpoint() {
+	m := c.data.Current
+	m.Saved = false
+	if err := c.persist(); err != nil {
+		m.Error = "Could not save retry record: " + err.Error()
+	}
+}
+
+// tail keeps the last limit bytes of text without splitting a UTF-8 character.
+func tail(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	cut := len(text) - limit
+	for cut < len(text) && !utf8.RuneStart(text[cut]) {
+		cut++
+	}
+	return text[cut:]
+}
+
 func (c *Conversation) save() {
 	m := c.data.Current
 	m.Saved = false
@@ -1334,6 +1374,9 @@ func (c *Conversation) send(ctx context.Context, op operation, ephemeral bool) e
 		return err
 	}
 	if ephemeral {
+		if op.thinking != "" {
+			fields["reasoning"] = op.thinking
+		}
 		_, err := c.service.client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields})
 		return err
 	}
@@ -1420,6 +1463,7 @@ func (c *Conversation) run() {
 			}
 			c.mu.Lock()
 			m := c.data.Current
+			thinking := c.reasoning
 			dirty := c.dirty && m != nil && c.created[m.ID]
 			if m != nil {
 				copy := *m
@@ -1433,7 +1477,7 @@ func (c *Conversation) run() {
 			c.mu.Unlock()
 			if dirty && m != nil && m.FinishedAt == nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				err := c.send(ctx, operation{Message: *m}, true)
+				err := c.send(ctx, operation{Message: *m, thinking: thinking}, true)
 				cancel()
 				if err != nil {
 					c.mu.Lock()

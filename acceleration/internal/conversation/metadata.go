@@ -21,6 +21,11 @@ const (
 )
 
 var displayID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
+
+// displayTools are the tools whose name and outcome employees may see. They are
+// Athena's own named tools and web search: fixed identifiers the client maps to
+// plain labels. Anything else (connector operations, arbitrary skills) stays hidden.
+var displayTools = regexp.MustCompile(`^(athena_[a-z_]{1,60}|search|web_search)$`)
 var artifactID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 
 const maxArtifactAttachments = 32
@@ -46,6 +51,11 @@ type displayTool struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"`
 	Summary string `json:"display_summary,omitempty"`
+	// Timing is shown so employees can see where a reply spent its time. Arguments and
+	// results are never part of the display.
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	DurationMS int64      `json:"duration_ms,omitempty"`
 }
 
 type displaySource struct {
@@ -130,7 +140,9 @@ func decodeMetadata(raw any) (supportMessage, error) {
 	seenTools := map[string]struct{}{}
 	for _, tool := range metadata.Tools {
 		expected, ok := displayToolOf(Tool{ID: tool.ID, Name: tool.Name, Status: tool.Status})
-		if !ok || tool != expected && !(tool.Status == "failed" && tool.Summary == "Stopped before completion.") {
+		// Timing is the one part a client cannot derive from the name and status.
+		expected.StartedAt, expected.FinishedAt, expected.DurationMS = tool.StartedAt, tool.FinishedAt, tool.DurationMS
+		if !ok || !sameDisplay(tool, expected) && !(tool.Status == "failed" && tool.Summary == "Stopped before completion.") || !validTiming(tool) {
 			return supportMessage{}, errors.New("invalid observable message metadata")
 		}
 		if _, exists := seenTools[tool.ID]; exists {
@@ -196,6 +208,7 @@ func messageFromWire(id, text string, custom map[string]any) (Message, error) {
 		message.Tools = append(message.Tools, Tool{
 			Type: "tool_calling", ID: display.ID, Name: display.Name, Title: title(display.Name),
 			Status: display.Status, Phase: display.Status, Summary: display.Summary,
+			StartedAt: startedAt(display), FinishedAt: display.FinishedAt, DurationMS: display.DurationMS,
 		})
 	}
 	for _, display := range metadata.Sources {
@@ -205,14 +218,21 @@ func messageFromWire(id, text string, custom map[string]any) (Message, error) {
 }
 
 func displayToolOf(tool Tool) (displayTool, bool) {
-	if (tool.Name != "athena_resource_metadata" && tool.Name != "athena_save_image") || !displayID.MatchString(tool.ID) {
+	if !displayTools.MatchString(tool.Name) || !displayID.MatchString(tool.ID) {
 		return displayTool{}, false
 	}
-	completed, failed := "Conversation metadata checked.", "Conversation metadata unavailable."
-	if tool.Name == "athena_save_image" {
+	completed, failed := "", "Didn’t complete."
+	switch tool.Name {
+	case "athena_resource_metadata":
+		completed, failed = "Conversation metadata checked.", "Conversation metadata unavailable."
+	case "athena_save_image":
 		completed, failed = "Image created.", "Image generation unavailable."
 	}
-	display := displayTool{ID: tool.ID, Name: tool.Name}
+	display := displayTool{ID: tool.ID, Name: tool.Name, FinishedAt: tool.FinishedAt, DurationMS: tool.DurationMS}
+	if !tool.StartedAt.IsZero() {
+		started := tool.StartedAt
+		display.StartedAt = &started
+	}
 	switch tool.Status {
 	case "running", "queued":
 		display.Status = "running"
@@ -422,4 +442,23 @@ func boundedDisplayText(value string, maximum int) bool {
 
 func boundedOptionalText(value string, maximum int) bool {
 	return value == "" || boundedDisplayText(value, maximum)
+}
+
+func startedAt(display displayTool) time.Time {
+	if display.StartedAt == nil {
+		return time.Time{}
+	}
+	return *display.StartedAt
+}
+
+func sameDisplay(a, b displayTool) bool {
+	return a.ID == b.ID && a.Name == b.Name && a.Status == b.Status && a.Summary == b.Summary &&
+		a.StartedAt == b.StartedAt && a.FinishedAt == b.FinishedAt && a.DurationMS == b.DurationMS
+}
+
+func validTiming(tool displayTool) bool {
+	if tool.DurationMS < 0 {
+		return false
+	}
+	return tool.StartedAt == nil || tool.FinishedAt == nil || !tool.FinishedAt.Before(*tool.StartedAt)
 }

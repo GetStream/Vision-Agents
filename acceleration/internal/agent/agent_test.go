@@ -160,6 +160,8 @@ type stubLLM struct {
 	// reply is streamed one delta per element for each request, unless the test writes the
 	// response itself.
 	reply []string
+	// thinking is streamed as reasoning before the reply.
+	thinking []string
 	// then replaces reply from the second request onward, so a model that asked for help
 	// on the first turn does not ask for it again once the answer has come back.
 	then []string
@@ -208,6 +210,7 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	s.scripts[params.ID] = script
 	s.order = append(s.order, params.ID)
 	reply := append([]string(nil), s.reply...)
+	thinking := append([]string(nil), s.thinking...)
 	first := len(s.asked) == 1
 	if !first && s.then != nil {
 		reply = append([]string(nil), s.then...)
@@ -224,6 +227,9 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		return script.Stream(), nil
 	}
 
+	for _, delta := range thinking {
+		script.ReasoningText(delta)
+	}
 	for _, delta := range reply {
 		script.OutputText(delta)
 	}
@@ -2269,4 +2275,25 @@ func (s *AgentSuite) TestAConversationInWritingLooksThingsUpTheSameWay() {
 	looked, _ := firstOf[LookedUp](s.reported())
 	s.Equal("refund window", looked.Query)
 	s.Equal(1, looked.Documents)
+}
+
+// TestThinkingInWritingIsReportedApartFromTheReply keeps a reader's view of the model's
+// reasoning separate from the answer: it is reported as it streams and never joins the
+// reply that is stored or remembered.
+func (s *AgentSuite) TestThinkingInWritingIsReportedApartFromTheReply() {
+	s.joinText()
+	s.model.thinking = []string{"The user greets; ", "greet back."}
+
+	s.Require().NoError(s.agent.SimpleResponse(s.ctx, "hello"))
+
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	responded, _ := firstOf[Responded](s.reported())
+	s.Equal("Hello there. How are you?", responded.Text)
+	var thought strings.Builder
+	for _, event := range s.reported() {
+		if delta, ok := event.(ReasoningDelta); ok {
+			thought.WriteString(delta.Text)
+		}
+	}
+	s.Equal("The user greets; greet back.", thought.String())
 }

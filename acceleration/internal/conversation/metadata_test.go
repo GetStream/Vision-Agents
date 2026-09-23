@@ -247,3 +247,33 @@ func TestImageActivityExposesOnlySafeStatus(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+// TestDisplayShowsAthenaToolsWithTimingAndHidesTheRest keeps the observable tool list
+// bounded: Athena's named tools and web search are shown with their timing, while
+// connector operations and other tools never reach chat clients.
+func TestDisplayShowsAthenaToolsWithTimingAndHidesTheRest(t *testing.T) {
+	started := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	finished := started.Add(1500 * time.Millisecond)
+	shown, ok := displayToolOf(Tool{ID: "call-1", Name: "athena_start_task", Status: "completed", StartedAt: started, FinishedAt: &finished, DurationMS: 1500})
+	require.True(t, ok)
+	require.Equal(t, int64(1500), shown.DurationMS)
+	require.Equal(t, started, *shown.StartedAt)
+	_, ok = displayToolOf(Tool{ID: "call-2", Name: "search", Status: "running", StartedAt: started})
+	require.True(t, ok)
+	for _, hidden := range []string{"linear.issue.create", "lookup_record", "Athena_Start", "athena_start_task; drop"} {
+		_, ok = displayToolOf(Tool{ID: "call-3", Name: hidden, Status: "completed"})
+		require.False(t, ok, hidden)
+	}
+
+	metadata, err := metadataOf(Message{State: "completed", Sequence: 2, Tools: []Tool{
+		{ID: "call-1", Name: "athena_start_task", Status: "completed", StartedAt: started, FinishedAt: &finished, DurationMS: 1500},
+		{ID: "call-4", Name: "linear.issue.create", Status: "completed"},
+	}})
+	require.NoError(t, err)
+	require.Len(t, metadata.Tools, 1)
+	raw, err := json.Marshal(metadata)
+	require.NoError(t, err)
+	decoded, err := decodeMetadata(json.RawMessage(raw))
+	require.NoError(t, err)
+	require.Equal(t, int64(1500), decoded.Tools[0].DurationMS)
+}

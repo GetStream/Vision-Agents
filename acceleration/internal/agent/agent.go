@@ -1814,6 +1814,12 @@ func (a *Agent) handle(event llm.Event) {
 		}
 		a.say(typed.ResponseID, typed.Delta)
 
+	case llm.ReasoningTextDelta:
+		// Thinking is only ever read, never spoken, so a voice has no use for it.
+		if a.options.Text && typed.Delta != "" && a.speaking(typed.ResponseID) {
+			a.emitter.Send(ReasoningDelta{TurnID: typed.ResponseID, Text: typed.Delta})
+		}
+
 	case llm.ResponseFailed:
 		a.fail(typed.Err, "llm")
 
