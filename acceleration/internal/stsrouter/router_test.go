@@ -208,6 +208,19 @@ func (s *STSRouterSuite) TestAConfigPromisingWhatItsProviderCannotSendIsRefusedA
 		"a term declared and never sent is the one thing terms exist to prevent")
 }
 
+func (s *STSRouterSuite) TestFastConversationalLandsOnGemini38Live() {
+	var built []routing.Spec
+	router := s.newStubbedRouter(&built)
+
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "sts-fast"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = session.Close() })
+
+	s.Require().Len(built, 1)
+	s.Equal("gemini", session.Provider())
+	s.Equal("gemini-3.8-live", built[0].Model, "the conversation nobody picked a model for gets the one the pin names")
+}
+
 func (s *STSRouterSuite) TestSemanticTurnsRouteOnlyToAModelThatReadsTheWords() {
 	var built []routing.Spec
 	router := s.newStubbedRouter(&built)

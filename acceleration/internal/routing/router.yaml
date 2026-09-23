@@ -1231,16 +1231,64 @@ tts:
 # it an estimate is the shape of Price, not the vendor's list.
 sts:
   providers:
-    # Gemini 3.1 Flash Live, which replaced the 2.5 native audio preview: Google's
-    # highest-quality audio model and, at well under a second to first audio, what sts-fast
-    # prefers. Its function calling is synchronous only, so a tool that takes a while holds
-    # the conversation while it runs. Audio in at $3/1M tokens and out at $12/1M, roughly
-    # 25 tokens a second of speech, to be checked against the model's own page once it is
-    # generally available. Google do not train on Developer API traffic, and there is no
-    # zero-retention path on it, so this cannot serve a request naming a retention ceiling.
+    # Gemini 3.8 Live, generally available since September 2026 and what Google now point
+    # a voice agent at, so it is what sts-fast prefers. Artificial Analysis time it at
+    # 1.18s to first audio against 0.96s for 3.1 Flash Live on minimal thinking, and put
+    # it twelve points higher on quality; timed from the caller's last word against the
+    # live API from here, VAD wait included, it came in a tenth of a second quicker. Tools are non-blocking by default: the
+    # model closes its turn when it calls one, so a slow tool no longer holds the
+    # conversation, though it stays quiet until the answer comes. It takes no thinking
+    # level. Turns are a silence timer, not semantic. Billed like 3.1: audio in at $3/1M
+    # tokens, out at $12/1M. Google do not train on paid-tier traffic and log it "for a
+    # limited period of time" with no figure, with no zero-retention path on the Developer
+    # API, so this cannot serve a request naming a retention ceiling.
+    - provider: gemini
+      model: gemini-3.8-live
+      description: "Google's default live voice, and what Fast conversational prefers. About a second to first audio, sees images, and a slow tool no longer holds the conversation."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: low-latency
+      supports: [endpointing, tools, text, input_transcript, output_transcript]
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 3.0
+        per_million_output_tokens: 12.0
+
+    # Gemini 3.8 Live Extended Thinking, a separate model id rather than a setting on the
+    # one above. It reasons in the background and runs tools asynchronously while speaking
+    # a filler, then the answer, which is why a reply here can span several of the API's
+    # turns. First on the Artificial Analysis speech-to-speech index at 82.6 and on Tau
+    # Voice at 68.6%, both at high thinking and 1.35s to first audio. It refuses a session
+    # without a thinking level and the provider sends low, its floor, unless overwrites say
+    # otherwise, so the benchmark figures are for a slower setting than the default. Same
+    # rates as 3.8 Live, with the thinking billed as output. Same data terms.
+    - provider: gemini
+      model: gemini-3.8-live-extended-thinking
+      description: "Top of the Artificial Analysis speech-to-speech board. Thinks in the background and talks while a tool runs. Sees images."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: true
+      tier: high-quality
+      supports: [endpointing, tools, text, input_transcript, output_transcript]
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+      price:
+        per_million_input_tokens: 3.0
+        per_million_output_tokens: 12.0
+
+    # Gemini 3.1 Flash Live, which Google now call a legacy preview in favour of 3.8 Live.
+    # Kept rather than removed because it still answers, passes the live suite and is the
+    # quickest of the three to first audio on Artificial Analysis' figures, and a config
+    # that names it should not start failing before Google retire it. Its function calling
+    # is synchronous only, so a tool that takes a while holds the conversation while it
+    # runs. Same rates and data terms as 3.8 Live.
     - provider: gemini
       model: gemini-3.1-flash-live-preview
-      description: "Under a second to first audio, and what Fast conversational prefers. Tools run synchronously, so a slow tool holds the conversation."
+      description: "The previous Gemini live voice, now a legacy preview. Under a second to first audio. Tools run synchronously, so a slow tool holds the conversation."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: low-latency
@@ -1311,14 +1359,14 @@ sts:
   # the one a conversation gets by default comes first.
   aliases:
     # The shorthand a conversation gets when nobody said which model they wanted: the one
-    # quickest to answer, pinned to Gemini 3.1 Flash Live for as long as it is up, with the
-    # rest of the tier behind it.
+    # quickest to answer, pinned to Gemini 3.8 Live for as long as it is up, with the rest
+    # of the tier behind it.
     sts-fast:
       title: Fast conversational
-      description: "The quickest realtime voice. Prefers Gemini 3.1 Flash Live and fails over to the rest of the fast tier."
+      description: "The quickest realtime voice. Prefers Gemini 3.8 Live and fails over to the rest of the fast tier."
       require_realtime: true
       tier: low-latency
-      prefer: gemini/gemini-3.1-flash-live-preview
+      prefer: gemini/gemini-3.8-live
 
     # A conversation the model can watch as well as hear. Pinned to GPT-Realtime-2, which
     # is what vlm pins for the same reason.

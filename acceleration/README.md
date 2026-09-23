@@ -423,7 +423,7 @@ turns it back on and the reasoning then arrives as `ReasoningDelta` events, sepa
 the answer.
 
 Speech to speech has two shortcuts of its own. `sts-fast` is the model quickest to answer,
-pinned to `gemini/gemini-3.1-flash-live-preview`, and `sts-vision` is a conversation the
+pinned to `gemini/gemini-3.8-live`, and `sts-vision` is a conversation the
 model can watch as well as hear, pinned to `openai/gpt-realtime-2` the way `vlm` is. A
 speech-to-speech model is the transcriber, the turn detector and the voice at once, so a
 session asks for one target rather than three, and the terms it can be asked for are its
@@ -434,7 +434,9 @@ not a term. Which models the shortcuts reach, and what each is billed at:
 
 | Model                                     | Tier         | Billed by                                   |
 | ----------------------------------------- | ------------ | ------------------------------------------- |
+| `gemini/gemini-3.8-live`                  | low-latency  | tokens: $3.00 in, $12.00 out per million     |
 | `gemini/gemini-3.1-flash-live-preview`    | low-latency  | tokens: $3.00 in, $12.00 out per million     |
+| `gemini/gemini-3.8-live-extended-thinking` | high-quality | tokens: $3.00 in, $12.00 out per million    |
 | `xai/grok-voice-think-fast-2.0`           | low-latency  | the caller's audio: $3.00 an hour            |
 | `qwen/qwen3.5-omni-plus-realtime`         | low-latency  | the caller's audio: $0.03 an hour            |
 | `openai/gpt-realtime-2`                   | high-quality | tokens: $32.00 in, $0.40 cached, $64.00 out  |
