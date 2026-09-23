@@ -17,7 +17,7 @@ import (
 	"github.com/redis/rueidis"
 )
 
-func TestExhaustedQuotaStillReachesSessionCleanupAuthorization(t *testing.T) {
+func TestExhaustedQuotaAllowsSessionDeletionThroughMiddleware(t *testing.T) {
 	address := os.Getenv("ROUTER_REDIS_ADDR")
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")

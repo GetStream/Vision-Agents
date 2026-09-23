@@ -2,8 +2,12 @@ package llmrouter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -408,24 +412,39 @@ func (s *LLMRouterSuite) TestVisionFailoverRejectsContradictoryAdapterCapabiliti
 	s.Equal("vision", session.Provider())
 }
 
-func (s *LLMRouterSuite) TestDirectModelCarriesExplicitThinkingConfiguration() {
-	var received routing.Spec
-	registry := NewRegistry()
-	registry.Register("stub", func(spec routing.Spec) (Provider, error) {
-		received = spec
-		return Started(newStubLLM(), nil)
-	})
+func (s *LLMRouterSuite) TestDirectModelSendsConfiguredReasoningToProvider() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Thinking struct {
+				Type string `json:"type"`
+			} `json:"thinking"`
+			Effort string `json:"reasoning_effort"`
+		}
+		if json.NewDecoder(r.Body).Decode(&request) != nil || request.Thinking.Type != "enabled" || request.Effort != "low" {
+			http.Error(w, "missing configured reasoning", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"id\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Configured\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	s.T().Setenv("BASETEN_API_KEY", "test-key")
+	s.T().Setenv("DEEPSEEK_BASE_URL", server.URL+"/v1")
 	router, err := New(Options{
-		Registry: registry,
+		Registry: DefaultRegistry(),
 		Config: routing.ModalityConfig{Providers: []routing.ProviderConfig{{
-			Provider: "stub", Model: "DeepSeek-V4-Pro-0813", Languages: []string{"en"},
+			Provider: "deepseek", Model: "DeepSeek-V4-Pro-0813", Languages: []string{"en"},
 			Thinking: true, ReasoningEffort: "low",
 		}}},
 	})
 	s.Require().NoError(err)
-	s.T().Cleanup(router.Close)
-	_, err = router.Start(s.ctx, Request{CustomerID: "acme", Target: "stub/DeepSeek-V4-Pro-0813", LanguageHints: []string{"en"}})
+	defer router.Close()
+	session, err := router.Start(s.ctx, Request{CustomerID: "acme", Target: "deepseek/DeepSeek-V4-Pro-0813", LanguageHints: []string{"en"}})
 	s.Require().NoError(err)
-	s.True(received.Thinking)
-	s.Equal("low", received.ReasoningEffort)
+	defer session.Close()
+	stream, err := session.Create(s.T().Context(), llm.ResponseParams{Input: []llm.Message{{Role: llm.User, Content: "Hello"}}})
+	s.Require().NoError(err)
+	response, err := llm.Collect(stream)
+	s.Require().NoError(err)
+	s.Equal("Configured", response.OutputText)
 }

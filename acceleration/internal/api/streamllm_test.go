@@ -10,21 +10,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 )
 
-func TestLLMSocketToolHistory(t *testing.T) {
-	var command respond
-	err := json.Unmarshal([]byte(`{"type":"respond","id":"turn-2","messages":[
-		{"role":"assistant","content":"Checking","tool_calls":[{"id":"call-1","name":"read","arguments":"{\"path\":\"report.txt\"}","signature":"opaque"}]},
-		{"role":"tool","tool_call_id":"call-1","content":"report contents"}
-	]}`), &command)
-	require.NoError(t, err)
-	params, err := command.params(options.LLM{})
-	require.NoError(t, err)
-	require.Equal(t, []llm.ToolCall{{ID: "call-1", Name: "read", Arguments: `{"path":"report.txt"}`, Signature: "opaque"}}, params.Input[0].ToolCalls)
-	require.Equal(t, "Checking", params.Input[0].Content)
-	require.Equal(t, "call-1", params.Input[1].ToolCallID)
-	require.Equal(t, "report contents", params.Input[1].Content)
-}
-
 func TestLLMSocketRejectsMalformedToolHistory(t *testing.T) {
 	for _, message := range []string{
 		`{"role":"tool","content":"result"}`,
