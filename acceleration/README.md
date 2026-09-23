@@ -1237,33 +1237,6 @@ off it. Those, and the three agent-log handlers excluded for the same reason, ar
 that list and this map disagree, because an operation the spec cannot see is the one place a
 default that refuses by default could fail open.
 
-## Text-only deployments and Redis
-
-LLM provider entries may set `thinking` and `reasoning_effort` for DeepSeek. These
-settings travel with a concrete model whether selected directly or through an alias;
-they do not change which model an alias prefers. For example, a Pro entry can set
-`thinking: true` and `reasoning_effort: low`. The optional `meta` provider is documented
-in [Meta Muse Spark](internal/llm/meta/README.md).
-
-Text sessions require only an LLM router. Cascade voice sessions still require STT
-and TTS, and native voice requires an STS router; missing speech dependencies are
-rejected before opening a call. Redis deployments may configure
-`ROUTER_REDIS_USERNAME` and `ROUTER_REDIS_PASSWORD` alongside `ROUTER_REDIS_ADDR`.
-
-## Tool history on the LLM socket
-
-`/v1/llm/stream` advertises `tool_history: true` in its `started` frame. To continue
-after a tool call, replay the assistant message with `tool_calls: [{id, name,
-arguments, signature}]`, followed by `role: tool` messages whose `tool_call_id`
-matches the call they answer. `arguments` is a JSON-encoded string; `signature` is
-optional opaque provider state and must be preserved when present. An assistant
-message containing only tool calls may omit `content` or set it to `null`.
-
-The `complete` frame returns the same tool-call fields for replay and includes
-`incomplete_reason` when the model could not finish, such as `max_output_tokens`.
-Malformed tool history produces an `error` frame; the socket remains available for
-a corrected request.
-
 ## Design notes
 
 - **The core knows nothing about modalities.** `routing.Router[P]` resolves a target, ranks
@@ -1376,32 +1349,3 @@ reject callbacks, transcription URLs, audio over 8 MiB and text over 16,000
 characters; the request's cancellation propagates and execution is bounded to
 90 seconds. Existing asynchronous recording behavior is unchanged. In Go use
 `Recorded{Audio: clip, Inline: true}` or `TTS().InlineRecording(...)`.
-
-## Durable session commands
-
-Personal persistent text sessions require a caller-generated `command_id` when
-responding. Send `{ "command_id": "request-123", "text": "Hello" }` to
-`POST /v1/agents/sessions/{id}/respond`, or include those fields in a WebSocket
-`respond` frame. Retrying the same ID and text returns the existing receipt without
-starting another inference; changing the text returns a conflict. Read receipts at
-`GET /v1/agents/sessions/{id}/commands/{command_id}` or, after the session closes,
-`GET /v1/agents/conversations/{cid}/commands/{command_id}`. These REST operations
-remain server-side and enforce conversation access.
-
-`POST /v1/agents/sessions/{id}/commands/{command_id}/interrupt` stops only the named
-command. A late stop returns its terminal receipt without cancelling a newer turn.
-Receipts and pending Chat writes share atomic local snapshots. One service owns an
-outbox directory at a time; use persistent storage for restart recovery. Interrupted
-work is reported after restart, never automatically executed again. This is not an
-exactly-once guarantee for external tool side effects.
-
-Shared conversation history preserves stored authors and checks current membership.
-The restored author labels are untrusted conversational context, not authorization.
-Session skill entries may carry an optional `revision` selected by the application's
-authorized registry; the runtime does not grant permissions based on that field.
-
-A reconnecting voice tool host may set `replay_pending_tools=true` on the session
-WebSocket. Pending requests retain their tool and turn IDs; replies must echo the
-bindings supplied with the request. Replays can duplicate live delivery, so the host
-must retain execution receipts and avoid repeating uncertain writes. Ordinary event
-watchers should leave replay disabled.

@@ -2,8 +2,6 @@
 
 ## Breaking Changes
 
-- Personal persistent text sessions now require a caller-generated `command_id` for responses, enabling safe retries and named cancellation.
-
 ### `ROUTER_AUTH_MODE` defaults to `api_key`, and `noauth` has been split in two
 
 The old `noauth` did two unrelated jobs: it trusted the headers a proxy set, and it was
@@ -278,13 +276,6 @@ becomes `routers/clinic/router.yaml`, and `sync_routers(directory)` now reads
 `description`.
 
 ## New Features
-
-- Persistent session commands expose durable receipts, duplicate detection, named cancellation and restart reconciliation. Shared history retains author identity and enforces current membership.
-- Voice tool hosts can opt into replaying pending requests with turn-bound results. Session skills accept application-selected revision metadata.
-
-- Optional Meta Muse Spark provider using the shared OpenAI-compatible transport.
-  Direct DeepSeek routes can configure thinking and reasoning effort per model,
-  with model-specific Flash and Pro request payloads. Default model aliases are unchanged.
 
 ### An agent can be given a guardrail: `guardrail.md`
 
@@ -1041,20 +1032,6 @@ answers out of a knowledge directory and a page on the docs site, both under one
 directory anywhere under `examples/`, not only in `examples/voice_agents/`.
 
 ## Bug Fixes
-
-- Voice interruption cancels pending tool work without blocking floor decisions. Slow overlapping speech decisions yield the floor, while finished turns still receive a fallback reply on classifier failure.
-- Voice transcripts follow the selected conversation and settle replies only after speech completes; interrupted replies are excluded from restored completed history.
-
-- Dispatch ping replies are serialized with call delivery, and disconnected session
-  watchers release their handlers immediately. Text sessions work in LLM-only
-  deployments, and exhausted generation quota no longer blocks session cleanup.
-
-- Router Redis connections support username/password authentication through
-  `ROUTER_REDIS_USERNAME` and `ROUTER_REDIS_PASSWORD`.
-
-- LLM WebSockets preserve tool-call IDs, arguments, provider signatures and correlated
-  tool results when replaying conversation history. Completion frames retain the
-  incomplete reason, and malformed tool history is rejected before reaching the model.
 
 - Chat readers are explicitly added to existing agent channels before their token is
   issued, so opening a members-only transcript no longer fails with `ReadChannel`.
