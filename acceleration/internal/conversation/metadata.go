@@ -56,6 +56,8 @@ type displaySource struct {
 }
 
 type runtimeMessage struct {
+	TextLayout     int        `json:"text_layout,omitempty"`
+	AnswerStart    int        `json:"answer_start"`
 	CommandID      string     `json:"command_id,omitempty"`
 	TurnID         string     `json:"turn_id,omitempty"`
 	QuestionID     string     `json:"question_id,omitempty"`
@@ -177,12 +179,14 @@ func messageFromWire(id, text string, custom map[string]any) (Message, error) {
 	}
 	metadata, err := decodeMetadata(metadataRaw)
 	if err != nil || runtime.State != metadata.State ||
+		runtime.TextLayout < 0 || runtime.TextLayout > 1 || runtime.AnswerStart < 0 || runtime.AnswerStart > utf8.RuneCountInString(text) ||
 		id == "" || len(id) > 128 || len(runtime.CommandID) > 128 || len(runtime.TurnID) > 128 {
 		return Message{}, errors.New("invalid schema-v1 message metadata")
 	}
 	message := Message{
 		CommandID: runtime.CommandID, TurnID: runtime.TurnID, ID: id,
 		QuestionID: runtime.QuestionID, Role: runtime.Role, Text: text,
+		TextLayout: runtime.TextLayout, AnswerStart: runtime.AnswerStart,
 		State: runtime.State, StartedAt: runtime.StartedAt,
 		StateStartedAt: runtime.StateStartedAt, FinishedAt: runtime.FinishedAt,
 		DurationMS: runtime.DurationMS, Sequence: metadata.Sequence, Saved: true,
@@ -378,6 +382,7 @@ func runtimeOf(message Message) runtimeMessage {
 	runtime := runtimeMessage{
 		CommandID: message.CommandID, TurnID: message.TurnID, QuestionID: message.QuestionID,
 		Role: message.Role, State: message.State, StartedAt: message.StartedAt,
+		TextLayout: message.TextLayout, AnswerStart: message.AnswerStart,
 		StateStartedAt: message.StateStartedAt, DurationMS: message.DurationMS,
 	}
 	if message.FinishedAt != nil {

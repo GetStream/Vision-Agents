@@ -47,6 +47,9 @@ type Source struct {
 	Citation string `json:"citation,omitempty"`
 }
 type Message struct {
+	// AnswerStart is a Unicode code-point offset separating public progress from the answer.
+	TextLayout     int                  `json:"text_layout,omitempty"`
+	AnswerStart    int                  `json:"answer_start,omitempty"`
 	CommandID      string               `json:"command_id,omitempty"`
 	TurnID         string               `json:"turn_id,omitempty"`
 	ID             string               `json:"id"`
@@ -757,7 +760,7 @@ func (c *Conversation) beginCommand(id, text string, legacy bool) (CommandReceip
 	}
 	now := time.Now().UTC()
 	u := Message{ID: uuid.NewString(), CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}}
-	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
+	a := Message{ID: uuid.NewString(), CommandID: id, Role: "assistant", TextLayout: 1, QuestionID: u.ID, State: "thinking", StartedAt: now, StateStartedAt: now, Tools: []Tool{}}
 	receipt := CommandReceipt{CommandID: id, UserMessageID: u.ID, AssistantMessageID: a.ID, State: a.State}
 	if c.data.Commands == nil {
 		c.data.Commands = map[string]commandRecord{}
@@ -874,6 +877,8 @@ func (c *Conversation) Observe(event agent.Event) {
 		if m.Text != "" && !strings.HasSuffix(m.Text, "\n\n") {
 			m.Text += "\n\n"
 		}
+		m.TextLayout = 1
+		m.AnswerStart = utf8.RuneCountInString(m.Text)
 	case agent.ResponseDelta:
 		if !c.acceptTurn(e.TurnID, false) {
 			return
@@ -889,6 +894,8 @@ func (c *Conversation) Observe(event agent.Event) {
 			c.finish("completed")
 			return
 		}
+		m.TextLayout = 1
+		m.AnswerStart = utf8.RuneCountInString(m.Text)
 	case agent.ToolStarted:
 		if !c.acceptTurn(e.TurnID, true) {
 			return
@@ -898,6 +905,8 @@ func (c *Conversation) Observe(event agent.Event) {
 				return
 			}
 		}
+		m.TextLayout = 1
+		m.AnswerStart = utf8.RuneCountInString(m.Text)
 		m.Tools = append(m.Tools, Tool{Type: "tool_calling", Product: e.Product, SDK: e.SDK, ID: e.ID, Name: e.Tool, Title: title(e.Tool), Status: "running", Phase: "running", StartedAt: e.StartedAt})
 		c.state("tools")
 		persist = true
