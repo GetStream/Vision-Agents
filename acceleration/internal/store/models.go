@@ -525,8 +525,10 @@ type KnowledgeDocument struct {
 	CustomerID string `bun:"customer_id,notnull"`
 	Namespace  string `bun:"namespace,notnull"`
 	// Source is what the passages are keyed by, and what a reader would call the document.
-	Source    string    `bun:"source,notnull"`
-	Passages  int       `bun:"passages,notnull"`
+	Source   string `bun:"source,notnull"`
+	Passages int    `bun:"passages,notnull"`
+	// Text is the document as it was posted. Listings leave it out.
+	Text      string    `bun:"text,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
 }

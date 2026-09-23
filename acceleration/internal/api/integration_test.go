@@ -934,6 +934,24 @@ func (s *APIIntegrationSuite) TestAPostedDocumentIsListed() {
 	s.Equal(2, listed[0].Passages)
 }
 
+func (s *APIIntegrationSuite) TestADocumentReadsBackAsItWasLastPosted() {
+	for _, text := range []string{`# Pricing\n\nA penny.`, `# Pricing\n\nTwo pennies.`} {
+		response, payload := s.do(http.MethodPost, "/v1/agents/knowledge",
+			`{"namespace":"`+s.customerID+`","documents":[{"source":"pricing.md","text":"`+text+`"}]}`)
+		s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+	}
+	listed := s.documents(s.customerID)
+	s.Require().Len(listed, 1)
+	s.Nil(listed[0].Text, "a listing leaves the text out")
+
+	response, payload := s.do(http.MethodGet, "/v1/agents/knowledge/documents/"+listed[0].Id, "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+	var read IndexedKnowledgeDocument
+	s.Require().NoError(json.Unmarshal(payload, &read))
+	s.Require().NotNil(read.Text)
+	s.Equal("# Pricing\n\nTwo pennies.", *read.Text)
+}
+
 func (s *APIIntegrationSuite) TestADocumentReadsBackAsThePassagesItWasCutInto() {
 	s.do(http.MethodPost, "/v1/agents/knowledge",
 		`{"namespace":"`+s.customerID+`","documents":[{"source":"pricing.md","text":"# Pricing\n\nA penny.\n\n# Support\n\nA day."}]}`)

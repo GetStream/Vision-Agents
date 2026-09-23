@@ -8,6 +8,8 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="IndexedKnowledgeDocument")
 
 
@@ -21,6 +23,8 @@ class IndexedKnowledgeDocument:
         passages (int): How many passages it was last cut into.
         created_at (datetime.datetime):
         updated_at (datetime.datetime): When it was last written.
+        text (str | Unset): The document as it was last posted. Only reading one document fills it in, and one written
+            before its text was kept has none.
     """
 
     id: str
@@ -29,6 +33,7 @@ class IndexedKnowledgeDocument:
     passages: int
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    text: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -44,6 +49,8 @@ class IndexedKnowledgeDocument:
 
         updated_at = self.updated_at.isoformat()
 
+        text = self.text
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -56,6 +63,8 @@ class IndexedKnowledgeDocument:
                 "updated_at": updated_at,
             }
         )
+        if text is not UNSET:
+            field_dict["text"] = text
 
         return field_dict
 
@@ -74,6 +83,8 @@ class IndexedKnowledgeDocument:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        text = d.pop("text", UNSET)
+
         indexed_knowledge_document = cls(
             id=id,
             namespace=namespace,
@@ -81,6 +92,7 @@ class IndexedKnowledgeDocument:
             passages=passages,
             created_at=created_at,
             updated_at=updated_at,
+            text=text,
         )
 
         indexed_knowledge_document.additional_properties = d

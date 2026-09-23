@@ -624,7 +624,11 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /**
+         * One document, with the text it was posted as
+         * @description What to start from when editing it: post it again under the same source to replace it. A document written before its text was kept comes back without one.
+         */
+        readonly get: operations["getKnowledgeDocument"];
         readonly put?: never;
         readonly post?: never;
         /**
@@ -2515,6 +2519,8 @@ export type components = {
              * @example pricing.md
              */
             readonly source: string;
+            /** @description The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none. */
+            readonly text?: string;
             /**
              * Format: date-time
              * @description When it was last written.
@@ -5017,6 +5023,33 @@ export interface operations {
             readonly 400: components["responses"]["BadRequest"];
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly getKnowledgeDocument: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: components["parameters"]["ResourceID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The document */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["IndexedKnowledgeDocument"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
         };
     };
     readonly deleteKnowledgeDocument: {

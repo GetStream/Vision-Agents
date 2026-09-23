@@ -1636,6 +1636,29 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   /v1/agents/knowledge/documents/{id}:
+    get:
+      operationId: getKnowledgeDocument
+      summary: One document, with the text it was posted as
+      description: >
+        What to start from when editing it: post it again under the same source to
+        replace it. A document written before its text was kept comes back without one.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexedKnowledgeDocument"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteKnowledgeDocument
       summary: Take a document out of a knowledge base
@@ -5399,6 +5422,11 @@ components:
         passages:
           type: integer
           description: How many passages it was last cut into.
+        text:
+          type: string
+          description: >
+            The document as it was last posted. Only reading one document fills it in, and
+            one written before its text was kept has none.
         created_at:
           type: string
           format: date-time

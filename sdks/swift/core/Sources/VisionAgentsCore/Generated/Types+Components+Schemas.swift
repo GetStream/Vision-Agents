@@ -98,6 +98,10 @@ extension Components {
         internal struct SessionSkill: Codable, Hashable, Sendable {
             /// - Remark: Generated from `#/components/schemas/SessionSkill/name`.
             internal var name: Swift.String
+            /// Immutable skill revision selected by the application's authorized registry.
+            ///
+            /// - Remark: Generated from `#/components/schemas/SessionSkill/revision`.
+            internal var revision: Swift.Int64?
             /// The one line the fast model sees.
             ///
             /// - Remark: Generated from `#/components/schemas/SessionSkill/description`.
@@ -118,18 +122,21 @@ extension Components {
             ///
             /// - Parameters:
             ///   - name:
+            ///   - revision: Immutable skill revision selected by the application's authorized registry.
             ///   - description: The one line the fast model sees.
             ///   - captureVideo: Capture task-scoped visual evidence before reasoning.
             ///   - instructions: The full prompt, which only the subagent sees.
             ///   - deadlineMs: How long the work may run before it is abandoned. Zero is the default.
             internal init(
                 name: Swift.String,
+                revision: Swift.Int64? = nil,
                 description: Swift.String,
                 captureVideo: Swift.Bool? = nil,
                 instructions: Swift.String,
                 deadlineMs: Swift.Int64? = nil
             ) {
                 self.name = name
+                self.revision = revision
                 self.description = description
                 self.captureVideo = captureVideo
                 self.instructions = instructions
@@ -137,6 +144,7 @@ extension Components {
             }
             internal enum CodingKeys: String, CodingKey {
                 case name
+                case revision
                 case description
                 case captureVideo = "capture_video"
                 case instructions

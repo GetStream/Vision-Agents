@@ -90,6 +90,27 @@ func (s *Server) ListKnowledgeDocuments(
 	return ListKnowledgeDocuments200JSONResponse(listed), nil
 }
 
+// GetKnowledgeDocument returns one document with the text it was posted as.
+func (s *Server) GetKnowledgeDocument(
+	ctx context.Context, request GetKnowledgeDocumentRequestObject,
+) (GetKnowledgeDocumentResponseObject, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return GetKnowledgeDocument401JSONResponse{missingCustomer()}, nil
+	}
+	if s.store == nil || s.knowledge == nil {
+		return GetKnowledgeDocument400JSONResponse{badRequest(noKnowledgeDocuments)}, nil
+	}
+
+	document, err := s.store.KnowledgeDocument(ctx, customerID, request.Id)
+	if err != nil {
+		return GetKnowledgeDocument404JSONResponse{NotFoundJSONResponse{Error: unknownKnowledgeDocument}}, nil
+	}
+	read := indexedKnowledgeDocumentOf(document)
+	read.Text = &document.Text
+	return GetKnowledgeDocument200JSONResponse(read), nil
+}
+
 // DeleteKnowledgeDocument takes a document out of its knowledge base, passages and all.
 func (s *Server) DeleteKnowledgeDocument(
 	ctx context.Context, request DeleteKnowledgeDocumentRequestObject,
@@ -183,6 +204,7 @@ func (s *Server) fillKnowledge(
 			Namespace:  namespace,
 			Source:     source,
 			Passages:   len(cut),
+			Text:       document.Text,
 		})
 	}
 

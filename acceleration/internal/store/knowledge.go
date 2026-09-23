@@ -190,6 +190,7 @@ func (s *Store) SaveKnowledgeDocument(ctx context.Context, document *KnowledgeDo
 	_, err := s.db.NewInsert().Model(document).
 		On("CONFLICT (customer_id, namespace, source) DO UPDATE").
 		Set("passages = EXCLUDED.passages").
+		Set("text = EXCLUDED.text").
 		Set("updated_at = EXCLUDED.updated_at").
 		Returning("id, created_at").
 		Exec(ctx)
@@ -221,7 +222,8 @@ func (s *Store) KnowledgeDocument(ctx context.Context, customerID, id string) (K
 }
 
 // CustomerKnowledgeDocuments returns the documents a customer filled its knowledge bases
-// with, most recently written first. An empty namespace returns every one of them.
+// with, most recently written first. An empty namespace returns every one of them. Their
+// text is left out: KnowledgeDocument reads it.
 func (s *Store) CustomerKnowledgeDocuments(
 	ctx context.Context, customerID, namespace string,
 ) ([]KnowledgeDocument, error) {
@@ -230,7 +232,7 @@ func (s *Store) CustomerKnowledgeDocuments(
 	}
 
 	var documents []KnowledgeDocument
-	query := s.db.NewSelect().Model(&documents).Where("customer_id = ?", customerID)
+	query := s.db.NewSelect().Model(&documents).ExcludeColumn("text").Where("customer_id = ?", customerID)
 	if namespace != "" {
 		query = query.Where("namespace = ?", namespace)
 	}
