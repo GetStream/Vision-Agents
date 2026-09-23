@@ -86,6 +86,22 @@ func (s *OpenAIIntegrationSuite) TestAnswersAndReportsWhatItCost() {
 	s.Positive(deltas, "the answer should stream rather than arrive in one lump")
 }
 
+func (s *OpenAIIntegrationSuite) TestEveryGPT6ModelAnswersAtItsDefaultEffort() {
+	for _, model := range []string{"gpt-6-luna", "gpt-6-sol", "gpt-6-astra"} {
+		s.Run(model, func() {
+			provider := s.start(Options{Model: model})
+
+			complete, _ := s.ask(provider, llm.ResponseParams{
+				Instructions: "Answer with a single word and no punctuation.",
+				Input:        []llm.Message{{Role: llm.User, Content: "What is the capital of France?"}},
+			})
+
+			s.Contains(strings.ToLower(complete.OutputText), "paris")
+			s.Equal(llm.StatusCompleted, complete.Status)
+		})
+	}
+}
+
 func (s *OpenAIIntegrationSuite) TestConversationHistoryIsHonoured() {
 	provider := s.start(Options{})
 

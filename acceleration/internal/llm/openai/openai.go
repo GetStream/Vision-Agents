@@ -52,8 +52,27 @@ const cacheTTL = 30 * time.Minute
 //
 // The 5.6 family is the first to take max, and the first where reasoning and tools can be
 // asked for together. Anything older is offered the smaller set it answers to, which is
-// the whole reason this is a table rather than one list.
+// the whole reason this is a table rather than one list. GPT-6 keeps the 5.6 ladder, except
+// Astra, which answers none with a 400, so the least thinking it can be asked for is low.
 var modelCapabilities = map[string]llm.Capabilities{
+	"gpt-6": {
+		ReasoningEfforts: []string{"none", "low", "medium", "high", "xhigh", "max"},
+		DefaultEffort:    "none",
+		Verbosities:      []string{"low", "medium", "high"},
+		Store:            true,
+		Conversations:    true,
+		PromptCacheKey:   true,
+		CacheTTLs:        []time.Duration{cacheTTL},
+	},
+	"gpt-6-astra": {
+		ReasoningEfforts: []string{"low", "medium", "high", "xhigh", "max"},
+		DefaultEffort:    "low",
+		Verbosities:      []string{"low", "medium", "high"},
+		Store:            true,
+		Conversations:    true,
+		PromptCacheKey:   true,
+		CacheTTLs:        []time.Duration{cacheTTL},
+	},
 	"gpt-5.6": {
 		ReasoningEfforts: []string{"none", "low", "medium", "high", "xhigh", "max"},
 		DefaultEffort:    "none",

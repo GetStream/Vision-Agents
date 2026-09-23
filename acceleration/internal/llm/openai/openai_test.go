@@ -74,6 +74,28 @@ func (s *OpenAISuite) TestAModelIsRecognisedByItsFamily() {
 func (s *OpenAISuite) TestAModelAcceptsImages() {
 	s.Contains(capabilitiesFor("gpt-5.6-luna").InputModalities, "image")
 	s.Contains(capabilitiesFor("gpt-5.5-chat").InputModalities, "image")
+	s.Contains(capabilitiesFor("gpt-6-luna").InputModalities, "image")
+	s.Contains(capabilitiesFor("gpt-6-astra").InputModalities, "image")
+}
+
+func (s *OpenAISuite) TestGPT6LunaAndSolCanBeToldNotToThink() {
+	for _, model := range []string{"gpt-6-luna", "gpt-6-sol"} {
+		provider, err := New(Options{APIKey: "k", Model: model})
+		s.Require().NoError(err)
+
+		s.Equal("none", provider.Capabilities().DefaultEffort, model)
+		s.Contains(provider.Capabilities().ReasoningEfforts, "max", model)
+	}
+}
+
+func (s *OpenAISuite) TestGPT6AstraCannotBeToldNotToThink() {
+	_, err := New(Options{APIKey: "k", Model: "gpt-6-astra", ReasoningEffort: "none"})
+	s.ErrorContains(err, "low, medium, high, xhigh, max")
+
+	provider, err := New(Options{APIKey: "k", Model: "gpt-6-astra"})
+	s.Require().NoError(err)
+	s.Equal("low", provider.Capabilities().DefaultEffort,
+		"a request naming no effort must not be sent the none Astra rejects")
 }
 
 func (s *OpenAISuite) TestAnImagePartIsSentAsInputImage() {
