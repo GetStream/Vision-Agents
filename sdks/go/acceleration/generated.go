@@ -722,6 +722,27 @@ func (e SearchOptionsContents) Valid() bool {
 	}
 }
 
+// Defines values for SessionMode.
+const (
+	SessionModeCascade SessionMode = "cascade"
+	SessionModeNative  SessionMode = "native"
+	SessionModeText    SessionMode = "text"
+)
+
+// Valid indicates whether the value is a known member of the SessionMode enum.
+func (e SessionMode) Valid() bool {
+	switch e {
+	case SessionModeCascade:
+		return true
+	case SessionModeNative:
+		return true
+	case SessionModeText:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionRespondCommandType.
 const (
 	Respond SessionRespondCommandType = "respond"
@@ -731,6 +752,54 @@ const (
 func (e SessionRespondCommandType) Valid() bool {
 	switch e {
 	case Respond:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionSettingsRequestThinking.
+const (
+	SessionSettingsRequestThinkingHigh    SessionSettingsRequestThinking = "high"
+	SessionSettingsRequestThinkingLow     SessionSettingsRequestThinking = "low"
+	SessionSettingsRequestThinkingMedium  SessionSettingsRequestThinking = "medium"
+	SessionSettingsRequestThinkingMinimal SessionSettingsRequestThinking = "minimal"
+	SessionSettingsRequestThinkingNone    SessionSettingsRequestThinking = "none"
+)
+
+// Valid indicates whether the value is a known member of the SessionSettingsRequestThinking enum.
+func (e SessionSettingsRequestThinking) Valid() bool {
+	switch e {
+	case SessionSettingsRequestThinkingHigh:
+		return true
+	case SessionSettingsRequestThinkingLow:
+		return true
+	case SessionSettingsRequestThinkingMedium:
+		return true
+	case SessionSettingsRequestThinkingMinimal:
+		return true
+	case SessionSettingsRequestThinkingNone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionSettingsRequestVerbosity.
+const (
+	SessionSettingsRequestVerbosityHigh   SessionSettingsRequestVerbosity = "high"
+	SessionSettingsRequestVerbosityLow    SessionSettingsRequestVerbosity = "low"
+	SessionSettingsRequestVerbosityMedium SessionSettingsRequestVerbosity = "medium"
+)
+
+// Valid indicates whether the value is a known member of the SessionSettingsRequestVerbosity enum.
+func (e SessionSettingsRequestVerbosity) Valid() bool {
+	switch e {
+	case SessionSettingsRequestVerbosityHigh:
+		return true
+	case SessionSettingsRequestVerbosityLow:
+		return true
+	case SessionSettingsRequestVerbosityMedium:
 		return true
 	default:
 		return false
@@ -1410,8 +1479,11 @@ type Call struct {
 	Llm *string `json:"llm,omitempty"`
 
 	// LlmUsed The provider/model that held the conversation.
-	LlmUsed     *string `json:"llm_used,omitempty"`
-	ReviewNotes *string `json:"review_notes,omitempty"`
+	LlmUsed *string `json:"llm_used,omitempty"`
+
+	// Mode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
+	Mode        *SessionMode `json:"mode,omitempty"`
+	ReviewNotes *string      `json:"review_notes,omitempty"`
 
 	// ReviewScore How well the agent handled it, from 1 to 5.
 	ReviewScore *int `json:"review_score,omitempty"`
@@ -1448,6 +1520,18 @@ type Call struct {
 
 	// TtsUsed The provider/model that spoke, on the same terms as stt_used.
 	TtsUsed *string `json:"tts_used,omitempty"`
+
+	// Usage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
+	Usage *CallUsage `json:"usage,omitempty"`
+
+	// UserId Who the agent spoke to, as the client's own token named them. Empty for a call the customer's backend opened, and for telephony, where the number is the name.
+	UserId *string `json:"user_id,omitempty"`
+
+	// Voice The voice the call asked for, in the provider's own terms. Empty means the provider's default.
+	Voice *string `json:"voice,omitempty"`
+
+	// VoiceUsed The voice that spoke, which is the provider's default when none was asked for. Known only while the call is running.
+	VoiceUsed *string `json:"voice_used,omitempty"`
 }
 
 // CallDirection defines model for Call.Direction.
@@ -1497,6 +1581,24 @@ type CallTokenRequest struct {
 
 	// UserName The name the other participants see. Defaults to the user id.
 	UserName *string `json:"user_name,omitempty"`
+}
+
+// CallUsage What the call spent, summed over every request it made. Counted once the call is over, so it is absent while one is still running. Requests that failed are included: a model that read the prompt and then fell over is still billed for it.
+type CallUsage struct {
+	// CachedInputTokens The part of those prompts a provider served from its own cache.
+	CachedInputTokens int64 `json:"cached_input_tokens"`
+
+	// CostMicros Millionths of a dollar, priced from the providers' configured rates.
+	CostMicros int64 `json:"cost_micros"`
+
+	// InputTokens Every prompt the models read, the cached part included.
+	InputTokens int64 `json:"input_tokens"`
+
+	// OutputTokens Everything the models generated, reasoning included.
+	OutputTokens int64 `json:"output_tokens"`
+
+	// Requests How many calls to a model it took, transcription and speech included.
+	Requests int64 `json:"requests"`
 }
 
 // Campaign defines model for Campaign.
@@ -1874,6 +1976,9 @@ type IndexedKnowledgeDocument struct {
 	// Example: pricing.md
 	Source string `json:"source"`
 
+	// Text The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+	Text *string `json:"text,omitempty"`
+
 	// UpdatedAt When it was last written.
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -1984,6 +2089,36 @@ type KnowledgeUrlRequest struct {
 // KnowledgeUrlState Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
 type KnowledgeUrlState string
 
+// LibraryVoice One voice a provider offers. Everything past the name is what that vendor chose to say about it, in its own words, so a field being absent means the vendor did not label it rather than that the voice lacks it.
+type LibraryVoice struct {
+	Accent      *string `json:"accent,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Gender      *string `json:"gender,omitempty"`
+
+	// Id What to put in the voice field, in the provider's own terms.
+	Id       string  `json:"id"`
+	Language *string `json:"language,omitempty"`
+	Name     string  `json:"name"`
+
+	// Own A voice this account made, rather than one from the public library.
+	Own *bool `json:"own,omitempty"`
+
+	// Preview Whether the voice can be heard.
+	Preview  *bool     `json:"preview,omitempty"`
+	Provider string    `json:"provider"`
+	Tags     *[]string `json:"tags,omitempty"`
+}
+
+// LibraryVoices defines model for LibraryVoices.
+type LibraryVoices struct {
+	// Providers The providers that publish a library, sorted by name.
+	Providers []string `json:"providers"`
+
+	// Unavailable Providers whose library could not be read just now.
+	Unavailable *[]string      `json:"unavailable,omitempty"`
+	Voices      []LibraryVoice `json:"voices"`
+}
+
 // LlmOptions How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model answers under belongs to the agent asking, not to the config that decides where the asking goes.
 type LlmOptions struct {
 	// Format Whether the answer is prose or a JSON object.
@@ -1995,6 +2130,12 @@ type LlmOptions struct {
 
 	// PromptCacheKey What a cached prompt prefix is keyed by. Requests sharing a key and a prefix are read from the cache rather than charged in full.
 	PromptCacheKey *string `json:"prompt_cache_key,omitempty"`
+
+	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A response that fails is answered by the next entry that will have it.
+	//
+	//
+	// Example: ["openai/gpt-5-mini","llm-fast"]
+	Providers *[]string `json:"providers,omitempty"`
 
 	// ReasoningEffort How long the model may think before answering, on the models that think.
 	ReasoningEffort *LlmOptionsReasoningEffort `json:"reasoning_effort,omitempty"`
@@ -2383,6 +2524,12 @@ type SearchOptions struct {
 	// OutputSchema A JSON schema the answer must fit, for the providers that can be asked to structure what they found.
 	OutputSchema *map[string]interface{} `json:"output_schema,omitempty"`
 
+	// Providers A priority list of where to try, in the order given, which wins over target and depth when it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it stands. A search that fails is asked of the next entry that will have it.
+	//
+	//
+	// Example: ["exa","search-fast"]
+	Providers *[]string `json:"providers,omitempty"`
+
 	// Results How many hits to return.
 	Results *int `json:"results,omitempty"`
 
@@ -2460,6 +2607,9 @@ type Session struct {
 	// Llm The provider and model answering, once routing has picked one.
 	Llm *string `json:"llm,omitempty"`
 
+	// Mode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
+	Mode *SessionMode `json:"mode,omitempty"`
+
 	// ModelOverwrites What to change about the models for one session, over whatever its agent config decided.
 	// It is one object rather than a dozen fields at the top level because it is one idea: everything here overrides the config, and a caller reading a session back wants to see what they changed in one place rather than diffed against a config they would have to fetch. Only the safe knobs are here. Instructions and tools are not, because a caller able to rewrite those could make a session impersonate a different agent.
 	ModelOverwrites *ModelOverwrites `json:"model_overwrites,omitempty"`
@@ -2488,6 +2638,9 @@ type Session struct {
 	Tts    *string       `json:"tts,omitempty"`
 	UserId string        `json:"user_id"`
 	Video  *SessionVideo `json:"video,omitempty"`
+
+	// Voice The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
+	Voice *string `json:"voice,omitempty"`
 }
 
 // SessionMemory Who the session's memories are about. Without a user id nothing is recalled or stored, which is the case for a call with nobody identified on it.
@@ -2501,6 +2654,9 @@ type SessionMemory struct {
 	// UserId Who the memories belong to. Empty means the customer.
 	UserId *string `json:"user_id,omitempty"`
 }
+
+// SessionMode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
+type SessionMode string
 
 // SessionPhone The number the session acts from, which is what turns transferring on.
 type SessionPhone struct {
@@ -2525,6 +2681,31 @@ type SessionRespondCommand struct {
 
 // SessionRespondCommandType defines model for SessionRespondCommand.Type.
 type SessionRespondCommandType string
+
+// SessionSettingsRequest What to change about one running session's models. A field left out is left as it is. The same safe knobs as ModelOverwrites, plus the voice.
+type SessionSettingsRequest struct {
+	// Llm The conversation model, a provider/model or a capability shortcut.
+	Llm             *string `json:"llm,omitempty"`
+	MaxOutputTokens *int    `json:"max_output_tokens,omitempty"`
+
+	// Sts A speech-to-speech target, which makes the session native. Empty makes it a cascade again.
+	Sts         *string                          `json:"sts,omitempty"`
+	Stt         *string                          `json:"stt,omitempty"`
+	Subagent    *string                          `json:"subagent,omitempty"`
+	Temperature *float64                         `json:"temperature,omitempty"`
+	Thinking    *SessionSettingsRequestThinking  `json:"thinking,omitempty"`
+	Tts         *string                          `json:"tts,omitempty"`
+	Verbosity   *SessionSettingsRequestVerbosity `json:"verbosity,omitempty"`
+
+	// Voice The voice to speak in, in the provider's own terms. Empty returns to the provider's default.
+	Voice *string `json:"voice,omitempty"`
+}
+
+// SessionSettingsRequestThinking defines model for SessionSettingsRequest.Thinking.
+type SessionSettingsRequestThinking string
+
+// SessionSettingsRequestVerbosity defines model for SessionSettingsRequest.Verbosity.
+type SessionSettingsRequestVerbosity string
 
 // SessionSkill A kind of work worth handing to the slower model. There is nothing behind a skill but a better model: what it declares is the instructions that model answers under.
 type SessionSkill struct {
@@ -3125,13 +3306,25 @@ type TimelineEntry struct {
 	// Interrupted Whether the caller talked over the answer.
 	Interrupted *bool `json:"interrupted,omitempty"`
 
+	// LlmTtftMs The wait between asking the model and its first token.
+	LlmTtftMs *float64 `json:"llm_ttft_ms,omitempty"`
+
 	// RoundtripMs How long the caller waited between finishing and being answered.
 	RoundtripMs *float64 `json:"roundtrip_ms,omitempty"`
 
 	// Said What the agent answered.
-	Said      *string   `json:"said,omitempty"`
-	StartedAt time.Time `json:"started_at"`
-	TurnId    string    `json:"turn_id"`
+	Said *string `json:"said,omitempty"`
+
+	// SpeechEndToAudioMs Voice in to voice out, which is the whole of what the caller felt.
+	SpeechEndToAudioMs *float64  `json:"speech_end_to_audio_ms,omitempty"`
+	StartedAt          time.Time `json:"started_at"`
+
+	// SttLatencyMs The provider's decode time for the transcript that settled the turn.
+	SttLatencyMs *float64 `json:"stt_latency_ms,omitempty"`
+
+	// TtsTtfbMs The wait between sending the first sentence and the first audio.
+	TtsTtfbMs *float64 `json:"tts_ttfb_ms,omitempty"`
+	TurnId    string   `json:"turn_id"`
 }
 
 // ToolResultCommand defines model for ToolResultCommand.
@@ -3162,7 +3355,12 @@ type TranscriptFormat string
 
 // TranscriptMessage defines model for TranscriptMessage.
 type TranscriptMessage struct {
+	// Agent Whether the agent said it rather than somebody it was talking to. It is what the line was stored as, so it holds however the agent was named.
+	Agent     *bool     `json:"agent,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+
+	// Name That speaker's display name, when they have one.
+	Name *string `json:"name,omitempty"`
 
 	// Speaker Who said it, the agent under its own user id.
 	Speaker string `json:"speaker"`
@@ -3686,6 +3884,12 @@ type ListSkillsParams struct {
 	ConfigId *string `form:"config_id,omitempty" json:"config_id,omitempty"`
 }
 
+// ListLibraryVoicesParams defines parameters for ListLibraryVoices.
+type ListLibraryVoicesParams struct {
+	// Provider Only this provider's voices.
+	Provider *string `form:"provider,omitempty" json:"provider,omitempty"`
+}
+
 // ListPhoneNumbersParams defines parameters for ListPhoneNumbers.
 type ListPhoneNumbersParams struct {
 	// IncludeReleased Include numbers that have been given back. A released number keeps its row, because what it cost while it was held is still part of that month's bill.
@@ -3857,6 +4061,9 @@ type CreateResponseJSONRequestBody = CreateResponseRequest
 
 // SaySessionJSONRequestBody defines body for SaySession for application/json ContentType.
 type SaySessionJSONRequestBody = SayRequest
+
+// SetSessionSettingsJSONRequestBody defines body for SetSessionSettings for application/json ContentType.
+type SetSessionSettingsJSONRequestBody = SessionSettingsRequest
 
 // CreateSimulationJSONRequestBody defines body for CreateSimulation for application/json ContentType.
 type CreateSimulationJSONRequestBody = SimulationRequest
@@ -4451,6 +4658,13 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/agents/knowledge/documents/{id} (the `DeleteKnowledgeDocument` operationId).
 	DeleteKnowledgeDocument(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetKnowledgeDocument One document, with the text it was posted as
+	//
+	// What to start from when editing it: post it again under the same source to replace it. A document written before its text was kept comes back without one.
+	//
+	// Corresponds with GET /v1/agents/knowledge/documents/{id} (the `GetKnowledgeDocument` operationId).
+	GetKnowledgeDocument(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListKnowledgeDocumentPassages What a document was cut into, in order
 	//
 	// The passages as the agent finds them, which is what shows what a lookup can answer out of this document.
@@ -4726,6 +4940,26 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/sessions/{id}/say (the `SaySession` operationId).
 	SaySession(ctx context.Context, id SessionID, body SaySessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// SetSessionSettingsWithBody Change the models and voice of one running session
+	//
+	// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+	SetSessionSettingsWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSessionSettings Change the models and voice of one running session
+	//
+	// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+	SetSessionSettings(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListSimulationRuns What the simulations have come to, newest first
 	//
 	// Without a simulation named this is the log of everything that has been run lately, which is the same question as what one simulation has come to, asked of all of them.
@@ -4915,6 +5149,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
 	CreateVoice(ctx context.Context, body CreateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListLibraryVoices The voices the speech providers offer
+	//
+	// The catalogue each provider publishes, so a voice can be picked by name rather than by pasting an id. Only providers this deployment holds a key for and that publish a library appear; for the others a voice is still whatever the vendor's own terms call one, and has to be typed. A provider that cannot be reached is reported in `unavailable` rather than emptying the list.
+	//
+	// Corresponds with GET /v1/agents/voices/library (the `ListLibraryVoices` operationId).
+	ListLibraryVoices(ctx context.Context, params *ListLibraryVoicesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PreviewLibraryVoice Hear a voice from a provider's library
+	//
+	// The sample the vendor already published, fetched through the router because two of them want the deployment's key to hand it over. Nothing is synthesised, so browsing a library spends no credits.
+	//
+	// Corresponds with GET /v1/agents/voices/library/{provider}/{voice}/preview (the `PreviewLibraryVoice` operationId).
+	PreviewLibraryVoice(ctx context.Context, provider string, voice string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListVoiceProviders The providers a voice can be prepared with
 	//
@@ -6064,6 +6312,23 @@ func (c *Client) DeleteKnowledgeDocument(ctx context.Context, id ResourceID, req
 	return c.Client.Do(req)
 }
 
+// GetKnowledgeDocument One document, with the text it was posted as
+//
+// What to start from when editing it: post it again under the same source to replace it. A document written before its text was kept comes back without one.
+//
+// Corresponds with GET /v1/agents/knowledge/documents/{id} (the `GetKnowledgeDocument` operationId).
+func (c *Client) GetKnowledgeDocument(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetKnowledgeDocumentRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListKnowledgeDocumentPassages What a document was cut into, in order
 //
 // The passages as the agent finds them, which is what shows what a lookup can answer out of this document.
@@ -6679,6 +6944,46 @@ func (c *Client) SaySession(ctx context.Context, id SessionID, body SaySessionJS
 	return c.Client.Do(req)
 }
 
+// SetSessionSettingsWithBody Change the models and voice of one running session
+//
+// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+func (c *Client) SetSessionSettingsWithBody(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSessionSettingsRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSessionSettings Change the models and voice of one running session
+//
+// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+func (c *Client) SetSessionSettings(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSessionSettingsRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListSimulationRuns What the simulations have come to, newest first
 //
 // Without a simulation named this is the log of everything that has been run lately, which is the same question as what one simulation has come to, asked of all of them.
@@ -7089,6 +7394,40 @@ func (c *Client) CreateVoiceWithBody(ctx context.Context, contentType string, bo
 // Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
 func (c *Client) CreateVoice(ctx context.Context, body CreateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateVoiceRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListLibraryVoices The voices the speech providers offer
+//
+// The catalogue each provider publishes, so a voice can be picked by name rather than by pasting an id. Only providers this deployment holds a key for and that publish a library appear; for the others a voice is still whatever the vendor's own terms call one, and has to be typed. A provider that cannot be reached is reported in `unavailable` rather than emptying the list.
+//
+// Corresponds with GET /v1/agents/voices/library (the `ListLibraryVoices` operationId).
+func (c *Client) ListLibraryVoices(ctx context.Context, params *ListLibraryVoicesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListLibraryVoicesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PreviewLibraryVoice Hear a voice from a provider's library
+//
+// The sample the vendor already published, fetched through the router because two of them want the deployment's key to hand it over. Nothing is synthesised, so browsing a library spends no credits.
+//
+// Corresponds with GET /v1/agents/voices/library/{provider}/{voice}/preview (the `PreviewLibraryVoice` operationId).
+func (c *Client) PreviewLibraryVoice(ctx context.Context, provider string, voice string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPreviewLibraryVoiceRequest(c.Server, provider, voice)
 	if err != nil {
 		return nil, err
 	}
@@ -9344,6 +9683,40 @@ func NewDeleteKnowledgeDocumentRequest(server string, id ResourceID) (*http.Requ
 	return req, nil
 }
 
+// NewGetKnowledgeDocumentRequest constructs an http.Request for the GetKnowledgeDocument method
+func NewGetKnowledgeDocumentRequest(server string, id ResourceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge/documents/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListKnowledgeDocumentPassagesRequest constructs an http.Request for the ListKnowledgeDocumentPassages method
 func NewListKnowledgeDocumentPassagesRequest(server string, id ResourceID) (*http.Request, error) {
 	var err error
@@ -11054,6 +11427,53 @@ func NewSaySessionRequestWithBody(server string, id SessionID, contentType strin
 	return req, nil
 }
 
+// NewSetSessionSettingsRequest calls the generic SetSessionSettings builder with application/json body
+func NewSetSessionSettingsRequest(server string, id SessionID, body SetSessionSettingsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetSessionSettingsRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewSetSessionSettingsRequestWithBody constructs an http.Request for the SetSessionSettings method, with any body, and a specified content type
+func NewSetSessionSettingsRequestWithBody(server string, id SessionID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/sessions/%s/settings", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListSimulationRunsRequest constructs an http.Request for the ListSimulationRuns method
 func NewListSimulationRunsRequest(server string, params *ListSimulationRunsParams) (*http.Request, error) {
 	var err error
@@ -11728,6 +12148,101 @@ func NewCreateVoiceRequestWithBody(server string, contentType string, body io.Re
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListLibraryVoicesRequest constructs an http.Request for the ListLibraryVoices method
+func NewListLibraryVoicesRequest(server string, params *ListLibraryVoicesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/voices/library")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Provider != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "provider", *params.Provider, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPreviewLibraryVoiceRequest constructs an http.Request for the PreviewLibraryVoice method
+func NewPreviewLibraryVoiceRequest(server string, provider string, voice string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "provider", provider, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "voice", voice, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/voices/library/%s/%s/preview", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -13966,6 +14481,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/agents/knowledge/documents/{id} (the `DeleteKnowledgeDocument` operationId).
 	DeleteKnowledgeDocumentWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*DeleteKnowledgeDocumentResponse, error)
 
+	// GetKnowledgeDocumentWithResponse One document, with the text it was posted as
+	//
+	// What to start from when editing it: post it again under the same source to replace it. A document written before its text was kept comes back without one.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/knowledge/documents/{id} (the `GetKnowledgeDocument` operationId).
+	GetKnowledgeDocumentWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetKnowledgeDocumentResponse, error)
+
 	// ListKnowledgeDocumentPassagesWithResponse What a document was cut into, in order
 	//
 	// The passages as the agent finds them, which is what shows what a lookup can answer out of this document.
@@ -14281,6 +14805,26 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/sessions/{id}/say (the `SaySession` operationId).
 	SaySessionWithResponse(ctx context.Context, id SessionID, body SaySessionJSONRequestBody, reqEditors ...RequestEditorFn) (*SaySessionResponse, error)
 
+	// SetSessionSettingsWithBodyWithResponse Change the models and voice of one running session
+	//
+	// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+	SetSessionSettingsWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error)
+
+	// SetSessionSettingsWithResponse Change the models and voice of one running session
+	//
+	// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+	// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+	SetSessionSettingsWithResponse(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error)
+
 	// ListSimulationRunsWithResponse What the simulations have come to, newest first
 	//
 	// Without a simulation named this is the log of everything that has been run lately, which is the same question as what one simulation has come to, asked of all of them.
@@ -14492,6 +15036,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/voices (the `CreateVoice` operationId).
 	CreateVoiceWithResponse(ctx context.Context, body CreateVoiceJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVoiceResponse, error)
+
+	// ListLibraryVoicesWithResponse The voices the speech providers offer
+	//
+	// The catalogue each provider publishes, so a voice can be picked by name rather than by pasting an id. Only providers this deployment holds a key for and that publish a library appear; for the others a voice is still whatever the vendor's own terms call one, and has to be typed. A provider that cannot be reached is reported in `unavailable` rather than emptying the list.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/voices/library (the `ListLibraryVoices` operationId).
+	ListLibraryVoicesWithResponse(ctx context.Context, params *ListLibraryVoicesParams, reqEditors ...RequestEditorFn) (*ListLibraryVoicesResponse, error)
+
+	// PreviewLibraryVoiceWithResponse Hear a voice from a provider's library
+	//
+	// The sample the vendor already published, fetched through the router because two of them want the deployment's key to hand it over. Nothing is synthesised, so browsing a library spends no credits.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/voices/library/{provider}/{voice}/preview (the `PreviewLibraryVoice` operationId).
+	PreviewLibraryVoiceWithResponse(ctx context.Context, provider string, voice string, reqEditors ...RequestEditorFn) (*PreviewLibraryVoiceResponse, error)
 
 	// ListVoiceProvidersWithResponse The providers a voice can be prepared with
 	//
@@ -16895,6 +17457,75 @@ func (r DeleteKnowledgeDocumentResponse) ContentType() string {
 	return ""
 }
 
+type GetKnowledgeDocumentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *IndexedKnowledgeDocument
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetKnowledgeDocumentResponse) GetJSON200() *IndexedKnowledgeDocument {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetKnowledgeDocumentResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetKnowledgeDocumentResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetKnowledgeDocumentResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetKnowledgeDocumentResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r GetKnowledgeDocumentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetKnowledgeDocumentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetKnowledgeDocumentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetKnowledgeDocumentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListKnowledgeDocumentPassagesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -18562,6 +19193,75 @@ func (r SaySessionResponse) ContentType() string {
 	return ""
 }
 
+type SetSessionSettingsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetSessionSettingsResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r SetSessionSettingsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r SetSessionSettingsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r SetSessionSettingsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r SetSessionSettingsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r SetSessionSettingsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetSessionSettingsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetSessionSettingsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetSessionSettingsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListSimulationRunsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -19659,6 +20359,137 @@ func (r CreateVoiceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateVoiceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListLibraryVoicesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *LibraryVoices
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListLibraryVoicesResponse) GetJSON200() *LibraryVoices {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ListLibraryVoicesResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListLibraryVoicesResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListLibraryVoicesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetBody returns the raw response body bytes
+func (r ListLibraryVoicesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListLibraryVoicesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListLibraryVoicesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListLibraryVoicesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PreviewLibraryVoiceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *VoicePreview
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PreviewLibraryVoiceResponse) GetJSON200() *VoicePreview {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PreviewLibraryVoiceResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PreviewLibraryVoiceResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PreviewLibraryVoiceResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PreviewLibraryVoiceResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetBody returns the raw response body bytes
+func (r PreviewLibraryVoiceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PreviewLibraryVoiceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PreviewLibraryVoiceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PreviewLibraryVoiceResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -22628,6 +23459,21 @@ func (c *ClientWithResponses) DeleteKnowledgeDocumentWithResponse(ctx context.Co
 	return ParseDeleteKnowledgeDocumentResponse(rsp)
 }
 
+// GetKnowledgeDocumentWithResponse One document, with the text it was posted as
+//
+// What to start from when editing it: post it again under the same source to replace it. A document written before its text was kept comes back without one.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/knowledge/documents/{id} (the `GetKnowledgeDocument` operationId).
+func (c *ClientWithResponses) GetKnowledgeDocumentWithResponse(ctx context.Context, id ResourceID, reqEditors ...RequestEditorFn) (*GetKnowledgeDocumentResponse, error) {
+	rsp, err := c.GetKnowledgeDocument(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetKnowledgeDocumentResponse(rsp)
+}
+
 // ListKnowledgeDocumentPassagesWithResponse What a document was cut into, in order
 //
 // The passages as the agent finds them, which is what shows what a lookup can answer out of this document.
@@ -23147,6 +23993,38 @@ func (c *ClientWithResponses) SaySessionWithResponse(ctx context.Context, id Ses
 	return ParseSaySessionResponse(rsp)
 }
 
+// SetSessionSettingsWithBodyWithResponse Change the models and voice of one running session
+//
+// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+func (c *ClientWithResponses) SetSessionSettingsWithBodyWithResponse(ctx context.Context, id SessionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error) {
+	rsp, err := c.SetSessionSettingsWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSessionSettingsResponse(rsp)
+}
+
+// SetSessionSettingsWithResponse Change the models and voice of one running session
+//
+// Swaps what the agent runs on without leaving the call, for this session only: the agent config it started from is untouched. The new models are opened before anything changes, so a target that does not route is refused and the agent carries on as it was. They take over from the next turn; a reply being spoken finishes on the models it started with.
+// Naming sts makes the session native, and an empty sts makes it a cascade again, on whatever llm, stt and tts it names or had before. The conversation carries across: a conversation model is handed the history on every turn, and a speech-to-speech model is opened with the recent transcript in its instructions.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/sessions/{id}/settings (the `SetSessionSettings` operationId).
+func (c *ClientWithResponses) SetSessionSettingsWithResponse(ctx context.Context, id SessionID, body SetSessionSettingsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSessionSettingsResponse, error) {
+	rsp, err := c.SetSessionSettings(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSessionSettingsResponse(rsp)
+}
+
 // ListSimulationRunsWithResponse What the simulations have come to, newest first
 //
 // Without a simulation named this is the log of everything that has been run lately, which is the same question as what one simulation has come to, asked of all of them.
@@ -23495,6 +24373,36 @@ func (c *ClientWithResponses) CreateVoiceWithResponse(ctx context.Context, body 
 		return nil, err
 	}
 	return ParseCreateVoiceResponse(rsp)
+}
+
+// ListLibraryVoicesWithResponse The voices the speech providers offer
+//
+// The catalogue each provider publishes, so a voice can be picked by name rather than by pasting an id. Only providers this deployment holds a key for and that publish a library appear; for the others a voice is still whatever the vendor's own terms call one, and has to be typed. A provider that cannot be reached is reported in `unavailable` rather than emptying the list.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/voices/library (the `ListLibraryVoices` operationId).
+func (c *ClientWithResponses) ListLibraryVoicesWithResponse(ctx context.Context, params *ListLibraryVoicesParams, reqEditors ...RequestEditorFn) (*ListLibraryVoicesResponse, error) {
+	rsp, err := c.ListLibraryVoices(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListLibraryVoicesResponse(rsp)
+}
+
+// PreviewLibraryVoiceWithResponse Hear a voice from a provider's library
+//
+// The sample the vendor already published, fetched through the router because two of them want the deployment's key to hand it over. Nothing is synthesised, so browsing a library spends no credits.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/voices/library/{provider}/{voice}/preview (the `PreviewLibraryVoice` operationId).
+func (c *ClientWithResponses) PreviewLibraryVoiceWithResponse(ctx context.Context, provider string, voice string, reqEditors ...RequestEditorFn) (*PreviewLibraryVoiceResponse, error) {
+	rsp, err := c.PreviewLibraryVoice(ctx, provider, voice, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePreviewLibraryVoiceResponse(rsp)
 }
 
 // ListVoiceProvidersWithResponse The providers a voice can be prepared with
@@ -25766,6 +26674,60 @@ func ParseDeleteKnowledgeDocumentResponse(rsp *http.Response) (*DeleteKnowledgeD
 	return response, nil
 }
 
+// ParseGetKnowledgeDocumentResponse parses an HTTP response from a GetKnowledgeDocumentWithResponse call
+func ParseGetKnowledgeDocumentResponse(rsp *http.Response) (*GetKnowledgeDocumentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetKnowledgeDocumentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IndexedKnowledgeDocument
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListKnowledgeDocumentPassagesResponse parses an HTTP response from a ListKnowledgeDocumentPassagesWithResponse call
 func ParseListKnowledgeDocumentPassagesResponse(rsp *http.Response) (*ListKnowledgeDocumentPassagesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -27043,6 +28005,60 @@ func ParseSaySessionResponse(rsp *http.Response) (*SaySessionResponse, error) {
 	return response, nil
 }
 
+// ParseSetSessionSettingsResponse parses an HTTP response from a SetSessionSettingsWithResponse call
+func ParseSetSessionSettingsResponse(rsp *http.Response) (*SetSessionSettingsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetSessionSettingsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListSimulationRunsResponse parses an HTTP response from a ListSimulationRunsWithResponse call
 func ParseListSimulationRunsResponse(rsp *http.Response) (*ListSimulationRunsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -27891,6 +28907,107 @@ func ParseCreateVoiceResponse(rsp *http.Response) (*CreateVoiceResponse, error) 
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListLibraryVoicesResponse parses an HTTP response from a ListLibraryVoicesWithResponse call
+func ParseListLibraryVoicesResponse(rsp *http.Response) (*ListLibraryVoicesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListLibraryVoicesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest LibraryVoices
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePreviewLibraryVoiceResponse parses an HTTP response from a PreviewLibraryVoiceWithResponse call
+func ParsePreviewLibraryVoiceResponse(rsp *http.Response) (*PreviewLibraryVoiceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PreviewLibraryVoiceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest VoicePreview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	}
 
