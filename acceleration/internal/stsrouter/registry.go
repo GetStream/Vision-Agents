@@ -4,6 +4,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/gemini"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/openailive"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/openairealtime"
 )
 
@@ -16,8 +17,26 @@ func DefaultRegistry() *Registry {
 	registry := NewRegistry()
 
 	// Three vendors, one package: xAI and Alibaba speak OpenAI's events, and differ from
-	// it only in how a session is configured, which the vendor value says.
-	registry.Register(openairealtime.OpenAI.Provider, realtime(openairealtime.OpenAI))
+	// it only in how a session is configured, which the vendor value says. OpenAI's Live
+	// models are the exception: same vendor, different API, so the model says which.
+	openaiRealtime := realtime(openairealtime.OpenAI)
+	registry.Register(openairealtime.OpenAI.Provider, func(spec routing.Spec) (sts.STS, error) {
+		if !openailive.Serves(spec.Model) {
+			return openaiRealtime(spec)
+		}
+		settings := liveSettings{}
+		if err := spec.Settings(&settings); err != nil {
+			return nil, err
+		}
+		return openailive.New(openailive.Options{
+			Model:        spec.Model,
+			Voice:        spec.Voice,
+			Instructions: spec.STS.Instructions,
+			Tools:        spec.Tools,
+			Backend:      settings.BackendModel,
+			Logger:       spec.Logger,
+		})
+	})
 	registry.Register(openairealtime.XAI.Provider, realtime(openairealtime.XAI))
 	registry.Register(openairealtime.Qwen.Provider, realtime(openairealtime.Qwen))
 
@@ -80,6 +99,9 @@ func realtime(vendor openairealtime.Vendor) routing.Factory[sts.STS] {
 func capabilitiesFor(provider, model string) (sts.Capabilities, bool) {
 	switch provider {
 	case openairealtime.OpenAI.Provider:
+		if openailive.Serves(model) {
+			return openailive.CapabilitiesFor(model), true
+		}
 		return openairealtime.CapabilitiesFor(openairealtime.OpenAI, model), true
 	case openairealtime.XAI.Provider:
 		return openairealtime.CapabilitiesFor(openairealtime.XAI, model), true
@@ -102,6 +124,12 @@ type realtimeSettings struct {
 	Threshold          *float64 `json:"threshold"`
 	Eagerness          string   `json:"eagerness"`
 	TranscriptionModel string   `json:"transcription_model"`
+}
+
+// liveSettings are what a caller can reach at OpenAI's Live models through overwrites: the
+// Responses model that reasoning and tools are delegated to, which is billed on its own.
+type liveSettings struct {
+	BackendModel string `json:"backend_model"`
 }
 
 // geminiSettings are what a caller can reach at Google through overwrites: the detector's
