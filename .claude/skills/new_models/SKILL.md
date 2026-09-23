@@ -24,10 +24,18 @@ go run ./cmd/xsearch -days 45 -handles OpenAI,OpenAIDevs,AnthropicAI,GoogleDeepM
 
 A call takes a minute or two. Run the batches in parallel, one per shell:
 
-- Labs: `OpenAI, OpenAIDevs, AnthropicAI, GoogleDeepMind, GoogleAI, xai, AIatMeta, nvidia, NVIDIAAIDev, MSFTResearch, Microsoft`
-- Voice: `elevenlabsio, DeepgramAI, inworld_ai, cartesia_ai, AssemblyAI`
-- Scoreboard: `ArtificialAnlys` on its own, which is where a launch gets ranked rather than
-  announced
+- `OpenAI, OpenAIDevs`
+- `AnthropicAI, claudeai`
+- `GoogleDeepMind, GoogleAI`
+- `xai, AIatMeta, nvidia, NVIDIAAIDev, MSFTResearch`
+- `elevenlabsio, DeepgramAI, inworld_ai, cartesia_ai, AssemblyAI`
+- `ArtificialAnlys` on its own, which is where a launch gets ranked rather than announced
+
+Keep the batches small. The tool takes twenty handles, but Grok summarises what it read, and
+one answer covering eleven accounts silently drops whole vendors — a run with `AnthropicAI` in
+a batch of eleven returned no Claude models at all, while the same handles on their own
+returned three. One vendor family per batch is the rule; the fourth batch above is the tail
+that rarely ships voice or frontier models in the same week.
 
 Write the query so it stands alone. The tool passes the handles separately, so a question
 saying "these accounts" makes Grok complain there are none. Widen `-days` when a batch
@@ -62,7 +70,16 @@ A model already listed is done. A model that is plainly the next version of one 
 still worth reporting, as an upgrade rather than a new integration — say which entry it
 replaces.
 
+Routing a vendor and having code for it are different questions. Check
+`internal/{llm,tts,stt,sts}/<vendor>` too: a vendor with a package but no `router.yaml` entry
+is the cheapest thing on the list, because the client already exists and the work is config.
+Anthropic was in exactly that state — `internal/llm/anthropic` with nothing routed to it.
+
 ## 4. Report
+
+Report every model that clears the bar, ordered by how much it would improve what we route.
+Do not let a model you went looking for crowd out one you did not: the best candidate in a
+run is often the one nobody mentioned.
 
 One block per model, nothing else:
 
