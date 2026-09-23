@@ -621,6 +621,14 @@ before streaming, retaining its conversation input, tools and cost tags. Cancell
 HTTP 400 rejections, partial output and provider-held continuation IDs are not replayed.
 Text sessions no longer acquire an implicit subagent when none was requested.
 
+### Claude Opus 5.5 in the built-in LLM config
+
+`anthropic/claude-opus-5-5` is now in the default `router.yaml` (#661), in the high-quality
+tier with image input, so the Anthropic provider is reachable without a config of your own.
+It is a failover candidate on the quality shortcuts and is not preferred by any of them. The
+provider now accepts images, and still refuses a `reasoning_effort` because Anthropic's
+OpenAI-compatible endpoint ignores it.
+
 ### Organization-scoped support memory
 
 Support conversations use the existing session memory identity to recall facts across
