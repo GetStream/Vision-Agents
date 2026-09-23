@@ -244,7 +244,7 @@ func (s *ElevenLabsSuite) TestCloseIsIdempotentAndClosesEvents() {
 func (s *ElevenLabsSuite) TestAnUtteranceOpensAContextStreamsTextAndCloses() {
 	fake := newFakeElevenLabs()
 	defer fake.close()
-	provider, conn := s.connect(fake, Options{VoiceID: "v1"})
+	provider, conn := s.connect(fake, Options{VoiceID: "v1", Speed: 0.9})
 	defer provider.Close()
 
 	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "hello"}))
@@ -254,6 +254,8 @@ func (s *ElevenLabsSuite) TestAnUtteranceOpensAContextStreamsTextAndCloses() {
 
 	s.Equal(" ", messages[0].Text, "the context is opened with a space")
 	s.Equal("u1", messages[0].ContextID)
+	s.Require().NotNil(messages[0].VoiceSettings)
+	s.Equal(0.9, messages[0].VoiceSettings.Speed)
 	s.Require().NotNil(messages[0].Generation, "the first chunk threshold should be tuned down")
 
 	s.Equal("hello ", messages[1].Text, "deltas need a trailing space to stay separate words")
@@ -436,4 +438,16 @@ func (s *ElevenLabsSuite) TestALostConnectionSettlesWhatWasInFlight() {
 
 func (s *ElevenLabsSuite) TestSatisfiesTTSInterface() {
 	var _ tts.TTS = s.newTTS(Options{})
+}
+
+func (s *ElevenLabsSuite) TestConfiguredSpeed() {
+	s.T().Setenv("ELEVENLABS_SPEED", "0.9")
+	o, _, err := normalize(Options{APIKey: "test"}, DefaultModel)
+	s.Require().NoError(err)
+	s.Equal(0.9, o.Speed)
+	for _, raw := range []string{"NaN", "fast", "0.2", "2"} {
+		s.T().Setenv("ELEVENLABS_SPEED", raw)
+		_, _, err := normalize(Options{APIKey: "test"}, DefaultModel)
+		s.Require().Error(err)
+	}
 }

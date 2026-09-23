@@ -75,6 +75,8 @@ const AudioTagPrompt = "Your words are spoken by a voice that acts stage directi
 // Options configures the provider. APIKey falls back to ELEVENLABS_API_KEY and VoiceID to
 // ELEVENLABS_VOICE_ID.
 type Options struct {
+	// Speed controls realtime speaking pace (0.7–1.2). Zero uses ELEVENLABS_SPEED or 1.
+	Speed  float64
 	APIKey string
 	// VoiceID is the speaker. The connection is bound to it, so one session is one voice.
 	VoiceID string
@@ -105,6 +107,7 @@ type clientMessage struct {
 }
 
 type voiceSettings struct {
+	Speed           float64 `json:"speed"`
 	Stability       float64 `json:"stability"`
 	SimilarityBoost float64 `json:"similarity_boost"`
 }
@@ -156,6 +159,20 @@ type TTS struct {
 // take the same options, so they settle them the same way and differ only in the model
 // they fall back to.
 func normalize(options Options, fallbackModel string) (Options, *slog.Logger, error) {
+	if options.Speed == 0 {
+		options.Speed = 1
+		if raw := os.Getenv("ELEVENLABS_SPEED"); raw != "" {
+			parsed, err := strconv.ParseFloat(raw, 64)
+			if err != nil {
+				return options, nil, errors.New("elevenlabs: invalid ELEVENLABS_SPEED")
+			}
+			options.Speed = parsed
+		}
+	}
+	if !(options.Speed >= 0.7 && options.Speed <= 1.2) {
+		return options, nil, errors.New("elevenlabs: speed must be between 0.7 and 1.2")
+	}
+
 	if options.APIKey == "" {
 		options.APIKey = os.Getenv("ELEVENLABS_API_KEY")
 	}
@@ -423,7 +440,7 @@ func (t *TTS) openContext(id string) error {
 	message := clientMessage{
 		Text:          " ",
 		ContextID:     id,
-		VoiceSettings: &voiceSettings{Stability: 0.5, SimilarityBoost: 0.8},
+		VoiceSettings: &voiceSettings{Stability: 0.5, SimilarityBoost: 0.8, Speed: t.options.Speed},
 		// A short first threshold trades a little prosody for audio that starts sooner.
 		Generation: &generationConf{ChunkLengthSchedule: []int{50, 120, 160, 290}},
 	}
