@@ -158,9 +158,17 @@ func (p *Provider) Dials(phone.CallFeature) bool { return true }
 // BuyNumber orders a number. Telnyx fulfils orders asynchronously, so this returns as soon
 // as the order is accepted rather than when the number is usable. Telnyx orders by number,
 // so the order's country is not needed.
+//
+// Neither the order nor the number Telnyx then holds says what it costs, so the price is
+// read off the offer just before ordering it, while the number is still for sale.
 func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Number, error) {
 	if order.E164 == "" {
 		return phone.Number{}, errors.New("telnyx: a number is required")
+	}
+
+	cost, err := p.priceOf(ctx, order.E164)
+	if err != nil {
+		return phone.Number{}, err
 	}
 
 	request := numberOrder{PhoneNumbers: []orderedNumber{{PhoneNumber: order.E164}}}
@@ -174,9 +182,10 @@ func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Numb
 	}
 
 	bought := phone.Number{
-		E164:     order.E164,
-		Vendor:   p.Vendor(),
-		VendorID: response.Data.ID,
+		E164:              order.E164,
+		Vendor:            p.Vendor(),
+		VendorID:          response.Data.ID,
+		MonthlyCostMicros: cost,
 	}
 	for _, ordered := range response.Data.PhoneNumbers {
 		if ordered.PhoneNumber != order.E164 {
@@ -275,6 +284,22 @@ func (p *Provider) Vendor() string { return "telnyx" }
 // Client exposes the HTTP client, so a caller can reach parts of Telnyx's API this does
 // not wrap without building a second client.
 func (p *Provider) Client() *http.Client { return p.client }
+
+// priceOf is the monthly price Telnyx is offering a number at.
+func (p *Provider) priceOf(ctx context.Context, e164 string) (int64, error) {
+	query := url.Values{"filter[phone_number][contains]": {strings.TrimPrefix(e164, "+")}}
+
+	var response envelope[[]availableNumber]
+	if err := p.do(ctx, http.MethodGet, "/v2/available_phone_numbers", query, nil, &response); err != nil {
+		return 0, err
+	}
+	for _, number := range response.Data {
+		if number.PhoneNumber == e164 {
+			return dollarsToMicros(number.CostInformation.MonthlyCost), nil
+		}
+	}
+	return 0, fmt.Errorf("telnyx: %s is not for sale", e164)
+}
 
 // idFor finds Telnyx's own identifier for a number this account owns, which is what
 // changing or releasing it needs.
