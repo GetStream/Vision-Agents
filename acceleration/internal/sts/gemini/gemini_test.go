@@ -240,6 +240,89 @@ func (s *GeminiSuite) TestUsageIsAttachedToTheReplyItBelongsTo() {
 	s.Equal(sts.Usage{InputTokens: 120, OutputTokens: 60, InputAudioTokens: 100, OutputAudioTokens: 60}, complete.Usage)
 }
 
+func (s *GeminiSuite) TestAFillerSpokenWhileTheModelThinksIsPartOfTheSameReply() {
+	provider := s.newProvider()
+
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{
+		ServerContent: &serverContent{TurnComplete: true, InteractionStatus: "IN_PROGRESS"},
+		UsageMetadata: &usageMetadata{PromptTokenCount: 3193, ResponseTokenCount: 47},
+	})
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{
+		ServerContent: &serverContent{TurnComplete: true, InteractionStatus: "IDLE"},
+		UsageMetadata: &usageMetadata{PromptTokenCount: 3335, ResponseTokenCount: 2736},
+	})
+
+	events := s.drain(provider)
+	var chunks []sts.AudioChunk
+	var completes []sts.ResponseComplete
+	for _, event := range events {
+		switch typed := event.(type) {
+		case sts.AudioChunk:
+			chunks = append(chunks, typed)
+		case sts.ResponseComplete:
+			completes = append(completes, typed)
+		}
+	}
+	s.Require().Len(completes, 1, "the reply ends when the interaction does")
+	s.False(completes[0].Interrupted)
+	s.Equal(sts.Usage{InputTokens: 6528, OutputTokens: 2783}, completes[0].Usage, "each turn is billed on its own, so the reply is their sum")
+	s.Require().Len(chunks, 2)
+	s.Equal(chunks[0].Generation, chunks[1].Generation)
+}
+
+func (s *GeminiSuite) TestALocalInterruptInTheThinkingPauseCutsTheReplyOff() {
+	provider := s.newProvider()
+
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{ServerContent: &serverContent{TurnComplete: true, InteractionStatus: "IN_PROGRESS"}})
+	s.Require().NoError(provider.Interrupt(0))
+	// The answer the filler promised is the reply that was cut off, and none of it plays.
+	provider.handleMessage(spoke(240))
+	provider.handleMessage(serverMessage{ServerContent: &serverContent{TurnComplete: true, InteractionStatus: "IDLE"}})
+	provider.handleMessage(spoke(240))
+
+	events := s.drain(provider)
+	var chunks []sts.AudioChunk
+	var completes []sts.ResponseComplete
+	for _, event := range events {
+		switch typed := event.(type) {
+		case sts.AudioChunk:
+			chunks = append(chunks, typed)
+		case sts.ResponseComplete:
+			completes = append(completes, typed)
+		}
+	}
+	s.Require().Len(completes, 1)
+	s.True(completes[0].Interrupted)
+	s.Require().Len(chunks, 2, "the filler, then the next reply")
+	s.Equal(1, chunks[0].Generation)
+	s.Equal(2, chunks[1].Generation)
+}
+
+func (s *GeminiSuite) TestAModelThatWillNotOpenWithoutAThinkingLevelIsGivenItsFloor() {
+	for model, want := range map[string]string{
+		"gemini-3.8-live-extended-thinking": "LOW",
+		"gemini-3.8-live":                   "",
+		"gemini-3.1-flash-live-preview":     "",
+	} {
+		provider, err := New(Options{APIKey: "test-key", Model: model})
+		s.Require().NoError(err)
+		thinking := provider.setup("").GenerationConfig.ThinkingConfig
+		if want == "" {
+			s.Nil(thinking, "%s rejects or does not need a thinking level nobody asked for", model)
+			continue
+		}
+		s.Require().NotNil(thinking, model)
+		s.Equal(want, thinking.ThinkingLevel, model)
+	}
+
+	provider, err := New(Options{APIKey: "test-key", Model: "gemini-3.8-live-extended-thinking", ThinkingLevel: "HIGH"})
+	s.Require().NoError(err)
+	s.Equal("HIGH", provider.setup("").GenerationConfig.ThinkingConfig.ThinkingLevel, "a level the caller asked for is kept")
+}
+
 func (s *GeminiSuite) TestTheServerWarnsBeforeItHangsUpAndLeavesAHandle() {
 	provider := s.newProvider()
 
