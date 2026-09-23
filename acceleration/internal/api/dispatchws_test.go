@@ -184,6 +184,39 @@ func (s *DispatchSuite) TestAWorkerCanMeasureItsOwnRoundTrip() {
 	s.Equal(1234.5, pong["at"], "the timestamp comes back so the worker can subtract it")
 }
 
+func (s *DispatchSuite) TestPingRepliesAndCallDeliveryShareTheSocket() {
+	connection := s.connect("acme", "")
+	s.Require().NoError(connection.SetWriteDeadline(time.Now().Add(5 * time.Second)))
+	for i := range 32 {
+		s.Require().NoError(connection.WriteJSON(frame{"type": "ping", "at": i}))
+	}
+	_, err := s.pool.Assign("acme", dispatch.Call{CallID: "concurrent-call"})
+	s.Require().NoError(err)
+	s.Require().NoError(connection.SetReadDeadline(time.Now().Add(5 * time.Second)))
+	seen := make(map[float64]bool)
+	calls := 0
+	for range 33 {
+		var event frame
+		s.Require().NoError(connection.ReadJSON(&event))
+		switch event["type"] {
+		case "pong":
+			at, ok := event["at"].(float64)
+			s.Require().True(ok)
+			s.False(seen[at], "each ping has exactly one reply")
+			seen[at] = true
+		case "call":
+			s.Equal("concurrent-call", event["call_id"])
+			calls++
+		default:
+			s.FailNow("unexpected dispatch event")
+		}
+	}
+	s.Equal(1, calls)
+	for i := range 32 {
+		s.True(seen[float64(i)], "all ping timestamps survive call delivery")
+	}
+}
+
 func (s *DispatchSuite) TestAMessageTheServerCannotReadDoesNotEndTheConnection() {
 	connection := s.connect("acme", "")
 

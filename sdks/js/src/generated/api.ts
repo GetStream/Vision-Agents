@@ -129,7 +129,7 @@ export type paths = {
          * Route one modality over a socket, for a pipeline running elsewhere
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. This is the routing the agent does, offered a piece at a time: a caller running its own pipeline sends audio or text and gets transcripts, audio or completions back, and the request is failed over and billed exactly as it would be inside a session.
          *     Every socket opens with a `start` frame. It names either a `config_id`, a stored router config to take the options from, or the options outright; naming both overrides that config field by field. What it may carry is the modality's own option block - `SttOptions` for speech-to-text, `TtsOptions` for a voice, `LlmOptions` for a model, `StsOptions` for a speech-to-speech model - plus `agent_id` and `call_id` to attribute the work to a conversation and `tags` to bill it.
-         *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
+         *     Speech-to-text then takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns `transcript` frames. Text-to-speech takes `speak` frames and returns binary audio with `synthesis_complete` between utterances: each audio frame opens with a little-endian header of a uint32 sample rate, a uint16 channel count and two reserved bytes, followed by PCM16 samples. Language models take `respond` frames, each naming an `id` and anything from `LlmOptions` for that one response along with its `tools`, and return `delta`, `reasoning_delta` and one `complete` per response; a `complete` reports the `status` the response ended in, what it cost in tokens and how long the caller waited for the first of them. `messages[].content` is a string, or an array of parts `[{type: text|image_url, ...}]`. Assistant messages replay `tool_calls: [{id, name, arguments, signature}]`, with arguments encoded as a JSON string and optional opaque signature. Tool-result messages use `role: tool` and `tool_call_id` to correlate their content. Completed tool calls include the same replay fields; incomplete responses additionally report `incomplete_reason` (such as `max_output_tokens`). The LLM `started` frame advertises `tool_history: true` when tool replay is supported. Content parts use `[{type: text|image_url, ...}]` with images on `image_url: {url, detail}`. Use `vlm` to select image-capable models. A model that does not accept images is refused with an `error` frame naming the model and the modality, before anything is billed. An `interrupt` frame naming `response_ids` abandons responses still being generated, which still settle and are still billed for what they produced before being cut off.
          *     Speech-to-speech takes binary PCM at the `sample_rate` the start frame named, 16 kHz mono by default, and returns the model's own voice as binary audio alongside JSON frames: `speech_started` and `speech_stopped` when the model's own detector hears the caller begin and finish, `input_transcript` and `output_transcript` for what it heard and said, `response_started` and `response_complete` around each reply, and `tool_call` and `tool_cancel` when it wants a function run. Each audio frame opens with a sixteen-byte little-endian header of a uint32 sample rate, a uint16 channel count, a uint16 header version, a uint32 generation and a uint32 chunk index, so a client can drop audio from a reply that `response_complete` has already reported interrupted. Mid-stream it takes `text` to inject a typed turn, `instructions` and `tools` to change either where the model allows it, `frame` with an `image_url` for a model that sees, `tool_result` with `tool_call_id` and `output` or `error`, and `interrupt` with an optional `played_ms` saying how much of the reply the listener heard. What the routed model cannot do is refused with an `error` frame rather than dropped. All four report failures as `error` frames and end with `closed`.
          *     Search is answered at `/v1/search` rather than here: one question and its answer need no socket held open between them. Memory and phone are recorded rather than routed, so they are not served either.
          */
@@ -488,6 +488,27 @@ export type paths = {
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["authorizePlugin"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/conversations/{cid}/commands/{command_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What a command in this conversation ended as
+         * @description Reads one command's receipt from the conversation's own durable record. It opens nothing and starts nothing, so a client whose stop found no session left to reach reconciles that command here rather than reopening a session to ask about it.
+         *     A command still running is reported as it stands; the session holding it is where it can be stopped.
+         */
+        readonly get: operations["getConversationCommand"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -867,6 +888,48 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/sessions/{id}/commands/{command_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What is known about one durable command
+         * @description Reads a command's receipt without accepting, running or stopping anything. It is how a client whose stop or submission had an unknown outcome reconciles the same command id rather than inventing another one.
+         */
+        readonly get: operations["getSessionCommand"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/sessions/{id}/commands/{command_id}/interrupt": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Stop one named command, and nothing else
+         * @description Abandons the reply that command is generating. Unlike interrupting the session, a stop that arrives after its command finished replays that command's terminal receipt and leaves the command running now alone, so a delayed stop for one question can never take the answer to the next one.
+         *     A command accepted but not yet generating is prevented from starting. A command already completed, failed, cancelled or interrupted returns what it ended as. An unknown command is a 404, the same answer as a conversation the caller does not own.
+         *     Interrupting model work claims nothing about a tool whose external side effect already happened.
+         */
+        readonly post: operations["interruptSessionCommand"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/sessions/{id}/events": {
         readonly parameters: {
             readonly query?: never;
@@ -878,10 +941,13 @@ export type paths = {
          * Watch the conversation and answer the model's tool calls
          * @description A WebSocket, which OpenAPI cannot describe past the upgrade. Frames are JSON objects carrying a `type` and the fields of that event.
          *     The server sends what the conversation did: `joined`, `heard`, `responding`, `response_delta`, `responded` (pending_work remains true while tools or delegated work are outstanding), `spoke`, `turn`, `decision`, `delegated`, `task_settled`, `task_cancelled`, `tool_call`, `tool_ran`, `transferred`, `pressed`, `looked_up`, `backchannel`, `interrupted`, `overlap_decided`, `conversation_compacted`, `error` and `left`.
-         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+         *     Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, command_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at; tool_ran also includes tool_call_id.
+         *     A respond command carrying command_id emits command_accepted with a nested command receipt (command_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text returns the existing IDs without invoking the model again; reuse with different text emits an error. Commands with IDs currently accept text only. After restart an interrupted command is reported, not rerun.
+         *     An `interrupt` command carrying `command_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `command_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
          *     A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
          *     Two frames are only sent when asked for, because they are far more frequent than the rest and most consumers want neither. `interim=true` adds `hearing`, which is a transcript revision as it arrives rather than a settled turn. `decisions=false` drops `decision`.
-         *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt`, `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be answered: everything else is a report.
+         *     `replay_pending_tools=true` opts a durable tool host into replay of external tool calls still awaiting results in a live voice session. Completed, cancelled and timed-out requests are excluded at snapshot time. Replays retain their tool and turn IDs and may duplicate live delivery; the host must persist execution receipts and refuse to repeat uncertain writes. Ordinary status watchers should leave this disabled. Persistent text command recovery is unchanged.
+         *     The client sends `tool_result` to answer a `tool_call`, and `say`, `respond`, `interrupt` (optionally naming a `command_id`), `instructions` or `close` to act on the session. A `tool_call` is the only frame that must be answered: everything else is a report. Tool calls made by durable personal commands carry `command_id` and `turn_id`; their result must repeat both values so a result cannot be adopted by another command or turn.
          *     `tool_result.output` is a string, or an array of parts `[{type: text|image_url, ...}]`. An image has an `image_url` object containing `url` (HTTP(S) or data URI), optionally with `detail` of `auto`, `low` or `high`. One socket message is at most 5 MB.
          *     `respond` may carry `images: [{url, detail}]`. These schedule the vision skill; the conversation receives the question and later the findings, without raw images. Video capture uses task-correlated `get_video_frames` tool requests and `tool_result` replies. Frames are never attached automatically to conversational turns.
          */
@@ -2204,6 +2270,15 @@ export type components = {
             readonly sessions_moved: number;
             readonly user_id: string;
         };
+        readonly CommandReceipt: {
+            readonly assistant_message_id: string;
+            readonly command_id: string;
+            /** @description True when this command already exists and no new inference was started. */
+            readonly duplicate: boolean;
+            /** @description Latest locally recorded response state; an interrupted command is never automatically rerun. */
+            readonly state: string;
+            readonly user_message_id: string;
+        };
         readonly Contact: {
             readonly attempts: number;
             /** @description The call this contact became, which is what the call paths take. */
@@ -2768,6 +2843,11 @@ export type components = {
          * @enum {string}
          */
         readonly RecordingStatus: "queued" | "running" | "completed" | "failed";
+        readonly RespondRequest: {
+            /** @description Required for personal persistent text conversations. Reuse this ID and identical text for retries; duplicate acceptance does not restart inference. */
+            readonly command_id?: string;
+            readonly text: string;
+        };
         readonly RollupRequest: {
             /** Format: date-time */
             readonly from: string;
@@ -2962,6 +3042,8 @@ export type components = {
             readonly vendor_call_id?: string;
         };
         readonly SessionRespondCommand: {
+            /** @description Required for personal persistent text conversations; reuse on retries. Text only when present. */
+            readonly command_id?: string;
             readonly images?: readonly components["schemas"]["ImageSource"][];
             readonly text: string;
             /** @enum {string} */
@@ -2981,6 +3063,11 @@ export type components = {
             /** @description The full prompt, which only the subagent sees. */
             readonly instructions: string;
             readonly name: string;
+            /**
+             * Format: int64
+             * @description Immutable skill revision selected by the application's authorized registry.
+             */
+            readonly revision?: number;
         };
         /**
          * @description Whether the agent is still in the call.
@@ -3540,9 +3627,11 @@ export type components = {
             readonly turn_id: string;
         };
         readonly ToolResultCommand: {
+            readonly command_id?: string;
             readonly error?: string;
             readonly output?: components["schemas"]["MessageContent"];
             readonly tool_call_id: string;
+            readonly turn_id?: string;
             /** @enum {string} */
             readonly type: "tool_result";
         };
@@ -3867,6 +3956,8 @@ export type components = {
         };
     };
     parameters: {
+        /** @description The client's own command id, as sent when the command was submitted. */
+        readonly CommandID: string;
         /** @description Narrow the list to the config with this name, which is how a name is resolved to a config. Names are unique per customer, so this answers with at most one. */
         readonly ConfigName: string;
         /** @description Up to 1000. Omitted is 200. */
@@ -4747,6 +4838,34 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
+    readonly getConversationCommand: {
+        readonly parameters: {
+            readonly query: {
+                readonly agent_id: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly cid: string;
+                /** @description The client's own command id, as sent when the command was submitted. */
+                readonly command_id: components["parameters"]["CommandID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The command's current receipt */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CommandReceipt"];
+                };
+            };
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
     readonly getConversationMessages: {
         readonly parameters: {
             readonly query: {
@@ -5398,6 +5517,69 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
+    readonly getSessionCommand: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The client's own command id, as sent when the command was submitted. */
+                readonly command_id: components["parameters"]["CommandID"];
+                /** @description The session, as returned when it was created. */
+                readonly id: components["parameters"]["SessionID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The command's current receipt */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CommandReceipt"];
+                };
+            };
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly interruptSessionCommand: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The client's own command id, as sent when the command was submitted. */
+                readonly command_id: components["parameters"]["CommandID"];
+                /** @description The session, as returned when it was created. */
+                readonly id: components["parameters"]["SessionID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The command's terminal receipt */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CommandReceipt"];
+                };
+            };
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 404: components["responses"]["NotFound"];
+            /** @description The stop was accepted but its durable outcome is unknown. The command is not reported stopped; retry the same command id. */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     readonly watchSession: {
         readonly parameters: {
             readonly query?: {
@@ -5405,6 +5587,8 @@ export interface operations {
                 readonly decisions?: boolean;
                 /** @description Also send `hearing` frames, which are the words as they are revised. */
                 readonly interim?: boolean;
+                /** @description Replay pending live voice tool requests to a durable tool host. */
+                readonly replay_pending_tools?: boolean;
             };
             readonly header?: never;
             readonly path: {
@@ -5522,10 +5706,19 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["SayRequest"];
+                readonly "application/json": components["schemas"]["RespondRequest"];
             };
         };
         readonly responses: {
+            /** @description Durable command accepted or replayed; only a new command starts inference */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CommandReceipt"];
+                };
+            };
             /** @description The model is answering */
             readonly 204: {
                 headers: {
@@ -5537,6 +5730,15 @@ export interface operations {
             readonly 401: components["responses"]["Unauthorized"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 404: components["responses"]["NotFound"];
+            /** @description The command ID was already accepted with different content */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     readonly listResponses: {

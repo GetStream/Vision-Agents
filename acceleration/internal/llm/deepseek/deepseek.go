@@ -85,15 +85,32 @@ func New(options Options) (*openaicompat.LLM, error) {
 		Capabilities: model,
 		// The chat template decides whether the model thinks, so the switch travels as a
 		// template argument rather than as a standard request field.
-		RequestFields: func(_ llm.ResponseParams, effort string) map[string]any {
-			args := map[string]any{"thinking": options.Thinking}
-			if effort != "" {
-				args["reasoning_effort"] = effort
-			}
-			return map[string]any{"chat_template_kwargs": args}
-		},
-		Logger: options.Logger,
+		RequestFields: requestFields(options.Model, options.Thinking),
+		Logger:        options.Logger,
 	})
+}
+
+// requestFields matches the request shape Baseten documents for each V4 model. Flash
+// takes its thinking switch inside chat_template_kwargs; Pro exposes top-level thinking
+// and reasoning_effort fields. Keeping this distinction here prevents a model-specific
+// payload from leaking into router aliases or callers.
+func requestFields(model string, thinking bool) func(llm.ResponseParams, string) map[string]any {
+	if strings.Contains(model, "DeepSeek-V4-Pro-0813") {
+		return func(_ llm.ResponseParams, effort string) map[string]any {
+			fields := map[string]any{"thinking": map[string]any{"type": map[bool]string{false: "disabled", true: "enabled"}[thinking]}}
+			if effort != "" {
+				fields["reasoning_effort"] = effort
+			}
+			return fields
+		}
+	}
+	return func(_ llm.ResponseParams, effort string) map[string]any {
+		args := map[string]any{"thinking": thinking}
+		if effort != "" {
+			args["reasoning_effort"] = effort
+		}
+		return map[string]any{"chat_template_kwargs": args}
+	}
 }
 
 // upstreamModel returns the id Baseten expects, leaving an already-qualified one alone.

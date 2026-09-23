@@ -1,13 +1,16 @@
 package chatlog
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -64,6 +67,20 @@ func (s *ChatLogSuite) TestTheTranscriptIsStoredUnderTheAgentId() {
 	s.Equal("agent-1", s.log.ChannelID())
 }
 
+func (s *ChatLogSuite) TestABoundConversationStoresTheTranscriptOnThatChannel() {
+	log, err := New(Options{
+		AgentID:   "agent-1",
+		Channel:   "support-accafc35",
+		Agent:     User{ID: "vision-agent", Name: "Vision Agent"},
+		APIKey:    "key",
+		APISecret: "secret",
+		Logger:    slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.Equal("support-accafc35", log.ChannelID())
+	s.True(log.existing)
+}
+
 func (s *ChatLogSuite) TestAParticipantIsTheAuthorOfWhatTheySaid() {
 	s.log.Record(agent.Heard{
 		Participant: stt.Participant{ID: "session-9", UserID: "alice", Name: "Alice"},
@@ -92,6 +109,16 @@ func (s *ChatLogSuite) TestTheAgentIsTheAuthorOfItsOwnReplies() {
 	s.Require().Len(waiting, 1)
 	s.Equal("vision-agent", waiting[0].author.ID)
 	s.Equal("hi there", waiting[0].text)
+	s.Equal(prepared, waiting[0].kind, "the model finishing is not the same as the caller hearing it")
+}
+
+func (s *ChatLogSuite) TestSpeechFinishingStoresTheSpokenReply() {
+	s.log.Record(agent.Spoke{TurnID: "turn-1"})
+
+	waiting := s.queued()
+	s.Require().Len(waiting, 1)
+	s.Equal(spoken, waiting[0].kind)
+	s.Equal("turn-1", waiting[0].turnID)
 }
 
 func (s *ChatLogSuite) TestOnlySpeechIsStored() {
@@ -136,8 +163,56 @@ func (s *ChatLogSuite) TestAnInterruptedReplyIsClosedOut() {
 
 	waiting := s.queued()
 	s.Require().Len(waiting, 1, "a reply nobody finished would say it was still coming forever")
-	s.Equal(end, waiting[0].kind)
+	s.Equal(interrupt, waiting[0].kind)
 	s.Equal("turn-1", waiting[0].turnID)
+}
+
+func (s *ChatLogSuite) TestAFinishedModelReplyStaysUnspokenUntilTheVoiceFinishes() {
+	s.log.client = chattest.Client(s.T())
+	writer := newWriter(s.log)
+	writer.handle(message{author: s.log.agent, text: "1, 2, 3, 4, 5", turnID: "turn-1", kind: piece})
+	writer.handle(message{author: s.log.agent, text: "1, 2, 3, 4, 5", turnID: "turn-1", kind: prepared})
+	s.Require().Len(writer.writing, 1)
+	s.Equal("1, 2, 3, 4, 5", writer.writing["turn-1"].generated)
+	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: spoken})
+	s.Empty(writer.writing, "speech finishing is what stores the reply")
+}
+
+func (s *ChatLogSuite) TestAnInterruptedReplyIsNotStoredAsFullySpoken() {
+	s.log.client = chattest.Client(s.T())
+	writer := newWriter(s.log)
+	writer.handle(message{author: s.log.agent, text: "1, 2, 3, 4, 5, 6, 7, 8, 9, 10", turnID: "turn-1", kind: piece})
+	writer.show()
+	writing := writer.writing["turn-1"]
+	s.Require().NotNil(writing)
+	s.NotEmpty(writing.messageID)
+	generated := "1, 2, 3, 4, 5, 6, 7, 8, 9, 10"
+	writer.handle(message{author: s.log.agent, text: generated, turnID: "turn-1", kind: prepared})
+	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: interrupt})
+	s.Empty(writer.writing)
+	response, err := s.log.client.Chat().GetMessage(context.Background(), writing.messageID, &getstream.GetMessageRequest{})
+	s.Require().NoError(err)
+	stored := response.Data.Message
+	s.Equal(true, stored.Custom[interruptedField])
+	s.Equal(false, stored.Custom[generatingField])
+	s.NotEqual(generated, stored.Text, "unplayed model text must not look like a finished spoken reply")
+}
+
+func (s *ChatLogSuite) TestANativePartialAfterInterruptIsKeptAsInterrupted() {
+	s.log.client = chattest.Client(s.T())
+	writer := newWriter(s.log)
+	writer.handle(message{author: s.log.agent, turnID: "turn-1", kind: interrupt})
+	writer.handle(message{author: s.log.agent, text: "One,", turnID: "turn-1", kind: prepared})
+	s.Empty(writer.writing)
+	state := true
+	response, err := s.log.client.Chat().GetOrCreateChannel(context.Background(), ChannelType, s.log.channel,
+		&getstream.GetOrCreateChannelRequest{State: &state})
+	s.Require().NoError(err)
+	s.Require().NotEmpty(response.Data.Messages)
+	stored := response.Data.Messages[0]
+	s.Equal("One,", stored.Text)
+	s.Equal(true, stored.Custom[interruptedField])
+	s.Equal(false, stored.Custom[generatingField])
 }
 
 func (s *ChatLogSuite) TestSilenceIsNotStored() {

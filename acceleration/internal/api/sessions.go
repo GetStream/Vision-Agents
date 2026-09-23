@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -230,6 +231,9 @@ func (s *Server) CloseSession(ctx context.Context, request CloseSessionRequestOb
 		return CloseSession404JSONResponse{NotFoundJSONResponse{Error: noSessions}}, nil
 	}
 
+	if _, failure := s.session(ctx, request.Id); failure != nil {
+		return CloseSession404JSONResponse{NotFoundJSONResponse{Error: unknownSession}}, nil
+	}
 	closed, err := s.sessions.Close(request.Id, OwnerFrom(ctx))
 	if err != nil {
 		return nil, err
@@ -272,6 +276,17 @@ func (s *Server) RespondSession(ctx context.Context, request RespondSessionReque
 		return RespondSession400JSONResponse{badRequest("there is nothing to answer")}, nil
 	}
 
+	if id := value(request.Body.CommandId); id != "" {
+		receipt, err := found.RespondCommand(ctx, id, request.Body.Text)
+		if errors.Is(err, conversation.ErrCommandConflict) {
+			return RespondSession409JSONResponse{Error: err.Error()}, nil
+		}
+		if err != nil {
+			return RespondSession400JSONResponse{badRequest(err.Error())}, nil
+		}
+		return RespondSession200JSONResponse{CommandId: receipt.CommandID, UserMessageId: receipt.UserMessageID,
+			AssistantMessageId: receipt.AssistantMessageID, State: receipt.State, Duplicate: receipt.Duplicate}, nil
+	}
 	if _, err := found.Respond(ctx, request.Body.Text, nil); err != nil {
 		return RespondSession400JSONResponse{badRequest(err.Error())}, nil
 	}
@@ -290,6 +305,56 @@ func (s *Server) InterruptSession(ctx context.Context, request InterruptSessionR
 
 	found.Interrupt()
 	return InterruptSession204Response{}, nil
+}
+
+// GetSessionCommand reports what one durable command ended as, without running anything.
+func (s *Server) GetSessionCommand(ctx context.Context, request GetSessionCommandRequestObject) (GetSessionCommandResponseObject, error) {
+	found, failure := s.session(ctx, request.Id)
+	if failure != nil {
+		if failure.status == unauthorized {
+			return GetSessionCommand401JSONResponse{missingCustomer()}, nil
+		}
+		return GetSessionCommand404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+	}
+
+	receipt, err := found.Command(request.CommandId)
+	if err != nil {
+		return GetSessionCommand404JSONResponse{NotFoundJSONResponse{Error: unknownCommand}}, nil
+	}
+	return GetSessionCommand200JSONResponse(receiptOf(receipt)), nil
+}
+
+// InterruptSessionCommand stops the named command and leaves every other one alone.
+func (s *Server) InterruptSessionCommand(ctx context.Context, request InterruptSessionCommandRequestObject) (InterruptSessionCommandResponseObject, error) {
+	found, failure := s.session(ctx, request.Id)
+	if failure != nil {
+		if failure.status == unauthorized {
+			return InterruptSessionCommand401JSONResponse{missingCustomer()}, nil
+		}
+		return InterruptSessionCommand404JSONResponse{NotFoundJSONResponse{Error: failure.message}}, nil
+	}
+
+	receipt, err := found.InterruptCommand(request.CommandId)
+	if errors.Is(err, conversation.ErrCommandNotFound) {
+		return InterruptSessionCommand404JSONResponse{NotFoundJSONResponse{Error: unknownCommand}}, nil
+	}
+	if err != nil {
+		// The stop was taken but its durable outcome is not known, so the caller is told
+		// to keep the intent and retry this command id rather than that it stopped.
+		return InterruptSessionCommand503JSONResponse{Error: err.Error()}, nil
+	}
+	return InterruptSessionCommand200JSONResponse(receiptOf(receipt)), nil
+}
+
+// receiptOf renders a durable command receipt for the wire.
+func receiptOf(receipt conversation.CommandReceipt) CommandReceipt {
+	return CommandReceipt{
+		CommandId:          receipt.CommandID,
+		UserMessageId:      receipt.UserMessageID,
+		AssistantMessageId: receipt.AssistantMessageID,
+		State:              receipt.State,
+		Duplicate:          receipt.Duplicate,
+	}
 }
 
 // SetSessionInstructions changes what the agent is told to be.
@@ -324,6 +389,10 @@ const (
 // same thing they are told about one that never existed.
 const unknownSession = "no such session"
 
+// unknownCommand is what a caller is told about a command this conversation never
+// accepted, which is the same thing they are told about one they may not touch.
+const unknownCommand = "no such command"
+
 type lookupFailure struct {
 	status  lookupStatus
 	message string
@@ -338,7 +407,7 @@ func (s *Server) session(ctx context.Context, id string) (*session.Session, *loo
 		return nil, &lookupFailure{status: notFound, message: noSessions}
 	}
 	found, ok := s.sessions.Get(id, OwnerFrom(ctx))
-	if !ok {
+	if !ok || !canReadSession(ctx, found.Spec()) {
 		return nil, &lookupFailure{status: notFound, message: unknownSession}
 	}
 	return found, nil
@@ -562,7 +631,7 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 		skills := harness.Skills{Skills: make([]harness.Skill, 0, len(*request.Skills))}
 		for _, skill := range *request.Skills {
 			skills.Skills = append(skills.Skills, harness.Skill{
-				Name:         skill.Name,
+				Name: skill.Name, Revision: value(skill.Revision),
 				CaptureVideo: value(skill.CaptureVideo),
 				Description:  skill.Description,
 				Instructions: skill.Instructions,
@@ -879,4 +948,9 @@ func override[T any](base T, requested *T) T {
 		return base
 	}
 	return *requested
+}
+
+// Persistent personal sessions use the same caller binding as their Chat channel.
+func canReadSession(ctx context.Context, spec session.Spec) bool {
+	return !spec.PersistConversation || spec.Caller.UserID == CallerFrom(ctx).UserID
 }

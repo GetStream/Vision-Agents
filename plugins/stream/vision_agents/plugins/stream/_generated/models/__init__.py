@@ -39,6 +39,7 @@ from .chat_token import ChatToken
 from .chat_token_request import ChatTokenRequest
 from .claim_guest_request import ClaimGuestRequest
 from .claim_guest_result import ClaimGuestResult
+from .command_receipt import CommandReceipt
 from .contact import Contact
 from .contact_state import ContactState
 from .contacts_request import ContactsRequest
@@ -109,6 +110,7 @@ from .provider import Provider
 from .provider_health import ProviderHealth
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
+from .respond_request import RespondRequest
 from .rollup_request import RollupRequest
 from .rollup_result import RollupResult
 from .route import Route
@@ -239,6 +241,7 @@ __all__ = (
     "ChatTokenRequest",
     "ClaimGuestRequest",
     "ClaimGuestResult",
+    "CommandReceipt",
     "Contact",
     "ContactState",
     "ContactsRequest",
@@ -309,6 +312,7 @@ __all__ = (
     "ProviderHealth",
     "RecordingSource",
     "RecordingStatus",
+    "RespondRequest",
     "RollupRequest",
     "RollupResult",
     "Route",

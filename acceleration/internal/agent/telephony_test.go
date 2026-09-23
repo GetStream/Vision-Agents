@@ -624,3 +624,33 @@ func (s *AgentSuite) TestInterruptCancelsActiveTextToolWithoutFollowingUp() {
 	}
 	s.Zero(countOf[Responded](s.reported()), "cancelled research must not produce an unsolicited follow-up")
 }
+
+func (s *AgentSuite) TestSpokenInterruptionCancelsPendingToolAndAnswersNextTurn() {
+	s.ownsTools("")
+	s.join(true)
+	runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}
+	s.agent.options.ToolRunner = runner
+	s.model.reply = []string{"Let me check the order."}
+	s.model.then = []string{"Fifteen."}
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "where is my order")
+	select {
+	case <-runner.began:
+	case <-time.After(3 * time.Second):
+		s.FailNow("tool did not start")
+	}
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.mutters(participant, "stop cancel that lookup")
+	select {
+	case <-runner.stopped:
+	case <-time.After(3 * time.Second):
+		s.FailNow("spoken interruption did not cancel the pending tool")
+	}
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "cancelled tool did not settle")
+	s.Require().Error(toolsRanIn(s.reported())[0].Err)
+	s.flow.then = nil
+	s.says(participant, "what is seven plus eight")
+	s.eventually(func() bool { return s.spokenText("Fifteen") }, "next spoken turn was not answered")
+}

@@ -320,7 +320,7 @@ func run(logger *slog.Logger) error {
 
 	var liveClient *live.Client
 	if address := os.Getenv(redisEnvVar); address != "" {
-		liveClient, err = live.New(live.Options{Address: address})
+		liveClient, err = live.New(live.Options{Address: address, Username: os.Getenv("ROUTER_REDIS_USERNAME"), Password: os.Getenv("ROUTER_REDIS_PASSWORD")})
 		if err != nil {
 			return err
 		}
@@ -531,9 +531,8 @@ func run(logger *slog.Logger) error {
 		defer base.Close()
 	}
 
-	// Conversations need all three modalities, so a deployment configured for only one
-	// still inspects routing and reports statistics while the session paths say there
-	// are none.
+	// An LLM-only deployment serves text sessions; voice modes validate their own
+	// speech dependencies before a call is opened.
 	sessions, err := buildSessions(streams, pgStore, liveClient, telephony, base, finding, judging, logger)
 	if err != nil {
 		return err
@@ -716,8 +715,7 @@ func splitList(raw string) []string {
 // buildSessions wires the part of the router that holds conversations rather than
 // describing them.
 //
-// It returns nil when a modality is missing, because a conversation needs all three and a
-// manager that could not start one is worse than a path that says there are none. The
+// It returns nil when the LLM router is missing. Speech routers are optional for text. The
 // factories live here rather than in the session package so the Stream edge, whose Opus
 // path is cgo, stays out of everything that only needs to be tested.
 func buildSessions(
@@ -730,8 +728,8 @@ func buildSessions(
 	judging *lcmrouter.Router,
 	logger *slog.Logger,
 ) (*session.Manager, error) {
-	if streams.STT == nil || streams.TTS == nil || streams.LLM == nil {
-		logger.Warn("not serving sessions, which need all three modalities configured")
+	if streams.LLM == nil {
+		logger.Warn("not serving sessions, which need an llm router configured")
 		return nil, nil
 	}
 
@@ -775,10 +773,13 @@ func buildSessions(
 			})
 		},
 		Transcript: func(spec session.Spec, logger *slog.Logger) (session.Transcript, error) {
-			// A voice call leaves nothing behind, so what was said is stored in a chat
-			// channel named after the agent.
+			channel := strings.TrimPrefix(spec.ConversationID, "agent:")
+			if channel == spec.ConversationID {
+				channel = ""
+			}
 			return chatlog.New(chatlog.Options{
 				AgentID: spec.AgentID,
+				Channel: channel,
 				Agent:   chatlog.User{ID: spec.UserID, Name: spec.UserName},
 				Logger:  logger,
 			})
