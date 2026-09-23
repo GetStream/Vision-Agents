@@ -16,7 +16,7 @@ import (
 	"slices"
 	"sync"
 
-	videosdk "github.com/GetStream/getstream-go-webrtc"
+	rtc "github.com/GetStream/getstream-go-webrtc"
 	"github.com/GetStream/getstream-go-webrtc/track"
 	sfu_events "github.com/GetStream/protocol/protobuf/video/sfu/event"
 	sfu_models "github.com/GetStream/protocol/protobuf/video/sfu/models"
@@ -90,8 +90,8 @@ type Edge struct {
 	attending *emit.Emitter[agent.Attendance]
 	speaker   *speaker
 
-	client *videosdk.Client
-	call   *videosdk.Call
+	client *rtc.Client
+	call   *rtc.Call
 
 	mu sync.Mutex
 	// listening holds the decoder per subscribed track, so a track that goes away stops
@@ -156,7 +156,7 @@ func (e *Edge) Join(ctx context.Context) error {
 	e.client = client
 
 	e.call = client.Call(e.options.CallType, e.options.CallID)
-	joined, err := e.call.Join(ctx, videosdk.WithOnTrack(videosdk.SubscriberFunc(func(remote videosdk.OnTrackReceived) {
+	joined, err := e.call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
 		e.listen(remote)
 	})))
 	if err != nil {
@@ -213,7 +213,7 @@ func (e *Edge) Leave() error {
 }
 
 // Call exposes the underlying call, so a caller can reach the SDK's own features.
-func (e *Edge) Call() *videosdk.Call { return e.call }
+func (e *Edge) Call() *rtc.Call { return e.call }
 
 func (e *Edge) leave() error {
 	e.mu.Lock()
@@ -258,21 +258,21 @@ func (e *Edge) leave() error {
 // The coordinator websocket stays on even though the agent reads none of its events: it is
 // what registers the agent as a user, and the coordinator refuses to let a user it has never
 // seen join a call.
-func (e *Edge) connect() (*videosdk.Client, error) {
-	user := videosdk.User{ID: e.options.User.ID, Name: e.options.User.Name}
+func (e *Edge) connect() (*rtc.Client, error) {
+	user := rtc.User{ID: e.options.User.ID, Name: e.options.User.Name}
 	if user.Name == "" {
 		user.Name = user.ID
 	}
 
 	if e.options.UserToken != "" {
-		client, err := videosdk.NewClient(e.options.APIKey, user, videosdk.StaticToken(e.options.UserToken))
+		client, err := rtc.NewClient(e.options.APIKey, user, rtc.StaticToken(e.options.UserToken))
 		if err != nil {
 			return nil, fmt.Errorf("streamedge: connect: %w", err)
 		}
 		return client, nil
 	}
 
-	client, err := videosdk.NewClientWithSecret(e.options.APIKey, e.options.APISecret, user)
+	client, err := rtc.NewRTCClient(e.options.APIKey, e.options.APISecret, rtc.WithUser(user))
 	if err != nil {
 		return nil, fmt.Errorf("streamedge: connect: %w", err)
 	}
@@ -303,7 +303,7 @@ func (e *Edge) publish() error {
 // listen decodes one participant's track into the audio the agent listens to. Reading the
 // track is also what pulls media through the receiver, so a track nobody reads is a track
 // that never arrives.
-func (e *Edge) listen(remote videosdk.OnTrackReceived) {
+func (e *Edge) listen(remote rtc.OnTrackReceived) {
 	if remote.TrackType != sfu_models.TrackType_TRACK_TYPE_AUDIO {
 		return
 	}
@@ -353,7 +353,7 @@ func (e *Edge) listen(remote videosdk.OnTrackReceived) {
 // watchForNewTracks subscribes to whatever is published after the agent joined, which is
 // how someone who joins later gets heard.
 func (e *Edge) watchForNewTracks(ctx context.Context) {
-	unregister := videosdk.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_TrackPublished) {
+	unregister := rtc.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_TrackPublished) {
 		published := event.TrackPublished
 		if published.GetUserId() == e.options.User.ID {
 			return
@@ -392,10 +392,10 @@ func (e *Edge) watchForNewTracks(ctx context.Context) {
 // a caller who has not spoken yet is still somebody to say hello to, and a track is the only
 // other evidence there would be.
 func (e *Edge) watchAttendance() {
-	joined := videosdk.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_ParticipantJoined) {
+	joined := rtc.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_ParticipantJoined) {
 		e.report(event.ParticipantJoined.GetParticipant(), true)
 	})
-	left := videosdk.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_ParticipantLeft) {
+	left := rtc.HandleCallEvent(e.call, func(event *sfu_events.SfuEvent_ParticipantLeft) {
 		e.report(event.ParticipantLeft.GetParticipant(), false)
 	})
 
