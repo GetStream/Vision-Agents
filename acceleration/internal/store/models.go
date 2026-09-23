@@ -66,6 +66,49 @@ type Bucket struct {
 	Uptime                 *float64  `bun:"uptime"`
 }
 
+// SpendBucket is what one group cost in one bucket, across every modality. Value is a
+// modality or a cost label value; "other" is everything outside the biggest few and the
+// empty string is spend that carried no such label, so the rows still add up to the total.
+type SpendBucket struct {
+	Bucket          time.Time `bun:"bucket"`
+	Value           string    `bun:"value"`
+	CostMicrosTotal int64     `bun:"cost_micros_total"`
+	RequestCount    int64     `bun:"request_count"`
+}
+
+// TagKeySummary is one cost label key, with what it covers and its largest values. It is
+// what lets a reader be shown the breakdown that means something: the keys are the
+// customer's own, so which of them identifies a product and which an end customer is
+// only visible in how many values each was used with and how much of the bill it covers.
+type TagKeySummary struct {
+	Key             string
+	ValueCount      int64
+	CostMicrosTotal int64
+	RequestCount    int64
+	// Coverage is the share of the window's requests carrying this key, from 0 to 1.
+	Coverage  float64
+	TopValues []TagValueSummary
+}
+
+// TagValueSummary is one value of a cost label key, and its share of what that key covers.
+type TagValueSummary struct {
+	Value           string
+	CostMicrosTotal int64
+	RequestCount    int64
+	Share           float64
+}
+
+// ActivityBucket is how much one bucket was used, and by how many people.
+type ActivityBucket struct {
+	Bucket       time.Time `bun:"bucket"`
+	ActiveUsers  int64     `bun:"active_users"`
+	Sessions     int64     `bun:"sessions"`
+	Messages     int64     `bun:"messages"`
+	Calls        int64     `bun:"calls"`
+	VoiceMinutes float64   `bun:"voice_minutes"`
+	PhoneMinutes float64   `bun:"phone_minutes"`
+}
+
 // Turn is one exchange in a conversation, measured the way the caller experienced it.
 // The legs are pointers because a pipeline need not have all of them, and an interrupted
 // turn stops partway through.
@@ -298,16 +341,14 @@ type RouterConfig struct {
 	// The option blocks, one per routed modality. They are the routing package's own
 	// types rather than copies of them, so what is stored and what reaches a provider
 	// cannot drift apart.
-	STT    options.STT    `bun:"stt,type:jsonb"`
-	TTS    options.TTS    `bun:"tts,type:jsonb"`
-	LLM    options.LLM    `bun:"llm,type:jsonb"`
-	STS    options.STS    `bun:"sts,type:jsonb"`
-	Search options.Search `bun:"search,type:jsonb"`
-	// Tags are cost labels carried onto every request made under this config.
-	Tags      map[string]string `bun:"tags,type:jsonb"`
-	CreatedAt time.Time         `bun:"created_at,notnull"`
-	UpdatedAt time.Time         `bun:"updated_at,notnull"`
-	DeletedAt *time.Time        `bun:"deleted_at"`
+	STT       options.STT    `bun:"stt,type:jsonb"`
+	TTS       options.TTS    `bun:"tts,type:jsonb"`
+	LLM       options.LLM    `bun:"llm,type:jsonb"`
+	STS       options.STS    `bun:"sts,type:jsonb"`
+	Search    options.Search `bun:"search,type:jsonb"`
+	CreatedAt time.Time      `bun:"created_at,notnull"`
+	UpdatedAt time.Time      `bun:"updated_at,notnull"`
+	DeletedAt *time.Time     `bun:"deleted_at"`
 }
 
 // Recording is one non-realtime job: a recording to transcribe or a text to speak.
@@ -887,6 +928,29 @@ func (g Granularity) truncateUnit() string {
 // Valid reports whether the granularity is one this store knows.
 func (g Granularity) Valid() bool {
 	return g == Hourly || g == Daily
+}
+
+// ActivityGranularity selects how wide an activity bucket is. It is separate from
+// Granularity, and coarser, because distinct users cannot be summed: a month of them is
+// who came back rather than the sum of its days, so a month has to be counted as a month.
+type ActivityGranularity string
+
+const (
+	ActivityDaily   ActivityGranularity = "daily"
+	ActivityMonthly ActivityGranularity = "monthly"
+)
+
+// truncateUnit returns the Postgres date_trunc unit for the granularity.
+func (g ActivityGranularity) truncateUnit() string {
+	if g == ActivityMonthly {
+		return "month"
+	}
+	return "day"
+}
+
+// Valid reports whether the granularity is one this store knows.
+func (g ActivityGranularity) Valid() bool {
+	return g == ActivityDaily || g == ActivityMonthly
 }
 
 // Organization owns apps. It exists so a bill and a rate limit have something to name that

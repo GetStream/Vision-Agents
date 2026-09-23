@@ -173,7 +173,7 @@ func (s *Server) streamModality(w http.ResponseWriter, r *http.Request) {
 		Caller:     CallerFrom(r.Context()),
 		AgentID:    opening.AgentID,
 		CallID:     opening.CallID,
-		Tags:       tagsUnder(config, &opening.Tags),
+		Tags:       tagsSent(&opening.Tags),
 	}
 	if err := request.Tags.Validate(); err != nil {
 		out.failed(err)

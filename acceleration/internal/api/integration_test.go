@@ -346,6 +346,24 @@ func (s *APIIntegrationSuite) recordSynthesis(at time.Time, characters, costMicr
 	}))
 }
 
+// recordLabelled stores a completed LLM completion carrying the customer's own cost labels.
+func (s *APIIntegrationSuite) recordLabelled(at time.Time, costMicros int64, tags map[string]string) {
+	latencyMs := 320.0
+	s.Require().NoError(s.store.RecordRequest(s.ctx, &store.Request{
+		Modality:     "llm",
+		CustomerID:   s.customerID,
+		Provider:     "openai",
+		Model:        "gpt-5.6-sol",
+		Tags:         tags,
+		StartedAt:    at,
+		InputTokens:  400,
+		OutputTokens: 120,
+		CostMicros:   costMicros,
+		LatencyMs:    &latencyMs,
+		Success:      true,
+	}))
+}
+
 func (s *APIIntegrationSuite) TestHealthReportsBothDependenciesAsOk() {
 	response, payload := s.do(http.MethodGet, "/health", "")
 
@@ -374,7 +392,7 @@ func (s *APIIntegrationSuite) TestRollupThenStatsReportsTheCustomersUsage() {
 
 	var rollup RollupResult
 	s.Require().NoError(json.Unmarshal(payload, &rollup))
-	s.Equal(Hourly, rollup.Granularity)
+	s.Equal(GranularityHourly, rollup.Granularity)
 	s.Positive(rollup.BucketsWritten)
 
 	path := fmt.Sprintf(
@@ -480,7 +498,7 @@ func (s *APIIntegrationSuite) TestDailyGranularityCollapsesTheHours() {
 
 	var rollup RollupResult
 	s.Require().NoError(json.Unmarshal(payload, &rollup))
-	s.Equal(Daily, rollup.Granularity)
+	s.Equal(GranularityDaily, rollup.Granularity)
 
 	path := fmt.Sprintf(
 		"/v1/stt/stats?granularity=daily&from=%s&to=%s",
@@ -493,6 +511,102 @@ func (s *APIIntegrationSuite) TestDailyGranularityCollapsesTheHours() {
 	s.Require().NoError(json.Unmarshal(payload, &buckets))
 	s.Require().Len(buckets, 1, "both hours belong to the same day")
 	s.EqualValues(3000, buckets[0].AudioMsTotal)
+}
+
+func (s *APIIntegrationSuite) TestSpendCoversEveryModalityWithoutARollup() {
+	s.recordTurn(s.base.Add(5*time.Minute), 3000, 120, true)
+	s.recordSynthesis(s.base.Add(6*time.Minute), 128, 6400)
+
+	from, to := s.base.Format(time.RFC3339), s.base.Add(24*time.Hour).Format(time.RFC3339)
+	response, payload := s.do(http.MethodGet,
+		"/v1/stats/spend?granularity=daily&from="+from+"&to="+to, "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var buckets []SpendBucket
+	s.Require().NoError(json.Unmarshal(payload, &buckets))
+	s.Require().Len(buckets, 2, "one group per modality, with no rollup having run")
+	s.Equal("tts", buckets[0].Value, "the synthesis is what cost money")
+	s.EqualValues(6400, buckets[0].CostMicrosTotal)
+	s.Equal("stt", buckets[1].Value)
+	s.EqualValues(1, buckets[1].RequestCount)
+}
+
+func (s *APIIntegrationSuite) TestSpendCanBeGroupedByACostLabel() {
+	s.recordLabelled(s.base.Add(5*time.Minute), 6000, map[string]string{"product": "support"})
+	s.recordLabelled(s.base.Add(6*time.Minute), 2000, map[string]string{"product": "sales"})
+	s.recordSynthesis(s.base.Add(7*time.Minute), 64, 100)
+
+	from, to := s.base.Format(time.RFC3339), s.base.Add(24*time.Hour).Format(time.RFC3339)
+	response, payload := s.do(http.MethodGet,
+		"/v1/stats/spend?group_by=product&granularity=daily&from="+from+"&to="+to, "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var buckets []SpendBucket
+	s.Require().NoError(json.Unmarshal(payload, &buckets))
+	s.Require().Len(buckets, 3)
+	s.Equal("support", buckets[0].Value)
+	s.EqualValues(6000, buckets[0].CostMicrosTotal)
+	s.Equal("sales", buckets[1].Value)
+	s.Equal("", buckets[2].Value, "the synthesis carries no product, and is still part of the bill")
+	s.EqualValues(100, buckets[2].CostMicrosTotal)
+}
+
+func (s *APIIntegrationSuite) TestTagKeysReportWhichLabelIsWorthABreakdown() {
+	s.recordLabelled(s.base.Add(5*time.Minute), 6000,
+		map[string]string{"product": "support", "environment": "production"})
+	s.recordLabelled(s.base.Add(6*time.Minute), 2000,
+		map[string]string{"product": "sales", "environment": "production"})
+
+	from, to := s.base.Format(time.RFC3339), s.base.Add(24*time.Hour).Format(time.RFC3339)
+	response, payload := s.do(http.MethodGet, "/v1/stats/tags/keys?from="+from+"&to="+to, "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var keys []TagKeySummary
+	s.Require().NoError(json.Unmarshal(payload, &keys))
+	s.Require().Len(keys, 2)
+
+	byKey := map[string]TagKeySummary{}
+	for _, key := range keys {
+		byKey[key.Key] = key
+	}
+	s.EqualValues(2, byKey["product"].ValueCount)
+	s.InDelta(1.0, byKey["product"].Coverage, 0.001, "every request carries it")
+	s.Require().Len(byKey["product"].TopValues, 2)
+	s.Equal("support", byKey["product"].TopValues[0].Value, "biggest spend first")
+	s.InDelta(0.75, byKey["product"].TopValues[0].Share, 0.001)
+	s.EqualValues(1, byKey["environment"].ValueCount, "one value is context, not a breakdown")
+}
+
+func (s *APIIntegrationSuite) TestActivityReportsWhoUsedTheAgentsAndHowMuch() {
+	session := &store.AgentSession{
+		ID:         "session-" + s.customerID,
+		CustomerID: s.customerID,
+		AgentName:  "docs",
+		UserID:     "randy",
+		CallerKind: "authenticated",
+		State:      store.SessionRunning,
+		CreatedAt:  s.base.Add(time.Minute),
+	}
+	s.Require().NoError(s.store.SaveSession(s.ctx, session))
+	s.Require().NoError(s.store.StartResponse(s.ctx, &store.AgentResponse{
+		ID:         "response-" + s.customerID,
+		SessionID:  session.ID,
+		CustomerID: s.customerID,
+		Said:       "how much does it cost",
+		CreatedAt:  s.base.Add(2 * time.Minute),
+	}))
+
+	from, to := s.base.Format(time.RFC3339), s.base.Add(24*time.Hour).Format(time.RFC3339)
+	response, payload := s.do(http.MethodGet, "/v1/stats/activity?from="+from+"&to="+to, "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+
+	var buckets []ActivityBucket
+	s.Require().NoError(json.Unmarshal(payload, &buckets))
+	s.Require().Len(buckets, 1)
+	s.EqualValues(1, buckets[0].Sessions)
+	s.EqualValues(1, buckets[0].Messages)
+	s.EqualValues(1, buckets[0].ActiveUsers, "one person asked one thing")
+	s.Zero(buckets[0].Calls, "nobody rang anybody")
 }
 
 func (s *APIIntegrationSuite) TestProvidersReportLiveHealth() {
@@ -820,6 +934,25 @@ func (s *APIIntegrationSuite) TestAPostedDocumentIsListed() {
 	s.Equal(2, listed[0].Passages)
 }
 
+func (s *APIIntegrationSuite) TestADocumentReadsBackAsThePassagesItWasCutInto() {
+	s.do(http.MethodPost, "/v1/agents/knowledge",
+		`{"namespace":"`+s.customerID+`","documents":[{"source":"pricing.md","text":"# Pricing\n\nA penny.\n\n# Support\n\nA day."}]}`)
+	listed := s.documents(s.customerID)
+	s.Require().Len(listed, 1)
+
+	response, payload := s.do(http.MethodGet, "/v1/agents/knowledge/documents/"+listed[0].Id+"/passages", "")
+	s.Require().Equal(http.StatusOK, response.StatusCode, string(payload))
+	var passages []KnowledgePassage
+	s.Require().NoError(json.Unmarshal(payload, &passages))
+	s.Require().Len(passages, 2)
+	s.Contains(passages[0].Text, "A penny.")
+	s.Contains(passages[1].Text, "A day.")
+
+	s.customerID = "somebody-else"
+	response, _ = s.do(http.MethodGet, "/v1/agents/knowledge/documents/"+listed[0].Id+"/passages", "")
+	s.Equal(http.StatusNotFound, response.StatusCode)
+}
+
 func (s *APIIntegrationSuite) TestADocumentPostedShorterLeavesNoOldTailBehind() {
 	namespace := s.customerID
 	s.do(http.MethodPost, "/v1/agents/knowledge",
@@ -911,11 +1044,10 @@ func (s *APIIntegrationSuite) TestAConfigRemembersWhichSearchItRoutesTo() {
 func (s *APIIntegrationSuite) TestARouterConfigSurvivesBeingStoredAndReadBack() {
 	response, payload := s.do(http.MethodPost, "/v1/router/configs", `{
 		"name":"healthcare",
-		"stt":{"target":"en-recorded","diarize":true,"keyterms":["perioperative"]},
+		"stt":{"target":"en-recorded","providers":["deepgram/nova-3","en-recorded"],"diarize":true,"keyterms":["perioperative"]},
 		"tts":{"target":"en-low-latency","voice":"aurora","speed":1.1},
 		"llm":{"target":"llm-fast","temperature":0.2},
-		"search":{"depth":"standard","include_domains":["nice.org.uk"]},
-		"tags":{"project":"clinic"}
+		"search":{"depth":"standard","include_domains":["nice.org.uk"]}
 	}`)
 	s.Require().Equal(http.StatusCreated, response.StatusCode, string(payload))
 
@@ -930,6 +1062,9 @@ func (s *APIIntegrationSuite) TestARouterConfigSurvivesBeingStoredAndReadBack() 
 	s.Require().NoError(json.Unmarshal(payload, &read))
 	s.Require().NotNil(read.Stt)
 	s.Equal("en-recorded", *read.Stt.Target)
+	s.Require().NotNil(read.Stt.Providers)
+	s.Equal([]string{"deepgram/nova-3", "en-recorded"}, *read.Stt.Providers,
+		"a priority list is the order it was written in, which is the point of writing one")
 	s.Require().NotNil(read.Stt.Keyterms)
 	s.Equal([]string{"perioperative"}, *read.Stt.Keyterms)
 	s.Require().NotNil(read.Tts)
@@ -938,8 +1073,6 @@ func (s *APIIntegrationSuite) TestARouterConfigSurvivesBeingStoredAndReadBack() 
 	s.InDelta(0.2, *read.Llm.Temperature, 0.001)
 	s.Require().NotNil(read.Search)
 	s.Equal([]string{"nice.org.uk"}, *read.Search.IncludeDomains)
-	s.Require().NotNil(read.Tags)
-	s.Equal("clinic", (*read.Tags)["project"])
 }
 
 func (s *APIIntegrationSuite) TestARouterConfigIsFoundByNameAsWellAsById() {
@@ -1005,6 +1138,20 @@ func (s *APIIntegrationSuite) TestAConfigAskingAVoiceForARetentionNothingCanBeCo
 	var failure Error
 	s.Require().NoError(json.Unmarshal(payload, &failure))
 	s.Contains(failure.Error, "ages")
+}
+
+func (s *APIIntegrationSuite) TestAConfigHoldingASystemPromptForAConversationIsRefused() {
+	// The agent that holds the conversation has instructions of its own and sends them
+	// when it opens the session. A config that also carried some would overwrite them
+	// from somewhere nobody thought to look.
+	response, payload := s.do(http.MethodPost, "/v1/router/configs",
+		`{"name":"clinic","sts":{"target":"sts-fast","instructions":"Be brief."}}`)
+
+	s.Require().Equal(http.StatusBadRequest, response.StatusCode, string(payload))
+
+	var failure Error
+	s.Require().NoError(json.Unmarshal(payload, &failure))
+	s.Contains(failure.Error, "instructions")
 }
 
 func (s *APIIntegrationSuite) TestARouterConfigNobodyHasIsRefusedRatherThanIgnored() {

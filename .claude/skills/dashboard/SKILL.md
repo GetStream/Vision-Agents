@@ -67,6 +67,26 @@ Change opens a dialog with two sections: **Routers** (route cards from
   (`agent-model-picker.tsx`) with `sources` and a `modality:target` value. See
   `agent-conversation-model.tsx`.
 
+## Ordering a list of choices
+
+`AgentModelChain` (`agent-model-chain.tsx`) is the reordering primitive: a form field
+holding `string[]`, shown as one `AgentModelPicker` per entry in the order they are tried.
+The first row takes the `label`, the rest are "Fallback 1", "Fallback 2". Each row has a
+drag grip and, for keyboard and tests, **Move up** / **Move down** / **Remove** buttons
+(`aria-label`s read "Move Fallback 1 up"). **Add fallback** appends `defaultRoute`.
+
+Volt has no drag-and-drop dependency and this uses native HTML5 drag on the grip: the drag
+image is set to the grip's row so the whole row follows the cursor, and `dragover` on a
+neighbour reorders as it goes, so the list on screen is what dropping would leave behind.
+Follow the same shape — grip plus move buttons — anywhere else rows are user-ordered,
+rather than reaching for `dnd-kit`.
+
+Use it for anything routing tries in order. A modality block's `providers` is a priority
+list that wins over `target`, so write one entry back as `target` and several as
+`providers`, clearing whichever is unused. Only STT, TTS and STS read a list
+(`routerChainTypes` in `utils/agents/routers.ts`); LLM and search resolve a single target
+and never read one, so pass `fallbacks={false}` for those and offer no Add fallback.
+
 ## Changing the router API
 
 `api/agents/openapi.yaml` is a copy of `acceleration/api/openapi.yaml`. After a spec change:

@@ -22,7 +22,6 @@ func (s *Store) CreateRouterConfig(ctx context.Context, config *RouterConfig) er
 	config.CreatedAt = now
 	config.UpdatedAt = now
 	config.DeletedAt = nil
-	normalizeRouterConfig(config)
 
 	if _, err := s.db.NewInsert().Model(config).Exec(ctx); err != nil {
 		return fmt.Errorf("store: create router config: %w", err)
@@ -41,10 +40,9 @@ func (s *Store) UpdateRouterConfig(ctx context.Context, config *RouterConfig) er
 	}
 
 	config.UpdatedAt = time.Now().UTC()
-	normalizeRouterConfig(config)
 
 	result, err := s.db.NewUpdate().Model(config).
-		Column("name", "stt", "tts", "llm", "sts", "search", "tags", "updated_at").
+		Column("name", "stt", "tts", "llm", "sts", "search", "updated_at").
 		Where("id = ?", config.ID).
 		Where("customer_id = ?", config.CustomerID).
 		Where("deleted_at IS NULL").
@@ -149,14 +147,6 @@ func (s *Store) CustomerRouterConfigs(ctx context.Context, customerID string) ([
 		return nil, fmt.Errorf("store: customer router configs: %w", err)
 	}
 	return configs, nil
-}
-
-// normalizeRouterConfig fills in the map a nil would write as null, which the column is
-// not.
-func normalizeRouterConfig(config *RouterConfig) {
-	if config.Tags == nil {
-		config.Tags = map[string]string{}
-	}
 }
 
 func unknownRouterConfig(id string) error {

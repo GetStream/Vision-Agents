@@ -22,11 +22,11 @@ T = TypeVar("T", bound="LlmOptions")
 @_attrs_define
 class LlmOptions:
     """How this config answers. The names are the response parameters the router already speaks rather than a second
-    vocabulary for the same things.
+    vocabulary for the same things. The system prompt is not among them: what the model answers under belongs to the
+    agent asking, not to the config that decides where the asking goes.
 
         Attributes:
             target (str | Unset): A provider/model or a capability shortcut. Example: llm-fast.
-            instructions (str | Unset): What the model answers under, when a request does not say.
             max_output_tokens (int | Unset):
             temperature (float | Unset):
             reasoning_effort (LlmOptionsReasoningEffort | Unset): How long the model may think before answering, on the
@@ -42,7 +42,6 @@ class LlmOptions:
     """
 
     target: str | Unset = UNSET
-    instructions: str | Unset = UNSET
     max_output_tokens: int | Unset = UNSET
     temperature: float | Unset = UNSET
     reasoning_effort: LlmOptionsReasoningEffort | Unset = UNSET
@@ -56,8 +55,6 @@ class LlmOptions:
 
     def to_dict(self) -> dict[str, Any]:
         target = self.target
-
-        instructions = self.instructions
 
         max_output_tokens = self.max_output_tokens
 
@@ -90,8 +87,6 @@ class LlmOptions:
         field_dict.update({})
         if target is not UNSET:
             field_dict["target"] = target
-        if instructions is not UNSET:
-            field_dict["instructions"] = instructions
         if max_output_tokens is not UNSET:
             field_dict["max_output_tokens"] = max_output_tokens
         if temperature is not UNSET:
@@ -119,8 +114,6 @@ class LlmOptions:
 
         d = dict(src_dict)
         target = d.pop("target", UNSET)
-
-        instructions = d.pop("instructions", UNSET)
 
         max_output_tokens = d.pop("max_output_tokens", UNSET)
 
@@ -162,7 +155,6 @@ class LlmOptions:
 
         llm_options = cls(
             target=target,
-            instructions=instructions,
             max_output_tokens=max_output_tokens,
             temperature=temperature,
             reasoning_effort=reasoning_effort,

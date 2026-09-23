@@ -2,9 +2,6 @@ name: clinic
 description: Transcription for clinical audio, where where the audio goes matters more
   than which model is best at transcribing it.
 
-tags:
-  team: clinical
-
 # Nothing in either of these configs is about live or recorded. The same block serves a
 # streaming session and a whole recording; the router picks the streaming or the batch half
 # of a vendor from which one is asking.

@@ -71,6 +71,9 @@ type Writer interface {
 	// Delete removes passages by id. Ids that are not there are not an error: what the
 	// caller asked for is that they are gone.
 	Delete(ctx context.Context, namespace string, ids []string) error
+	// Fetch reads passages back by id, in the order asked for. Ids that are not there are
+	// left out.
+	Fetch(ctx context.Context, namespace string, ids []string) ([]Document, error)
 }
 
 // Scoped is the provider's name for one customer's knowledge base. A config names its base

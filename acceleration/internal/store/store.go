@@ -450,6 +450,352 @@ func (s *Store) CustomerTagStats(
 	return buckets, nil
 }
 
+// spendGroupByModality is the group_by that means "where the money went" rather than
+// "what it was spent on", and the only one that is not a cost label key.
+const spendGroupByModality = "modality"
+
+// spendOther is the value every group outside the biggest few is summed into.
+const spendOther = "other"
+
+// CustomerSpend returns what one customer spent per bucket and group, oldest bucket first.
+// It is the whole bill rather than one modality's share of it, which is what a spend trend
+// is read as.
+//
+// groupBy is either "modality" or a cost label key. Only the limit biggest values over the
+// whole window keep a group of their own: a label such as customer_id has as many values as
+// the customer has customers, and a chart of all of them says nothing. The rest are summed
+// into "other", and requests carrying no such label into the empty value, so the rows still
+// add up to the total.
+//
+// Reads the request rows rather than the rollups, so today's spend is there before a
+// rollup has run.
+func (s *Store) CustomerSpend(
+	ctx context.Context,
+	customerID, groupBy string,
+	granularity Granularity,
+	from, to time.Time,
+	limit int,
+	tags map[string]string,
+) ([]SpendBucket, error) {
+	if !granularity.Valid() {
+		return nil, fmt.Errorf("store: unknown granularity %q", granularity)
+	}
+	if customerID == "" {
+		return nil, errors.New("store: customer id is required")
+	}
+	if limit < 1 {
+		return nil, errors.New("store: limit must be at least 1")
+	}
+	if tags == nil {
+		tags = map[string]string{}
+	}
+	filter, err := json.Marshal(tags)
+	if err != nil {
+		return nil, fmt.Errorf("store: customer spend: encode tag filter: %w", err)
+	}
+
+	valueExpr := "modality"
+	args := []any{}
+	if groupBy != spendGroupByModality {
+		valueExpr = "COALESCE(tags->>?, '')"
+		args = append(args, groupBy)
+	}
+	args = append(args, customerID, from, to, string(filter), limit)
+
+	query := fmt.Sprintf(`
+WITH grouped AS (
+    SELECT
+        date_trunc('%s', started_at) AS bucket,
+        %s AS value,
+        cost_micros
+    FROM requests
+    WHERE customer_id = ?
+      AND started_at >= ? AND started_at < ?
+      AND tags @> ?::jsonb
+),
+biggest AS (
+    SELECT
+        value,
+        ROW_NUMBER() OVER (
+            ORDER BY SUM(cost_micros) DESC, COUNT(*) DESC, value ASC
+        ) AS rank
+    FROM grouped
+    WHERE value <> ''
+    GROUP BY value
+),
+folded AS (
+    SELECT
+        g.bucket AS bucket,
+        CASE
+            WHEN g.value = '' THEN ''
+            WHEN b.rank > ? THEN '%s'
+            ELSE g.value
+        END AS value,
+        g.cost_micros AS cost_micros
+    FROM grouped AS g
+    LEFT JOIN biggest AS b ON b.value = g.value
+)
+SELECT
+    bucket,
+    value,
+    COALESCE(SUM(cost_micros), 0) AS cost_micros_total,
+    COUNT(*) AS request_count
+FROM folded
+GROUP BY bucket, value
+ORDER BY bucket ASC, cost_micros_total DESC, value ASC`,
+		granularity.truncateUnit(), valueExpr, spendOther)
+
+	var buckets []SpendBucket
+	if err := s.db.NewRaw(query, args...).Scan(ctx, &buckets); err != nil {
+		return nil, fmt.Errorf("store: customer spend: %w", err)
+	}
+	return buckets, nil
+}
+
+// tagKeyRow is one cost label key paired with one of its largest values, which is how the
+// two levels come back from a single query.
+type tagKeyRow struct {
+	Key             string `bun:"key"`
+	ValueCount      int64  `bun:"value_count"`
+	CostMicrosTotal int64  `bun:"cost_micros_total"`
+	RequestCount    int64  `bun:"request_count"`
+	Value           string `bun:"value"`
+	ValueCost       int64  `bun:"value_cost_micros_total"`
+	ValueRequests   int64  `bun:"value_request_count"`
+}
+
+// topTagValues is how many values of a key come back with it. Enough to see what drives the
+// key's spend, few enough that a key naming an end customer does not return a database.
+const topTagValues = 10
+
+// CustomerTagKeys returns which cost label keys one customer's spend carries, biggest spend
+// first, each with its ten largest values.
+//
+// Cost labels are the customer's own, so nothing here knows in advance whether spend is
+// broken down by product, by environment or by the end customer it was incurred for. What
+// tells them apart is how many values a key was used with and how much of the traffic
+// carries it, which is what this reports.
+func (s *Store) CustomerTagKeys(
+	ctx context.Context,
+	customerID string,
+	from, to time.Time,
+	tags map[string]string,
+) ([]TagKeySummary, error) {
+	if customerID == "" {
+		return nil, errors.New("store: customer id is required")
+	}
+	if tags == nil {
+		tags = map[string]string{}
+	}
+	filter, err := json.Marshal(tags)
+	if err != nil {
+		return nil, fmt.Errorf("store: customer tag keys: encode tag filter: %w", err)
+	}
+
+	// Coverage is measured against every request in the window, labelled or not, because a
+	// key on half the traffic breaks down half the bill and reading it as the whole of it
+	// is the mistake this number exists to prevent.
+	var total int64
+	err = s.db.NewSelect().
+		Table("requests").
+		ColumnExpr("COUNT(*)").
+		Where("customer_id = ?", customerID).
+		Where("started_at >= ?", from).
+		Where("started_at < ?", to).
+		Where("tags @> ?::jsonb", string(filter)).
+		Scan(ctx, &total)
+	if err != nil {
+		return nil, fmt.Errorf("store: customer tag keys: %w", err)
+	}
+	if total == 0 {
+		return nil, nil
+	}
+
+	query := `
+WITH labelled AS (
+    SELECT tag.key AS key, tag.value AS value, r.cost_micros AS cost_micros
+    FROM requests AS r
+    CROSS JOIN LATERAL jsonb_each_text(r.tags) AS tag(key, value)
+    WHERE r.customer_id = ?
+      AND r.started_at >= ? AND r.started_at < ?
+      AND r.tags @> ?::jsonb
+),
+per_value AS (
+    SELECT
+        key,
+        value,
+        SUM(cost_micros) AS cost_micros_total,
+        COUNT(*) AS request_count
+    FROM labelled
+    GROUP BY key, value
+),
+ranked AS (
+    SELECT
+        key, value, cost_micros_total, request_count,
+        ROW_NUMBER() OVER (
+            PARTITION BY key
+            ORDER BY cost_micros_total DESC, request_count DESC, value ASC
+        ) AS rank
+    FROM per_value
+),
+per_key AS (
+    SELECT
+        key,
+        COUNT(*) AS value_count,
+        SUM(cost_micros_total) AS cost_micros_total,
+        SUM(request_count) AS request_count
+    FROM per_value
+    GROUP BY key
+)
+SELECT
+    k.key AS key,
+    k.value_count AS value_count,
+    k.cost_micros_total AS cost_micros_total,
+    k.request_count AS request_count,
+    r.value AS value,
+    r.cost_micros_total AS value_cost_micros_total,
+    r.request_count AS value_request_count
+FROM per_key AS k
+JOIN ranked AS r ON r.key = k.key AND r.rank <= ?
+ORDER BY k.cost_micros_total DESC, k.request_count DESC, k.key ASC, r.rank ASC`
+
+	var rows []tagKeyRow
+	err = s.db.NewRaw(query, customerID, from, to, string(filter), topTagValues).Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("store: customer tag keys: %w", err)
+	}
+
+	var keys []TagKeySummary
+	for _, row := range rows {
+		if len(keys) == 0 || keys[len(keys)-1].Key != row.Key {
+			keys = append(keys, TagKeySummary{
+				Key:             row.Key,
+				ValueCount:      row.ValueCount,
+				CostMicrosTotal: row.CostMicrosTotal,
+				RequestCount:    row.RequestCount,
+				Coverage:        float64(row.RequestCount) / float64(total),
+			})
+		}
+		key := &keys[len(keys)-1]
+		// A deployment with no prices configured records every row at zero, so a share of
+		// spend would be a division by nothing. Requests are what is left to rank by.
+		share := float64(row.ValueRequests) / float64(key.RequestCount)
+		if key.CostMicrosTotal > 0 {
+			share = float64(row.ValueCost) / float64(key.CostMicrosTotal)
+		}
+		key.TopValues = append(key.TopValues, TagValueSummary{
+			Value:           row.Value,
+			CostMicrosTotal: row.ValueCost,
+			RequestCount:    row.ValueRequests,
+			Share:           share,
+		})
+	}
+	return keys, nil
+}
+
+// CustomerActivity returns how much one customer's agents were used per bucket, oldest
+// first, and by how many distinct people.
+//
+// A bucket with nothing in it is left out rather than returned as zeroes, the same way the
+// stats paths leave out a bucket nobody used.
+func (s *Store) CustomerActivity(
+	ctx context.Context,
+	customerID string,
+	granularity ActivityGranularity,
+	from, to time.Time,
+) ([]ActivityBucket, error) {
+	if !granularity.Valid() {
+		return nil, fmt.Errorf("store: unknown activity granularity %q", granularity)
+	}
+	if customerID == "" {
+		return nil, errors.New("store: customer id is required")
+	}
+
+	unit := granularity.truncateUnit()
+	query := fmt.Sprintf(`
+WITH seen AS (
+    SELECT
+        date_trunc('%[1]s', s.created_at) AS bucket,
+        COALESCE(NULLIF(g.claimed_by, ''), s.user_id) AS user_id,
+        s.caller_kind AS caller_kind
+    FROM agent_sessions AS s
+    LEFT JOIN guest_users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+    WHERE s.customer_id = ? AND s.created_at >= ? AND s.created_at < ?
+    UNION ALL
+    SELECT
+        date_trunc('%[1]s', a.created_at) AS bucket,
+        COALESCE(NULLIF(g.claimed_by, ''), s.user_id) AS user_id,
+        s.caller_kind AS caller_kind
+    FROM agent_responses AS a
+    JOIN agent_sessions AS s ON s.id = a.session_id
+    LEFT JOIN guest_users AS g ON g.id = s.user_id AND g.customer_id = s.customer_id
+    WHERE a.customer_id = ? AND a.created_at >= ? AND a.created_at < ?
+),
+user_counts AS (
+    SELECT bucket, COUNT(*) AS n
+    FROM (SELECT DISTINCT bucket, user_id FROM seen WHERE user_id <> '' AND caller_kind <> 'anonymous') AS people
+    GROUP BY bucket
+),
+session_counts AS (
+    SELECT date_trunc('%[1]s', created_at) AS bucket, COUNT(*) AS n
+    FROM agent_sessions
+    WHERE customer_id = ? AND created_at >= ? AND created_at < ?
+    GROUP BY bucket
+),
+message_counts AS (
+    SELECT date_trunc('%[1]s', created_at) AS bucket, COUNT(*) AS n
+    FROM agent_responses
+    WHERE customer_id = ? AND created_at >= ? AND created_at < ?
+    GROUP BY bucket
+),
+call_counts AS (
+    SELECT
+        date_trunc('%[1]s', started_at) AS bucket,
+        COUNT(*) AS n,
+        SUM(EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at)))::double precision / 60
+            AS voice_minutes,
+        COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(ended_at, now()) - started_at)))
+            FILTER (WHERE from_number IS NOT NULL OR to_number IS NOT NULL), 0)::double precision / 60
+            AS phone_minutes
+    FROM calls
+    WHERE customer_id = ? AND started_at >= ? AND started_at < ?
+    GROUP BY bucket
+),
+buckets AS (
+    SELECT bucket FROM user_counts
+    UNION SELECT bucket FROM session_counts
+    UNION SELECT bucket FROM message_counts
+    UNION SELECT bucket FROM call_counts
+)
+SELECT
+    b.bucket AS bucket,
+    COALESCE(u.n, 0) AS active_users,
+    COALESCE(s.n, 0) AS sessions,
+    COALESCE(m.n, 0) AS messages,
+    COALESCE(c.n, 0) AS calls,
+    COALESCE(c.voice_minutes, 0) AS voice_minutes,
+    COALESCE(c.phone_minutes, 0) AS phone_minutes
+FROM buckets AS b
+LEFT JOIN user_counts AS u ON u.bucket = b.bucket
+LEFT JOIN session_counts AS s ON s.bucket = b.bucket
+LEFT JOIN message_counts AS m ON m.bucket = b.bucket
+LEFT JOIN call_counts AS c ON c.bucket = b.bucket
+ORDER BY b.bucket ASC`, unit)
+
+	var buckets []ActivityBucket
+	err := s.db.NewRaw(query,
+		customerID, from, to,
+		customerID, from, to,
+		customerID, from, to,
+		customerID, from, to,
+		customerID, from, to,
+	).Scan(ctx, &buckets)
+	if err != nil {
+		return nil, fmt.Errorf("store: customer activity: %w", err)
+	}
+	return buckets, nil
+}
+
 // ModelRequests returns how many requests each "provider/model" served for a modality
 // since a time, across every customer. It is what makes a model popular, so it counts
 // calls rather than spend, and is read from the raw requests so it needs no rollup.

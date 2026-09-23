@@ -30,7 +30,9 @@ class StsOptions:
                 it holds anything. Each entry is a provider name, a provider/model or a capability shortcut, expanded where it
                 stands.
                  Example: ['openai', 'sts-fast'].
-            instructions (str | Unset): The system prompt the model converses under.
+            instructions (str | Unset): The system prompt the model converses under, sent when the session opens. A stored
+                router config naming one is refused: what is said belongs to the agent holding the conversation, not to the
+                config that decides where it goes.
             voice (str | Unset): The vendor's own name for a voice, such as marin at OpenAI or Kore at Google. None of these
                 models takes one of your own voices, so the name is passed on as given rather than looked up.
                  Example: marin.

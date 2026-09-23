@@ -2,9 +2,6 @@
 # behind it are interchangeable enough to fail over between.
 name: stt-realtime-fast
 
-tags:
-  team: examples
-
 stt:
   # List order is try order, and each entry is expanded where it stands, so this is a
   # fallback chain rather than a set. Flux first because Deepgram's turn detector is the

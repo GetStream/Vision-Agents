@@ -9,9 +9,6 @@ is, naming the config stores it, and the socket streams PCM back as the provider
 ```yaml
 name: switchboard
 
-tags:
-  team: support
-
 tts:
   target: en-low-latency
 ```

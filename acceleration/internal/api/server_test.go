@@ -501,6 +501,91 @@ func (s *ServerSuite) TestStatsAreServedForModalitiesThatAreRecordedButNotRouted
 	s.Contains(failure.Error, "no database configured", "the modality was accepted, the store is what is missing")
 }
 
+func (s *ServerSuite) TestSpendRequiresTheCustomerHeader() {
+	from := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	to := time.Now().UTC().Format(time.RFC3339)
+
+	recorder := s.get("/v1/stats/spend?from="+from+"&to="+to, "")
+
+	s.Equal(http.StatusUnauthorized, recorder.Code)
+}
+
+func (s *ServerSuite) TestSpendRejectsAnInvertedWindow() {
+	from := time.Now().UTC().Format(time.RFC3339)
+	to := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+
+	recorder := s.get("/v1/stats/spend?from="+from+"&to="+to, "acme")
+
+	s.Equal(http.StatusBadRequest, recorder.Code)
+
+	var failure Error
+	s.decode(recorder, &failure)
+	s.Contains(failure.Error, "to must be after from")
+}
+
+func (s *ServerSuite) TestSpendRejectsATagFilterThatIsNotAPair() {
+	from := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	to := time.Now().UTC().Format(time.RFC3339)
+
+	recorder := s.get("/v1/stats/spend?from="+from+"&to="+to+"&tag=support", "acme")
+
+	s.Equal(http.StatusBadRequest, recorder.Code)
+
+	var failure Error
+	s.decode(recorder, &failure)
+	s.Contains(failure.Error, "must be written key:value")
+}
+
+func (s *ServerSuite) TestSpendRejectsAGroupThatCannotBeCharted() {
+	from := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	to := time.Now().UTC().Format(time.RFC3339)
+
+	recorder := s.get("/v1/stats/spend?from="+from+"&to="+to+"&limit=0", "acme")
+
+	s.Equal(http.StatusBadRequest, recorder.Code, "the spec makes one the smallest limit")
+}
+
+func (s *ServerSuite) TestTagKeysRequireTheCustomerHeader() {
+	from := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	to := time.Now().UTC().Format(time.RFC3339)
+
+	recorder := s.get("/v1/stats/tags/keys?from="+from+"&to="+to, "")
+
+	s.Equal(http.StatusUnauthorized, recorder.Code)
+}
+
+func (s *ServerSuite) TestTagKeysReportWhenNoDatabaseIsConfigured() {
+	from := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	to := time.Now().UTC().Format(time.RFC3339)
+
+	recorder := s.get("/v1/stats/tags/keys?from="+from+"&to="+to, "acme")
+
+	s.Equal(http.StatusBadRequest, recorder.Code)
+
+	var failure Error
+	s.decode(recorder, &failure)
+	s.Contains(failure.Error, "no database configured")
+}
+
+func (s *ServerSuite) TestActivityRequiresTheCustomerHeader() {
+	from := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	to := time.Now().UTC().Format(time.RFC3339)
+
+	recorder := s.get("/v1/stats/activity?from="+from+"&to="+to, "")
+
+	s.Equal(http.StatusUnauthorized, recorder.Code)
+}
+
+func (s *ServerSuite) TestActivityRejectsAGranularityItCannotCountUsersOver() {
+	from := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	to := time.Now().UTC().Format(time.RFC3339)
+
+	recorder := s.get("/v1/stats/activity?granularity=hourly&from="+from+"&to="+to, "acme")
+
+	s.Equal(http.StatusBadRequest, recorder.Code,
+		"distinct users cannot be summed, so the hours the spend paths take are not offered here")
+}
+
 func (s *ServerSuite) TestRollupRequiresTheCustomerHeader() {
 	body := `{"from":"2026-03-01T00:00:00Z","to":"2026-03-02T00:00:00Z"}`
 	request := httptest.NewRequest(http.MethodPost, "/v1/stats/rollup", strings.NewReader(body))

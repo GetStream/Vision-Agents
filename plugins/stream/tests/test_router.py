@@ -456,8 +456,6 @@ class TestRouter:
         write_router(
             tmp_path,
             "healthcare",
-            "tags:\n"
-            "  team: clinical\n"
             "stt:\n"
             "  providers: [deepgram, parakeet]\n"
             "  data_policy:\n"
@@ -493,7 +491,6 @@ class TestRouter:
         )
         assert stored[0].stt.providers == ["deepgram", "parakeet"]
         assert stored[0].stt.data_policy.retention == "none"
-        assert stored[0].tags.additional_properties == {"team": "clinical"}
         assert stored[1].stt.providers == ["grok"]
 
     async def test_syncing_the_same_directory_twice_edits_what_is_stored(

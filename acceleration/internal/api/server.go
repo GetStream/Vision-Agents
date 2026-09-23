@@ -914,6 +914,129 @@ func (s *Server) GetTurnStats(ctx context.Context, request GetTurnStatsRequestOb
 	return GetTurnStats200JSONResponse(stats), nil
 }
 
+// GetSpend returns what the calling customer spent, grouped.
+func (s *Server) GetSpend(ctx context.Context, request GetSpendRequestObject) (GetSpendResponseObject, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return GetSpend401JSONResponse{missingCustomer()}, nil
+	}
+	if !request.Params.To.After(request.Params.From) {
+		return GetSpend400JSONResponse{badRequest("to must be after from")}, nil
+	}
+	tags, err := parseTagFilter(request.Params.Tag)
+	if err != nil {
+		return GetSpend400JSONResponse{badRequest(err.Error())}, nil
+	}
+	if s.store == nil {
+		return GetSpend400JSONResponse{badRequest("statistics are not available: no database configured")}, nil
+	}
+
+	groupBy := defaultSpendGroupBy
+	if request.Params.GroupBy != nil && *request.Params.GroupBy != "" {
+		groupBy = *request.Params.GroupBy
+	}
+	limit := defaultSpendGroups
+	if request.Params.Limit != nil {
+		limit = *request.Params.Limit
+	}
+
+	buckets, err := s.store.CustomerSpend(ctx, customerID, groupBy,
+		granularityOf(request.Params.Granularity), request.Params.From, request.Params.To, limit, tags)
+	if err != nil {
+		return GetSpend400JSONResponse{badRequest(err.Error())}, nil
+	}
+
+	spend := make([]SpendBucket, 0, len(buckets))
+	for _, bucket := range buckets {
+		spend = append(spend, SpendBucket{
+			Bucket:          bucket.Bucket,
+			Value:           bucket.Value,
+			CostMicrosTotal: bucket.CostMicrosTotal,
+			RequestCount:    bucket.RequestCount,
+		})
+	}
+	return GetSpend200JSONResponse(spend), nil
+}
+
+// GetTagKeys returns which cost labels the calling customer's spend carries.
+func (s *Server) GetTagKeys(ctx context.Context, request GetTagKeysRequestObject) (GetTagKeysResponseObject, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return GetTagKeys401JSONResponse{missingCustomer()}, nil
+	}
+	if !request.Params.To.After(request.Params.From) {
+		return GetTagKeys400JSONResponse{badRequest("to must be after from")}, nil
+	}
+	tags, err := parseTagFilter(request.Params.Tag)
+	if err != nil {
+		return GetTagKeys400JSONResponse{badRequest(err.Error())}, nil
+	}
+	if s.store == nil {
+		return GetTagKeys400JSONResponse{badRequest("statistics are not available: no database configured")}, nil
+	}
+
+	found, err := s.store.CustomerTagKeys(ctx, customerID, request.Params.From, request.Params.To, tags)
+	if err != nil {
+		return nil, err
+	}
+
+	keys := make([]TagKeySummary, 0, len(found))
+	for _, key := range found {
+		values := make([]TagValueSummary, 0, len(key.TopValues))
+		for _, value := range key.TopValues {
+			values = append(values, TagValueSummary{
+				Value:           value.Value,
+				CostMicrosTotal: value.CostMicrosTotal,
+				RequestCount:    value.RequestCount,
+				Share:           value.Share,
+			})
+		}
+		keys = append(keys, TagKeySummary{
+			Key:             key.Key,
+			ValueCount:      key.ValueCount,
+			CostMicrosTotal: key.CostMicrosTotal,
+			RequestCount:    key.RequestCount,
+			Coverage:        key.Coverage,
+			TopValues:       values,
+		})
+	}
+	return GetTagKeys200JSONResponse(keys), nil
+}
+
+// GetActivity returns who used the calling customer's agents, and how much.
+func (s *Server) GetActivity(ctx context.Context, request GetActivityRequestObject) (GetActivityResponseObject, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return GetActivity401JSONResponse{missingCustomer()}, nil
+	}
+	if !request.Params.To.After(request.Params.From) {
+		return GetActivity400JSONResponse{badRequest("to must be after from")}, nil
+	}
+	if s.store == nil {
+		return GetActivity400JSONResponse{badRequest("statistics are not available: no database configured")}, nil
+	}
+
+	buckets, err := s.store.CustomerActivity(ctx, customerID,
+		activityGranularityOf(request.Params.Granularity), request.Params.From, request.Params.To)
+	if err != nil {
+		return nil, err
+	}
+
+	activity := make([]ActivityBucket, 0, len(buckets))
+	for _, bucket := range buckets {
+		activity = append(activity, ActivityBucket{
+			Bucket:       bucket.Bucket,
+			ActiveUsers:  bucket.ActiveUsers,
+			Sessions:     bucket.Sessions,
+			Messages:     bucket.Messages,
+			Calls:        bucket.Calls,
+			VoiceMinutes: bucket.VoiceMinutes,
+			PhoneMinutes: bucket.PhoneMinutes,
+		})
+	}
+	return GetActivity200JSONResponse(activity), nil
+}
+
 // RunRollup aggregates request rows into a rollup table.
 func (s *Server) RunRollup(ctx context.Context, request RunRollupRequestObject) (RunRollupResponseObject, error) {
 	if _, ok := CustomerFrom(ctx); !ok {
@@ -961,10 +1084,25 @@ func parseTagFilter(raw *[]string) (map[string]string, error) {
 
 // granularityOf defaults to hourly, matching the spec.
 func granularityOf(requested *Granularity) store.Granularity {
-	if requested != nil && *requested == Daily {
+	if requested != nil && *requested == GranularityDaily {
 		return store.Daily
 	}
 	return store.Hourly
+}
+
+// The spend defaults, matching the spec: the whole bill by where it went, and few enough
+// groups to read.
+const (
+	defaultSpendGroupBy = "modality"
+	defaultSpendGroups  = 6
+)
+
+// activityGranularityOf defaults to daily, matching the spec.
+func activityGranularityOf(requested *ActivityGranularity) store.ActivityGranularity {
+	if requested != nil && *requested == ActivityGranularityMonthly {
+		return store.ActivityMonthly
+	}
+	return store.ActivityDaily
 }
 
 // tierOf reports the effective tier, which is low-latency for a model that declares none.

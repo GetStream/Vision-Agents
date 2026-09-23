@@ -1,5 +1,7 @@
 """Contains all the data models used in inputs/outputs"""
 
+from .activity_bucket import ActivityBucket
+from .activity_granularity import ActivityGranularity
 from .agent_config import AgentConfig
 from .agent_config_request import AgentConfigRequest
 from .agent_config_request_tags import AgentConfigRequestTags
@@ -69,6 +71,7 @@ from .ingest_knowledge_request import IngestKnowledgeRequest
 from .ingested_knowledge import IngestedKnowledge
 from .instructions_request import InstructionsRequest
 from .knowledge_document import KnowledgeDocument
+from .knowledge_passage import KnowledgePassage
 from .knowledge_url import KnowledgeUrl
 from .knowledge_url_request import KnowledgeUrlRequest
 from .knowledge_url_state import KnowledgeUrlState
@@ -111,8 +114,6 @@ from .rollup_result import RollupResult
 from .route import Route
 from .router_config import RouterConfig
 from .router_config_request import RouterConfigRequest
-from .router_config_request_tags import RouterConfigRequestTags
-from .router_config_tags import RouterConfigTags
 from .sandbox import Sandbox
 from .say_request import SayRequest
 from .search_answer import SearchAnswer
@@ -155,6 +156,7 @@ from .skipped_vendor import SkippedVendor
 from .speech import Speech
 from .speech_request import SpeechRequest
 from .speech_request_tags import SpeechRequestTags
+from .spend_bucket import SpendBucket
 from .stats_bucket import StatsBucket
 from .sts_options import StsOptions
 from .sts_options_overwrites import StsOptionsOverwrites
@@ -164,7 +166,9 @@ from .stt_options_overwrites import SttOptionsOverwrites
 from .sync_agent_request import SyncAgentRequest
 from .sync_agent_request_tags import SyncAgentRequestTags
 from .sync_agent_result import SyncAgentResult
+from .tag_key_summary import TagKeySummary
 from .tag_stats_bucket import TagStatsBucket
+from .tag_value_summary import TagValueSummary
 from .text_content_part import TextContentPart
 from .text_content_part_type import TextContentPartType
 from .tier import Tier
@@ -196,6 +200,8 @@ from .voice_sample import VoiceSample
 from .voice_sample_request import VoiceSampleRequest
 
 __all__ = (
+    "ActivityBucket",
+    "ActivityGranularity",
     "AgentConfig",
     "AgentConfigRequest",
     "AgentConfigRequestTags",
@@ -265,6 +271,7 @@ __all__ = (
     "IngestedKnowledge",
     "InstructionsRequest",
     "KnowledgeDocument",
+    "KnowledgePassage",
     "KnowledgeUrl",
     "KnowledgeUrlRequest",
     "KnowledgeUrlState",
@@ -307,8 +314,6 @@ __all__ = (
     "Route",
     "RouterConfig",
     "RouterConfigRequest",
-    "RouterConfigRequestTags",
-    "RouterConfigTags",
     "Sandbox",
     "SayRequest",
     "SearchAnswer",
@@ -351,6 +356,7 @@ __all__ = (
     "Speech",
     "SpeechRequest",
     "SpeechRequestTags",
+    "SpendBucket",
     "StatsBucket",
     "StsOptions",
     "StsOptionsOverwrites",
@@ -360,7 +366,9 @@ __all__ = (
     "SyncAgentRequest",
     "SyncAgentRequestTags",
     "SyncAgentResult",
+    "TagKeySummary",
     "TagStatsBucket",
+    "TagValueSummary",
     "TextContentPart",
     "TextContentPartType",
     "Tier",

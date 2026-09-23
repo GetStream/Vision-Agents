@@ -112,6 +112,44 @@ func (s *Server) DeleteKnowledgeDocument(
 	return DeleteKnowledgeDocument204Response{}, nil
 }
 
+// ListKnowledgeDocumentPassages reads back what a document was cut into.
+func (s *Server) ListKnowledgeDocumentPassages(
+	ctx context.Context, request ListKnowledgeDocumentPassagesRequestObject,
+) (ListKnowledgeDocumentPassagesResponseObject, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return ListKnowledgeDocumentPassages401JSONResponse{missingCustomer()}, nil
+	}
+	if s.store == nil || s.knowledge == nil {
+		return ListKnowledgeDocumentPassages400JSONResponse{badRequest(noKnowledgeDocuments)}, nil
+	}
+
+	document, err := s.store.KnowledgeDocument(ctx, customerID, request.Id)
+	if err != nil {
+		return ListKnowledgeDocumentPassages404JSONResponse{NotFoundJSONResponse{Error: unknownKnowledgeDocument}}, nil
+	}
+	passages, err := s.knowledgePassages(ctx, customerID, document.Namespace, document.Source, document.Passages)
+	if err != nil {
+		return nil, err
+	}
+	return ListKnowledgeDocumentPassages200JSONResponse(passages), nil
+}
+
+// knowledgePassages reads a source's passages back in the order it was cut into them.
+func (s *Server) knowledgePassages(
+	ctx context.Context, customerID, namespace, source string, count int,
+) ([]KnowledgePassage, error) {
+	found, err := s.knowledge.Fetch(ctx, knowledge.Scoped(customerID, namespace), ingest.IDs(source, 0, count))
+	if err != nil {
+		return nil, err
+	}
+	passages := make([]KnowledgePassage, 0, len(found))
+	for _, document := range found {
+		passages = append(passages, KnowledgePassage{Id: document.ID, Source: document.Source, Text: document.Text})
+	}
+	return passages, nil
+}
+
 // fillKnowledge cuts documents into passages and writes them. The count of documents
 // actually read can be less than what was sent: a file of only whitespace is skipped.
 //

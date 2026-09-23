@@ -21,7 +21,6 @@ from ._generated.models import (
     RecordingStatus,
     RouterConfig,
     RouterConfigRequest,
-    RouterConfigRequestTags,
     SearchOptions,
     SearchRequest,
     SearchRequestTags,
@@ -106,8 +105,7 @@ class Router:
         Args:
             config: A stored router config, by name or by id. Without one every call says
                 what it wants for itself.
-            tags: Cost labels carried onto everything routed here, on top of the config's
-                own.
+            tags: Cost labels carried onto everything routed here.
             url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
             customer_id: Who the work is billed to. Defaults to
                 `STREAM_ACCELERATION_CUSTOMER_ID`.
@@ -170,10 +168,6 @@ class Router:
                 stored.search,
                 stored.sts,
             )
-            if not isinstance(stored.tags, Unset):
-                wanted.tags = RouterConfigRequestTags.from_dict(stored.tags.to_dict())
-        if self.tags:
-            wanted.tags = RouterConfigRequestTags.from_dict(self.tags)
 
         return await store(client, wanted, stored)
 
@@ -189,7 +183,8 @@ class Router:
         ```
 
         Args:
-            **options: Any field of the sts block - `target`, `providers`, `instructions`,
+            **options: Any field of the sts block except `instructions`, which a session
+                sends when it opens - `target`, `providers`,
                 `voice`, `languages`, `turn_detection`, `silence_ms`, `interrupt_response`,
                 `input_transcript`, `output_transcript`, `tools`, `text`, `images`,
                 `data_policy`, `overwrites`.
@@ -220,10 +215,6 @@ class Router:
                 stored.llm,
                 stored.search,
             )
-            if not isinstance(stored.tags, Unset):
-                wanted.tags = RouterConfigRequestTags.from_dict(stored.tags.to_dict())
-        if self.tags:
-            wanted.tags = RouterConfigRequestTags.from_dict(self.tags)
 
         return await store(client, wanted, stored)
 
@@ -272,10 +263,6 @@ class Router:
                 stored.search,
                 stored.sts,
             )
-            if not isinstance(stored.tags, Unset):
-                wanted.tags = RouterConfigRequestTags.from_dict(stored.tags.to_dict())
-        if self.tags:
-            wanted.tags = RouterConfigRequestTags.from_dict(self.tags)
 
         return await store(client, wanted, stored)
 
@@ -348,7 +335,6 @@ async def define_router(
     llm: Optional[dict[str, Any]] = None,
     sts: Optional[dict[str, Any]] = None,
     search: Optional[dict[str, Any]] = None,
-    tags: Optional[dict[str, str]] = None,
     url: Optional[str] = None,
     customer_id: Optional[str] = None,
 ) -> RouterConfig:
@@ -365,7 +351,6 @@ async def define_router(
         llm: How it answers.
         sts: How it holds a conversation with one native audio model.
         search: How it looks things up.
-        tags: Cost labels carried onto everything routed under it.
         url: The router's base URL. Defaults to `STREAM_ACCELERATION_URL`.
         customer_id: Who the work is billed to. Defaults to
             `STREAM_ACCELERATION_CUSTOMER_ID`.
@@ -385,7 +370,6 @@ async def define_router(
             "llm": llm,
             "sts": sts,
             "search": search,
-            "tags": tags,
         },
     )
     return await store(client, request, await find(client, name))
@@ -408,8 +392,6 @@ async def sync_routers(
 
     ```yaml
     # routers/healthcare/router.yaml
-    tags:
-      team: clinical
     stt:
       providers: [deepgram, parakeet]
       data_policy:
@@ -644,7 +626,7 @@ class Completions:
         """An answering session, configured and not yet started.
 
         Args:
-            **options: Any field of the config's llm block - `target`, `instructions`,
+            **options: Any field of the config's llm block - `target`,
                 `max_output_tokens`, `temperature`, `reasoning_effort`, `format`,
                 `verbosity`, `tool_choice`.
 

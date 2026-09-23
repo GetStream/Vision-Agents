@@ -127,18 +127,13 @@ func (s *Server) DeleteRouterConfig(ctx context.Context, request DeleteRouterCon
 	return DeleteRouterConfig204Response{}, nil
 }
 
-// routerConfigComplaint reports what is wrong with a router config, if anything. The tags
-// and the keyterms are checked here rather than left to the request that uses the config,
-// because a config nothing can be routed under is worth hearing about while it is being
-// written and not once a socket is open.
+// routerConfigComplaint reports what is wrong with a router config, if anything. The
+// keyterms are checked here rather than left to the request that uses the config, because
+// a config nothing can be routed under is worth hearing about while it is being written
+// and not once a socket is open.
 func (s *Server) routerConfigComplaint(request RouterConfigRequest) (string, bool) {
 	if strings.TrimSpace(request.Name) == "" {
 		return "a router config needs a name", false
-	}
-	if request.Tags != nil {
-		if err := routing.Tags(*request.Tags).Validate(); err != nil {
-			return err.Error(), false
-		}
 	}
 	if request.Stt != nil && request.Stt.Keyterms != nil && len(*request.Stt.Keyterms) > stt.MaxKeyterms {
 		return fmt.Sprintf("a config may name at most %d keyterms", stt.MaxKeyterms), false
@@ -163,6 +158,12 @@ func (s *Server) routerConfigComplaint(request RouterConfigRequest) (string, boo
 	conversation := stsOptionsOf(request.Sts)
 	if err := conversation.Validate(); err != nil {
 		return err.Error(), false
+	}
+	// A config decides where a conversation goes, not what is said in it. The agent
+	// holding it has instructions of its own and sends them when it opens the session,
+	// which is the only moment they are known.
+	if conversation.Instructions != "" {
+		return "a router config carries no instructions: the agent sends its own when it opens the session", false
 	}
 	if message, ok := s.stsComplaint(conversation); !ok {
 		return message, false
@@ -284,9 +285,6 @@ func storedRouterConfig(request RouterConfigRequest, customerID string) store.Ro
 		STS:        stsOptionsOf(request.Sts),
 		Search:     searchOptionsOf(request.Search),
 	}
-	if request.Tags != nil {
-		config.Tags = *request.Tags
-	}
 	config.STT.Keyterms = stt.CleanKeyterms(config.STT.Keyterms)
 	return config
 }
@@ -303,10 +301,6 @@ func routerConfigOf(config store.RouterConfig) RouterConfig {
 		Search:    searchOptionsFor(config.Search),
 		CreatedAt: config.CreatedAt,
 		UpdatedAt: config.UpdatedAt,
-	}
-	if len(config.Tags) > 0 {
-		tags := config.Tags
-		rendered.Tags = &tags
 	}
 	return rendered
 }
@@ -339,13 +333,10 @@ func (s *Server) routerOptions(ctx context.Context, customerID, configID string)
 	return config, nil
 }
 
-// tagsUnder are the labels a request is billed with: the config's own, with the request's
-// written over them, so a caller can add a label to one job without restating the rest.
-func tagsUnder(config store.RouterConfig, sent *map[string]string) routing.Tags {
+// tagsSent are the labels a request is billed with, which are the caller's own and
+// nobody else's: a router config says where to route, not who to bill.
+func tagsSent(sent *map[string]string) routing.Tags {
 	tags := routing.Tags{}
-	for key, value := range config.Tags {
-		tags[key] = value
-	}
 	if sent != nil {
 		for key, value := range *sent {
 			tags[key] = value

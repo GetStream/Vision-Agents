@@ -11,7 +11,6 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.llm_options import LlmOptions
-    from ..models.router_config_request_tags import RouterConfigRequestTags
     from ..models.search_options import SearchOptions
     from ..models.sts_options import StsOptions
     from ..models.stt_options import SttOptions
@@ -26,8 +25,6 @@ class RouterConfigRequest:
     """
     Attributes:
         name (str): What the config is called, which is unique among the customer's own.
-        tags (RouterConfigRequestTags | Unset): Cost labels, carried onto every request made under this config. At most
-            16, keys matching ^[a-zA-Z0-9_.-]{1,64}$ and values under 256 characters, which is what the rollups can carry.
         stt (SttOptions | Unset): How this config transcribes, live or from a recording. A field that only means
             something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to
             write subtitles from. A provider that cannot express a term refuses the request rather than dropping it
@@ -36,7 +33,8 @@ class RouterConfigRequest:
             rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that
             says it cannot.
         llm (LlmOptions | Unset): How this config answers. The names are the response parameters the router already
-            speaks rather than a second vocabulary for the same things.
+            speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model
+            answers under belongs to the agent asking, not to the config that decides where the asking goes.
         sts (StsOptions | Unset): How this config holds a conversation with one native audio model, in place of a
             transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a
             term, and a request naming a term is routed to a model that declared it or refused, never served by one that
@@ -45,7 +43,6 @@ class RouterConfigRequest:
     """
 
     name: str
-    tags: RouterConfigRequestTags | Unset = UNSET
     stt: SttOptions | Unset = UNSET
     tts: TtsOptions | Unset = UNSET
     llm: LlmOptions | Unset = UNSET
@@ -55,10 +52,6 @@ class RouterConfigRequest:
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
-
-        tags: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.tags, Unset):
-            tags = self.tags.to_dict()
 
         stt: dict[str, Any] | Unset = UNSET
         if not isinstance(self.stt, Unset):
@@ -87,8 +80,6 @@ class RouterConfigRequest:
                 "name": name,
             }
         )
-        if tags is not UNSET:
-            field_dict["tags"] = tags
         if stt is not UNSET:
             field_dict["stt"] = stt
         if tts is not UNSET:
@@ -105,9 +96,6 @@ class RouterConfigRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.llm_options import LlmOptions
-        from ..models.router_config_request_tags import (
-            RouterConfigRequestTags,
-        )
         from ..models.search_options import SearchOptions
         from ..models.sts_options import StsOptions
         from ..models.stt_options import SttOptions
@@ -115,13 +103,6 @@ class RouterConfigRequest:
 
         d = dict(src_dict)
         name = d.pop("name")
-
-        _tags = d.pop("tags", UNSET)
-        tags: RouterConfigRequestTags | Unset
-        if isinstance(_tags, Unset):
-            tags = UNSET
-        else:
-            tags = RouterConfigRequestTags.from_dict(_tags)
 
         _stt = d.pop("stt", UNSET)
         stt: SttOptions | Unset
@@ -160,7 +141,6 @@ class RouterConfigRequest:
 
         router_config_request = cls(
             name=name,
-            tags=tags,
             stt=stt,
             tts=tts,
             llm=llm,

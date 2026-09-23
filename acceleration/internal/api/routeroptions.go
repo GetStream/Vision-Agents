@@ -139,7 +139,6 @@ func llmOptionsOf(sent *LlmOptions) options.LLM {
 	}
 	return options.LLM{
 		Target:          value(sent.Target),
-		Instructions:    value(sent.Instructions),
 		MaxOutputTokens: sent.MaxOutputTokens,
 		Temperature:     wider(sent.Temperature),
 		ReasoningEffort: string(value(sent.ReasoningEffort)),
@@ -155,7 +154,6 @@ func llmOptionsOf(sent *LlmOptions) options.LLM {
 func llmOptionsFor(held options.LLM) *LlmOptions {
 	sent := &LlmOptions{
 		Target:          optional(held.Target),
-		Instructions:    optional(held.Instructions),
 		MaxOutputTokens: held.MaxOutputTokens,
 		Temperature:     narrower(held.Temperature),
 		ToolChoice:      optional(held.ToolChoice),

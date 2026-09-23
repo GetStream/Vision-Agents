@@ -12,7 +12,6 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.llm_options import LlmOptions
-    from ..models.router_config_tags import RouterConfigTags
     from ..models.search_options import SearchOptions
     from ..models.sts_options import StsOptions
     from ..models.stt_options import SttOptions
@@ -30,7 +29,6 @@ class RouterConfig:
         name (str):
         created_at (datetime.datetime):
         updated_at (datetime.datetime):
-        tags (RouterConfigTags | Unset):
         stt (SttOptions | Unset): How this config transcribes, live or from a recording. A field that only means
             something on one of the two forms says so: a recording has no endpointing to do, and a socket has no file to
             write subtitles from. A provider that cannot express a term refuses the request rather than dropping it
@@ -39,7 +37,8 @@ class RouterConfig:
             rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that
             says it cannot.
         llm (LlmOptions | Unset): How this config answers. The names are the response parameters the router already
-            speaks rather than a second vocabulary for the same things.
+            speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model
+            answers under belongs to the agent asking, not to the config that decides where the asking goes.
         sts (StsOptions | Unset): How this config holds a conversation with one native audio model, in place of a
             transcriber, a text model and a voice. What every such model takes is a field here; what only some take is a
             term, and a request naming a term is routed to a model that declared it or refused, never served by one that
@@ -51,7 +50,6 @@ class RouterConfig:
     name: str
     created_at: datetime.datetime
     updated_at: datetime.datetime
-    tags: RouterConfigTags | Unset = UNSET
     stt: SttOptions | Unset = UNSET
     tts: TtsOptions | Unset = UNSET
     llm: LlmOptions | Unset = UNSET
@@ -67,10 +65,6 @@ class RouterConfig:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
-
-        tags: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.tags, Unset):
-            tags = self.tags.to_dict()
 
         stt: dict[str, Any] | Unset = UNSET
         if not isinstance(self.stt, Unset):
@@ -102,8 +96,6 @@ class RouterConfig:
                 "updated_at": updated_at,
             }
         )
-        if tags is not UNSET:
-            field_dict["tags"] = tags
         if stt is not UNSET:
             field_dict["stt"] = stt
         if tts is not UNSET:
@@ -120,7 +112,6 @@ class RouterConfig:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.llm_options import LlmOptions
-        from ..models.router_config_tags import RouterConfigTags
         from ..models.search_options import SearchOptions
         from ..models.sts_options import StsOptions
         from ..models.stt_options import SttOptions
@@ -134,13 +125,6 @@ class RouterConfig:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
-
-        _tags = d.pop("tags", UNSET)
-        tags: RouterConfigTags | Unset
-        if isinstance(_tags, Unset):
-            tags = UNSET
-        else:
-            tags = RouterConfigTags.from_dict(_tags)
 
         _stt = d.pop("stt", UNSET)
         stt: SttOptions | Unset
@@ -182,7 +166,6 @@ class RouterConfig:
             name=name,
             created_at=created_at,
             updated_at=updated_at,
-            tags=tags,
             stt=stt,
             tts=tts,
             llm=llm,

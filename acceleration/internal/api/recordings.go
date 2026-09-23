@@ -85,7 +85,7 @@ func (s *Server) TranscribeRecording(ctx context.Context, request TranscribeReco
 		return TranscribeRecording400JSONResponse{badRequest(err.Error())}, nil
 	}
 
-	tags := tagsUnder(config, request.Body.Tags)
+	tags := tagsSent(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
 		return TranscribeRecording400JSONResponse{badRequest(err.Error())}, nil
 	}
@@ -173,7 +173,7 @@ func (s *Server) RecordSpeech(ctx context.Context, request RecordSpeechRequestOb
 		held.Target = recordedTarget(held.Languages)
 	}
 
-	tags := tagsUnder(config, request.Body.Tags)
+	tags := tagsSent(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
 		return RecordSpeech400JSONResponse{badRequest(err.Error())}, nil
 	}

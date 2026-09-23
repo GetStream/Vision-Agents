@@ -617,6 +617,27 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/knowledge/documents/{id}/passages": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What a document was cut into, in order
+         * @description The passages as the agent finds them, which is what shows what a lookup can answer out of this document.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listKnowledgeDocumentPassages"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/knowledge/urls": {
         readonly parameters: {
             readonly query?: never;
@@ -678,6 +699,27 @@ export type paths = {
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
         readonly post: operations["indexKnowledgeUrl"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/agents/knowledge/urls/{id}/passages": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What a page was last read into, in order
+         * @description Empty until the page has been read.
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["listKnowledgeUrlPassages"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1598,6 +1640,27 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/stats/activity": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who used the calling customer's agents, and how much
+         * @description Sessions opened, responses produced and calls held, counted per bucket, alongside how many distinct people were behind them.
+         *     Distinct users are counted rather than summed, which is why the granularity here is days or months rather than the hours the spend paths take: a month's active users are the people who came back, not the sum of its days, so a month has to be asked for as a month.
+         */
+        readonly get: operations["getActivity"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/stats/rollup": {
         readonly parameters: {
             readonly query?: never;
@@ -1612,6 +1675,49 @@ export type paths = {
          * @description Covers every modality and customer in the window. Idempotent: re-running it over the same window recomputes those buckets, so a missed run is fixed by running it again.
          */
         readonly post: operations["runRollup"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/stats/spend": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What the calling customer spent, grouped
+         * @description Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, or a cost label for what it was spent on.
+         *     Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
+         *     Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
+         */
+        readonly get: operations["getSpend"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/stats/tags/keys": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Which cost labels the calling customer's spend carries
+         * @description Cost labels are the customer's own, so nothing here knows in advance whether spend is broken down by product, by environment or by the end customer it was incurred for. This reports the keys in use and what each covers, so a reader can be shown the breakdown that means something rather than a list to guess from.
+         *     A key every request carries with a single value -- environment: production and nothing else -- is context rather than a breakdown, and value_count says so.
+         */
+        readonly get: operations["getTagKeys"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1717,6 +1823,41 @@ export type paths = {
 export type webhooks = Record<string, never>;
 export type components = {
     schemas: {
+        readonly ActivityBucket: {
+            /**
+             * Format: int64
+             * @description Distinct end users who opened a session or asked something of an agent in the bucket. A guest who later turned out to be a known user counts as that user.
+             *     A caller that named nobody is not counted, and neither is an anonymous one: an anonymous name is a claim nothing verified, so counting it would make guessing a name enough to inflate this.
+             */
+            readonly active_users: number;
+            /** Format: date-time */
+            readonly bucket: string;
+            /** Format: int64 */
+            readonly calls: number;
+            /**
+             * Format: int64
+             * @description Responses the agents produced, which is one per thing asked of them.
+             */
+            readonly messages: number;
+            /**
+             * Format: double
+             * @description The part of voice_minutes that arrived over a phone number.
+             */
+            readonly phone_minutes: number;
+            /** Format: int64 */
+            readonly sessions: number;
+            /**
+             * Format: double
+             * @description How long those calls lasted. One still running counts up to now.
+             */
+            readonly voice_minutes: number;
+        };
+        /**
+         * @description Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
+         * @default daily
+         * @enum {string}
+         */
+        readonly ActivityGranularity: "daily" | "monthly";
         readonly AgentConfig: {
             /** Format: date-time */
             readonly created_at: string;
@@ -2334,6 +2475,12 @@ export type components = {
             /** @description The document, whole. It is cut into passages here. */
             readonly text: string;
         };
+        readonly KnowledgePassage: {
+            readonly id: string;
+            /** @description The heading or file the passage sits under. */
+            readonly source: string;
+            readonly text: string;
+        };
         readonly KnowledgeUrl: {
             /** Format: date-time */
             readonly created_at: string;
@@ -2384,15 +2531,13 @@ export type components = {
          * @enum {string}
          */
         readonly KnowledgeUrlState: "pending" | "indexed" | "failed";
-        /** @description How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. */
+        /** @description How this config answers. The names are the response parameters the router already speaks rather than a second vocabulary for the same things. The system prompt is not among them: what the model answers under belongs to the agent asking, not to the config that decides where the asking goes. */
         readonly LlmOptions: {
             /**
              * @description Whether the answer is prose or a JSON object.
              * @enum {string}
              */
             readonly format?: "text" | "json_object";
-            /** @description What the model answers under, when a request does not say. */
-            readonly instructions?: string;
             readonly max_output_tokens?: number;
             /** @description Passed to the provider untouched, for the providers that store it. */
             readonly metadata?: {
@@ -2656,9 +2801,6 @@ export type components = {
             readonly search?: components["schemas"]["SearchOptions"];
             readonly sts?: components["schemas"]["StsOptions"];
             readonly stt?: components["schemas"]["SttOptions"];
-            readonly tags?: {
-                readonly [key: string]: string;
-            };
             readonly tts?: components["schemas"]["TtsOptions"];
             /** Format: date-time */
             readonly updated_at: string;
@@ -2670,10 +2812,6 @@ export type components = {
             readonly search?: components["schemas"]["SearchOptions"];
             readonly sts?: components["schemas"]["StsOptions"];
             readonly stt?: components["schemas"]["SttOptions"];
-            /** @description Cost labels, carried onto every request made under this config. At most 16, keys matching ^[a-zA-Z0-9_.-]{1,64}$ and values under 256 characters, which is what the rollups can carry. */
-            readonly tags?: {
-                readonly [key: string]: string;
-            };
             readonly tts?: components["schemas"]["TtsOptions"];
         };
         /**
@@ -3072,6 +3210,22 @@ export type components = {
             /** @description What to say. Whole paragraphs rather than the sentence at a time a socket takes. */
             readonly text: string;
         };
+        readonly SpendBucket: {
+            /** Format: date-time */
+            readonly bucket: string;
+            /**
+             * Format: int64
+             * @description Millionths of a dollar, priced from the configured rates.
+             */
+            readonly cost_micros_total: number;
+            /** Format: int64 */
+            readonly request_count: number;
+            /**
+             * @description The modality or label value this row is for. "other" is everything outside the biggest few, and the empty string is spend carrying no such label at all, so a customer that labels only part of its traffic can see which part.
+             * @example support
+             */
+            readonly value: string;
+        };
         readonly StatsBucket: {
             /**
              * Format: int64
@@ -3128,7 +3282,7 @@ export type components = {
             readonly images?: boolean;
             /** @description Ask the model to write down what it heard. */
             readonly input_transcript?: boolean;
-            /** @description The system prompt the model converses under. */
+            /** @description The system prompt the model converses under, sent when the session opens. A stored router config naming one is refused: what is said belongs to the agent holding the conversation, not to the config that decides where it goes. */
             readonly instructions?: string;
             /** @description Whether the model cuts its own reply off when it hears the caller. Omitting it leaves the vendor's default; false is for a speaker close enough to the microphone that the model would otherwise interrupt itself. */
             readonly interrupt_response?: boolean;
@@ -3288,6 +3442,26 @@ export type components = {
             /** @description True when the hash matched and nothing was written. */
             readonly unchanged: boolean;
         };
+        readonly TagKeySummary: {
+            /** Format: int64 */
+            readonly cost_micros_total: number;
+            /**
+             * Format: double
+             * @description The share of the window's requests that carry this key, from 0 to 1. A key on half the traffic breaks down half the bill, which is worth knowing before it is read as the whole of it.
+             */
+            readonly coverage: number;
+            /** @example product */
+            readonly key: string;
+            /** Format: int64 */
+            readonly request_count: number;
+            /** @description The ten largest values, biggest spend first. */
+            readonly top_values: readonly components["schemas"]["TagValueSummary"][];
+            /**
+             * Format: int64
+             * @description How many distinct values the key was used with. One means it is context rather than a breakdown; hundreds mean it identifies something, such as an end customer, and only its largest values are worth a chart.
+             */
+            readonly value_count: number;
+        };
         readonly TagStatsBucket: {
             /** Format: int64 */
             readonly audio_ms_total: number;
@@ -3320,6 +3494,19 @@ export type components = {
             readonly tag_value: string;
             /** Format: double */
             readonly uptime?: number | null;
+        };
+        readonly TagValueSummary: {
+            /** Format: int64 */
+            readonly cost_micros_total: number;
+            /** Format: int64 */
+            readonly request_count: number;
+            /**
+             * Format: double
+             * @description This value's share of what the key covers, from 0 to 1.
+             */
+            readonly share: number;
+            /** @example support */
+            readonly value: string;
         };
         readonly TextContentPart: {
             readonly text: string;
@@ -4738,6 +4925,33 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
+    readonly listKnowledgeDocumentPassages: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: components["parameters"]["ResourceID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The passages */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["KnowledgePassage"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
     readonly listKnowledgeUrls: {
         readonly parameters: {
             readonly query?: {
@@ -4862,6 +5076,33 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["KnowledgeUrl"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+        };
+    };
+    readonly listKnowledgeUrlPassages: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The resource, as returned when it was created. */
+                readonly id: components["parameters"]["ResourceID"];
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The passages */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["KnowledgePassage"][];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
@@ -6577,6 +6818,35 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
         };
     };
+    readonly getActivity: {
+        readonly parameters: {
+            readonly query: {
+                /** @description Start of the window, inclusive. */
+                readonly from: string;
+                readonly granularity?: components["schemas"]["ActivityGranularity"];
+                /** @description End of the window, exclusive. */
+                readonly to: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description One row per bucket, oldest first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ActivityBucket"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
     readonly runRollup: {
         readonly parameters: {
             readonly query?: never;
@@ -6597,6 +6867,85 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RollupResult"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly getSpend: {
+        readonly parameters: {
+            readonly query: {
+                /** @description Start of the window, inclusive. */
+                readonly from: string;
+                readonly granularity?: components["schemas"]["Granularity"];
+                /**
+                 * @description "modality", or the cost label to group by.
+                 * @example product
+                 */
+                readonly group_by?: string;
+                /** @description How many values keep a series of their own. */
+                readonly limit?: number;
+                /**
+                 * @description Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several.
+                 * @example [
+                 *       "product:support",
+                 *       "environment:production"
+                 *     ]
+                 */
+                readonly tag?: readonly string[];
+                /** @description End of the window, exclusive. */
+                readonly to: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description One row per bucket and group, oldest bucket first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SpendBucket"][];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 403: components["responses"]["Forbidden"];
+        };
+    };
+    readonly getTagKeys: {
+        readonly parameters: {
+            readonly query: {
+                /** @description Start of the window, inclusive. */
+                readonly from: string;
+                /**
+                 * @description Only consider requests carrying every one of these cost labels, each written "key:value". Repeat for several.
+                 * @example [
+                 *       "product:support"
+                 *     ]
+                 */
+                readonly tag?: readonly string[];
+                /** @description End of the window, exclusive. */
+                readonly to: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description One row per label key, largest spend first */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["TagKeySummary"][];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

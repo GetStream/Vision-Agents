@@ -98,6 +98,29 @@ func (s *Server) GetKnowledgeUrl(
 	return GetKnowledgeUrl200JSONResponse(knowledgeURLOf(page)), nil
 }
 
+// ListKnowledgeUrlPassages reads back what a page was last read into.
+func (s *Server) ListKnowledgeUrlPassages(
+	ctx context.Context, request ListKnowledgeUrlPassagesRequestObject,
+) (ListKnowledgeUrlPassagesResponseObject, error) {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
+		return ListKnowledgeUrlPassages401JSONResponse{missingCustomer()}, nil
+	}
+	if s.pages == nil || s.knowledge == nil {
+		return ListKnowledgeUrlPassages400JSONResponse{badRequest(noKnowledgeURLs)}, nil
+	}
+
+	page, err := s.pages.Get(ctx, customerID, request.Id)
+	if err != nil {
+		return ListKnowledgeUrlPassages404JSONResponse{NotFoundJSONResponse{Error: unknownKnowledgeURL}}, nil
+	}
+	passages, err := s.knowledgePassages(ctx, customerID, page.Namespace, page.URL, page.Passages)
+	if err != nil {
+		return nil, err
+	}
+	return ListKnowledgeUrlPassages200JSONResponse(passages), nil
+}
+
 // DeleteKnowledgeUrl stops filling a knowledge base from a page, and removes the passages
 // it wrote.
 func (s *Server) DeleteKnowledgeUrl(

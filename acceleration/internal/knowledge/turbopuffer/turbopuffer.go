@@ -237,6 +237,48 @@ func (s *Store) Delete(ctx context.Context, namespace string, ids []string) erro
 	return nil
 }
 
+// Fetch reads passages back by id, which is how somebody sees what a document became.
+func (s *Store) Fetch(ctx context.Context, namespace string, ids []string) ([]knowledge.Document, error) {
+	if strings.TrimSpace(namespace) == "" {
+		return nil, errors.New("turbopuffer: a namespace is required")
+	}
+
+	path := "/v2/namespaces/" + url.PathEscape(namespace) + "/query"
+	byID := make(map[string]knowledge.Document, len(ids))
+	for batch := range slices.Chunk(ids, upsertBatch) {
+		body := fetchRequest{
+			Filters:           []any{idField, "In", batch},
+			RankBy:            []any{idField, "asc"},
+			Limit:             len(batch),
+			IncludeAttributes: []string{textAttribute, sourceAttribute},
+		}
+		var response queryResponse
+		found, err := s.call(ctx, path, body, &response)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, nil
+		}
+		for _, row := range response.Rows {
+			id := attribute(row, idField)
+			byID[id] = knowledge.Document{
+				ID:     id,
+				Text:   attribute(row, textAttribute),
+				Source: attribute(row, sourceAttribute),
+			}
+		}
+	}
+
+	documents := make([]knowledge.Document, 0, len(byID))
+	for _, id := range ids {
+		if document, ok := byID[id]; ok {
+			documents = append(documents, document)
+		}
+	}
+	return documents, nil
+}
+
 // Provider is the name this store is recorded under.
 func (s *Store) Provider() string { return "turbopuffer" }
 
@@ -313,6 +355,14 @@ func score(row map[string]json.RawMessage) float64 {
 
 type queryRequest struct {
 	// RankBy is turbopuffer's positional ranking expression: attribute, function, query.
+	RankBy            []any    `json:"rank_by"`
+	Limit             int      `json:"limit"`
+	IncludeAttributes []string `json:"include_attributes"`
+}
+
+// fetchRequest reads rows by id rather than ranking them against a question.
+type fetchRequest struct {
+	Filters           []any    `json:"filters"`
 	RankBy            []any    `json:"rank_by"`
 	Limit             int      `json:"limit"`
 	IncludeAttributes []string `json:"include_attributes"`

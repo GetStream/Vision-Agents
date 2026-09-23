@@ -21,7 +21,6 @@ from ._generated.models import (
     LlmOptions,
     RouterConfig,
     RouterConfigRequest,
-    RouterConfigRequestTags,
     SearchOptions,
     StsOptions,
     SttOptions,
@@ -43,9 +42,7 @@ ROUTER_FILE = "router.yaml"
 ROUTER_STAMP = ".router_sync"
 
 # ROUTER_KEYS are the top-level keys a router config file may hold.
-ROUTER_KEYS = frozenset(
-    {"name", "description", "stt", "tts", "llm", "sts", "search", "tags"}
-)
+ROUTER_KEYS = frozenset({"name", "description", "stt", "tts", "llm", "sts", "search"})
 
 
 async def ensure_router(name: str, backend: Backend) -> Optional[RouterConfig]:
@@ -156,8 +153,6 @@ def wanted(name: str, described: dict[str, Any]) -> RouterConfigRequest:
         request.sts = block(StsOptions, described["sts"])
     if described.get("search"):
         request.search = block(SearchOptions, described["search"])
-    if described.get("tags"):
-        request.tags = RouterConfigRequestTags.from_dict(described["tags"])
     return request
 
 

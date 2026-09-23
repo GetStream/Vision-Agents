@@ -1658,6 +1658,36 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/agents/knowledge/documents/{id}/passages:
+    get:
+      operationId: listKnowledgeDocumentPassages
+      summary: What a document was cut into, in order
+      description: >
+        The passages as the agent finds them, which is what shows what a lookup can
+        answer out of this document.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an
+        end user's device.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The passages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KnowledgePassage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/agents/knowledge/urls:
     get:
       operationId: listKnowledgeUrls
@@ -1761,6 +1791,35 @@ paths:
       responses:
         "204":
           description: The page and its passages are gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/agents/knowledge/urls/{id}/passages:
+    get:
+      operationId: listKnowledgeUrlPassages
+      summary: What a page was last read into, in order
+      description: >
+        Empty until the page has been read.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an
+        end user's device.
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: The passages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KnowledgePassage"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3296,6 +3355,188 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/stats/spend:
+    get:
+      operationId: getSpend
+      summary: What the calling customer spent, grouped
+      description: >
+        Spend across every modality at once, which is what a bill is. group_by decides what
+        the series are: "modality" for where the money went, or a cost label for what it was
+        spent on.
+
+        Only the biggest values keep a series of their own, because a label such as
+        customer_id has as many values as the customer has customers. The rest are summed
+        into "other", and spend carrying no such label at all into the empty value, so the
+        rows still add up to the total.
+
+        Reads the request rows rather than the rollups, so today's spend is there without a
+        rollup having run.
+      parameters:
+        - name: group_by
+          in: query
+          required: false
+          description: '"modality", or the cost label to group by.'
+          schema:
+            type: string
+            default: modality
+          example: product
+        - name: granularity
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Granularity"
+        - name: from
+          in: query
+          required: true
+          description: Start of the window, inclusive.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          description: End of the window, exclusive.
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          required: false
+          description: How many values keep a series of their own.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 6
+        - name: tag
+          in: query
+          required: false
+          description: >
+            Only count requests carrying every one of these cost labels, each written
+            "key:value". Repeat for several.
+          schema:
+            type: array
+            items:
+              type: string
+          example: ["product:support", "environment:production"]
+      responses:
+        "200":
+          description: One row per bucket and group, oldest bucket first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SpendBucket"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/stats/tags/keys:
+    get:
+      operationId: getTagKeys
+      summary: Which cost labels the calling customer's spend carries
+      description: >
+        Cost labels are the customer's own, so nothing here knows in advance whether spend
+        is broken down by product, by environment or by the end customer it was incurred
+        for. This reports the keys in use and what each covers, so a reader can be shown
+        the breakdown that means something rather than a list to guess from.
+
+        A key every request carries with a single value -- environment: production and
+        nothing else -- is context rather than a breakdown, and value_count says so.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Start of the window, inclusive.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          description: End of the window, exclusive.
+          schema:
+            type: string
+            format: date-time
+        - name: tag
+          in: query
+          required: false
+          description: >
+            Only consider requests carrying every one of these cost labels, each written
+            "key:value". Repeat for several.
+          schema:
+            type: array
+            items:
+              type: string
+          example: ["product:support"]
+      responses:
+        "200":
+          description: One row per label key, largest spend first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TagKeySummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/stats/activity:
+    get:
+      operationId: getActivity
+      summary: Who used the calling customer's agents, and how much
+      description: >
+        Sessions opened, responses produced and calls held, counted per bucket, alongside
+        how many distinct people were behind them.
+
+        Distinct users are counted rather than summed, which is why the granularity here is
+        days or months rather than the hours the spend paths take: a month's active users
+        are the people who came back, not the sum of its days, so a month has to be asked
+        for as a month.
+      parameters:
+        - name: granularity
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ActivityGranularity"
+        - name: from
+          in: query
+          required: true
+          description: Start of the window, inclusive.
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          description: End of the window, exclusive.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: One row per bucket, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityBucket"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/stats/rollup:
     post:
       operationId: runRollup
@@ -3840,14 +4081,6 @@ components:
         name:
           type: string
           description: What the config is called, which is unique among the customer's own.
-        tags:
-          type: object
-          additionalProperties:
-            type: string
-          description: >
-            Cost labels, carried onto every request made under this config. At most 16,
-            keys matching ^[a-zA-Z0-9_.-]{1,64}$ and values under 256 characters, which is
-            what the rollups can carry.
         stt:
           $ref: "#/components/schemas/SttOptions"
         tts:
@@ -3867,10 +4100,6 @@ components:
           type: string
         name:
           type: string
-        tags:
-          type: object
-          additionalProperties:
-            type: string
         stt:
           $ref: "#/components/schemas/SttOptions"
         tts:
@@ -4160,7 +4389,10 @@ components:
           example: ["openai", "sts-fast"]
         instructions:
           type: string
-          description: The system prompt the model converses under.
+          description: >
+            The system prompt the model converses under, sent when the session opens. A
+            stored router config naming one is refused: what is said belongs to the agent
+            holding the conversation, not to the config that decides where it goes.
         voice:
           type: string
           description: >
@@ -4224,15 +4456,14 @@ components:
       type: object
       description: >
         How this config answers. The names are the response parameters the router already
-        speaks rather than a second vocabulary for the same things.
+        speaks rather than a second vocabulary for the same things. The system prompt is
+        not among them: what the model answers under belongs to the agent asking, not to
+        the config that decides where the asking goes.
       properties:
         target:
           type: string
           description: A provider/model or a capability shortcut.
           example: llm-fast
-        instructions:
-          type: string
-          description: What the model answers under, when a request does not say.
         max_output_tokens:
           type: integer
         temperature:
@@ -5017,6 +5248,18 @@ components:
           type: string
           format: date-time
           description: When it was last written.
+
+    KnowledgePassage:
+      type: object
+      required: [id, source, text]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+          description: The heading or file the passage sits under.
+        text:
+          type: string
 
     KnowledgeUrlRequest:
       type: object
@@ -6523,6 +6766,133 @@ components:
           type: number
           format: double
           nullable: true
+
+    SpendBucket:
+      type: object
+      required: [bucket, value, cost_micros_total, request_count]
+      properties:
+        bucket:
+          type: string
+          format: date-time
+        value:
+          type: string
+          description: >
+            The modality or label value this row is for. "other" is everything outside the
+            biggest few, and the empty string is spend carrying no such label at all, so a
+            customer that labels only part of its traffic can see which part.
+          example: support
+        cost_micros_total:
+          type: integer
+          format: int64
+          description: Millionths of a dollar, priced from the configured rates.
+        request_count:
+          type: integer
+          format: int64
+
+    TagKeySummary:
+      type: object
+      required:
+        [key, value_count, cost_micros_total, request_count, coverage, top_values]
+      properties:
+        key:
+          type: string
+          example: product
+        value_count:
+          type: integer
+          format: int64
+          description: >
+            How many distinct values the key was used with. One means it is context rather
+            than a breakdown; hundreds mean it identifies something, such as an end
+            customer, and only its largest values are worth a chart.
+        cost_micros_total:
+          type: integer
+          format: int64
+        request_count:
+          type: integer
+          format: int64
+        coverage:
+          type: number
+          format: double
+          description: >
+            The share of the window's requests that carry this key, from 0 to 1. A key on
+            half the traffic breaks down half the bill, which is worth knowing before it is
+            read as the whole of it.
+        top_values:
+          type: array
+          items:
+            $ref: "#/components/schemas/TagValueSummary"
+          description: The ten largest values, biggest spend first.
+
+    TagValueSummary:
+      type: object
+      required: [value, cost_micros_total, request_count, share]
+      properties:
+        value:
+          type: string
+          example: support
+        cost_micros_total:
+          type: integer
+          format: int64
+        request_count:
+          type: integer
+          format: int64
+        share:
+          type: number
+          format: double
+          description: This value's share of what the key covers, from 0 to 1.
+
+    ActivityGranularity:
+      type: string
+      enum: [daily, monthly]
+      default: daily
+      description: >
+        Separate from Granularity, and coarser, because distinct users cannot be summed: a
+        month of them is who came back rather than the sum of its days.
+
+    ActivityBucket:
+      type: object
+      required:
+        [
+          bucket,
+          active_users,
+          sessions,
+          messages,
+          calls,
+          voice_minutes,
+          phone_minutes,
+        ]
+      properties:
+        bucket:
+          type: string
+          format: date-time
+        active_users:
+          type: integer
+          format: int64
+          description: >
+            Distinct end users who opened a session or asked something of an agent in the
+            bucket. A guest who later turned out to be a known user counts as that user.
+
+            A caller that named nobody is not counted, and neither is an anonymous one: an
+            anonymous name is a claim nothing verified, so counting it would make guessing
+            a name enough to inflate this.
+        sessions:
+          type: integer
+          format: int64
+        messages:
+          type: integer
+          format: int64
+          description: Responses the agents produced, which is one per thing asked of them.
+        calls:
+          type: integer
+          format: int64
+        voice_minutes:
+          type: number
+          format: double
+          description: How long those calls lasted. One still running counts up to now.
+        phone_minutes:
+          type: number
+          format: double
+          description: The part of voice_minutes that arrived over a phone number.
 
     TurnStatsBucket:
       type: object

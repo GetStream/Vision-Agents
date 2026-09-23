@@ -35,7 +35,7 @@ func (s *Server) Search(ctx context.Context, request SearchRequestObject) (Searc
 	}
 	held := config.Search.Merge(searchOptionsOf(request.Body.Options))
 
-	tags := tagsUnder(config, request.Body.Tags)
+	tags := tagsSent(request.Body.Tags)
 	if err := tags.Validate(); err != nil {
 		return Search400JSONResponse{badRequest(err.Error())}, nil
 	}

@@ -44,6 +44,19 @@ func (b *base) Delete(_ context.Context, _ string, ids []string) error {
 	return nil
 }
 
+func (b *base) Fetch(_ context.Context, _ string, ids []string) ([]knowledge.Document, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	var found []knowledge.Document
+	for _, id := range ids {
+		if document, ok := b.passages[id]; ok {
+			found = append(found, document)
+		}
+	}
+	return found, nil
+}
+
 func (b *base) stored() (string, map[string]knowledge.Document) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

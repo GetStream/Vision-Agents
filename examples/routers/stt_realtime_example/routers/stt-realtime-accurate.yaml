@@ -2,9 +2,6 @@
 # models than one that does not.
 name: stt-realtime-accurate
 
-tags:
-  team: examples
-
 stt:
   # The same shape of chain as the fast config, ordered by accuracy rather than by
   # latency: Muse Voice first, then Scribe v2 Realtime, then Ink 2, then Nemotron.
