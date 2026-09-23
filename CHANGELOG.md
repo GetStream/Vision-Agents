@@ -505,6 +505,13 @@ does not diarize and that batch Scribe is where that lives, so it declares `keyt
 `endpointing` and not `diarize`, and a request that asks to be told who spoke routes past
 it rather than being served something that cannot answer.
 
+### OpenAI's GPT-6: Astra, Sol and Luna
+
+The router now reaches `openai/gpt-6-astra`, `openai/gpt-6-sol` and `openai/gpt-6-luna`.
+`llm-thinking` prefers GPT-6 Sol and `vlm` prefers GPT-6 Luna in place of their GPT-5.6
+namesakes, which stay declared for configs that name them. Astra rejects a reasoning effort
+of `none`, so a request naming no effort is sent `low` and one naming `none` is refused.
+
 ### A recorded call, for a Go program with nobody at a microphone
 
 `stream.RecordedCall` reads a 16 kHz mono PCM16 WAV and hands it over the way a call
