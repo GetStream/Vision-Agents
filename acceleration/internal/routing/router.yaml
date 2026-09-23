@@ -1235,13 +1235,14 @@ sts:
     # a voice agent at, so it is what sts-fast prefers. Artificial Analysis time it at
     # 1.18s to first audio against 0.96s for 3.1 Flash Live on minimal thinking, and put
     # it twelve points higher on quality; timed from the caller's last word against the
-    # live API from here, VAD wait included, it came in a tenth of a second quicker. Tools are non-blocking by default: the
-    # model closes its turn when it calls one, so a slow tool no longer holds the
-    # conversation, though it stays quiet until the answer comes. It takes no thinking
-    # level. Turns are a silence timer, not semantic. Billed like 3.1: audio in at $3/1M
-    # tokens, out at $12/1M. Google do not train on paid-tier traffic and log it "for a
-    # limited period of time" with no figure, with no zero-retention path on the Developer
-    # API, so this cannot serve a request naming a retention ceiling.
+    # live API from here, VAD wait included, it came in a tenth of a second quicker.
+    # Tools are non-blocking by default: the model closes its turn when it calls one, so a
+    # slow tool no longer holds the conversation, though it stays quiet until the answer
+    # comes. It takes no thinking level. Turns are a silence timer, not semantic. Billed
+    # like 3.1: audio in at $3/1M tokens, out at $12/1M. Google do not train on paid-tier
+    # traffic and log it "for a limited period of time" with no figure, with no
+    # zero-retention path on the Developer API, so this cannot serve a request naming a
+    # retention ceiling.
     - provider: gemini
       model: gemini-3.8-live
       description: "Google's default live voice, and what Fast conversational prefers. About a second to first audio, sees images, and a slow tool no longer holds the conversation."
