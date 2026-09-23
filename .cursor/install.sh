@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Build-time setup for Cursor cloud agents. Must be idempotent and terminate.
+# Builds read this from main, but agents also run on branches such as accelerate,
+# so it installs their toolchain too: Go, Postgres, Redis and the cgo audio libraries.
+set -euo pipefail
+
+GO_VERSION=1.27.1
+PYTHON_VERSION=3.12.11
+
+sudo apt-get update
+# livekit media-sdk is cgo: libopus/libopusfile decode Opus and libsoxr resamples.
+# The Python audio tests need portaudio, and a few Python deps build from source.
+sudo apt-get install -y build-essential postgresql redis-server pkg-config \
+  libopus-dev libopusfile-dev libsoxr-dev libportaudio2
+
+export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"
+if ! grep -q '/usr/local/go/bin' "$HOME/.bashrc"; then
+  echo 'export PATH="/usr/local/go/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"' >>"$HOME/.bashrc"
+fi
+
+if ! command -v uv >/dev/null; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+fi
+uv sync --python "$PYTHON_VERSION"
+
+if [ "$(go version 2>/dev/null | awk '{print $3}')" != "go${GO_VERSION}" ]; then
+  curl -LsSf "https://go.dev/dl/go${GO_VERSION}.linux-$(dpkg --print-architecture).tar.gz" -o /tmp/go.tar.gz
+  sudo rm -rf /usr/local/go
+  sudo tar -C /usr/local -xzf /tmp/go.tar.gz
+  rm /tmp/go.tar.gz
+fi
+go install github.com/pressly/goose/v3/cmd/goose@latest
+
+# ~/.bashrc returns early in non-interactive shells, so link the tools onto the default PATH.
+sudo ln -sf /usr/local/go/bin/go /usr/local/go/bin/gofmt "$HOME/.local/bin/uv" \
+  "$HOME/.local/bin/uvx" "$HOME/go/bin/goose" /usr/local/bin/
+
+# Give the agent's own user a Postgres superuser role so psql works without sudo.
+sudo service postgresql start
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$(whoami)'" | grep -q 1; then
+  sudo -u postgres createuser --superuser "$(whoami)"
+fi

@@ -1,0 +1,6 @@
+{
+  "name": "vision-agents",
+  "install": "bash .cursor/install.sh",
+  "start": "sudo service postgresql start && sudo service redis-server start",
+  "ports": [{ "name": "acceleration-api", "port": 8080 }]
+}
