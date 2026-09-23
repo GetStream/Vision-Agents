@@ -2,7 +2,7 @@
 # Build-time setup for Cursor cloud agents. Must be idempotent and terminate.
 set -euo pipefail
 
-GO_VERSION=1.25.7
+GO_VERSION=1.27.1
 PYTHON_VERSION=3.12.11
 
 sudo apt-get update
